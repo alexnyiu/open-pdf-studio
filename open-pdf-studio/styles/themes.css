@@ -310,7 +310,7 @@
 /* Dark theme */
 [data-theme="dark"] {
   /* General */
-  --theme-bg: #1a1a2e;
+  --theme-bg: #181818;
   --theme-surface: #16213e;
   --theme-border: #0f3460;
   --theme-text: #eaeaea;
@@ -400,7 +400,7 @@
   --theme-tab-add-hover: #334155;
 
   /* Content area */
-  --theme-content-bg: #2a2a4a;
+  --theme-content-bg: #181818;
 
   /* Left panel */
   --theme-panel-bg: #16213e;

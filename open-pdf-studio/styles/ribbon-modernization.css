@@ -1,0 +1,452 @@
+/*
+ * Phase 6 — macOS-refined ribbon presentation
+ *
+ * This is a presentation-only layer. The legacy ribbon selectors remain in
+ * ribbon.css because they cover the full command surface; this file supplies
+ * the approved surface, spacing, icon, and interaction treatment after that
+ * stylesheet has loaded. Command IDs, labels, tab state, adaptive overflow,
+ * and callbacks are intentionally unchanged.
+ */
+
+.ribbon-container {
+  --ui-ribbon-surface: var(--ui-color-surface-elevated);
+  --ui-ribbon-chrome: var(--ui-color-surface);
+  --ui-ribbon-muted: var(--ui-color-selection);
+  --ui-ribbon-border: var(--ui-color-border);
+  --ui-ribbon-border-strong: var(--ui-color-border);
+  --ui-ribbon-ink: var(--ui-color-text);
+  --ui-ribbon-muted-text: var(--ui-color-text-secondary);
+  --ui-ribbon-faint: var(--ui-color-text-secondary);
+  --ui-ribbon-accent: var(--ui-color-accent);
+  --ui-ribbon-accent-soft: var(--ui-color-selection);
+  --ui-ribbon-accent-strong: var(--ui-color-accent-hover);
+  --ui-ribbon-selection: var(--ui-color-selection);
+
+  /* Keep legacy descendants on the same palette during migration. */
+  --theme-ribbon-bg-start: var(--ui-ribbon-chrome);
+  --theme-ribbon-bg-end: var(--ui-ribbon-chrome);
+  --theme-ribbon-border: var(--ui-ribbon-border);
+  --theme-ribbon-tabs-bg-start: var(--ui-ribbon-chrome);
+  --theme-ribbon-tabs-bg-end: var(--ui-ribbon-chrome);
+  --theme-ribbon-content-bg: var(--ui-ribbon-surface);
+  --theme-ribbon-text: var(--ui-ribbon-muted-text);
+  --theme-ribbon-text-hover: var(--ui-ribbon-ink);
+  --theme-ribbon-tab-hover: var(--ui-ribbon-muted);
+  --theme-ribbon-tab-active-bg: var(--ui-ribbon-surface);
+  --theme-ribbon-tab-active-border: var(--ui-ribbon-border);
+  --theme-ribbon-btn-hover: var(--ui-ribbon-muted);
+  --theme-ribbon-btn-hover-border: var(--ui-ribbon-border);
+  --theme-ribbon-btn-active-bg: var(--ui-ribbon-accent-soft);
+  --theme-ribbon-btn-active-border: var(--ui-ribbon-accent);
+  --theme-ribbon-btn-active-text: var(--ui-ribbon-accent-strong);
+  --theme-ribbon-icon-stroke: var(--ui-ribbon-muted-text);
+  --theme-ribbon-group-label: var(--ui-ribbon-faint);
+  --theme-ribbon-group-border: var(--ui-ribbon-border);
+  --theme-ribbon-dropdown-arrow: var(--ui-ribbon-faint);
+  --theme-ribbon-input-bg: var(--ui-ribbon-surface);
+  --theme-ribbon-input-border: var(--ui-ribbon-border);
+  --theme-ribbon-input-text: var(--ui-ribbon-ink);
+  --theme-ribbon-input-focus-border: var(--ui-ribbon-accent);
+  --theme-ribbon-input-focus-bg: var(--ui-ribbon-surface);
+  --theme-ribbon-input-label: var(--ui-ribbon-faint);
+  --theme-file-tab-bg: transparent;
+  --theme-file-tab-hover: var(--ui-ribbon-accent-soft);
+  --theme-file-tab-text: var(--ui-ribbon-accent-strong);
+  --theme-ctx-tab-border: var(--ui-ribbon-accent);
+  --theme-ctx-tab-text: var(--ui-ribbon-accent);
+  --theme-ctx-tab-hover-bg: var(--ui-ribbon-accent-soft);
+  --theme-ctx-tab-active-text: var(--ui-ribbon-accent-strong);
+
+  background: var(--ui-ribbon-chrome);
+  border-bottom: 1px solid var(--ui-ribbon-border);
+  color: var(--ui-ribbon-ink);
+}
+
+[data-theme="light"] .ribbon-container {
+  --ui-ribbon-surface: #fff;
+  --ui-ribbon-chrome: #f4f5f7;
+  --ui-ribbon-muted: #e9ebef;
+  --ui-ribbon-border: #d8dce2;
+  --ui-ribbon-border-strong: #c5cad2;
+  --ui-ribbon-ink: #1d232c;
+  --ui-ribbon-muted-text: #6c7480;
+  --ui-ribbon-faint: #8d96a3;
+  --ui-ribbon-accent: #286bd8;
+  --ui-ribbon-accent-soft: #e8f0ff;
+  --ui-ribbon-accent-strong: #174ea6;
+  --ui-ribbon-selection: #d8e7ff;
+}
+
+[data-theme="dark"] .ribbon-container {
+  --ui-ribbon-surface: #2d2d2d;
+  --ui-ribbon-chrome: #242424;
+  --ui-ribbon-muted: #1d1d1d;
+  --ui-ribbon-border: #3d3d3d;
+  --ui-ribbon-border-strong: #515151;
+  --ui-ribbon-ink: #f0f0f0;
+  --ui-ribbon-muted-text: #aaaaaa;
+  --ui-ribbon-faint: #858585;
+  --ui-ribbon-accent: #73a8ff;
+  --ui-ribbon-accent-soft: #253c62;
+  --ui-ribbon-accent-strong: #a9c8ff;
+  --ui-ribbon-selection: #35537f;
+}
+
+/* Tabs: one quiet strip, one blue active indicator, no stacked gradients. */
+.ribbon-tabs {
+  height: 32px;
+  min-height: 32px;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 0 8px;
+  overflow: hidden;
+  background: var(--ui-ribbon-chrome);
+  border-bottom: 1px solid var(--ui-ribbon-border);
+}
+
+.ribbon-tab {
+  flex: 0 0 auto;
+  height: 31px;
+  min-height: 31px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ui-ribbon-muted-text);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 29px;
+  white-space: nowrap;
+}
+
+.ribbon-tab:hover {
+  background: var(--ui-ribbon-muted);
+  color: var(--ui-ribbon-ink);
+}
+
+.ribbon-tab.active,
+.ribbon-tab.is-active {
+  margin-bottom: 0;
+  border-color: var(--ui-ribbon-accent);
+  background: transparent;
+  color: var(--ui-ribbon-accent-strong);
+  font-weight: 600;
+}
+
+.ribbon-tab.file-tab {
+  margin-right: 3px;
+  padding-inline: 12px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--ui-ribbon-accent-strong);
+  font-weight: 600;
+}
+
+.ribbon-tab.file-tab:hover {
+  background: var(--ui-ribbon-accent-soft);
+  color: var(--ui-ribbon-accent-strong);
+}
+
+.ribbon-tab.contextual-tab {
+  margin-left: 5px;
+  border-top: 0;
+  color: var(--ui-ribbon-accent);
+}
+
+.ribbon-tab.contextual-tab:hover {
+  background: var(--ui-ribbon-accent-soft);
+  color: var(--ui-ribbon-accent-strong);
+}
+
+.ribbon-tab.contextual-tab.active,
+.ribbon-tab.contextual-tab.is-active {
+  border-top: 0;
+  border-bottom-color: var(--ui-ribbon-accent);
+  background: transparent;
+  color: var(--ui-ribbon-accent-strong);
+}
+
+.ribbon-tab-separator.contextual-tabs.visible {
+  width: 1px;
+  height: 20px;
+  margin: 4px 6px;
+  background: var(--ui-ribbon-border-strong);
+}
+
+/* Command surface: the raised panel from the approved mockup. */
+.ribbon-content {
+  height: 88px;
+  min-height: 88px;
+  padding: 6px 10px 5px;
+  overflow: hidden;
+  background: var(--ui-ribbon-surface);
+  border-bottom: 1px solid var(--ui-ribbon-border);
+}
+
+.ribbon-content.active {
+  display: flex;
+  align-items: stretch;
+}
+
+.ribbon-groups {
+  gap: 5px;
+  align-items: stretch;
+}
+
+.ribbon-group {
+  min-width: 60px;
+  padding: 0 9px;
+  border-right: 1px solid var(--ui-ribbon-border);
+}
+
+.ribbon-group:last-child {
+  border-right: 0;
+}
+
+.ribbon-group-content {
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+}
+
+.ribbon-group-label {
+  margin-top: 3px;
+  padding: 0;
+  color: var(--ui-ribbon-faint);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  line-height: 1;
+}
+
+.ribbon-btn-stack {
+  gap: 2px;
+}
+
+/* One outline icon treatment and one command-button state vocabulary. */
+.ribbon-btn {
+  min-width: 52px;
+  height: 60px;
+  padding: 4px 5px;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ui-ribbon-muted-text);
+  -webkit-text-fill-color: currentColor;
+  font-size: 10px;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.ribbon-btn:hover:not(:disabled) {
+  border-color: var(--ui-ribbon-border);
+  background: var(--ui-ribbon-muted);
+  color: var(--ui-ribbon-ink);
+}
+
+.ribbon-btn.active,
+.ribbon-btn.is-active {
+  border-color: color-mix(in srgb, var(--ui-ribbon-accent) 35%, transparent);
+  background: var(--ui-ribbon-accent-soft);
+  color: var(--ui-ribbon-accent-strong);
+}
+
+.ribbon-btn:active:not(:disabled) {
+  background: var(--ui-ribbon-selection);
+}
+
+.ribbon-btn:disabled {
+  opacity: .4;
+}
+
+.ribbon-btn-icon {
+  width: 21px;
+  height: 21px;
+}
+
+.ribbon-btn-icon svg,
+.ribbon-row-btn svg,
+.ribbon-overflow-btn-icon svg,
+.ribbon-collapse-toggle svg {
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ribbon-btn-icon svg {
+  width: 21px;
+  height: 21px;
+}
+
+.ribbon-btn-label {
+  max-width: 58px;
+  color: currentColor;
+  font-size: 10px;
+  line-height: 1.05;
+}
+
+.ribbon-btn.small,
+.ribbon-btn.medium {
+  justify-content: flex-start;
+  min-width: 84px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  text-align: left;
+}
+
+.ribbon-btn.small {
+  height: 19px;
+  gap: 6px;
+}
+
+.ribbon-btn.medium {
+  height: 28px;
+  gap: 7px;
+}
+
+.ribbon-btn.small .ribbon-btn-icon,
+.ribbon-btn.medium .ribbon-btn-icon {
+  flex: 0 0 auto;
+}
+
+.ribbon-btn.small .ribbon-btn-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.ribbon-btn.medium .ribbon-btn-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.ribbon-btn.small .ribbon-btn-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.ribbon-btn.medium .ribbon-btn-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ribbon-btn.small .ribbon-btn-label,
+.ribbon-btn.medium .ribbon-btn-label {
+  max-width: none;
+  color: currentColor;
+  font-size: 11px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* Keep adaptive icon-only mode measurable and visually aligned. */
+.ribbon-groups-icon-only .ribbon-btn.small,
+.ribbon-groups-icon-only .ribbon-btn.medium,
+.ribbon-group-icon-only .ribbon-btn.small,
+.ribbon-group-icon-only .ribbon-btn.medium {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 1px;
+  gap: 0;
+  justify-content: center;
+}
+
+.ribbon-groups-icon-only .ribbon-btn.small .ribbon-btn-icon,
+.ribbon-groups-icon-only .ribbon-btn.medium .ribbon-btn-icon,
+.ribbon-group-icon-only .ribbon-btn.small .ribbon-btn-icon,
+.ribbon-group-icon-only .ribbon-btn.medium .ribbon-btn-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.ribbon-groups-icon-only .ribbon-btn.small .ribbon-btn-icon svg,
+.ribbon-groups-icon-only .ribbon-btn.medium .ribbon-btn-icon svg,
+.ribbon-group-icon-only .ribbon-btn.small .ribbon-btn-icon svg,
+.ribbon-group-icon-only .ribbon-btn.medium .ribbon-btn-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Rare commands remain available in the existing adaptive More flyout. */
+.ribbon-overflow-btn {
+  width: 56px;
+  height: 60px;
+  padding: 4px 2px 2px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ui-ribbon-muted-text);
+  font-size: 10px;
+}
+
+.ribbon-overflow-btn:hover,
+.ribbon-overflow-btn.open {
+  border-color: var(--ui-ribbon-border);
+  background: var(--ui-ribbon-muted);
+  color: var(--ui-ribbon-ink);
+}
+
+.ribbon-overflow-flyout {
+  background: var(--ui-ribbon-surface);
+  border-color: var(--ui-ribbon-border-strong);
+  border-radius: 6px;
+  box-shadow: var(--ui-shadow-floating);
+}
+
+.ribbon-overflow-flyout-inner > .ribbon-group {
+  border-right-color: var(--ui-ribbon-border);
+}
+
+.ribbon-collapse-toggle {
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--ui-ribbon-muted-text);
+}
+
+.ribbon-collapse-toggle:hover {
+  border-color: var(--ui-ribbon-border);
+  background: var(--ui-ribbon-muted);
+  color: var(--ui-ribbon-ink);
+}
+
+/* Contextual controls keep the same command surface and only change accent. */
+.ribbon-form-select,
+.ribbon-transform-input,
+.ribbon-input,
+.ribbon-color-input {
+  border-color: var(--ui-ribbon-border);
+  border-radius: 5px;
+  background: var(--ui-ribbon-surface);
+  color: var(--ui-ribbon-ink);
+}
+
+.ribbon-form-select:focus,
+.ribbon-transform-input:focus,
+.ribbon-input:focus,
+.ribbon-color-input:focus {
+  border-color: var(--ui-ribbon-accent);
+  outline: var(--ui-focus-ring-width) solid var(--ui-ribbon-accent);
+  outline-offset: var(--ui-focus-ring-offset);
+}
+
+@media (max-width: 960px) {
+  .ribbon-tabs { padding-inline: 5px; }
+  .ribbon-tab { padding-inline: 10px; }
+  .ribbon-content { padding-inline: 6px; }
+  .ribbon-group { padding-inline: 7px; }
+}
+
+@media (max-width: 820px) {
+  .ribbon-tabs { padding-inline: 3px; }
+  .ribbon-tab { padding-inline: 7px; font-size: 10px; }
+  .ribbon-content { padding-inline: 4px; }
+  .ribbon-group { padding-inline: 6px; }
+  .ribbon-btn { min-width: 44px; }
+  .ribbon-btn.small,
+  .ribbon-btn.medium { min-width: 76px; }
+}

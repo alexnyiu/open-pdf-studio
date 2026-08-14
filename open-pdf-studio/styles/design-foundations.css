@@ -1,0 +1,208 @@
+/*
+ * Phase 3 design foundations
+ *
+ * These semantic aliases are the migration boundary for the macOS-refined
+ * workspace. Existing component variables remain intact until each surface
+ * is migrated deliberately; this file must not redefine viewport geometry.
+ */
+
+:root {
+  /* Semantic color roles. Component styles should migrate to these roles. */
+  --ui-color-surface: var(--theme-bg);
+  --ui-color-surface-elevated: var(--theme-surface);
+  --ui-color-surface-control: var(--theme-panel-bg);
+  --ui-color-canvas-surround: var(--theme-content-bg);
+  --ui-color-border: var(--theme-border);
+  --ui-color-border-subtle: var(--theme-border);
+  --ui-color-border-subtle: color-mix(in srgb, var(--theme-border) 65%, transparent);
+  --ui-color-text: var(--theme-text);
+  --ui-color-text-secondary: var(--theme-text-secondary);
+  --ui-color-text-disabled: var(--theme-titlebar-btn-disabled);
+  --ui-color-accent: var(--theme-accent);
+  --ui-color-accent-hover: var(--theme-accent-hover);
+  --ui-color-accent-contrast: var(--theme-file-tab-text, #fff);
+  --ui-color-selection: var(--theme-hover);
+  --ui-color-focus: var(--theme-accent);
+  --ui-color-success: #248a52;
+  --ui-color-warning: #b26a00;
+  --ui-color-destructive: #c93434;
+  --ui-color-error: #c93434;
+
+  /* 4px base grid. */
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-space-5: 20px;
+  --ui-space-6: 24px;
+  --ui-space-8: 32px;
+
+  /* Compact desktop type scale. */
+  --ui-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ui-font-size-caption: 10px;
+  --ui-font-size-control: 11px;
+  --ui-font-size-label: 12px;
+  --ui-font-size-body: 13px;
+  --ui-font-size-emphasis: 15px;
+  --ui-line-height-tight: 1.2;
+  --ui-line-height-normal: 1.4;
+
+  /* Control, icon, panel, and elevation rules. */
+  --ui-control-height-compact: 24px;
+  --ui-control-height: 28px;
+  --ui-control-height-comfortable: 32px;
+  --ui-icon-grid: 20px;
+  --ui-icon-box: 24px;
+  --ui-radius-control: 5px;
+  --ui-radius-group: 6px;
+  --ui-radius-dialog: 8px;
+  --ui-shadow-floating: 0 6px 20px rgb(0 0 0 / 18%);
+  --ui-shadow-dialog: 0 12px 32px rgb(0 0 0 / 24%);
+  --ui-panel-width-left: 200px;
+  --ui-panel-width-left-min: 120px;
+  --ui-panel-width-left-max: 500px;
+  --ui-panel-width-properties: 300px;
+  --ui-panel-width-collapsed: 28px;
+  --ui-focus-ring-width: 2px;
+  --ui-focus-ring-offset: 2px;
+  --ui-transition-standard: 120ms ease;
+}
+
+/* The new shell primitives follow the approved macOS-refined mockup palette. */
+[data-theme="light"] {
+  /* Keep legacy shell aliases aligned with the approved blue direction while
+     component styles migrate to the semantic UI roles. */
+  --theme-accent: #286bd8;
+  --theme-accent-hover: #174ea6;
+  --theme-active: #286bd8;
+  --theme-file-tab-bg: #286bd8;
+  --theme-file-tab-hover: #174ea6;
+  --theme-ribbon-input-focus-border: #286bd8;
+  --theme-ctx-tab-border: #286bd8;
+  --theme-ctx-tab-text: #286bd8;
+  --theme-ctx-tab-active-text: #286bd8;
+  --theme-tab-active-accent: #286bd8;
+  --theme-tab-modified: #286bd8;
+  --theme-panel-accent: #286bd8;
+  --theme-panel-resize-hover: #286bd8;
+  --theme-thumbnail-active-border: #286bd8;
+  --ui-color-accent: #286bd8;
+  --ui-color-accent-hover: #174ea6;
+  --ui-color-accent-contrast: #fff;
+  --ui-color-selection: #d8e7ff;
+  --ui-color-focus: #286bd8;
+}
+
+[data-theme="dark"] {
+  /* Keep dark-mode surfaces neutral grey; blue remains the accent and
+     selection vocabulary from the approved macOS-refined mockup. */
+  --theme-bg: #181818;
+  --theme-surface: #2d2d2d;
+  --theme-border: #3d3d3d;
+  --theme-hover: #35537f;
+  --theme-titlebar-bg-start: #2d2d2d;
+  --theme-titlebar-bg-end: #242424;
+  --theme-titlebar-border: #3d3d3d;
+  --theme-ribbon-bg-start: #242424;
+  --theme-ribbon-bg-end: #1d1d1d;
+  --theme-ribbon-border: #3d3d3d;
+  --theme-ribbon-tabs-bg-start: #242424;
+  --theme-ribbon-tabs-bg-end: #1d1d1d;
+  --theme-ribbon-content-bg: #2d2d2d;
+  --theme-ribbon-tab-active-bg: #2d2d2d;
+  --theme-ribbon-group-border: #3d3d3d;
+  --theme-ribbon-input-bg: #1d1d1d;
+  --theme-ribbon-input-border: #3d3d3d;
+  --theme-ribbon-input-focus-bg: #1d1d1d;
+  --theme-app-menu-bg: #2d2d2d;
+  --theme-app-menu-sidebar: #242424;
+  --theme-app-menu-sidebar-border: #3d3d3d;
+  --theme-app-menu-divider: #3d3d3d;
+  --theme-tab-bg: #242424;
+  --theme-tab-border: #3d3d3d;
+  --theme-tab-hover: #3a3a3a;
+  --theme-tab-active-bg: #2d2d2d;
+  --theme-tab-add-border: #3d3d3d;
+  --theme-tab-add-hover: #3a3a3a;
+  --theme-content-bg: #181818;
+  --theme-panel-bg: #2d2d2d;
+  --theme-panel-border: #3d3d3d;
+  --theme-panel-tab-bg: #242424;
+  --theme-panel-tab-hover: #3a3a3a;
+  --theme-panel-tab-active-bg: #2d2d2d;
+  --theme-panel-toggle-bg: #3d3d3d;
+  --theme-panel-toggle-hover: #515151;
+  --theme-panel-resize: #3d3d3d;
+  --theme-thumbnail-bg: #242424;
+  --theme-thumbnail-hover: #3a3a3a;
+  --theme-thumbnail-active-bg: #2d2d2d;
+  --theme-thumbnail-selected-bg: #35537f;
+  --theme-thumbnail-selected-border: #73a8ff;
+  --theme-thumbnail-selected-label: #a9c8ff;
+  --theme-status-bg: #242424;
+  --theme-status-border: #3d3d3d;
+  --theme-notifbar-btn-bg: #242424;
+  --theme-pdfabar-btn-bg: #242424;
+
+  /* Keep legacy shell aliases aligned with the approved blue direction while
+     component styles migrate to the semantic UI roles. */
+  --theme-accent: #73a8ff;
+  --theme-accent-hover: #a9c8ff;
+  --theme-active: #73a8ff;
+  --theme-file-tab-bg: #73a8ff;
+  --theme-file-tab-hover: #a9c8ff;
+  --theme-ribbon-input-focus-border: #73a8ff;
+  --theme-ctx-tab-border: #73a8ff;
+  --theme-ctx-tab-text: #73a8ff;
+  --theme-ctx-tab-active-text: #a9c8ff;
+  --theme-tab-active-accent: #73a8ff;
+  --theme-tab-modified: #73a8ff;
+  --theme-panel-accent: #73a8ff;
+  --theme-panel-resize-hover: #73a8ff;
+  --theme-thumbnail-active-border: #73a8ff;
+  --ui-color-accent: #73a8ff;
+  --ui-color-accent-hover: #a9c8ff;
+  --ui-color-accent-contrast: #1d232c;
+  --ui-color-selection: #35537f;
+  --ui-color-focus: #73a8ff;
+}
+
+/* Keep the high-contrast theme literal and intentionally non-translucent. */
+[data-theme="highContrast"] {
+  --ui-color-border-subtle: var(--theme-border);
+  --ui-shadow-floating: none;
+  --ui-shadow-dialog: none;
+}
+
+/* The application stack is the only surface that adopts the new font token. */
+body {
+  font-family: var(--ui-font-family);
+}
+
+/* Shared keyboard focus treatment for application controls. */
+:where(
+  .title-bar,
+  .ribbon-container,
+  .status-bar,
+  .left-panel,
+  .properties-panel,
+  .app-menu-overlay,
+  .context-menu,
+  .document-tabs,
+  .dialog,
+  .modal
+) :where(button, input, select, textarea, [role="button"], [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: var(--ui-focus-ring-width) solid var(--ui-color-focus);
+  outline-offset: var(--ui-focus-ring-offset);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

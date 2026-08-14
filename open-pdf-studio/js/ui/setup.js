@@ -130,6 +130,9 @@ function setupHtmlDragDrop() {
 }
 
 // Setup resizable panel handles
+const LEFT_PANEL_MIN_WIDTH = 120;
+const LEFT_PANEL_MAX_WIDTH = 500;
+
 function setupPanelResize() {
   const leftPanel = document.getElementById('left-panel');
   const leftHandle = document.getElementById('left-panel-resize');
@@ -151,7 +154,7 @@ function setupPanelResize() {
         if (leftPanel.classList.contains('collapsed')) return;
         const isRtl = document.documentElement.dir === 'rtl';
         const delta = e.clientX - startX;
-        const newWidth = Math.max(120, Math.min(500, startWidth + (isRtl ? -delta : delta)));
+        const newWidth = Math.max(LEFT_PANEL_MIN_WIDTH, Math.min(LEFT_PANEL_MAX_WIDTH, startWidth + (isRtl ? -delta : delta)));
         leftPanel.style.width = newWidth + 'px';
       };
 

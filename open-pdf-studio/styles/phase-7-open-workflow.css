@@ -1,0 +1,367 @@
+/* Phase 7: Open, recent documents, and the no-document state. */
+
+#placeholder.empty-state {
+  align-items: stretch;
+  box-sizing: border-box;
+  justify-content: center;
+  overflow: auto;
+  padding: clamp(24px, 6vh, 64px) clamp(20px, 5vw, 72px);
+  text-align: left;
+}
+
+#placeholder.empty-state .empty-state-card {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin: auto;
+  width: min(100%, 680px);
+}
+
+.empty-state-hero {
+  align-items: flex-start;
+  display: flex;
+  gap: 18px;
+}
+
+.empty-state-icon {
+  align-items: center;
+  background: var(--ui-color-surface-elevated);
+  border: 1px solid var(--ui-color-border);
+  border-radius: 14px;
+  color: var(--ui-color-accent);
+  display: flex;
+  flex: 0 0 56px;
+  height: 56px;
+  justify-content: center;
+  width: 56px;
+}
+
+.empty-state-icon svg {
+  height: 30px;
+  opacity: 1;
+  width: 30px;
+}
+
+.empty-state-copy {
+  min-width: 0;
+}
+
+.empty-state-copy h2 {
+  color: var(--ui-color-text);
+  font-size: clamp(24px, 3vw, 30px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 2px 0 8px;
+}
+
+.empty-state-copy p {
+  color: var(--ui-color-text-secondary);
+  font-size: var(--ui-font-size-emphasis);
+  line-height: 1.5;
+  margin: 0;
+  max-width: 520px;
+}
+
+.empty-state-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.empty-state-open,
+.empty-state-secondary,
+.empty-state-recent-link {
+  border-radius: var(--ui-radius-control);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--ui-font-size-body);
+  min-height: var(--ui-control-height-comfortable);
+  padding: 0 16px;
+  transition: background-color var(--ui-transition-standard), border-color var(--ui-transition-standard), color var(--ui-transition-standard);
+}
+
+.empty-state-open {
+  background: var(--ui-color-accent);
+  border: 1px solid var(--ui-color-accent);
+  color: var(--ui-color-accent-contrast);
+  font-weight: 600;
+}
+
+.empty-state-open:hover {
+  background: var(--ui-color-accent-hover);
+  border-color: var(--ui-color-accent-hover);
+}
+
+.empty-state-secondary {
+  background: transparent;
+  border: 1px solid var(--ui-color-border);
+  color: var(--ui-color-text);
+}
+
+.empty-state-secondary:hover,
+.empty-state-recent-link:hover {
+  background: var(--ui-color-selection);
+  border-color: var(--ui-color-accent);
+  color: var(--ui-color-text);
+}
+
+.empty-state-recent {
+  border-top: 1px solid var(--ui-color-border);
+  padding-top: 18px;
+}
+
+.empty-state-recent-header {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.empty-state-recent-header h3 {
+  color: var(--ui-color-text);
+  font-size: var(--ui-font-size-emphasis);
+  font-weight: 600;
+  margin: 0;
+}
+
+.empty-state-recent-link {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ui-color-accent);
+  min-height: 28px;
+  padding: 0 8px;
+}
+
+.empty-state-recent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.empty-state-recent-item {
+  align-items: center;
+  background: var(--ui-color-surface-elevated);
+  border: 1px solid var(--ui-color-border);
+  border-radius: var(--ui-radius-control);
+  color: var(--ui-color-text);
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  min-height: 48px;
+  padding: 7px 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.empty-state-recent-item:hover {
+  background: var(--ui-color-selection);
+  border-color: var(--ui-color-accent);
+}
+
+.empty-state-recent-icon {
+  align-items: center;
+  color: var(--ui-color-accent);
+  display: flex;
+  flex: 0 0 24px;
+  justify-content: center;
+}
+
+.empty-state-recent-icon svg {
+  height: 22px;
+  width: 22px;
+}
+
+.empty-state-recent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.empty-state-recent-name,
+.empty-state-recent-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-state-recent-name {
+  font-size: var(--ui-font-size-body);
+  font-weight: 600;
+}
+
+.empty-state-recent-path {
+  color: var(--ui-color-text-secondary);
+  font-size: var(--ui-font-size-label);
+}
+
+/* File > Open keeps its existing navigation and command wiring, but uses the
+   same semantic surfaces as the redesigned shell. */
+.open-panel {
+  background: var(--ui-color-surface);
+}
+
+.open-panel-nav {
+  background: var(--ui-color-surface-control);
+  border-right-color: var(--ui-color-border);
+  gap: 4px;
+  padding: 16px 10px;
+  width: 208px;
+}
+
+.open-panel-nav-item {
+  border-radius: var(--ui-radius-control);
+  color: var(--ui-color-text-secondary);
+  min-height: 36px;
+  padding: 8px 10px;
+  transition: background-color var(--ui-transition-standard), color var(--ui-transition-standard);
+}
+
+.open-panel-nav-item:hover:not(:disabled) {
+  background: var(--ui-color-selection);
+  color: var(--ui-color-text);
+}
+
+.open-panel-nav-item.active {
+  background: var(--ui-color-selection);
+  color: var(--ui-color-text);
+  box-shadow: inset 2px 0 0 var(--ui-color-accent);
+}
+
+.open-panel-nav-item svg,
+.open-panel-nav-item.active svg {
+  stroke: currentColor;
+}
+
+.open-panel-content {
+  background: var(--ui-color-surface);
+  padding: 28px clamp(24px, 4vw, 48px);
+}
+
+.open-panel-title {
+  color: var(--ui-color-text);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin-bottom: 16px;
+}
+
+.open-panel-search {
+  background: var(--ui-color-surface-control);
+  border: 1px solid var(--ui-color-border);
+  border-radius: var(--ui-radius-control);
+  margin-bottom: 16px;
+  max-width: 680px;
+  min-height: var(--ui-control-height-comfortable);
+}
+
+.open-panel-search:focus-within {
+  border-color: var(--ui-color-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-color-focus) 22%, transparent);
+}
+
+.open-panel-search-input {
+  color: var(--ui-color-text);
+  font-size: var(--ui-font-size-body);
+}
+
+.open-panel-groups {
+  max-width: 680px;
+}
+
+.open-panel-group-header {
+  background: transparent;
+  border-bottom-color: var(--ui-color-border);
+  color: var(--ui-color-text-secondary);
+  font-size: var(--ui-font-size-label);
+  min-height: 30px;
+  padding: 5px 4px;
+}
+
+.open-panel-group-header:hover {
+  color: var(--ui-color-text);
+}
+
+.open-panel-empty {
+  color: var(--ui-color-text-secondary);
+  font-size: var(--ui-font-size-body);
+  font-style: normal;
+  padding: 16px 8px;
+}
+
+.recent-file-item {
+  background: var(--ui-color-surface-elevated);
+  border: 1px solid var(--ui-color-border);
+  border-radius: var(--ui-radius-control);
+  margin-bottom: 6px;
+  min-height: 48px;
+  padding: 7px 10px;
+}
+
+.recent-file-item:hover {
+  background: var(--ui-color-selection);
+  border-color: var(--ui-color-accent);
+}
+
+.recent-file-name {
+  color: var(--ui-color-text);
+  font-weight: 600;
+}
+
+.recent-file-path {
+  color: var(--ui-color-text-secondary);
+}
+
+.recent-file-action-btn {
+  color: var(--ui-color-text-secondary);
+}
+
+.recent-file-action-btn:hover,
+.recent-file-action-btn.pinned {
+  color: var(--ui-color-accent);
+}
+
+@media (max-width: 820px) {
+  #placeholder.empty-state {
+    padding: 24px 20px;
+  }
+
+  #placeholder.empty-state .empty-state-card {
+    gap: 20px;
+  }
+
+  .empty-state-hero {
+    gap: 12px;
+  }
+
+  .open-panel {
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .open-panel-nav {
+    border-bottom: 1px solid var(--ui-color-border);
+    border-right: 0;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 8px;
+    width: auto;
+  }
+
+  .open-panel-nav-item {
+    flex: 0 0 auto;
+    min-width: max-content;
+    padding: 8px 12px;
+  }
+
+  .open-panel-nav-item svg {
+    display: none;
+  }
+
+  .open-panel-content {
+    padding: 20px;
+  }
+}

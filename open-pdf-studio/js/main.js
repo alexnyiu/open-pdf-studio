@@ -195,6 +195,15 @@ async function init() {
     return;
   }
 
+  // Internal Phase 4 primitive gallery. This route intentionally bypasses
+  // document initialization so it cannot create a second PDF behavior path.
+  if (new URLSearchParams(location.search).get('view') === 'component-gallery') {
+    const { default: ComponentGallery } = await import('./solid/components/ComponentGallery.jsx');
+    render(() => ComponentGallery(), document.getElementById('app-root'));
+    recordStartupDiagnostic('frontend-component-gallery-ready');
+    return;
+  }
+
   // Disable context menu on desktop only (long-press is expected on mobile)
   if (!mobile) {
     disableDefaultContextMenu();

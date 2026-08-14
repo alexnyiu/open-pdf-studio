@@ -1,0 +1,76 @@
+{
+  "name": "00-ui-redesign-baseline",
+  "description": "Phase 0 behavioral-contract smoke test: open, pages/tabs, zoom/fit/view modes, annotation edit with undo/redo, Save As/reopen, and light/dark themes. The source fixture is never modified.",
+  "setup": {
+    "pdfPath": "open-pdf-studio/public/pdfjs/web/compressed.tracemonkey-pldi-09.pdf",
+    "page": 1,
+    "scale": 1.0
+  },
+  "steps": [
+    { "action": "tool", "name": "app_get_recent_console", "args": { "tail": 100 }, "store": "consoleAtOpen" },
+    { "action": "tool", "name": "app_get_page_count", "store": "opened" },
+    { "action": "wait", "ms": 1500 },
+    { "action": "screenshot", "label": "open-default", "width": 1200 },
+
+    { "action": "tool", "name": "app_go_to_page", "args": { "page": 2 } },
+    { "action": "tool", "name": "app_get_page_count", "store": "page2" },
+    { "action": "tool", "name": "app_set_zoom", "args": { "scale": 1.25 }, "store": "zoom125" },
+    { "action": "probe", "store": "zoomed" },
+    { "action": "tool", "name": "app_fit_page", "store": "fitPage" },
+    { "action": "tool", "name": "app_fit_width", "store": "fitWidth" },
+
+    { "action": "tool", "name": "app_set_view_mode", "args": { "mode": "continuous" }, "store": "continuous" },
+    { "action": "tool", "name": "app_set_view_mode", "args": { "mode": "book" }, "store": "book" },
+    { "action": "tool", "name": "app_set_view_mode", "args": { "mode": "facing" }, "store": "facing" },
+    { "action": "tool", "name": "app_set_view_mode", "args": { "mode": "single" }, "store": "single" },
+
+    { "action": "tool", "name": "app_create_annotation", "args": { "type": "textbox", "page": 2, "props": { "x": 72, "y": 72, "width": 180, "height": 48, "text": "Phase 0 baseline", "fontSize": 14, "color": "#1f2937" } }, "store": "created" },
+    { "action": "tool", "name": "app_select_annotation", "args": { "id": "={created.id}" } },
+    { "action": "tool", "name": "app_update_annotation", "args": { "id": "={created.id}", "props": { "text": "Phase 0 edited", "fontSize": 16 } } },
+    { "action": "tool", "name": "app_get_annotation", "args": { "id": "={created.id}" }, "store": "edited" },
+    { "action": "screenshot", "label": "annotation-selected", "width": 1200 },
+    { "action": "tool", "name": "app_undo" },
+    { "action": "tool", "name": "app_get_annotation", "args": { "id": "={created.id}" }, "store": "undone" },
+    { "action": "tool", "name": "app_redo" },
+    { "action": "tool", "name": "app_get_annotation", "args": { "id": "={created.id}" }, "store": "redone" },
+
+    { "action": "tool", "name": "app_save_pdf", "args": { "path": "/private/tmp/open-pdf-studio-phase-0-roundtrip.pdf" }, "store": "saved" },
+    { "action": "open_pdf", "path": "/private/tmp/open-pdf-studio-phase-0-roundtrip.pdf" },
+    { "action": "tool", "name": "app_get_page_count", "store": "reopened" },
+    { "action": "tool", "name": "app_list_tabs", "store": "tabsAfterReopen" },
+    { "action": "tool", "name": "app_switch_tab", "args": { "index": "={tabsAfterReopen.tabs.length - 2}" } },
+    { "action": "tool", "name": "app_list_tabs", "store": "tabsAfterSwitch" },
+    { "action": "tool", "name": "app_switch_tab", "args": { "index": "={tabsAfterReopen.tabs.length - 1}" } },
+
+    { "action": "clickButton", "id": "theme-picker-toggle" },
+    { "action": "clickButton", "selector": ".theme-picker-option[data-theme-value=\"light\"]" },
+    { "action": "uiState", "selector": "html[data-theme=\"light\"]", "searchTabs": false, "store": "lightTheme" },
+    { "action": "screenshot", "label": "light-theme", "width": 1200 },
+    { "action": "clickButton", "id": "theme-picker-toggle" },
+    { "action": "clickButton", "selector": ".theme-picker-option[data-theme-value=\"dark\"]" },
+    { "action": "uiState", "selector": "html[data-theme=\"dark\"]", "searchTabs": false, "store": "darkTheme" },
+    { "action": "screenshot", "label": "dark-theme", "width": 1200 },
+    { "action": "clickButton", "id": "theme-picker-toggle" },
+    { "action": "clickButton", "selector": ".theme-picker-option[data-theme-value=\"default\"]" },
+
+    { "action": "tool", "name": "app_get_recent_console", "args": { "tail": 200 }, "store": "consoleAtEnd" }
+  ],
+  "assertions": [
+    { "type": "stateEquals", "probe": "opened", "field": "pageCount", "value": 14, "label": "existing 14-page PDF opens" },
+    { "type": "stateEquals", "probe": "page2", "field": "currentPage", "value": 2, "label": "page switch reaches page 2" },
+    { "type": "stateInRange", "probe": "zoomed", "field": "viewport.zoom", "min": 1.24, "max": 1.26, "label": "explicit 125% zoom is applied by the active viewport" },
+    { "type": "stateInRange", "probe": "fitPage", "field": "actual", "min": 0.1, "max": 5, "label": "Fit Page returns a valid zoom" },
+    { "type": "stateInRange", "probe": "fitWidth", "field": "actual", "min": 0.1, "max": 5, "label": "Fit Width returns a valid zoom" },
+    { "type": "stateEquals", "probe": "continuous", "field": "viewMode", "value": "continuous", "label": "continuous view activates" },
+    { "type": "stateEquals", "probe": "book", "field": "bookSpread", "value": true, "label": "book view activates" },
+    { "type": "stateEquals", "probe": "facing", "field": "facingSpread", "value": true, "label": "facing view activates" },
+    { "type": "stateEquals", "probe": "single", "field": "viewMode", "value": "single", "label": "single-page view restores" },
+    { "type": "stateEquals", "probe": "edited", "field": "annotation.text", "value": "Phase 0 edited", "label": "annotation property edit applies" },
+    { "type": "stateEquals", "probe": "undone", "field": "annotation.text", "value": "Phase 0 baseline", "label": "undo restores annotation text" },
+    { "type": "stateEquals", "probe": "redone", "field": "annotation.text", "value": "Phase 0 edited", "label": "redo reapplies annotation text" },
+    { "type": "stateEquals", "probe": "reopened", "field": "pageCount", "value": 14, "label": "Save As output reopens with all pages" },
+    { "type": "stateChanged", "preProbe": "tabsAfterReopen", "postProbe": "tabsAfterSwitch", "field": "activeIndex", "label": "document tab switching changes active index" },
+    { "type": "elementFound", "probe": "lightTheme", "label": "light theme applies" },
+    { "type": "elementFound", "probe": "darkTheme", "label": "dark theme applies" }
+  ]
+}

@@ -1,12 +1,14 @@
+import UiTab from '../ui/UiTab.jsx';
+
 export default function RibbonTab(props) {
   return (
-    <button
+    <UiTab
       class={`ribbon-tab${props.isActive ? ' active' : ''}${props.isFileTab ? ' file-tab' : ''}${props.isContextual ? ' contextual-tab contextual-tabs visible' : ''}`}
-      data-tab={props.dataTab}
+      active={props.isActive}
+      dataTab={props.dataTab}
       id={props.id}
+      label={props.label}
       onClick={props.onClick}
-    >
-      {props.label}
-    </button>
+    />
   );
 }

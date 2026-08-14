@@ -70,10 +70,17 @@
 
 .properties-panel h3 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--ui-font-size-body);
   color: var(--theme-panel-header-text);
   font-weight: 600;
   border-radius: 0;
+}
+
+.prop-panel-title {
+  padding: var(--ui-space-2) 0;
+  background: none;
+  flex: 1;
+  line-height: var(--ui-line-height-tight);
 }
 
 .prop-panel-header {
@@ -90,14 +97,19 @@
   border: none;
   cursor: pointer;
   color: var(--theme-text-secondary);
-  width: 28px;
-  height: 28px;
+  width: var(--ui-control-height);
+  height: var(--ui-control-height);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border-radius: 0;
-  transition: background 0.1s;
+  border-radius: var(--ui-radius-control);
+  transition: background-color var(--ui-transition-standard), color var(--ui-transition-standard);
+}
+
+.prop-panel-header .ui-panel-collapse-button {
+  width: var(--ui-control-height);
+  height: var(--ui-control-height);
 }
 
 .prop-panel-collapse-btn:hover {

@@ -1,20 +1,25 @@
 import { autoShrinkLabel } from './autoShrinkLabel.js';
+import UiButton from '../ui/UiButton.jsx';
 
 export default function RibbonButton(props) {
   return (
-    <button
+    <UiButton
       class={`ribbon-btn${props.size === 'small' ? ' small' : ''}${props.size === 'medium' ? ' medium' : ''}${props.active ? ' active' : ''}${props.iconOnly ? ' icon-only' : ''}${props.extraClass ? ' ' + props.extraClass : ''}`}
+      variant="quiet"
+      active={props.active}
+      iconOnly={props.iconOnly}
       id={props.id}
       title={props.title}
+      ariaLabel={props.iconOnly ? props.title : undefined}
       disabled={props.disabled}
       onClick={props.onClick}
       style={props.style}
-    >
-      <div class="ribbon-btn-icon" style={props.iconStyle} ref={el => { if (props.icon) el.innerHTML = props.icon; }}>
-      </div>
-      {!props.iconOnly && (
-        <span class="ribbon-btn-label" ref={el => autoShrinkLabel(el)}>{props.label}</span>
-      )}
-    </button>
+      icon={props.icon}
+      iconStyle={props.iconStyle}
+      iconClass="ribbon-btn-icon"
+      labelClass="ribbon-btn-label"
+      labelRef={el => autoShrinkLabel(el)}
+      label={props.label}
+    />
   );
 }

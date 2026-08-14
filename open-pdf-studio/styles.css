@@ -1,6 +1,7 @@
 @import './styles/base.css';
 @import './styles/fonts.css';
 @import './styles/themes.css';
+@import './styles/ui-primitives.css';
 @import './styles/titlebar.css';
 @import './styles/app-menu.css';
 @import './styles/ribbon.css';
@@ -22,3 +23,8 @@
 @import './styles/find-bar.css';
 @import './styles/rtl.css';
 @import './styles/mobile.css';
+@import './styles/design-foundations.css';
+@import './styles/shell-modernization.css';
+@import './styles/ribbon-modernization.css';
+@import './styles/phase-7-open-workflow.css';
+@import './styles/component-gallery.css';

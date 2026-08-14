@@ -26,20 +26,20 @@
   border-bottom: 1px solid var(--theme-ribbon-border);
   display: flex;
   padding: 0 2px;
-  gap: 2px;
-  height: 28px;
+  gap: var(--ui-space-1);
+  height: var(--ui-control-height);
   align-items: flex-end;
 }
 
 .ribbon-tab {
-  padding: 6px 16px;
-  font-size: 12px;
+  padding: var(--ui-space-1) var(--ui-space-4);
+  font-size: var(--ui-font-size-label);
   background: transparent;
   border: none;
   color: var(--theme-ribbon-text);
   font-weight: 500;
-  border-radius: 4px 4px 0 0;
-  transition: all 0.15s ease;
+  border-radius: var(--ui-radius-control) var(--ui-radius-control) 0 0;
+  transition: background-color var(--ui-transition-standard), border-color var(--ui-transition-standard), color var(--ui-transition-standard);
   position: relative;
   border: 1px solid transparent;
   border-bottom: none;
@@ -179,8 +179,8 @@
 .ribbon-group {
   display: flex;
   flex-direction: column;
-  padding: 0 6px;
-  border-right: 1px solid var(--theme-ribbon-group-border);
+  padding: 0 var(--ui-space-2);
+  border-right: 1px solid var(--ui-color-border-subtle);
   min-width: 50px;
   height: 100%;
 }
@@ -190,8 +190,8 @@
 }
 
 .ribbon-group-label {
-  font-size: 9px;
-  color: var(--theme-ribbon-group-label);
+  font-size: var(--ui-font-size-caption);
+  color: var(--ui-color-text-secondary);
   text-align: center;
   font-weight: 500;
   padding: 2px 0;
@@ -227,7 +227,7 @@
   padding: 3px 3px 1px 3px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 2px;
+  border-radius: var(--ui-radius-control);
   cursor: pointer;
   /* Only animate the hover visuals. Must NOT be `all`: the adaptive ribbon
      toggles `.ribbon-groups-icon-only`, which changes button width/min-width/
@@ -236,7 +236,7 @@
      into the overflow flyout on a window that was actually wide enough — and
      because the container width never changed afterwards, that miscount stuck.
      Animating only colour/border keeps width changes instant and measurable. */
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background-color var(--ui-transition-standard), border-color var(--ui-transition-standard), color var(--ui-transition-standard);
   min-width: 44px;
   gap: 1px;
   height: 66px;
@@ -258,8 +258,8 @@
 }
 
 .ribbon-btn-icon {
-  width: 28px;
-  height: 28px;
+  width: var(--ui-icon-box);
+  height: var(--ui-icon-box);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -267,8 +267,8 @@
 }
 
 .ribbon-btn-icon svg {
-  width: 24px;
-  height: 24px;
+  width: var(--ui-icon-grid);
+  height: var(--ui-icon-grid);
   stroke: var(--theme-ribbon-icon-stroke);
 }
 
@@ -281,8 +281,8 @@
 }
 
 .ribbon-btn-label {
-  font-size: 10px;
-  color: var(--theme-ribbon-text);
+  font-size: var(--ui-font-size-control);
+  color: var(--ui-color-text-secondary);
   text-align: center;
   line-height: 1.15;
   max-width: 58px;

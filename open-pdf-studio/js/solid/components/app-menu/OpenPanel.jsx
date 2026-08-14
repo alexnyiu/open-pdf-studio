@@ -2,8 +2,9 @@ import { createSignal, createMemo, For, Show, Switch, Match, onMount } from 'sol
 import { closeAppMenu } from '../../stores/appMenuStore.js';
 import { openPDFFile, loadPDF } from '../../../pdf/loader.js';
 import { getRecentFiles, removeRecentFile, pinRecentFile, unpinRecentFile } from '../../../mobile/recent-files.js';
+import { openRecentFile } from '../../../pdf/recent-file-opener.js';
 import { createTab } from '../../../ui/chrome/tabs.js';
-import { isTauri, fileExists, openFolderDialog, downloadPdfFromUrl, listPdfFiles } from '../../../core/platform.js';
+import { isTauri, openFolderDialog, downloadPdfFromUrl, listPdfFiles } from '../../../core/platform.js';
 import { useTranslation, localizeNumber } from '../../../i18n/useTranslation.js';
 import { getSavedSessions, saveCurrentSession, deleteSession, restoreSession } from '../../../stores/sessions.js';
 import { getSavedPlaces, addPlace, removePlace } from '../../../stores/places.js';
@@ -68,22 +69,8 @@ export default function OpenPanel() {
 
   async function handleOpenRecent(file) {
     closeAppMenu();
-    if (isTauri()) {
-      try {
-        // Grant FS scope FIRST — fileExists needs it to access the path
-        await window.__TAURI__.core.invoke('allow_fs_scope', { path: file.path });
-        const exists = await fileExists(file.path);
-        if (!exists) {
-          removeRecentFile(file.path);
-          refreshFiles();
-          return;
-        }
-      } catch (e) {
-        // If we can't check, try opening anyway
-      }
-    }
-    const { index } = createTab(file.path);
-    await loadPDF(file.path, index);
+    const result = await openRecentFile(file);
+    if (result.removed) refreshFiles();
   }
 
   function handlePin(e, file) {

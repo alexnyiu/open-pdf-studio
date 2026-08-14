@@ -25,7 +25,10 @@ const OVERFLOW_RESERVE_PX = 80; // width of the "More" button incl. spacing
 
 export default function AdaptiveGroups(props) {
   const { t } = useTranslation('ribbon');
-  const moreLabel = () => t('common.more', 'More') || 'More';
+  const moreLabel = () => {
+    const translated = t('common.more', 'More');
+    return translated && translated !== 'common.more' ? translated : 'More';
+  };
 
   const [overflowStart, setOverflowStart] = createSignal(Infinity);
   const [iconOnly, setIconOnly] = createSignal(false);

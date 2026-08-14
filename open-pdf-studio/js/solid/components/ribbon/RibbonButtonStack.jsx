@@ -1,7 +1,5 @@
+import UiButtonStack from '../ui/UiButtonStack.jsx';
+
 export default function RibbonButtonStack(props) {
-  return (
-    <div class="ribbon-btn-stack">
-      {props.children}
-    </div>
-  );
+  return <UiButtonStack class="ribbon-btn-stack">{props.children}</UiButtonStack>;
 }

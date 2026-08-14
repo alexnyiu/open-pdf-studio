@@ -1,6 +1,7 @@
 import { isMobile } from '../core/platform.js';
 import MobileApp from './MobileApp.jsx';
 import TitleBar from './components/TitleBar.jsx';
+import EmptyState from './components/EmptyState.jsx';
 import Ribbon from './components/ribbon/Ribbon.jsx';
 import DocumentTabs from './components/DocumentTabs.jsx';
 import CanvasScrollbars from './components/CanvasScrollbars.jsx';
@@ -30,8 +31,7 @@ import MiniLog from './components/MiniLog.jsx';
 import AssistantPanel from './components/AssistantPanel.jsx';
 import { getRegisteredPalettes } from '../plugins/palette-registry.js';
 import { leftOrder, rightOrder } from './stores/paletteOrder.js';
-import { useTranslation } from '../i18n/useTranslation.js';
-import { For, ErrorBoundary } from 'solid-js';
+import { For } from 'solid-js';
 
 function OrderedDockedPalettes(props) {
   const order = () => props.side === 'left' ? leftOrder() : rightOrder();
@@ -65,7 +65,6 @@ function OrderedDockedPalettes(props) {
 }
 
 function DesktopApp() {
-  const { t } = useTranslation('common');
   const extPalettes = () => getRegisteredPalettes();
 
   return (
@@ -91,13 +90,7 @@ function DesktopApp() {
           </For>
           <FindBar />
 
-          <div id="placeholder">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
-            <h2>{t('noDocuments')}</h2>
-            <p>{t('noDocumentsHint')}</p>
-          </div>
+          <EmptyState />
 
           <FormFieldsBar />
 
