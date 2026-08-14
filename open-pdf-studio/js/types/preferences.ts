@@ -1,6 +1,7 @@
 export interface Preferences {
   // Theme
   theme: string;
+  density: 'compact' | 'comfortable';
 
   // General
   authorName: string;

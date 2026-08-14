@@ -44,6 +44,9 @@ export const HANDLE_TYPES = {
 export const DEFAULT_PREFERENCES: Preferences = {
   // Theme
   theme: 'default',
+  // Compact remains the default density; comfortable is available from the
+  // General preferences tab for users who want larger controls and spacing.
+  density: 'compact',
 
   // General — authorName defaults to '' (resolved to OS username at load time)
   authorName: '',

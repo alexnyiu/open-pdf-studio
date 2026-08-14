@@ -8,6 +8,7 @@ export default function RibbonTab(props) {
       dataTab={props.dataTab}
       id={props.id}
       label={props.label}
+      isFileTab={props.isFileTab}
       onClick={props.onClick}
     />
   );

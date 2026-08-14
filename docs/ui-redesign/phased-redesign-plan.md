@@ -337,9 +337,13 @@ Interaction states and accessibility begin in Phase 3 and are required by every 
 
 Keep animation restrained. A document editor should feel fast and stable, not theatrical.
 
-## Phase 9: Accessibility and density
+## Phase 9: Accessibility and density — completed
 
 Estimated time: 1–2 weeks initially, then continuous.
+
+Phase 9 is complete. The shared accessibility and density implementation and
+its recorded static/live gates are documented in
+[phase-9-accessibility-density.md](phase-9-accessibility-density.md).
 
 Audit the measurable requirements already applied throughout the earlier phases and close remaining gaps:
 

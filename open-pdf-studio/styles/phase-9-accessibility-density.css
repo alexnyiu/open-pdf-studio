@@ -1,0 +1,309 @@
+/*
+ * Phase 9 — accessibility and density
+ *
+ * This layer owns the shared UI contract. The PDF viewport and canvas geometry
+ * remain owned by the renderer/layout styles.
+ */
+
+:root,
+[data-density="compact"] {
+  --ui-space-1: 3px;
+  --ui-space-2: 6px;
+  --ui-space-3: 9px;
+  --ui-space-4: 12px;
+  --ui-space-5: 16px;
+  --ui-space-6: 20px;
+  --ui-space-8: 28px;
+  --ui-control-height-compact: 24px;
+  --ui-control-height: 28px;
+  --ui-control-height-comfortable: 32px;
+  --ui-icon-grid: 20px;
+  --ui-icon-box: 24px;
+  --ui-panel-width-left: 200px;
+  --ui-panel-width-properties: 300px;
+}
+
+[data-density="comfortable"] {
+  --ui-space-1: 5px;
+  --ui-space-2: 10px;
+  --ui-space-3: 14px;
+  --ui-space-4: 18px;
+  --ui-space-5: 22px;
+  --ui-space-6: 26px;
+  --ui-space-8: 34px;
+  --ui-control-height-compact: 28px;
+  --ui-control-height: 34px;
+  --ui-control-height-comfortable: 40px;
+  --ui-font-size-caption: 11px;
+  --ui-font-size-control: 12px;
+  --ui-font-size-label: 13px;
+  --ui-font-size-body: 14px;
+  --ui-font-size-emphasis: 16px;
+  --ui-icon-grid: 22px;
+  --ui-icon-box: 30px;
+  --ui-panel-width-left: 220px;
+  --ui-panel-width-properties: 320px;
+}
+
+/* Solid secondary tokens keep normal interface text readable on every theme.
+   Status text on the amber themes intentionally stays dark because its status
+   strip is a light accent surface. */
+[data-theme="default"] {
+  --ui-color-text-secondary: #d6d3d1;
+  --theme-text-secondary: #d6d3d1;
+  --theme-titlebar-text-secondary: #d6d3d1;
+  --theme-status-text: #d6d3d1;
+  --theme-status-text-label: #d6d3d1;
+  --theme-placeholder-text: #c9c6c4;
+  --theme-tab-text: #d6d3d1;
+  --theme-tab-empty-text: #c9c6c4;
+  --theme-ribbon-input-label: #d6d3d1;
+  --theme-ribbon-dropdown-arrow: #d6d3d1;
+}
+
+[data-theme="light"] {
+  --ui-color-text-secondary: #374151;
+  --theme-text-secondary: #4b5563;
+  --theme-titlebar-text-secondary: #4b5563;
+  --theme-status-text: #374151;
+  --theme-status-text-label: #4b5563;
+  --theme-placeholder-text: #4b5563;
+  --theme-tab-text: #4b5563;
+  --theme-tab-empty-text: #4b5563;
+  --theme-ribbon-group-label: #4b5563;
+  --theme-ribbon-input-label: #4b5563;
+  --theme-ribbon-dropdown-arrow: #4b5563;
+}
+
+[data-theme="dark"] {
+  --ui-color-text-secondary: #d1d5db;
+  --theme-text-secondary: #cbd5e1;
+  --theme-titlebar-text-secondary: #cbd5e1;
+  --theme-status-text: #cbd5e1;
+  --theme-status-text-label: #cbd5e1;
+  --theme-placeholder-text: #cbd5e1;
+  --theme-tab-text: #cbd5e1;
+  --theme-tab-empty-text: #cbd5e1;
+  --theme-ribbon-muted-text: #cbd5e1;
+  --theme-ribbon-faint: #cbd5e1;
+  --theme-ribbon-input-label: #cbd5e1;
+  --theme-ribbon-dropdown-arrow: #cbd5e1;
+}
+
+[data-theme="blue"] {
+  --ui-color-text-secondary: #c6dced;
+  --theme-text-secondary: #c6dced;
+  --theme-titlebar-text-secondary: #c6dced;
+  --theme-status-text: #c6dced;
+  --theme-status-text-label: #c6dced;
+  --theme-placeholder-text: #b9c9d8;
+  --theme-tab-text: #c6dced;
+  --theme-tab-empty-text: #b9c9d8;
+}
+
+[data-theme="amber-navy"] {
+  --ui-color-text-secondary: #e1d2bf;
+  --theme-text-secondary: #e1d2bf;
+  --theme-titlebar-text-secondary: #e1d2bf;
+  --theme-placeholder-text: #d8c5ae;
+  --theme-tab-text: #e1d2bf;
+  --theme-tab-empty-text: #d8c5ae;
+  --theme-status-text: #1f2937;
+  --theme-status-text-label: #1f2937;
+  --theme-status-text-value: #1f2937;
+  --theme-status-nav-text: #1f2937;
+}
+
+[data-theme="warm-ember"] {
+  --ui-color-text-secondary: #f0e6dc;
+  --theme-text-secondary: #f0e6dc;
+  --theme-titlebar-text-secondary: #f0e6dc;
+  --theme-placeholder-text: #e8dcd1;
+  --theme-tab-text: #f0e6dc;
+  --theme-tab-empty-text: #e8dcd1;
+  --theme-status-text: #1f2937;
+  --theme-status-text-label: #1f2937;
+  --theme-status-text-value: #1f2937;
+  --theme-status-nav-text: #1f2937;
+}
+
+[data-theme="highContrast"] {
+  --ui-color-text-secondary: #ffffff;
+  --theme-text-secondary: #ffffff;
+  --theme-titlebar-text-secondary: #ffffff;
+  --theme-placeholder-text: #ffffff;
+  --theme-bookmarks-empty: #ffffff;
+}
+
+/* The custom preference controls retain their existing visual language while
+   gaining a real keyboard target and listbox semantics. */
+.pref-select-trigger {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+  min-height: 100%;
+  padding: 0 var(--ui-space-2);
+  border: 0;
+  background: transparent;
+  color: var(--theme-text, #333);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.pref-combo {
+  height: var(--ui-control-height);
+}
+
+.pref-row {
+  gap: var(--ui-space-3);
+}
+
+.pref-tab {
+  min-height: var(--ui-control-height);
+  padding-block: var(--ui-space-2);
+}
+
+/* Density is also visible in the primary command surface, not only inside
+   Preferences. */
+.ribbon-tabs {
+  height: var(--ui-control-height);
+  min-height: var(--ui-control-height);
+}
+
+.ribbon-tab {
+  height: calc(var(--ui-control-height) - 1px);
+  min-height: calc(var(--ui-control-height) - 1px);
+  padding-inline: var(--ui-space-3);
+  line-height: calc(var(--ui-control-height) - 3px);
+}
+
+.ribbon-btn {
+  height: calc(var(--ui-control-height) + 32px);
+  padding-inline: var(--ui-space-2);
+}
+
+.pref-select-trigger:disabled {
+  cursor: not-allowed;
+}
+
+.pref-select-trigger .pref-select-display {
+  padding: 0;
+}
+
+.pref-combo-arrow-icon {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  color: var(--theme-text-secondary, #666);
+}
+
+.pref-combo:has(.pref-select-trigger:focus-visible) {
+  border-color: var(--theme-active, #0078d7);
+}
+
+.pref-combo-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--ui-control-height);
+  padding: 0 var(--ui-space-2);
+  border: 0;
+  background: transparent;
+  color: var(--theme-text, #333);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.pref-combo-option:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: var(--ui-focus-ring-width) solid var(--ui-color-focus);
+  outline-offset: -2px;
+}
+
+/* Make selection and pressed state perceivable without relying on color. */
+#app-root :where(
+  [aria-selected="true"],
+  [aria-pressed="true"],
+  .ribbon-tab.active,
+  .ribbon-btn.active,
+  .left-panel-tab.active,
+  .ui-button.is-active
+) {
+  box-shadow: inset 0 -2px 0 var(--ui-color-focus);
+}
+
+#app-root :where(button, input, select, textarea, [role="button"], [tabindex]:not([tabindex="-1"])) {
+  scroll-margin: var(--ui-space-2);
+}
+
+/* Keep the key shell surfaces navigable at the minimum supported window. */
+@media (max-width: 840px), (max-height: 640px) {
+  .ribbon-tabs {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .ribbon-content {
+    min-width: 0;
+    overflow-x: auto;
+  }
+
+  .ribbon-groups {
+    min-width: max-content;
+  }
+
+  .left-panel {
+    width: min(var(--ui-panel-width-left), 24vw);
+  }
+
+  .properties-panel-outer {
+    width: min(var(--ui-panel-width-properties), 30vw);
+    min-width: min(var(--ui-panel-width-properties), 30vw);
+  }
+
+  .properties-panel {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .preferences-dialog {
+    width: min(600px, calc(100vw - 24px));
+    height: min(520px, calc(100vh - 24px));
+  }
+
+  .preferences-content,
+  .pref-tab-content {
+    min-width: 0;
+  }
+}
+
+/* Explicit forced-colors treatment keeps state and focus visible in system
+   high-contrast modes. */
+@media (forced-colors: active) {
+  #app-root :where(button, input, select, textarea, [role="button"]):focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  #app-root :where([aria-selected="true"], [aria-pressed="true"], .active) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+/* Avoid fractional icon strokes on either low- or high-density displays. */
+@media (min-resolution: 2dppx) {
+  #app-root :where(svg, .ribbon-btn-icon) {
+    shape-rendering: geometricPrecision;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #app-root :where(.pref-combo, .pref-combo-dropdown, .pref-select-trigger) {
+    transition-duration: 0.01ms;
+  }
+}

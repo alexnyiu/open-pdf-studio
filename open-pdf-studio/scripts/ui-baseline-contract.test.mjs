@@ -14,6 +14,19 @@ function count(haystack, needle) {
   return haystack.split(needle).length - 1;
 }
 
+function contrastRatio(foreground, background) {
+  const rgb = (hex) => {
+    const value = hex.replace('#', '');
+    return [0, 2, 4].map(index => parseInt(value.slice(index, index + 2), 16) / 255);
+  };
+  const luminance = (hex) => rgb(hex)
+    .map(channel => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+  const light = luminance(foreground);
+  const dark = luminance(background);
+  return (Math.max(light, dark) + 0.05) / (Math.min(light, dark) + 0.05);
+}
+
 test('desktop PDF viewport keeps its protected container and canvas contract', async () => {
   const app = await source('js/solid/App.jsx');
   const orderedMarkers = [
@@ -394,4 +407,87 @@ test('phase 8 applies shared metadata, confirmation, and focus behavior across l
   assert.match(qualityStyles, /\.context-menu-item/);
   assert.match(qualityStyles, /\.find-toggle-btn/);
   assert.match(qualityStyles, /\.app-menu-item/);
+});
+
+test('phase 9 exposes density choices and closes shared accessibility gaps', async () => {
+  const constants = await source('js/core/constants.ts');
+  assert.match(constants, /density:\s*'compact'/);
+
+  const preferencesType = await source('js/types/preferences.ts');
+  assert.match(preferencesType, /density:\s*'compact' \| 'comfortable'/);
+
+  const preferences = await source('js/core/preferences.js');
+  for (const marker of ['normalizeDensity', 'applyDensity', 'data-density']) {
+    assert.ok(preferences.includes(marker), `preferences.js must expose ${marker}`);
+  }
+
+  const general = await source('js/solid/components/preferences/GeneralTab.jsx');
+  for (const marker of ['densityOptions', "value: 'compact'", "value: 'comfortable'", 'ariaLabel']) {
+    assert.ok(general.includes(marker), `GeneralTab.jsx must expose ${marker}`);
+  }
+
+  const mobile = await source('js/solid/MobileApp.jsx');
+  assert.ok(mobile.includes("value={state.preferences.density || 'compact'}"));
+
+  const prefSelect = await source('js/solid/components/preferences/PrefSelect.jsx');
+  for (const marker of ['role="combobox"', 'role="listbox"', 'role="option"', 'ArrowDown', 'aria-selected']) {
+    assert.ok(prefSelect.includes(marker), `PrefSelect.jsx must cover ${marker}`);
+  }
+
+  const languageSelect = await source('js/solid/components/preferences/LanguageSelect.jsx');
+  for (const marker of ['role="combobox"', 'role="listbox"', 'role="option"', 'Search languages']) {
+    assert.ok(languageSelect.includes(marker), `LanguageSelect.jsx must cover ${marker}`);
+  }
+
+  const prefDialog = await source('js/solid/components/preferences/PreferencesDialog.jsx');
+  for (const marker of ['role="tablist"', 'role="tab"', 'aria-selected', 'role="tabpanel"', 'handleTabKeyDown']) {
+    assert.ok(prefDialog.includes(marker), `PreferencesDialog.jsx must cover ${marker}`);
+  }
+
+  const ribbonTab = await source('js/solid/components/ribbon/RibbonTab.jsx');
+  assert.ok(ribbonTab.includes('isFileTab={props.isFileTab}'));
+  const uiTab = await source('js/solid/components/ui/UiTab.jsx');
+  assert.ok(uiTab.includes('role={props.isFileTab ? \'button\' : \'tab\'}'));
+  const ribbon = await source('js/solid/components/ribbon/Ribbon.jsx');
+  assert.ok(ribbon.includes('role="tablist"'));
+  assert.ok(ribbon.includes('aria-label={ribbonCollapsed()'));
+
+  const adapter = await source('js/ui/interaction-quality.js');
+  for (const marker of ['decorateAccessibleName', 'data-phase9-a11y', "['title', 'aria-label']"]) {
+    assert.ok(adapter.includes(marker), `interaction-quality.js must cover ${marker}`);
+  }
+
+  const phase9Styles = await source('styles/phase-9-accessibility-density.css');
+  for (const marker of [
+    '[data-density="compact"]',
+    '[data-density="comfortable"]',
+    '--ui-color-text-secondary',
+    '[aria-selected="true"]',
+    '@media (max-width: 840px), (max-height: 640px)',
+    '@media (forced-colors: active)',
+    '@media (min-resolution: 2dppx)',
+  ]) {
+    assert.ok(phase9Styles.includes(marker), `phase-9-accessibility-density.css must cover ${marker}`);
+  }
+  for (const [foreground, background] of [
+    ['#d6d3d1', '#36363e'],
+    ['#4b5563', '#f5f5f5'],
+    ['#cbd5e1', '#181818'],
+    ['#c6dced', '#0d1b2a'],
+    ['#e1d2bf', '#1a1a2e'],
+    ['#f0e6dc', '#3e3636'],
+  ]) {
+    assert.ok(
+      contrastRatio(foreground, background) >= 4.5,
+      `${foreground} on ${background} must meet WCAG AA normal-text contrast`,
+    );
+  }
+  assert.doesNotMatch(
+    phase9Styles,
+    /#pdf-container|#canvas-wrapper|#canvas-container|#pdf-canvas|#text-highlight-canvas|#annotation-canvas|#continuous-container/,
+    'Phase 9 accessibility styles must not redefine protected PDF viewport selectors',
+  );
+
+  const globalStyles = await source('styles.css');
+  assert.ok(globalStyles.includes("@import './styles/phase-9-accessibility-density.css';"));
 });

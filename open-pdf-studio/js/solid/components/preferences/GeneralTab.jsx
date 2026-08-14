@@ -23,20 +23,32 @@ export default function GeneralTab(props) {
     { value: 'highContrast', label: tRibbon('theme.highContrast') },
   ];
 
+  const densityOptions = [
+    { value: 'compact', label: t('general.compact') || 'Compact' },
+    { value: 'comfortable', label: t('general.comfortable') || 'Comfortable' },
+  ];
+
   return (
     <>
       <fieldset class="pref-fieldset">
         <legend>{t('general.language')}</legend>
         <div class="pref-row">
           <label>{t('general.interfaceLanguage')}</label>
-          <LanguageSelect value={p.language[0]} setValue={p.language[1]} options={languageOptions} style={{ width: '220px' }} />
+          <LanguageSelect ariaLabel={t('general.interfaceLanguage')} value={p.language[0]} setValue={p.language[1]} options={languageOptions} style={{ width: '220px' }} />
         </div>
       </fieldset>
       <fieldset class="pref-fieldset">
         <legend>{t('general.theme')}</legend>
         <div class="pref-row">
           <label>{t('general.applicationTheme')}</label>
-          <PrefSelect value={p.theme[0]} setValue={p.theme[1]} options={themeOptions} style={{ width: '140px' }} />
+          <PrefSelect ariaLabel={t('general.applicationTheme')} value={p.theme[0]} setValue={p.theme[1]} options={themeOptions} style={{ width: '140px' }} />
+        </div>
+      </fieldset>
+      <fieldset class="pref-fieldset">
+        <legend>{t('general.density') || 'Interface Density'}</legend>
+        <div class="pref-row">
+          <label>{t('general.interfaceDensity') || 'Interface Density'}</label>
+          <PrefSelect ariaLabel={t('general.interfaceDensity') || 'Interface Density'} value={p.density[0]} setValue={p.density[1]} options={densityOptions} style={{ width: '140px' }} />
         </div>
       </fieldset>
       <fieldset class="pref-fieldset">
@@ -60,8 +72,8 @@ export default function GeneralTab(props) {
       <fieldset class="pref-fieldset">
         <legend>{t('general.author')}</legend>
         <div class="pref-row">
-          <label>{t('general.defaultAuthorName')}</label>
-          <input type="text" value={p.authorName[0]()} onInput={e => p.authorName[1](e.target.value)} />
+          <label for="preferences-author-name">{t('general.defaultAuthorName')}</label>
+          <input id="preferences-author-name" type="text" value={p.authorName[0]()} onInput={e => p.authorName[1](e.target.value)} />
         </div>
       </fieldset>
     </>

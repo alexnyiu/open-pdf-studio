@@ -16,6 +16,10 @@
   "general": {
     "theme": "Theme",
     "applicationTheme": "Application Theme",
+    "density": "Interface Density",
+    "interfaceDensity": "Interface Density",
+    "compact": "Compact",
+    "comfortable": "Comfortable",
     "startup": "Startup",
     "restoreLastSession": "Restore last session when application starts",
     "author": "Author",

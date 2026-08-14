@@ -1,0 +1,102 @@
+{
+  "generated_at": "2026-08-14T06:55:15.554503+00:00",
+  "nodes": {
+    "open_pdf_studio_js_annotations_rendering_redrawannotations": {
+      "code_fingerprint": "a071aaaa07d0fcc23da7a01d0a41796078cfc9c6ac869ea0dbbc93d672a08a57",
+      "label": "redrawAnnotations()",
+      "last": "2026-08-14T06:53:32.673636+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-14T06:53:32.673636+00:00",
+          "outcome": "useful",
+          "q": "Why does getActiveDocument() bridge so many UI and PDF subsystems?"
+        }
+      ],
+      "score": 0.999972488,
+      "source_file": "open-pdf-studio/js/annotations/rendering.js",
+      "status": "tentative",
+      "uses": 1
+    },
+    "open_pdf_studio_js_core_state_getactivedocument": {
+      "code_fingerprint": "8d157d7f946264841424f7aa83fa9d0a740cff263f2acad523c0422714cea45d",
+      "label": "getActiveDocument()",
+      "last": "2026-08-14T06:53:32.673636+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-14T06:53:32.673636+00:00",
+          "outcome": "useful",
+          "q": "Why does getActiveDocument() bridge so many UI and PDF subsystems?"
+        }
+      ],
+      "score": 0.999972488,
+      "source_file": "open-pdf-studio/js/core/state.ts",
+      "status": "tentative",
+      "uses": 1
+    },
+    "open_pdf_studio_js_pdf_loader_loadpdf": {
+      "code_fingerprint": "e16caedf98a27806c277026c5deedac05660026d2ff84d7eb94b28067beff5a5",
+      "label": "loadPDF()",
+      "last": "2026-08-14T06:53:32.673636+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-14T06:53:32.673636+00:00",
+          "outcome": "useful",
+          "q": "Why does getActiveDocument() bridge so many UI and PDF subsystems?"
+        }
+      ],
+      "score": 0.999972488,
+      "source_file": "open-pdf-studio/js/pdf/loader.js",
+      "status": "tentative",
+      "uses": 1
+    },
+    "open_pdf_studio_js_pdf_saver_savepdf": {
+      "code_fingerprint": "b93950dd4465dd98c4e7cf970ad4db3e3f98053c4ad1a97c135c20f6cf6fd16f",
+      "label": "savePDF()",
+      "last": "2026-08-14T06:53:32.673636+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-14T06:53:32.673636+00:00",
+          "outcome": "useful",
+          "q": "Why does getActiveDocument() bridge so many UI and PDF subsystems?"
+        }
+      ],
+      "score": 0.999972488,
+      "source_file": "open-pdf-studio/js/pdf/saver.js",
+      "status": "tentative",
+      "uses": 1
+    },
+    "open_pdf_studio_js_solid_stores_propertiesstore_updateannotprop": {
+      "code_fingerprint": "d084a2504702efe85cfe1048139947c5076f7d1ef56d61e3dc8531e4bc33caec",
+      "label": "updateAnnotProp()",
+      "last": "2026-08-14T06:53:32.673636+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-14T06:53:32.673636+00:00",
+          "outcome": "useful",
+          "q": "Why does getActiveDocument() bridge so many UI and PDF subsystems?"
+        }
+      ],
+      "score": 0.999972488,
+      "source_file": "open-pdf-studio/js/solid/stores/propertiesStore.js",
+      "status": "tentative",
+      "uses": 1
+    },
+    "open_pdf_studio_js_tools_tool_context_buildtoolcontext": {
+      "code_fingerprint": "c6ba3976f5226590c667208133e540a84aca5cf670f63580388a0b8552a9477f",
+      "label": "buildToolContext()",
+      "last": "2026-08-14T06:53:32.673636+00:00",
+      "provenance": [
+        {
+          "date": "2026-08-14T06:53:32.673636+00:00",
+          "outcome": "useful",
+          "q": "Why does getActiveDocument() bridge so many UI and PDF subsystems?"
+        }
+      ],
+      "score": 0.999972488,
+      "source_file": "open-pdf-studio/js/tools/tool-context.js",
+      "status": "tentative",
+      "uses": 1
+    }
+  },
+  "version": 1
+}

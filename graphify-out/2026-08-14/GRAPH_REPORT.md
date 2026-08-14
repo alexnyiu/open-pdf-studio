@@ -1,16 +1,16 @@
-# Graph Report - open-pdf-studio  (2026-08-14)
+# Graph Report - open-pdf-studio  (2026-08-13)
 
 ## Corpus Check
-- 1199 files · ~1,359,151 words
+- 1196 files · ~1,357,313 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 8729 nodes · 21221 edges · 483 communities (421 shown, 62 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 449 edges (avg confidence: 0.61)
+- 8701 nodes · 21166 edges · 461 communities (404 shown, 57 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 434 edges (avg confidence: 0.61)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `55cb2246`
+- Built from commit: `a57e72a5`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -21,13 +21,13 @@
 - renderer.js
 - redrawAnnotations
 - getActiveDocument
+- propertiesStore.js
 - useTranslation
-- DialogHost.jsx
-- DrawingTab.jsx
+- cloneAnnotation
 - PDFViewer
 - ribbonIcons.js
 - isTauri
-- main.js
+- platform.js
 - LeftPanel.jsx
 - loader.js
 - saver.js
@@ -38,7 +38,7 @@
 - WorkerState
 - keyboard-handlers.js
 - mcp_server.rs
-- mcp-bridge.js
+- state.ts
 - src-tauri/src/lib.rs
 - rendering.js
 - App.jsx
@@ -64,7 +64,7 @@
 - DocumentHandle
 - CommentTab.jsx
 - PDFFindController
-- ExtensionsPanel.jsx
+- plugin-api.js
 - pdfium_renderer.rs
 - bcf-import.js
 - pdf-viewport.js
@@ -75,7 +75,7 @@
 - FontRegistry
 - symbolLibraryOnlineStore.js
 - DOMLocalization
-- thumbnailStore.js
+- dialogs.js
 - DrawCommandBuffer
 - compare-store.js
 - preferences.js
@@ -83,25 +83,25 @@
 - bridge.ts
 - TextLayerBuilder
 - Naslagwerk: PDF-rotatie-mechanica van images, tekstvakken (FreeText) en annotaties
-- MobileApp.jsx
+- annotation-converter.js
 - parametricLabelInputStore.js
 - L10n
 - corpus_diff.rs
 - Unified Pan/Zoom Model — Design Spec
 - HIGH
-- ArrangeTab.jsx
+- alignment.js
 - stavenreeks.js
-- g-move-mode.js
+- g-rotate-mode.js
 - PDFium Renderer Swap + Opschoning Open PDF Studio — Implementation Plan
 - .replay_range
 - vector-zoom-benchmark.mjs
 - whats-new-trigger.js
-- appearance-vectors.js
+- geometry.js
 - drafting-rules.js
 - PDFium Browser Integration Research
 - font_parser.rs
 - betonbalk.js
-- tabs.js
+- DocumentTabs.jsx
 - screenshot.js
 - dxf-elektra-convert.mjs
 - test-nl-ifc-parametric-components.mjs
@@ -116,14 +116,14 @@
 - TileScene
 - AssistantPanel.jsx
 - bitmap-orchestrator.js
-- KeystrokeOverlay.jsx
+- ViewTab.jsx
 - PDFHistory
 - dependencies
 - symbolEditStore.js
 - Open PDF Studio v2 GPU Rendering Engine — Design
-- PrefSelect.jsx
+- PrefComboBox.jsx
 - Iterations
-- state.ts
+- constants.ts
 - QuantitiesProperties.jsx
 - engine.js
 - permissions
@@ -152,7 +152,7 @@
 - Ontwerp: macOS-releasekwaliteit voor versie 1.78
 - style-types.js
 - AppearanceSection.jsx
-- PrintQueueDialog.jsx
+- attachments.js
 - test-symbol-library-online.mjs
 - Glossary used throughout this plan
 - .create
@@ -208,7 +208,7 @@
 - ScheduleWizard.jsx
 - countStore.js
 - wapening-lijn.js
-- platform.js
+- text-edit-appearance.js
 - devDependencies
 - window_mgmt.rs
 - Fasen (elk los testbaar + commit)
@@ -230,7 +230,7 @@
 - categories.js
 - FormatTab.jsx
 - AltTextManager
-- imageEditStore.js
+- PDFDocumentProperties
 - dxf-vloeren-convert.mjs
 - PoC 02 — Document-Scoped Image Cache
 - PoC 04 — Pixmap Cache (Full-Page Rendered-Pixmap Cache)
@@ -256,8 +256,8 @@
 - Kernbegrippen
 - GIS-style PDF zoom cache
 - interpreter.rs
-- AppMenu.jsx
-- PrintDialog.jsx
+- bout.js
+- watermark-renderer.js
 - test-wapeningskorf.mjs
 - PoC 08 — preflight-thumbnail-ui
 - measure-baseline.mjs
@@ -273,10 +273,10 @@
 - README.md
 - Open PDF Studio
 - Continuous-mode zoom + scroll redesign
-- showMessage
+- xfdf.js
 - frames.js
-- SchedulesPanel.jsx
-- image-crop-overlay.js
+- annotation-image-sources.mjs
+- PDFRenderingQueue
 - tauri.conf.json
 - Proof of Concept Onderzoeksprogramma
 - mupdf_compare_helper.py
@@ -297,8 +297,8 @@
 - DummyBuilder
 - DummyBuilder
 - test-arrange-same-size.mjs
-- PreferencesDialog.jsx
-- walls.js
+- openExternal
+- color-extraction.js
 - navigation-events.js
 - MiniLog.jsx
 - nen1414Library.js
@@ -326,7 +326,7 @@
 - Critical Rules
 - compare-annotations.js
 - overlay-renderer.js
-- WatermarkDialog.jsx
+- interaction-store.ts
 - vloer-dxf.js
 - test-rotate-snap.ps1
 - verify-stavenreeks-roundtrip.py
@@ -369,9 +369,9 @@
 - verify-continuous.mjs
 - minimal_pdf_bytes
 - Design
-- dialogs.js
-- setup.js
-- contextMenuStore.js
+- ifc-export.js
+- tile-coverage.js
+- bookmarksStore.js
 - open-pdf-studio/package.json
 - DrawLayerBuilder
 - bump-version.js
@@ -391,7 +391,7 @@
 - verify-symbol-ap.mjs
 - zoom-debounce-test.mjs
 - Technology Boundaries
-- RibbonButton.jsx
+- TypeLengthHUD.jsx
 - macos-startup-smoke.sh
 - _FS_RECTF_
 - targets
@@ -402,8 +402,8 @@
 - iter29_inspect.py
 - wit-test.mjs
 - create-icon.js
-- FluentBundle
-- render_pdf_page
+- _findElementAcrossTabs
+- email-pdf.js
 - shape-tool.js
 - linux-release-config.test.mjs
 - Building from Source
@@ -445,32 +445,10 @@
 - render_test/__init__.py
 - /@id/pdfjs-dist
 - pdfium-worker
-- HelpTab.jsx
-- split-tool.js
-- page-type-cache.js
-- LanguageSelect.jsx
-- TextHighlighter
-- takeoff.test.mjs
-- interaction-quality.js
-- PasswordPrompt
-- document.ts
-- catmullRomToBezier
-- PageMenuContent
-- SignaturesPanel.jsx
-- attachmentsStore.js
-- linksStore.js
-- Q: Why does getActiveDocument() bridge so many UI and PDF subsystems?
-- Q: What is the next phase after Phase 8?
-- DimensionTypeSection.jsx
-- hatch-catalog.js
-- loadingStore.js
-- ParametricSymbolSection.jsx
-- formFieldsStore.js
-- fontStore.js
 
 ## God Nodes (most connected - your core abstractions)
 1. `getActiveDocument()` - 549 edges
-2. `useTranslation()` - 167 edges
+2. `useTranslation()` - 166 edges
 3. `state` - 150 edges
 4. `redrawAnnotations()` - 145 edges
 5. `isTauri()` - 114 edges
@@ -487,102 +465,102 @@
   open-pdf-studio/src-tauri/src/lib.rs → open-pdf-render/src/parser.rs
 - `TileSceneCache` --references--> `TileScene`  [EXTRACTED]
   open-pdf-studio/src-tauri/src/lib.rs → open-pdf-render/src/tile_render.rs
-- `render_pdf_page_skia()` --references--> `Response`  [EXTRACTED]
+- `read_clipboard_image_png()` --references--> `Response`  [EXTRACTED]
   open-pdf-studio/src-tauri/src/lib.rs → pdfium-worker/src/protocol.rs
-- `render_tile_scene_region()` --references--> `Response`  [EXTRACTED]
-  open-pdf-studio/src-tauri/src/lib.rs → pdfium-worker/src/protocol.rs
+- `open-pdf-studio` --depends_on--> `open-pdf-render`  [EXTRACTED]
+  open-pdf-studio/src-tauri/Cargo.toml → open-pdf-render/Cargo.toml
 
 ## Import Cycles
 - 2-file cycle: `open-pdf-studio/js/core/state.ts -> open-pdf-studio/js/core/stores/selection-helpers.ts -> open-pdf-studio/js/core/state.ts`
-- 3-file cycle: `open-pdf-studio/js/bridge.ts -> open-pdf-studio/js/solid/stores/formatStore.js -> open-pdf-studio/js/ui/panels/properties-panel.js -> open-pdf-studio/js/bridge.ts`
-- 3-file cycle: `open-pdf-studio/js/annotations/measurement.js -> open-pdf-studio/js/bridge.ts -> open-pdf-studio/js/solid/stores/propertiesStore.js -> open-pdf-studio/js/annotations/measurement.js`
-- 3-file cycle: `open-pdf-studio/js/ui/chrome/tabs.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/bookmarks.js -> open-pdf-studio/js/ui/chrome/tabs.js`
-- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/ui/panels/annotations-list.js -> open-pdf-studio/js/pdf/renderer.js -> open-pdf-studio/js/annotations/rendering.js`
-- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/ui/panels/annotations-list.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/annotations/rendering.js`
-- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/ui/panels/annotations-list.js -> open-pdf-studio/js/ui/panels/properties-panel.js -> open-pdf-studio/js/annotations/rendering.js`
 - 3-file cycle: `open-pdf-studio/js/annotations/measurement.js -> open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/annotations/rendering/measurements.js -> open-pdf-studio/js/annotations/measurement.js`
-- 3-file cycle: `open-pdf-studio/js/pdf/loader.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/attachments.js -> open-pdf-studio/js/pdf/loader.js`
-- 3-file cycle: `open-pdf-studio/js/pdf/loader.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/bookmarks.js -> open-pdf-studio/js/pdf/loader.js`
-- 3-file cycle: `open-pdf-studio/js/pdf/renderer.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/bookmarks.js -> open-pdf-studio/js/pdf/renderer.js`
-- 3-file cycle: `open-pdf-studio/js/pdf/renderer.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/destinations.js -> open-pdf-studio/js/pdf/renderer.js`
-- 3-file cycle: `open-pdf-studio/js/pdf/renderer.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/links.js -> open-pdf-studio/js/pdf/renderer.js`
 - 3-file cycle: `open-pdf-studio/js/annotations/measurement.js -> open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/annotations/rendering/hatch-patterns.js -> open-pdf-studio/js/annotations/measurement.js`
 - 3-file cycle: `open-pdf-studio/js/annotations/measurement.js -> open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/annotations/rendering/ui-state.js -> open-pdf-studio/js/annotations/measurement.js`
 - 3-file cycle: `open-pdf-studio/js/annotations/measurement.js -> open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/annotations/rendering/walls.js -> open-pdf-studio/js/annotations/measurement.js`
-- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/tools/tools/spline-tool.js -> open-pdf-studio/js/tools/tool-context.js -> open-pdf-studio/js/annotations/rendering.js`
-- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/watermark/watermark-renderer.js -> open-pdf-studio/js/pdf/exporter.js -> open-pdf-studio/js/annotations/rendering.js`
+- 3-file cycle: `open-pdf-studio/js/annotations/measurement.js -> open-pdf-studio/js/bridge.ts -> open-pdf-studio/js/solid/stores/propertiesStore.js -> open-pdf-studio/js/annotations/measurement.js`
+- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/ui/panels/annotations-list.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/annotations/rendering.js`
+- 3-file cycle: `open-pdf-studio/js/pdf/loader.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/attachments.js -> open-pdf-studio/js/pdf/loader.js`
+- 3-file cycle: `open-pdf-studio/js/pdf/loader.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/bookmarks.js -> open-pdf-studio/js/pdf/loader.js`
+- 3-file cycle: `open-pdf-studio/js/pdf/renderer.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/bookmarks.js -> open-pdf-studio/js/pdf/renderer.js`
+- 3-file cycle: `open-pdf-studio/js/ui/chrome/tabs.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/bookmarks.js -> open-pdf-studio/js/ui/chrome/tabs.js`
+- 3-file cycle: `open-pdf-studio/js/pdf/renderer.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/destinations.js -> open-pdf-studio/js/pdf/renderer.js`
+- 3-file cycle: `open-pdf-studio/js/pdf/renderer.js -> open-pdf-studio/js/ui/panels/left-panel.js -> open-pdf-studio/js/ui/panels/links.js -> open-pdf-studio/js/pdf/renderer.js`
 - 3-file cycle: `open-pdf-studio/js/annotations/geometry.js -> open-pdf-studio/js/tools/tools/spline-tool.js -> open-pdf-studio/js/tools/tool-context.js -> open-pdf-studio/js/annotations/geometry.js`
-- 4-file cycle: `open-pdf-studio/js/annotations/measurement.js -> open-pdf-studio/js/bridge.ts -> open-pdf-studio/js/solid/stores/propertiesStore.js -> open-pdf-studio/js/symbols/real-size.js -> open-pdf-studio/js/annotations/measurement.js`
+- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/tools/tools/spline-tool.js -> open-pdf-studio/js/tools/tool-context.js -> open-pdf-studio/js/annotations/rendering.js`
+- 3-file cycle: `open-pdf-studio/js/bridge.ts -> open-pdf-studio/js/solid/stores/formatStore.js -> open-pdf-studio/js/ui/panels/properties-panel.js -> open-pdf-studio/js/bridge.ts`
+- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/ui/panels/annotations-list.js -> open-pdf-studio/js/pdf/renderer.js -> open-pdf-studio/js/annotations/rendering.js`
+- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/watermark/watermark-renderer.js -> open-pdf-studio/js/pdf/exporter.js -> open-pdf-studio/js/annotations/rendering.js`
+- 3-file cycle: `open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/ui/panels/annotations-list.js -> open-pdf-studio/js/ui/panels/properties-panel.js -> open-pdf-studio/js/annotations/rendering.js`
+- 4-file cycle: `open-pdf-studio/js/annotations/measurement.js -> open-pdf-studio/js/annotations/rendering.js -> open-pdf-studio/js/annotations/rendering/measurements.js -> open-pdf-studio/js/annotations/rendering/hatch-patterns.js -> open-pdf-studio/js/annotations/measurement.js`
 
-## Communities (483 total, 62 thin omitted)
+## Communities (461 total, 57 thin omitted)
 
 ### Community 0 - "manager.js"
-Cohesion: 0.02
-Nodes (120): lineLineIntersection(), setAsDefaultStyle(), handleSetTool(), measureScaleOnDrawing(), getCachedEmbeddedImages(), createSimilarFromSelection(), getCursorForTool(), maybeRevertToSelect() (+112 more)
+Cohesion: 0.03
+Nodes (133): lineLineIntersection(), applyDeltaToAll(), attachListeners(), _bestObjectSnap(), _cacheObjectSnapPoints(), cancelMove(), commitMove(), detachListeners() (+125 more)
 
 ### Community 1 - "viewer.mjs"
 Cohesion: 0.02
-Nodes (99): backtrackBeforeAllVisibleElements(), beforePrint(), beforeUnload(), binarySearchFirstItem(), bindEvents(), CachedIterable, _cleanup(), createPrintService() (+91 more)
+Nodes (95): afterPrint(), backtrackBeforeAllVisibleElements(), beforePrint(), beforeUnload(), binarySearchFirstItem(), bindEvents(), CachedIterable, _cleanup() (+87 more)
 
 ### Community 2 - "tool-context.js"
-Cohesion: 0.07
-Nodes (83): applyDynamicScaling(), createAnnotation(), calculateArea(), calculateDistance(), calculatePerimeter(), formatDimensionText(), formatMeasurement(), getMeasureScale() (+75 more)
+Cohesion: 0.05
+Nodes (117): applyDynamicScaling(), getViewportScaleFactor(), isDynamicScalingEnabled(), setDynamicScalingEnabled(), createAnnotation(), createRotatedResizeCursor(), cursorCache, findHandleAt() (+109 more)
 
 ### Community 3 - "renderer.js"
-Cohesion: 0.05
-Nodes (73): getPageRotation(), clearFormLayers(), clearSinglePageFormLayer(), createFormLayer(), createSinglePageFormLayer(), hideFormFieldsBar(), clearLinkLayers(), clearSinglePageLinkLayer() (+65 more)
+Cohesion: 0.03
+Nodes (107): clearRecentFiles(), initDoubleTap(), initPinchZoom(), initSwipeNavigation(), clearFormLayers(), clearSinglePageFormLayer(), createFormLayer(), createSinglePageFormLayer() (+99 more)
 
 ### Community 4 - "redrawAnnotations"
-Cohesion: 0.06
-Nodes (82): copyAnnotation(), duplicateAnnotation(), pasteAnnotation(), pasteAnnotations(), pasteAnnotationsInPlace(), pasteFromClipboard(), pasteImageFromBlob(), visibleCenterOnPage() (+74 more)
+Cohesion: 0.05
+Nodes (94): redraw(), pasteAnnotation(), pasteAnnotations(), pasteAnnotationsInPlace(), pasteFromClipboard(), pasteImageFromBlob(), visibleCenterOnPage(), hasFill() (+86 more)
 
 ### Community 5 - "getActiveDocument"
-Cohesion: 0.06
-Nodes (85): showCalibrationDialog(), applyAllRedactions(), applyRedactions(), detectScaleFromPdf(), getActiveDocument(), noPdf(), setPageRotation(), state (+77 more)
+Cohesion: 0.05
+Nodes (93): showCalibrationDialog(), applyAllRedactions(), applyRedactions(), detectScaleFromPdf(), getActiveDocument(), setPageRotation(), state, applyRedo() (+85 more)
 
-### Community 6 - "useTranslation"
-Cohesion: 0.10
-Nodes (40): ARABIC_DIGITS, convertDigits(), FARSI_DIGITS, [language, setLanguage], localizeNumber(), useTranslation(), ActionsSection(), CollapsibleSection() (+32 more)
+### Community 6 - "propertiesStore.js"
+Cohesion: 0.05
+Nodes (74): BETONBALK_BREEDTE_RANGE, BETONBALK_DEFAULTS, BETONBALK_HOOGTE_RANGE, betonbalkProfielNaam(), computeTextboxContentHeight(), SYSTEEMRASTER_PLAAT_RANGE, fireSelectionChange(), ActionsSection() (+66 more)
 
-### Community 7 - "DialogHost.jsx"
+### Community 7 - "useTranslation"
 Cohesion: 0.07
-Nodes (38): BUILT_IN_STAMPS, formatBytes(), Dialog(), DIALOG_MAP, DialogHost(), AboutDialog(), handleKeyDown(), handleOk() (+30 more)
+Nodes (45): saveTekeningtypen(), BUILT_IN_STAMPS, ARABIC_DIGITS, convertDigits(), FARSI_DIGITS, [language, setLanguage], localizeNumber(), useTranslation() (+37 more)
 
-### Community 8 - "DrawingTab.jsx"
+### Community 8 - "cloneAnnotation"
 Cohesion: 0.06
-Nodes (86): copyAnnotations(), cloneAnnotation(), applyRounding(), expandArcPoints(), getAnnotationPoint(), _hasArcPoints(), loadDocumentScale(), recalculateAllMeasurements() (+78 more)
+Nodes (71): cloneAnnotation(), expandArcPoints(), getAnnotationPoint(), _hasArcPoints(), loadDocumentScale(), recalculateAllMeasurements(), saveDocumentScale(), scaleStorageKey() (+63 more)
 
 ### Community 9 - "PDFViewer"
 Cohesion: 0.04
-Nodes (5): afterPrint(), isValidAnnotationEditorMode(), PDFThumbnailViewer, PDFViewer, webViewerResolutionChange()
+Nodes (6): isValidAnnotationEditorMode(), PDFThumbnailViewer, PDFViewer, TempImageFactory, webViewerKeyDown(), webViewerResolutionChange()
 
 ### Community 10 - "ribbonIcons.js"
-Cohesion: 0.04
-Nodes (70): actualSizeIcon, addTextIcon, alignCenterIcon, alignMiddleIcon, alignRightIcon, annotationsListIcon, bookViewIcon, bringForwardIcon (+62 more)
+Cohesion: 0.05
+Nodes (72): RibbonGroup(), UiToolbarGroup(), actualSizeIcon, addTextIcon, alignBottomIcon, alignCenterIcon, alignLeftIcon, alignMiddleIcon (+64 more)
 
 ### Community 11 - "isTauri"
-Cohesion: 0.11
-Nodes (48): exportXFDFToFile(), importXFDFFromFile(), exportBcfToFile(), importBcfFromFile(), renderPageSnapshot(), isTauri(), openFileDialog(), openFolderDialog() (+40 more)
+Cohesion: 0.07
+Nodes (60): exportXFDFToFile(), importXFDFFromFile(), exportBcfToFile(), importBcfFromFile(), renderPageSnapshot(), invoke(), isTauri(), openFileDialog() (+52 more)
 
-### Community 12 - "main.js"
-Cohesion: 0.10
-Nodes (41): extractFileName(), fileExists(), getOpenedFiles(), isDefaultPdfApp(), isDevMode(), isMobile(), loadSession(), saveSession() (+33 more)
+### Community 12 - "platform.js"
+Cohesion: 0.05
+Nodes (68): buildUserAgent(), fileExists(), getOpenedFiles(), getOsInfo(), getTauriCore(), getTauriWindow(), isDefaultPdfApp(), isDevMode() (+60 more)
 
 ### Community 13 - "LeftPanel.jsx"
-Cohesion: 0.06
-Nodes (39): LeftPanel(), LeftPanelTab(), AttachmentsPanel(), DestinationsPanel(), FIELD_TYPE_ICONS, FormFieldsPanel(), LayersPanel(), LinkPageGroup() (+31 more)
+Cohesion: 0.04
+Nodes (55): LeftPanelTab(), AttachmentsPanel(), BookmarkNode(), BookmarksPanel(), DestinationsPanel(), FIELD_TYPE_ICONS, FormFieldsPanel(), LayersPanel() (+47 more)
 
 ### Community 14 - "loader.js"
-Cohesion: 0.12
-Nodes (30): lockFile(), getNextUntitledName(), renderPdfPage(), resetAnnotationStorage(), _attachPdfDocGetPageRecovery(), checkPdfACompliance(), clearCachedPdfBytes(), _convertAndPushAnnotations() (+22 more)
+Cohesion: 0.08
+Nodes (62): updateQuickAccessButtons(), extractFileName(), lockFile(), unlockFile(), findDocumentByPath(), createDocument(), getNextUntitledName(), openFiles() (+54 more)
 
 ### Community 15 - "saver.js"
-Cohesion: 0.12
-Nodes (24): hasFill(), layoutTextboxForExport(), toLocalPrimitives(), getAnnotationStorage(), getAnnotIdToFieldName(), setCachedPdfBytes(), attachVectorAP(), saveBookmarksToOutline() (+16 more)
+Cohesion: 0.09
+Nodes (60): layoutTextboxForExport(), resolveWallMaterial(), catmullRomToBezier(), sampleSplineArrow(), splineArrowEndTangent(), toLocalPrimitives(), getAnnotationStorage(), getAnnotIdToFieldName() (+52 more)
 
 ### Community 16 - "left-panel.js"
-Cohesion: 0.07
-Nodes (50): fetchLocale(), initialLng, initialResources, isKnownLanguage(), isRTL(), loadedLanguages, loadLocale(), localeModules (+42 more)
+Cohesion: 0.05
+Nodes (58): fetchLocale(), initialLng, initialResources, isKnownLanguage(), isRTL(), loadedLanguages, loadLocale(), localeModules (+50 more)
 
 ### Community 17 - "ContentStreamIter<'a>"
 Cohesion: 0.08
@@ -593,96 +571,96 @@ Cohesion: 0.13
 Nodes (20): Error, CachedDecodedImage, Interpreter, profile_enabled(), Arc, Dictionary, Document, GlyphPathCache (+12 more)
 
 ### Community 19 - "formatStore.js"
-Cohesion: 0.09
-Nodes (27): autoActivateContextualTab(), CONTEXTUAL_TABS, drawGrid(), getGridGeometry(), selectionSignature(), syncImageEditTab(), updateContextualTabs(), applyStyle() (+19 more)
+Cohesion: 0.06
+Nodes (58): clampFrac(), commitCrop(), cropRect(), drawImageCropOverlay(), effScale(), handlePoints(), hitHandle(), install() (+50 more)
 
 ### Community 20 - "WorkerState"
 Cohesion: 0.06
 Nodes (45): AtomicU8, AtomicUsize, BufReader, Child, ChildStdin, ChildStdout, Command, Drop (+37 more)
 
 ### Community 21 - "keyboard-handlers.js"
-Cohesion: 0.11
-Nodes (32): recordClearPage(), recordPageRotation(), closeFindBar(), ViewTab(), _hintFor(), TypeLengthHUD(), isGMoveModeActive(), isGRotateModeActive() (+24 more)
+Cohesion: 0.07
+Nodes (55): copyAnnotation(), copyAnnotations(), duplicateAnnotation(), createFullPageScaleRegion(), createScaleRegion(), CLOSED_POLY_TYPES, createCollection(), explodeCollection() (+47 more)
 
 ### Community 22 - "mcp_server.rs"
 Cohesion: 0.08
 Nodes (54): Into, IntoResponse, app_response(), mcp_bridge_ready(), McpAppBridge, request(), AppHandle, AtomicU64 (+46 more)
 
-### Community 23 - "mcp-bridge.js"
-Cohesion: 0.08
-Nodes (34): _buildCreateProps(), BUTTON_INDEX, BUTTONS_MASK, compositeCurrentView(), CONSOLE_RING, _findElementAcrossTabs(), _GEOMETRY_KEYS, handleClearCaches() (+26 more)
+### Community 23 - "state.ts"
+Cohesion: 0.06
+Nodes (51): SearchState, TextSelection, _buildCreateProps(), BUTTON_INDEX, BUTTONS_MASK, _captureCanvasState(), compositeCurrentView(), CONSOLE_RING (+43 more)
 
 ### Community 24 - "src-tauri/src/lib.rs"
 Cohesion: 0.10
 Nodes (55): allow_fs_scope(), delete_file(), discard_spool_pdf(), download_pdf_from_url(), file_exists(), get_plugins_dir(), get_preferences_file_path(), get_printer_spool_dir() (+47 more)
 
 ### Community 25 - "rendering.js"
-Cohesion: 0.04
-Nodes (102): _anchor(), betonbalkBuildOpts(), betonbalkHalfWidthPx(), betonbalkPxPerMm(), UNIT_TO_MM, getViewportScaleFactor(), isDynamicScalingEnabled(), setDynamicScalingEnabled() (+94 more)
+Cohesion: 0.08
+Nodes (51): labelHasNumericField(), arcControlPoint(), drawBetonbalkGeom(), cloudPuffSize(), drawCommentIcon(), applyBorderStyle(), drawArrowheadOnCanvas(), drawDimensionLineEnding() (+43 more)
 
 ### Community 26 - "App.jsx"
-Cohesion: 0.08
-Nodes (41): hasAnnotationType(), getRegisteredPalettes(), [palettes, setPalettes], registerToolPalette(), unregisterToolPalette(), clearAllToolGroups(), getActiveSubTool(), getActiveSubToolId() (+33 more)
+Cohesion: 0.07
+Nodes (46): getRegisteredPalettes(), clearAllToolGroups(), getActiveSubTool(), getActiveSubToolId(), [groupState, setGroupState], setActiveSubTool(), DesktopApp(), OrderedDockedPalettes() (+38 more)
 
 ### Community 27 - ".push"
 Cohesion: 0.06
-Nodes (22): CachedAsyncIterable, CachedSyncIterable, EventBus, FluentDateTime, FluentNumber, FluentResource, getArguments(), getDefault() (+14 more)
+Nodes (21): CachedAsyncIterable, CachedSyncIterable, EventBus, FluentDateTime, FluentNumber, FluentResource, getArguments(), getDefault() (+13 more)
 
 ### Community 28 - "OpenPanel.jsx"
-Cohesion: 0.11
-Nodes (35): downloadPdfFromUrl(), listPdfFiles(), findDocumentByPath(), createDocument(), getRecentFiles(), pinRecentFile(), removeRecentFile(), unpinRecentFile() (+27 more)
+Cohesion: 0.07
+Nodes (39): closeWindow(), downloadPdfFromUrl(), listPdfFiles(), actionAndClose(), AppMenu(), ICONS, handleAddFolder(), handleBrowse() (+31 more)
 
 ### Community 29 - "fs"
 Cohesion: 0.05
 Nodes (26): test_all_bouwtekeningen(), test_pdf(), Result, String, Vec, simulate_tauri_dimensions(), simulate_tauri_render(), test_tauri_command_simulation() (+18 more)
 
 ### Community 30 - "snap-engine.js"
-Cohesion: 0.11
-Nodes (33): snapPointToGrid(), buildSpatialIndex(), _cellCoord(), _cellKey(), commitSegments(), cubicBezierPoint(), extractPageGeometry(), getPdfEdgeSegmentsNear() (+25 more)
+Cohesion: 0.08
+Nodes (46): snapPointToGrid(), computeWallShape(), _cornersAt(), _drawIsolatieFill(), _isect(), _ISO_BY_ID, ISOLATIE_MATERIALEN, isPointOnWall() (+38 more)
 
 ### Community 31 - "form-layer.js"
 Cohesion: 0.08
 Nodes (47): annotButtonValues, annotIdToFieldName, applyBlurValidation(), applyFieldChanges(), applyFieldRestrictions(), applyKeystrokeRestriction(), applyToggleActions(), buildBlurValidators() (+39 more)
 
 ### Community 32 - ".close"
-Cohesion: 0.06
-Nodes (22): abort(), AnnotationEditorParams, AutomationEventBus, bindWindowEvents(), dispatchEvent(), ensureOverlay(), GenericScripting, OverlayManager (+14 more)
+Cohesion: 0.05
+Nodes (22): abort(), AnnotationEditorParams, AutomationEventBus, bindWindowEvents(), dispatchEvent(), ensureOverlay(), GenericScripting, getViewerConfiguration() (+14 more)
 
 ### Community 33 - ".reset"
-Cohesion: 0.09
-Nodes (5): getXfaHtmlForPrinting(), PDFAttachmentViewer, PDFLayerViewer, PDFOutlineViewer, Toolbar
+Cohesion: 0.07
+Nodes (8): BaseTreeViewer, getXfaHtmlForPrinting(), PDFAttachmentViewer, PDFLayerViewer, PDFOutlineViewer, toggleCheckedBtn(), toggleExpandedBtn(), Toolbar
 
 ### Community 34 - "registry.js"
-Cohesion: 0.04
-Nodes (27): templates, beugelTemplate, boutTemplate, _MATEN, doorTemplate, _HOUT_BY_ID, houtBalkTemplate, HOUTSOORTEN (+19 more)
+Cohesion: 0.05
+Nodes (26): templates, beugelTemplate, doorTemplate, _HOUT_BY_ID, houtBalkTemplate, HOUTSOORTEN, MATEN, ifcSpaceTemplate (+18 more)
 
 ### Community 35 - "ContextMenu.jsx"
-Cohesion: 0.07
-Nodes (52): addReplyIcon, arrangeIcon, bookmarkIcon, bringForwardSvg, bringToFrontSvg, convertMeasurementIcon, convertPolygonIcon, convertPolylineIcon (+44 more)
+Cohesion: 0.08
+Nodes (45): addReplyIcon, arrangeIcon, bookmarkIcon, bringForwardSvg, bringToFrontSvg, convertMeasurementIcon, convertPolygonIcon, convertPolylineIcon (+37 more)
 
 ### Community 36 - "SkiaRenderer"
 Cohesion: 0.08
 Nodes (18): GraphicsState, GraphicsStateStack, Default, Mask, Option, Self, Transform, Vec (+10 more)
 
 ### Community 37 - "page-manager.js"
-Cohesion: 0.30
-Nodes (27): recordPageStructure(), computeCropBox(), cropMargins(), detectContentBounds(), getCachedPdfBytes(), markAllAnnotationPagesLoaded(), copyPage(), copyPages() (+19 more)
+Cohesion: 0.16
+Nodes (41): recordPageStructure(), computeCropBox(), cropMargins(), detectContentBounds(), parsePageRange(), getCachedPdfBytes(), markAllAnnotationPagesLoaded(), copyPage() (+33 more)
 
 ### Community 38 - "find-bar.js"
-Cohesion: 0.12
-Nodes (40): executeSearchAndUpdate(), handleSearchInput(), highlightMatch(), highlightResults(), navigateToResult(), onFindNext(), onFindPrevious(), onHighlightChange() (+32 more)
+Cohesion: 0.11
+Nodes (43): clearHighlights(), closeFindBar(), executeSearchAndUpdate(), handleSearchInput(), highlightMatch(), highlightResults(), navigateToResult(), onFindNext() (+35 more)
 
 ### Community 39 - "symbolStore.js"
 Cohesion: 0.08
-Nodes (39): ELEKTRA_SYMBOLS, INB_CATEGORIES, NL_CATEGORIES, BUILT_IN_CATEGORIES, COUNTRIES, DEFAULT_COUNTRY, DEFAULT_INDUSTRY, INDUSTRIES (+31 more)
+Nodes (37): ELEKTRA_SYMBOLS, INB_CATEGORIES, NL_CATEGORIES, BUILT_IN_CATEGORIES, COUNTRIES, DEFAULT_COUNTRY, DEFAULT_INDUSTRY, INDUSTRIES (+29 more)
 
 ### Community 40 - "text-edit-tool.js"
-Cohesion: 0.08
-Nodes (56): [active, setActive], [blurHandler, setBlurHandler], [cancelHandler, setCancelHandler], [commitHandler, setCommitHandler], [editorStyle, setEditorStyle], getEditorText(), hidePdfTextEditor(), [keyDownHandler, setKeyDownHandler] (+48 more)
+Cohesion: 0.10
+Nodes (45): [active, setActive], [blurHandler, setBlurHandler], [cancelHandler, setCancelHandler], [commitHandler, setCommitHandler], [editorStyle, setEditorStyle], getEditorText(), hidePdfTextEditor(), [keyDownHandler, setKeyDownHandler] (+37 more)
 
 ### Community 41 - ".remove"
-Cohesion: 0.06
-Nodes (5): BaseTreeViewer, getDirection(), PDFCursorTools, PDFPresentationMode, PDFSidebar
+Cohesion: 0.08
+Nodes (4): getDirection(), PDFCursorTools, PDFPresentationMode, PDFSidebar
 
 ### Community 42 - "permissions"
 Cohesion: 0.04
@@ -691,6 +669,10 @@ Nodes (44): description, identifier, core:default, dialog:allow-ask, dialog:allo
 ### Community 43 - "steel-catalog.js"
 Cohesion: 0.08
 Nodes (38): register(), registerTemplate(), unregisterTemplate(), _circlePts(), _pickName(), SHAPE_COLUMNS, SHAPE_IMPL, STEEL_SHAPES (+30 more)
+
+### Community 44 - "PDFPageView"
+Cohesion: 0.08
+Nodes (3): _initializePageLabels(), PDFPageView, PDFThumbnailView
 
 ### Community 45 - "fpdfview.h"
 Cohesion: 0.05
@@ -702,15 +684,15 @@ Nodes (16): Display, RenderError, String, DocumentHandle, Dictionary, Document, 
 
 ### Community 47 - "CommentTab.jsx"
 Cohesion: 0.07
-Nodes (38): [dockPreview, setDockPreview], DockTargets(), ensureCtxListeners(), [floatPos, setFloatPos], [isDragging, setIsDragging], PaletteContextMenu(), [paletteCtxMenu, setPaletteCtxMenu], [paletteIconSize, setPaletteIconSizeRaw] (+30 more)
+Nodes (39): noPdf(), [dockPreview, setDockPreview], ensureCtxListeners(), [floatPos, setFloatPos], [isDragging, setIsDragging], PaletteContextMenu(), [paletteCtxMenu, setPaletteCtxMenu], [paletteIconSize, setPaletteIconSizeRaw] (+31 more)
 
 ### Community 48 - "PDFFindController"
-Cohesion: 0.08
+Cohesion: 0.09
 Nodes (4): getOriginalIndex(), normalize(), PDFFindController, SecondaryToolbar
 
-### Community 49 - "ExtensionsPanel.jsx"
-Cohesion: 0.16
-Nodes (15): createPluginApi(), getInstalledPlugins(), getLoadedPlugins(), initPlugins(), installPluginFromFile(), loadedPlugins, loadInstalledPlugins(), loadPlugin() (+7 more)
+### Community 49 - "plugin-api.js"
+Cohesion: 0.08
+Nodes (25): [palettes, setPalettes], registerToolPalette(), unregisterToolPalette(), createPluginApi(), getInstalledPlugins(), getLoadedPlugins(), initPlugins(), installPluginFromFile() (+17 more)
 
 ### Community 50 - "pdfium_renderer.rs"
 Cohesion: 0.16
@@ -725,12 +707,12 @@ Cohesion: 0.10
 Nodes (34): _anchorAt(), _applyDprChange(), _armDprWatcher(), _captureZoomFreeze(), clampAndCenter(), clampAndCenterUnused_keptForReference(), computeFitZoom(), destroyViewport() (+26 more)
 
 ### Community 53 - "inline-number-editing.js"
-Cohesion: 0.21
-Nodes (19): parametricLabelInputActive(), showParametricLabelInput(), findEditableLabel(), toLocalPoint(), betonbalkTagScreenPos(), hitInlineNumberAt(), providerOpts(), startBetonbalkTagInput() (+11 more)
+Cohesion: 0.10
+Nodes (34): viewport, CanvasScrollbars(), parametricLabelInputActive(), showParametricLabelInput(), computeSectionVisibility(), storeShowProperties(), findEditableLabel(), toLocalPoint() (+26 more)
 
 ### Community 54 - "PdfBytesCache"
-Cohesion: 0.19
-Nodes (31): File, analyze_page_type(), analyze_page_type_batch(), clear_pdf_cache(), DocHandleCache, extract_draw_commands(), extract_draw_commands_batch(), extract_page_text() (+23 more)
+Cohesion: 0.16
+Nodes (37): File, OnceCell, analyze_page_type(), analyze_page_type_batch(), clear_pdf_cache(), DocHandleCache, extract_draw_commands(), extract_draw_commands_batch() (+29 more)
 
 ### Community 55 - "test-parametric-label-editing.mjs"
 Cohesion: 0.05
@@ -752,9 +734,9 @@ Nodes (35): collectionJsonUrl(), collectionToGroup(), isSafeSymbolSvg(), LIBRARY
 Cohesion: 0.09
 Nodes (13): createSanitizedElement(), createTextNodeFromTextContent(), DOMLocalization, getNodeForNamedElement(), hasAttribute(), isAttrNameLocalizable(), isElementAllowed(), Localization (+5 more)
 
-### Community 60 - "thumbnailStore.js"
-Cohesion: 0.15
-Nodes (19): ThumbnailMenuContent(), ThumbnailsPanel(), [activePage, setActivePage], clearPageSelection(), [draggedPage, setDraggedPage], [dropTarget, setDropTarget], formatPageRangeString(), getSelectedPagesArray() (+11 more)
+### Community 60 - "dialogs.js"
+Cohesion: 0.09
+Nodes (31): ThumbnailMenuContent(), getPageSetupSettings(), ThumbnailsPanel(), [activePage, setActivePage], clearPageSelection(), [draggedPage, setDraggedPage], [dropTarget, setDropTarget], formatPageRangeString() (+23 more)
 
 ### Community 61 - "DrawCommandBuffer"
 Cohesion: 0.11
@@ -765,12 +747,12 @@ Cohesion: 0.07
 Nodes (33): [active, setActive], _applyPairIndex(), [changes, setChangesSignal], _clampNew(), _clampOld(), [detecting, setDetectingSignal], [fitRequest, setFitRequest], [focused, setFocused] (+25 more)
 
 ### Community 63 - "preferences.js"
-Cohesion: 0.16
-Nodes (25): DEFAULT_PREFERENCES, getUsername(), loadPreferencesFile(), savePreferencesFile(), applyDefaultStyle(), applyDensity(), applyPreferences(), applyTheme() (+17 more)
+Cohesion: 0.12
+Nodes (28): DEFAULT_PREFERENCES, getUsername(), loadPreferencesFile(), savePreferencesFile(), applyDefaultStyle(), applyPreferences(), applyTheme(), getStyleMapping() (+20 more)
 
 ### Community 65 - "bridge.ts"
-Cohesion: 0.04
-Nodes (85): computeTextboxContentHeight(), addToSelection(), isSelected(), removeFromSelection(), recordModify(), recordPropertyChange(), markAnchored(), registerAnnotationType() (+77 more)
+Cohesion: 0.12
+Nodes (27): recordModify(), popupCanvas(), beginMenu(), captureFocus(), [menuType, setMenuType], [multiSelectCount, setMultiSelectCount], [position, setPosition], showAnnotationMenu() (+19 more)
 
 ### Community 66 - "TextLayerBuilder"
 Cohesion: 0.07
@@ -780,9 +762,9 @@ Nodes (6): AnnotationEditorLayerBuilder, AnnotationLayerBuilder, clamp(), Progre
 Cohesion: 0.06
 Nodes (32): 0. Managementsamenvatting (lees dit eerst), 1.1 Coördinaatruimtes, 1.2 De matrix `[a b c d e f]`, 1.3 Elementaire matrices (§8.3.3), 1.4 De `cm`-operator en samenstelling, 1. PDF-coördinatenstelsel en transformatiematrices, 2.1 Het unit square, 2.2 Geroteerde afbeelding (+24 more)
 
-### Community 68 - "MobileApp.jsx"
-Cohesion: 0.08
-Nodes (33): clearRecentFiles(), initDoubleTap(), initPinchZoom(), initSwipeNavigation(), _ensureOverlay(), hidePagePlaceholderWhenReady(), showPagePlaceholder(), actualSize() (+25 more)
+### Community 68 - "annotation-converter.js"
+Cohesion: 0.12
+Nodes (27): STAVENREEKS_DEFAULTS, convertPdfAnnotation(), mapBorderStyle(), selectSymbol(), ANNOTATION_TYPE_DEFAULT, IFC_DEFAULT, ifcCategoryForAnnotation(), ifcCategoryForAnnotationType() (+19 more)
 
 ### Community 69 - "parametricLabelInputStore.js"
 Cohesion: 0.09
@@ -790,7 +772,7 @@ Nodes (27): STAVENREEKS_DIAMETERS, captureParametricLabelReturnFocus(), makeProg
 
 ### Community 70 - "L10n"
 Cohesion: 0.08
-Nodes (6): ConstL10n, GenericL10n, getLanguage(), getPageName(), L10n, PDFDocumentProperties
+Nodes (10): ConstL10n, DATETIME(), FluentBundle, FluentType, GenericL10n, getMemoizerForLocale(), keysFromBundle(), L10n (+2 more)
 
 ### Community 71 - "corpus_diff.rs"
 Cohesion: 0.12
@@ -804,17 +786,17 @@ Nodes (31): Annotation overlay canvas, Architecture, Architectuurprobleem, Backg
 Cohesion: 0.06
 Nodes (31): Architecture observations, C1. `js/pdf/mupdf-renderer.js` is effectively dead, and renderer.js has a duplicate ghost copy of the same code, C2. `js/pdf/tile-renderer.js` is fully orphan code (~300 lines), C3. Render-task tracking has a race window, C4. Silent `catch (_) {}` blocks swallow real errors, C5. `_setSelectFallthroughEnabled` global mousemove listener — known regression source, CRITICAL, H1. 37 forgotten `[PERF]`/`[JANK]` console.logs in release code (+23 more)
 
-### Community 74 - "ArrangeTab.jsx"
-Cohesion: 0.26
+### Community 74 - "alignment.js"
+Cohesion: 0.24
 Nodes (29): alignBottom(), alignCenter(), alignLeft(), alignMiddle(), alignRight(), [alignTarget, setAlignTarget], alignTop(), distributeBottom() (+21 more)
 
 ### Community 75 - "stavenreeks.js"
 Cohesion: 0.13
 Nodes (30): barPositions(), buildStavenreeks(), clamp(), DIAMETER_SIGN, DIAMETER_SIGN_METRICS, handleAnchors(), labelText(), legRotor() (+22 more)
 
-### Community 76 - "g-move-mode.js"
-Cohesion: 0.11
-Nodes (46): applyRotateGeneric(), cloneForInsert(), copyAndMove(), duplicateTargets(), getEditTargets(), moveTargets(), newAnnotationId(), NON_EDITABLE_TYPES (+38 more)
+### Community 76 - "g-rotate-mode.js"
+Cohesion: 0.14
+Nodes (26): applyRotateGeneric(), cloneForInsert(), copyAndMove(), duplicateTargets(), getEditTargets(), moveTargets(), newAnnotationId(), NON_EDITABLE_TYPES (+18 more)
 
 ### Community 77 - "PDFium Renderer Swap + Opschoning Open PDF Studio — Implementation Plan"
 Cohesion: 0.06
@@ -832,13 +814,13 @@ Nodes (24): captureScreenshot(), gitIdentity(), main(), McpClient, mcpOwnerPid()
 Cohesion: 0.15
 Nodes (26): getAppVersion(), compareVersions(), fetchReleases(), parseBilingualBody(), parseVersion(), readCache(), renderMarkdown(), writeCache() (+18 more)
 
-### Community 81 - "appearance-vectors.js"
-Cohesion: 0.21
-Nodes (28): arrowheadOps(), buildBetonbalkAP(), buildCloudAP(), buildFilledAreaAP(), buildMeasureAreaAP(), buildMeasureDistanceAP(), buildPolylineMeasureAP(), buildStavenreeksAP() (+20 more)
+### Community 81 - "geometry.js"
+Cohesion: 0.16
+Nodes (24): approxTextWidth(), betonbalkCenterline(), betonbalkTagAnchor(), halfWidthFromMm(), resolveBetonbalkParams(), _anchor(), betonbalkBuildOpts(), betonbalkHalfWidthPx() (+16 more)
 
 ### Community 82 - "drafting-rules.js"
-Cohesion: 0.07
-Nodes (53): annAnchor(), DRAFTING_RULE_TYPES, effectiveDraftingLineWidth(), getDefaultRegelset(), getRegelsetById(), getTekeningtypenData(), labelFontSizeAt(), rulesAtPoint() (+45 more)
+Cohesion: 0.16
+Nodes (25): DRAFTING_LINE_WIDTH, annAnchor(), DRAFTING_RULE_TYPES, effectiveDraftingLineWidth(), getDefaultRegelset(), getRegelsetById(), getTekeningtypenData(), labelFontSizeAt() (+17 more)
 
 ### Community 83 - "PDFium Browser Integration Research"
 Cohesion: 0.07
@@ -849,12 +831,12 @@ Cohesion: 0.12
 Nodes (14): GlyphOutline, OutlineCollector, parse_truetype(), parse_type1(), ParsedFont, HashMap, Option, OutlineBuilder (+6 more)
 
 ### Community 85 - "betonbalk.js"
-Cohesion: 0.11
-Nodes (35): approxTextWidth(), beamOutline(), BETONBALK_BREEDTE_RANGE, BETONBALK_DEFAULTS, BETONBALK_HOOGTE_RANGE, BETONBALK_LIJNSTIJLEN, BETONBALK_PROFIELEN, betonbalkCenterline() (+27 more)
+Cohesion: 0.16
+Nodes (23): beamOutline(), BETONBALK_LIJNSTIJLEN, BETONBALK_PROFIELEN, betonbalkLineStyles(), buildBetonbalk(), CENTERLINE_WIDTH_FACTOR, clamp(), _cleanPoints() (+15 more)
 
-### Community 86 - "tabs.js"
-Cohesion: 0.09
-Nodes (37): updateQuickAccessButtons(), blurCompareTab(), focusCompareTab(), getTauriCore(), invoke(), openDefaultAppsSettings(), renameFile(), unlockFile() (+29 more)
+### Community 86 - "DocumentTabs.jsx"
+Cohesion: 0.12
+Nodes (22): blurCompareTab(), focusCompareTab(), canRevealInFileManager(), desktopOsType(), revealInFileManager(), revealInFileManagerLabelKey(), PageMenuContent(), cancelRename() (+14 more)
 
 ### Community 87 - "screenshot.js"
 Cohesion: 0.15
@@ -873,7 +855,7 @@ Cohesion: 0.07
 Nodes (27): compilerOptions, allowJs, allowSyntheticDefaultImports, baseUrl, checkJs, esModuleInterop, forceConsistentCasingInFileNames, isolatedModules (+19 more)
 
 ### Community 91 - "elementVisibilityStore.js"
-Cohesion: 0.11
+Cohesion: 0.12
 Nodes (23): ../../core/undo-manager.js, getHalftone(), [halftoneTypes, setHalftoneTypes], [hiddenTypes, setHiddenTypes], isTypeHalftoned(), isTypeHidden(), [panelVisible, setPanelVisible], redraw() (+15 more)
 
 ### Community 92 - "How real PDF viewers handle scroll/zoom/pan on image-heavy PDFs"
@@ -885,12 +867,12 @@ Cohesion: 0.10
 Nodes (20): /js/pdf/loader.js, fetchJson(), main(), require, sleep(), { WebSocket }, { chromium }, { chromium } (+12 more)
 
 ### Community 94 - "Ribbon.jsx"
-Cohesion: 0.12
-Nodes (12): CommentTab(), DrawingTab(), RibbonTab(), UiTab(), [activeTab, setActiveTab], [calibrationPixelDistance, setCalibrationPixelDistance], [colorPickerValue, setColorPickerValue], [contextualTabsVisible, setContextualTabsVisible] (+4 more)
+Cohesion: 0.09
+Nodes (21): showPreferencesDialog(), CommentTab(), DrawingTab(), HelpTab(), RibbonTab(), UiTab(), aboutIcon, extensionsIcon (+13 more)
 
 ### Community 95 - "schedulesStore.js"
-Cohesion: 0.15
-Nodes (18): handleGetTakeoff(), getTemplateById(), addBlankAndConfigure(), addSelected(), commitRename(), addBlankSchedule(), addScheduleFromTemplate(), collectElements() (+10 more)
+Cohesion: 0.13
+Nodes (22): handleGetTakeoff(), SCHEDULE_DND_MIME, getTemplateById(), STANDARD_SCHEDULE_TEMPLATES, addBlankAndConfigure(), addSelected(), commitRename(), exportCsv() (+14 more)
 
 ### Community 96 - "embedded-image-detector.js"
 Cohesion: 0.17
@@ -909,48 +891,48 @@ Cohesion: 0.11
 Nodes (17): enqueueAssistantQuestion(), _queue, registerAssistantMessages(), registerAssistantSubmit(), relayClientActive(), _waiters, ASSISTANT_SKILLS, SKILLS_SYSTEM_PROMPT (+9 more)
 
 ### Community 100 - "bitmap-orchestrator.js"
-Cohesion: 0.20
-Nodes (20): ensureTileForCurrentView(), prewarmZoomTiles(), _tileRequests, createInflightKeyGate(), computeZoomBucket(), CACHE, makeKey(), tileCacheFindCovering() (+12 more)
+Cohesion: 0.21
+Nodes (19): ensureBitmapForCurrentView(), ensureTileForCurrentView(), prewarmZoomTiles(), _tileRequests, createInflightKeyGate(), computeZoomBucket(), isHeavyBytes(), isHeavyPage() (+11 more)
 
-### Community 101 - "KeystrokeOverlay.jsx"
-Cohesion: 0.29
-Nodes (9): formatKey(), [keys, setKeys], KeystrokeOverlay(), keystrokeOverlayVisible(), onKeyDown(), pushKey(), scheduleExpiry(), toggleKeystrokeOverlay() (+1 more)
+### Community 101 - "ViewTab.jsx"
+Cohesion: 0.10
+Nodes (22): formatKey(), [keys, setKeys], KeystrokeOverlay(), keystrokeOverlayVisible(), onKeyDown(), pushKey(), scheduleExpiry(), toggleKeystrokeOverlay() (+14 more)
 
 ### Community 102 - "PDFHistory"
-Cohesion: 0.17
-Nodes (3): getCurrentHash(), isDestArraysEqual(), PDFHistory
+Cohesion: 0.15
+Nodes (4): getCurrentHash(), isDestArraysEqual(), isDestHashesEqual(), PDFHistory
 
 ### Community 103 - "dependencies"
 Cohesion: 0.08
 Nodes (25): @crabnebula/tauri-plugin-drag, i18next, i18next-browser-languagedetector, dependencies, @crabnebula/tauri-plugin-drag, i18next, i18next-browser-languagedetector, mupdf (+17 more)
 
 ### Community 104 - "symbolEditStore.js"
-Cohesion: 0.14
-Nodes (23): SymbolTypeEditor(), selectSymbol(), cancelSymbolTypeEdit(), currentSvg(), [editorOpen, setEditorOpen], moveVertex(), num(), openSymbolTypeEditor() (+15 more)
+Cohesion: 0.15
+Nodes (22): SymbolTypeEditor(), cancelSymbolTypeEdit(), currentSvg(), [editorOpen, setEditorOpen], moveVertex(), num(), openSymbolTypeEditor(), parsePathPoints() (+14 more)
 
 ### Community 105 - "Open PDF Studio v2 GPU Rendering Engine — Design"
 Cohesion: 0.08
 Nodes (23): Architecture, Caching strategy, Crate layout, Data flow, Dependencies (versions to pin), Error handling, Goal, JS-side wrapper (+15 more)
 
-### Community 106 - "PrefSelect.jsx"
-Cohesion: 0.13
-Nodes (8): toggleDropdown(), focusSelectedOption(), handleOptionKeyDown(), handleTriggerClick(), isDisabled(), selectOption(), toggleFromKeyboard(), useDropdown()
+### Community 106 - "PrefComboBox.jsx"
+Cohesion: 0.10
+Nodes (5): LANGUAGES, position(), toggle(), toggleDropdown(), useDropdown()
 
 ### Community 107 - "Iterations"
 Cohesion: 0.09
 Nodes (23): Iteration 0 — Setup (this entry), Iteration 10 — Long-tail AA investigation (Text pdf gecombineerd / rapport-constructie cluster), Iteration 11 — Honour PDF /Widths and /W arrays for glyph advance (text-cluster long tail), Iteration 12 — Indexed colour space images (Combinatie Raster v1.4 architectural drawing), Iteration 13 — SMask "dimming-only" mask compositing (Zware vector tile-grid pages), Iteration 14 — 2885 Demo project transparency-group +1 brightness investigation (NO_PROGRESS, REVERTED), Iteration 15 — Form XObject /BBox clipping (PDF spec 8.10.2), Iteration 16 — Off-screen transparency-group compositing (PDF 11.4.5 / 11.6.6) (+15 more)
 
-### Community 108 - "state.ts"
-Cohesion: 0.09
-Nodes (35): AppState, SearchState, TextSelection, clearClipboard(), ClipboardState, EditingState, resetAllEditing(), resetPdfTextEditing() (+27 more)
+### Community 108 - "constants.ts"
+Cohesion: 0.12
+Nodes (18): HANDLE_SIZE, AppState, clearClipboard(), ClipboardState, EditingState, resetAllEditing(), resetPdfTextEditing(), resetTextEditing() (+10 more)
 
 ### Community 109 - "QuantitiesProperties.jsx"
-Cohesion: 0.16
-Nodes (8): CATEGORY_LABELS, allFields(), filterAt(), setFilterAt(), toggleCat(), i(), clearBuiltInText(), loadBuiltInText()
+Cohesion: 0.12
+Nodes (14): CATEGORY_ORDER, allFields(), filterAt(), onMouseMove(), onMouseUp(), setFilterAt(), toggleCat(), csvCell() (+6 more)
 
 ### Community 110 - "engine.js"
-Cohesion: 0.21
-Nodes (12): categoryOf(), applyFmt(), buildSchedule(), cmp(), groupBy(), OPS, safeGet(), subtotal() (+4 more)
+Cohesion: 0.13
+Nodes (19): categoryOf(), applyFmt(), buildSchedule(), cmp(), groupBy(), OPS, safeGet(), subtotal() (+11 more)
 
 ### Community 111 - "permissions"
 Cohesion: 0.09
@@ -981,20 +963,20 @@ Cohesion: 0.16
 Nodes (19): ndarray, compare(), _make_overlay(), Image, Pixel-diff with Gaussian blur, plus a side-by-side overlay for human review., Returns (diff_pct, overlay_image). Blur both images with Gaussian sigma, then…, Render ref / app / diff side-by-side. Diff = ref tinted red where mask is True., main() (+11 more)
 
 ### Community 118 - "systeemraster.js"
-Cohesion: 0.19
-Nodes (19): _aabb(), _applyRandConditie(), buildSysteemraster(), clamp(), clipHorizontalLine(), clipVerticalLine(), computeAxisOffset(), EDGE_EPS (+11 more)
+Cohesion: 0.20
+Nodes (18): _aabb(), _applyRandConditie(), buildSysteemraster(), clamp(), clipHorizontalLine(), clipVerticalLine(), computeAxisOffset(), EDGE_EPS (+10 more)
 
 ### Community 119 - "compare-viewport.js"
 Cohesion: 0.18
 Nodes (20): _bboxOverlapOrNear(), detectChanges(), _isInk(), _mergeNearby(), setChanges(), setCompareDetecting(), _changesCache, _changesCacheKey() (+12 more)
 
 ### Community 120 - "schedule-image.test.mjs"
-Cohesion: 0.17
-Nodes (12): bodyRow, check(), csv, els, eq(), firstRow, r, table (+4 more)
+Cohesion: 0.16
+Nodes (19): csvCell(), scheduleResultToCsv(), textCell(), bodyRow, check(), csv, els, eq() (+11 more)
 
 ### Community 121 - "AnnotationsPanel.jsx"
-Cohesion: 0.18
-Nodes (15): commitAnnotationMutation(), AnnotationsPanel(), groupOptions, statusFilterOptions, collapseAllGroups(), [collapsedGroups, setCollapsedGroups], [countText, setCountText], [emptyMessage, setEmptyMessage] (+7 more)
+Cohesion: 0.11
+Nodes (20): groupOptions, statusFilterOptions, copyIcon, cutIcon, deleteIcon, deselectIcon, exportIcon, flattenIcon (+12 more)
 
 ### Community 122 - "test-wapeningsstaaf-two-point.mjs"
 Cohesion: 0.10
@@ -1009,20 +991,20 @@ Cohesion: 0.10
 Nodes (20): Architectuur, Automatische Mode Detectie, Bestanden, Caching, Command formaat, Doel, Frontend: Tile Manager, Frontend: Vector Renderer (+12 more)
 
 ### Community 125 - "phased-redesign-plan.md"
-Cohesion: 0.08
-Nodes (22): Acceptance checks, Behavior ownership, Phase 7 — Open, recent documents, and empty state, Scope, Delivered, Phase 9 — Accessibility and density, Verification, Code areas to change first (+14 more)
+Cohesion: 0.10
+Nodes (19): Acceptance checks, Behavior ownership, Phase 7 — Open, recent documents, and empty state, Scope, Code areas to change first, Major risks, Phase 0: Freeze the behavioral contract — completed, Phase 10: Rollout and cleanup (+11 more)
 
 ### Community 126 - "Ontwerp: veilige PDF-opslag, cache-invalidatie en bestandsvergrendeling"
 Cohesion: 0.10
 Nodes (20): Aanleiding, Acceptatiecriteria, Bestandsvergrendeling, Cache-invalidatie, Doelen, Eén backendopdracht voor de desktop-opslag, Foutafhandeling en herstel, Frontendgedrag (+12 more)
 
 ### Community 127 - "wapeningskorf.js"
-Cohesion: 0.17
-Nodes (18): DRAFTING_LINE_WIDTH, approxTextWidth(), diameterSignSegments(), labelLayout(), _barLabel(), _barLabelWidth(), _count(), _diaSign() (+10 more)
+Cohesion: 0.20
+Nodes (17): approxTextWidth(), diameterSignSegments(), labelLayout(), _barLabel(), _barLabelWidth(), _count(), _diaSign(), diaSignLineWidth() (+9 more)
 
 ### Community 128 - "ComponentGallery.jsx"
-Cohesion: 0.22
-Nodes (7): RibbonButtonStack(), UiButton(), UiButtonStack(), UiField(), UiIconButton(), UiPanelHeader(), UiSegmentedControl()
+Cohesion: 0.17
+Nodes (11): autoShrinkLabel(), observer, overflows(), shrink(), RibbonButton(), SplitButton(), UiButton(), UiField() (+3 more)
 
 ### Community 129 - "scheduleStore.js"
 Cohesion: 0.13
@@ -1037,8 +1019,8 @@ Cohesion: 0.12
 Nodes (3): AppOptions, BasePreferences, ViewHistory
 
 ### Community 132 - "PDFPrintService"
-Cohesion: 0.11
-Nodes (11): close(), download(), DownloadManager, downloadOrSave(), _ensureDownloadComplete(), openInExternalApp(), PDFPrintService, renderPage() (+3 more)
+Cohesion: 0.13
+Nodes (10): close(), download(), DownloadManager, downloadOrSave(), _ensureDownloadComplete(), openInExternalApp(), PDFPrintService, renderPage() (+2 more)
 
 ### Community 133 - "Unified Pan/Zoom Model Implementation Plan"
 Cohesion: 0.10
@@ -1049,16 +1031,16 @@ Cohesion: 0.10
 Nodes (19): 1. Gerichte integratie op actuele `main` - gekozen, 2. Universele macOS-library in Git committen, 3. PR #251 rechtstreeks mergen, Aanleiding, Acceptatiecriteria, Bouwdocumentatie, Doelen, Foutafhandeling en herstel (+11 more)
 
 ### Community 135 - "style-types.js"
-Cohesion: 0.17
-Nodes (11): DIMENSION_TYPES, dimensionTypeProps(), HATCH_TYPES, INB_HATCH_DEFS, INB_HATCH_TYPES, _mergeEntry(), PEN_TYPES, _PEN_WEIGHTS (+3 more)
+Cohesion: 0.14
+Nodes (14): DIMENSION_TYPES, dimensionTypeProps(), HATCH_TYPES, INB_HATCH_DEFS, INB_HATCH_TYPES, _mergeEntry(), PEN_TYPES, _PEN_WEIGHTS (+6 more)
 
 ### Community 136 - "AppearanceSection.jsx"
-Cohesion: 0.17
+Cohesion: 0.18
 Nodes (18): getLineWidthLabel(), _applyPropsToAnnotation(), applyStylePresetById(), applyStyleToSelection(), captureCurrentStyle(), _captureFromAnnotation(), _captureFromPanel(), [copiedStyle, setCopiedStyle] (+10 more)
 
-### Community 137 - "PrintQueueDialog.jsx"
-Cohesion: 0.15
-Nodes (17): handleMerge(), handleOpen(), openAsUntitled(), displayName(), fmtSize(), fmtTime(), getPdfjs(), PrintQueueWindow() (+9 more)
+### Community 137 - "attachments.js"
+Cohesion: 0.19
+Nodes (19): addAttachment(), currentAttachments, deleteSelectedAttachment(), embedAttachment(), formatDate(), formatFileSize(), guessMimeType(), handleFileDrop() (+11 more)
 
 ### Community 138 - "test-symbol-library-online.mjs"
 Cohesion: 0.11
@@ -1069,16 +1051,16 @@ Cohesion: 0.11
 Nodes (18): Execution handoff, File structure, Glossary used throughout this plan, Self-review, Skia Native Renderer Implementation Plan, Task 10: Add an `engine-skia`-aware render entrypoint to `parser.rs`, Task 11: Rewire `interpreter.rs` to be generic over `R: Renderer`, Task 12: First Skia regression run + parity loop (+10 more)
 
 ### Community 140 - ".create"
-Cohesion: 0.22
-Nodes (9): MmapMut, main(), Result, Result, Self, String, Shm, write_then_read_header() (+1 more)
+Cohesion: 0.15
+Nodes (11): MmapMut, main(), Result, Request, String, Result, Self, String (+3 more)
 
 ### Community 141 - "hatch-patterns.js"
 Cohesion: 0.18
-Nodes (13): BUILTIN_HATCH_PATTERNS, drawLineFamily(), getHatchSwatchDataUrl(), HATCH_CATEGORIES, _hatchLineWidth(), listHatchPatternsByCategory(), PATTERN_BY_ID, SWATCH_CACHE (+5 more)
+Nodes (15): applyHatchFill(), BUILTIN_HATCH_PATTERNS, drawLineFamily(), getHatchSwatchDataUrl(), HATCH_CATEGORIES, _hatchLineWidth(), listHatchPatternsByCategory(), PATTERN_BY_ID (+7 more)
 
 ### Community 142 - "links.js"
-Cohesion: 0.15
-Nodes (22): openExternal(), basename(), buildMailtoUrl(), emailCurrentPdf(), allLinks, BORDER_STYLE_LABELS, colorArrayToCSS(), copySelectedLink() (+14 more)
+Cohesion: 0.19
+Nodes (18): allLinks, BORDER_STYLE_LABELS, colorArrayToCSS(), copySelectedLink(), filterLinks(), getBorderStyleLabel(), getHighlightLabel(), getLinkLabel() (+10 more)
 
 ### Community 143 - "test-stenenrij.mjs"
 Cohesion: 0.11
@@ -1105,12 +1087,12 @@ Cohesion: 0.11
 Nodes (17): Components, Data model, Factory (`js/annotations/factory.js`), Files touched, Goal, Handles (`js/annotations/handles.js`), Hit-testing (`js/annotations/geometry.js`), Interaction details (+9 more)
 
 ### Community 149 - "image-extraction.js"
-Cohesion: 0.12
-Nodes (29): annotationIdOf(), appearanceStream(), findImageAnnotationSources(), findImageForAnnotation(), nameOf(), numberOf(), rectKey(), decodeApStream() (+21 more)
+Cohesion: 0.19
+Nodes (14): applyPredictor(), blobToDataUrl(), decodeImageStream(), extractImageFromFormXObject(), extractStampImages(), extractStampImagesHybrid(), extractStampImagesViaPdfJs(), getDecodeParms() (+6 more)
 
 ### Community 150 - "page-bitmap-cache.js"
-Cohesion: 0.26
-Nodes (10): _cache, ensureBitmap(), _ensureBitmapAtScale(), _evictIfNeeded(), getBestAvailableBitmap(), getCachedBitmap(), _key(), _pending (+2 more)
+Cohesion: 0.17
+Nodes (13): _cache, ensureBitmap(), _ensureBitmapAtScale(), _evictIfNeeded(), getBestAvailableBitmap(), getCachedBitmap(), _key(), _pending (+5 more)
 
 ### Community 151 - "text-selection.js"
 Cohesion: 0.23
@@ -1177,8 +1159,8 @@ Cohesion: 0.29
 Nodes (12): getCompareDoc(), _extractDocLines(), _resultCache, runTextCompare(), diffPageTexts(), diffWords(), groupItemsIntoLineObjs(), groupItemsIntoLines() (+4 more)
 
 ### Community 167 - "quantitiesStore.js"
-Cohesion: 0.12
-Nodes (22): onMouseMove(), onMouseUp(), csvCell(), fmtTotal(), formatCell(), SchedulePanel(), [appearance, setAppearance], [builtInText, setBuiltInText] (+14 more)
+Cohesion: 0.15
+Nodes (16): [appearance, setAppearance], [builtInText, setBuiltInText], collectElements(), countCatName(), [filters, setFilters], [format, setFormat], [grandTotals, setGrandTotals], [itemize, setItemize] (+8 more)
 
 ### Community 168 - "macos-notarization-retry.mjs"
 Cohesion: 0.15
@@ -1217,16 +1199,16 @@ Cohesion: 0.12
 Nodes (15): Components / files touched, Creation tool, Data model, Goal, Integration with existing scale resolution, Out of scope (YAGNI), PDF (`/Square` annotation), Persistence (PDF + XFDF) (+7 more)
 
 ### Community 177 - "describeTarget"
-Cohesion: 0.18
-Nodes (19): buttonIndexFor(), buttonsMaskFor(), _captureCanvasState(), codeForChar(), describeTarget(), dispatchPointerAndMouse(), handleKey(), handleMouseClick() (+11 more)
+Cohesion: 0.23
+Nodes (16): buttonIndexFor(), buttonsMaskFor(), codeForChar(), describeTarget(), dispatchPointerAndMouse(), handleKey(), handleMouseClick(), handleMouseDrag() (+8 more)
 
 ### Community 178 - "progressive-render.js"
-Cohesion: 0.20
-Nodes (18): ensureBitmapForCurrentView(), computeTileGrid(), _contentBytesCache, createSceneAttemptCoordinator(), ensureProgressiveBitmapForCurrentView(), invokeTileRegion(), isExtremePage(), isHeavyBytes() (+10 more)
+Cohesion: 0.23
+Nodes (15): computeTileGrid(), _contentBytesCache, createSceneAttemptCoordinator(), ensureProgressiveBitmapForCurrentView(), invokeTileRegion(), isExtremePage(), isSceneCandidateBytes(), pageContentBytes() (+7 more)
 
 ### Community 179 - "text-layer.js"
-Cohesion: 0.19
-Nodes (15): applyResolvedFontInfo(), buildFontInfoCache(), clearSinglePageTextLayer(), createSinglePageTextLayer(), createTextLayer(), createTextLayerFromRust(), ensureEndOfContent(), getResolvedFontInfo() (+7 more)
+Cohesion: 0.21
+Nodes (13): applyResolvedFontInfo(), buildFontInfoCache(), createTextLayer(), createTextLayerFromRust(), ensureEndOfContent(), getResolvedFontInfo(), insertColumnBreaks(), pageFontResolutionPromises (+5 more)
 
 ### Community 180 - "annotation.ts"
 Cohesion: 0.21
@@ -1261,24 +1243,24 @@ Cohesion: 0.13
 Nodes (14): Chord registration, Command lifecycle, Components / files touched, Coord-input integration, Data model, G-key migration, Goal, Move / Copy / Rotate Basepoint Flow — Design (+6 more)
 
 ### Community 189 - "vector-renderer.js"
-Cohesion: 0.14
-Nodes (15): _cache, cacheCommands(), _decodeImage(), getCachedPageDimensions(), hasCachedCommands(), _imageCache, _key(), LINE_CAP (+7 more)
+Cohesion: 0.20
+Nodes (12): _cache, cacheCommands(), _decodeImage(), getCachedPageDimensions(), hasCachedCommands(), _imageCache, _key(), LINE_CAP (+4 more)
 
 ### Community 190 - "ScheduleWizard.jsx"
-Cohesion: 0.25
+Cohesion: 0.23
 Nodes (12): fieldByKey(), fieldsForCategories(), addField(), allFields(), filterAt(), moveSched(), patch(), removeField() (+4 more)
 
 ### Community 191 - "countStore.js"
-Cohesion: 0.16
-Nodes (10): [activeCategoryId, setActiveCategoryId], activeCountCategory(), activeCountCategoryId, [categories, setCategories], countCategories, countCsvRows(), countTallies, countTotal (+2 more)
+Cohesion: 0.15
+Nodes (11): [activeCategoryId, setActiveCategoryId], activeCountCategory(), activeCountCategoryId, [categories, setCategories], countCategories, countCsvRows(), countTallies, countTotal (+3 more)
 
 ### Community 192 - "wapening-lijn.js"
-Cohesion: 0.25
-Nodes (14): compactNumber(), editableLineLabels(), integer(), lineLayout(), markerCommands(), markerParams, markerPercentage(), netwapeningTemplate (+6 more)
+Cohesion: 0.28
+Nodes (13): compactNumber(), editableLineLabels(), integer(), lineLayout(), markerCommands(), markerParams, markerPercentage(), positiveNumber() (+5 more)
 
-### Community 193 - "platform.js"
-Cohesion: 0.15
-Nodes (21): buildUserAgent(), closeWindow(), getOsInfo(), getTauriWindow(), isWindowFullscreen(), MACOS_10_NAMES, MACOS_NAMES, maximizeWindow() (+13 more)
+### Community 193 - "text-edit-appearance.js"
+Cohesion: 0.30
+Nodes (13): applyPageRotation(), componentHex(), elementRectToCanvasPixels(), getPageRotationMatrix(), getRotatedPageSize(), getTextLayerCssMatrix(), invertPageRotation(), normalizePageRotation() (+5 more)
 
 ### Community 194 - "devDependencies"
 Cohesion: 0.13
@@ -1307,6 +1289,10 @@ Nodes (13): Components / files touched, Data model, Goal, Hit rule, Live preview
 ### Community 200 - "comment-icons.js"
 Cohesion: 0.24
 Nodes (11): darken(), drawCircle(), drawComment(), drawHelp(), drawInsert(), drawKey(), drawNewParagraph(), drawNote() (+3 more)
+
+### Community 201 - "DefaultExternalServices"
+Cohesion: 0.14
+Nodes (3): DefaultExternalServices, webViewerAnnotationEditorStatesChanged(), webViewerReportTelemetry()
 
 ### Community 202 - "test-pdf-text-native-editing.mjs"
 Cohesion: 0.16
@@ -1350,15 +1336,15 @@ Nodes (12): Components / files touched, Data model, Goal, Grid + Polar Tracking 
 
 ### Community 212 - "categories.js"
 Cohesion: 0.18
-Nodes (9): areaValue(), CATEGORY_ORDER, COMMON, FIELD_REGISTRY, lengthValue(), pixelLength(), realArea(), TYPE_NAMES (+1 more)
+Nodes (9): areaValue(), CATEGORY_LABELS, COMMON, FIELD_REGISTRY, lengthValue(), pixelLength(), realArea(), TYPE_NAMES (+1 more)
 
 ### Community 213 - "FormatTab.jsx"
-Cohesion: 0.16
-Nodes (9): RibbonGroup(), UiToolbarGroup(), editTypeIcon, hideAnnotationIcon, openPropertiesIcon, resetLocationIcon, styleToolsIcon, STYLE_DEFS (+1 more)
+Cohesion: 0.17
+Nodes (9): ColorPickerButton(), editTypeIcon, hideAnnotationIcon, openPropertiesIcon, resetLocationIcon, styleToolsIcon, PALETTE_COLUMNS, STYLE_DEFS (+1 more)
 
-### Community 215 - "imageEditStore.js"
-Cohesion: 0.16
-Nodes (20): ImageTab(), brightnessIcon, contrastIcon, cropIcon, grayscaleIcon, resetAdjustIcon, applyToImage(), [brightness, setBrightnessSig] (+12 more)
+### Community 215 - "PDFDocumentProperties"
+Cohesion: 0.23
+Nodes (3): getLanguage(), getPageName(), PDFDocumentProperties
 
 ### Community 216 - "dxf-vloeren-convert.mjs"
 Cohesion: 0.22
@@ -1389,12 +1375,12 @@ Cohesion: 0.33
 Nodes (8): EDITABLE_NUMBER_COLOR, getEditableNumbers(), hasEditableNumbers(), hitTestEditableNumber(), providers, pointInBox(), registerEditableNumbers(), shouldHighlightNumbers()
 
 ### Community 224 - "parametricSymbolStore.js"
-Cohesion: 0.26
-Nodes (11): ParametricSymbolPicker(), getAvailableTemplates(), [pendingParams, setPendingParamsSignal], [pendingSymbolId, setPendingSymbolIdSignal], [pickerOpen, setPickerOpen], resolveSymbolParams(), setPendingParams(), setPendingSymbolId() (+3 more)
+Cohesion: 0.27
+Nodes (10): ParametricSymbolPicker(), getAvailableTemplates(), [pendingParams, setPendingParamsSignal], [pendingSymbolId, setPendingSymbolIdSignal], [pickerOpen, setPickerOpen], resolveSymbolParams(), setPendingSymbolId(), validateSymbolParams() (+2 more)
 
 ### Community 225 - "cursor.js"
-Cohesion: 0.24
-Nodes (12): createRotatedResizeCursor(), getCursorForHandle(), cursor, _findMainView(), getCurrentCursor(), initCursor(), _isOverrideMode(), _toolCursor() (+4 more)
+Cohesion: 0.29
+Nodes (10): cursor, _findMainView(), getCurrentCursor(), initCursor(), _isOverrideMode(), _toolCursor(), BADGE_MAP, _cache (+2 more)
 
 ### Community 226 - "test-steel-catalog.mjs"
 Cohesion: 0.17
@@ -1456,13 +1442,9 @@ Nodes (10): 1. Viewport-cover als cachecontract, 2. Tile cover en level-of-detai
 Cohesion: 0.27
 Nodes (10): extract(), first_draw_image(), inline_image_exotisch_filter_wordt_overgeslagen(), inline_image_flate_met_png_predictor(), inline_image_raw_rgb_wordt_geemit(), profile_dump(), profile_dump_uniq(), profile_reset() (+2 more)
 
-### Community 241 - "AppMenu.jsx"
-Cohesion: 0.18
-Nodes (17): showPreferencesDialog(), actionAndClose(), AppMenu(), ICONS, [activePanel, setActivePanelSignal], captureFocus(), closeAppMenu(), getActivePanel() (+9 more)
-
-### Community 242 - "PrintDialog.jsx"
-Cohesion: 0.13
-Nodes (23): parsePageRange(), runPrintJob(), PrintDialog(), [defaultPrinter, setDefaultPrinter], [loaded, setLoaded], loadPrinters(), [printers, setPrinters], [active, setActive] (+15 more)
+### Community 242 - "watermark-renderer.js"
+Cohesion: 0.35
+Nodes (10): getPosition(), imageCache, renderHeaderFooter(), renderImageWatermark(), renderTextWatermark(), renderWatermarksBehind(), renderWatermarksForLayer(), renderWatermarksInFront() (+2 more)
 
 ### Community 243 - "test-wapeningskorf.mjs"
 Cohesion: 0.20
@@ -1524,21 +1506,17 @@ Nodes (7): Architecture, Companion Skill Packages, Conventions, Dependency Versi
 Cohesion: 0.20
 Nodes (10): Code that stays, Code to remove, Continuous-mode zoom + scroll redesign, Current state, Goals, Implementation flow, Non-goals, Open questions (+2 more)
 
-### Community 258 - "showMessage"
-Cohesion: 0.16
-Nodes (15): annotationToXFDF(), colorToXFDF(), commonAttrs(), escapeXml(), exportToXFDF(), parseRect(), replyToXFDF(), xfdfColorToHex() (+7 more)
+### Community 258 - "xfdf.js"
+Cohesion: 0.42
+Nodes (9): annotationToXFDF(), colorToXFDF(), commonAttrs(), escapeXml(), exportToXFDF(), parseRect(), replyToXFDF(), xfdfColorToHex() (+1 more)
 
 ### Community 259 - "frames.js"
 Cohesion: 0.53
 Nodes (9): _allowDir(), _exists(), getFrameDirs(), getUserFramesDir(), openFramesFolder(), parseFrameName(), _scanDir(), scanFrames() (+1 more)
 
-### Community 260 - "SchedulesPanel.jsx"
-Cohesion: 0.22
-Nodes (16): csvCell(), scheduleResultToCsv(), textCell(), initScheduleDrop(), onDragOver(), onDrop(), placeScheduleAt(), SCHEDULE_DND_MIME (+8 more)
-
-### Community 261 - "image-crop-overlay.js"
-Cohesion: 0.26
-Nodes (17): clampFrac(), commitCrop(), cropRect(), drawImageCropOverlay(), effScale(), handlePoints(), hitHandle(), install() (+9 more)
+### Community 260 - "annotation-image-sources.mjs"
+Cohesion: 0.38
+Nodes (8): annotationIdOf(), appearanceStream(), findImageAnnotationSources(), findImageForAnnotation(), nameOf(), numberOf(), rectKey(), ONE_PIXEL_PNG
 
 ### Community 262 - "tauri.conf.json"
 Cohesion: 0.20
@@ -1612,17 +1590,21 @@ Nodes (6): /js/pdf/mupdf-renderer.js, { chromium }, require, { chromium }, requi
 Cohesion: 0.33
 Nodes (3): matchAnnotationSizes(), resizeAnnotationToBounds(), updateBoundsFromPoints()
 
-### Community 282 - "PreferencesDialog.jsx"
-Cohesion: 0.14
-Nodes (10): LANGUAGES, handleSetDefault(), createPrefSignals(), DESKTOP_ONLY_TABS, PreferencesDialog(), TAB_ICONS, TAB_IDS, hideDefaultAppBar() (+2 more)
+### Community 282 - "openExternal"
+Cohesion: 0.28
+Nodes (5): openExternal(), handleSetDefault(), hideDefaultAppBar(), showDefaultAppBar(), [visible, setVisible]
 
-### Community 283 - "walls.js"
-Cohesion: 0.23
-Nodes (15): computeWallShape(), _cornersAt(), _drawIsolatieFill(), drawWall(), _isect(), _ISO_BY_ID, ISOLATIE_MATERIALEN, isPointOnWall() (+7 more)
+### Community 283 - "color-extraction.js"
+Cohesion: 0.58
+Nodes (7): decodeApStream(), extractAnnotationColors(), extractApAlphas(), inflateBytes(), mapPdfFontName(), pdfColorToHex(), pdfNum()
 
 ### Community 284 - "navigation-events.js"
-Cohesion: 0.27
-Nodes (11): addPanVelocity(), stopPanMomentum(), suppressNextFit(), viewport, zoomStepAtPoint(), CanvasScrollbars(), alignPageToBottom(), alignPageToTop() (+3 more)
+Cohesion: 0.44
+Nodes (8): addPanVelocity(), suppressNextFit(), zoomStepAtPoint(), alignPageToBottom(), alignPageToTop(), _resetZoomAccumSoon(), setupWheelZoom(), _viewportHeightCss()
+
+### Community 285 - "MiniLog.jsx"
+Cohesion: 0.25
+Nodes (3): tick(), toggleExpanded(), writeStoredBool()
 
 ### Community 286 - "nen1414Library.js"
 Cohesion: 0.31
@@ -1716,9 +1698,9 @@ Nodes (7): _annsForDoc(), _centerAndBounds(), diffAnnotationLists(), diffAnnotat
 Cohesion: 0.25
 Nodes (5): drawHighlights(), HIGHLIGHT_COLORS, INK_THRESHOLD, NEW_TINT, OLD_TINT
 
-### Community 311 - "WatermarkDialog.jsx"
-Cohesion: 0.23
-Nodes (8): recordAddWatermark(), buildHeaderFooter(), generateId(), handleAdd(), buildImageWatermark(), buildTextWatermark(), generateId(), handleAdd()
+### Community 311 - "interaction-store.ts"
+Cohesion: 0.43
+Nodes (7): InteractionState, resetAllInteraction(), resetDrag(), resetDrawing(), resetPan(), resetRubberBand(), Point
 
 ### Community 312 - "vloer-dxf.js"
 Cohesion: 0.32
@@ -1868,17 +1850,17 @@ Nodes (5): minimal_pdf_bytes(), Vec, test_load_document(), test_page_dimensions(
 Cohesion: 0.33
 Nodes (6): 1. Layout — no auto-centering, 2. Unified zoom function, 3. Anchor model, 4. Initial-paint fit, 5. Page-20 dim drift fix, Design
 
-### Community 354 - "dialogs.js"
-Cohesion: 0.18
-Nodes (12): getPageSetupSettings(), formatFileSize(), formatPdfDate(), gatherDocProperties(), hideDocPropertiesDialog(), hideExtractPagesDialog(), hideInsertPageDialog(), hideMergePdfsDialog() (+4 more)
+### Community 354 - "ifc-export.js"
+Cohesion: 0.60
+Nodes (5): _b64(), _entityFor(), exportIfcReport(), _geometryOf(), _ifcClassFor()
 
-### Community 355 - "setup.js"
-Cohesion: 0.31
-Nodes (12): initKeyboardHandlers(), handleDblClick(), registerAllTools(), clearDockHighlight(), getFileExtension(), IMAGE_EXTENSIONS, setupDragDrop(), setupEventListeners() (+4 more)
+### Community 355 - "tile-coverage.js"
+Cohesion: 0.73
+Nodes (4): coversRequest(), findBestCoveringTile(), tileCoversViewport(), visiblePdfRegion()
 
-### Community 356 - "contextMenuStore.js"
-Cohesion: 0.12
-Nodes (19): BookmarkNode(), BookmarksPanel(), beginMenu(), captureFocus(), [menuType, setMenuType], [multiSelectCount, setMultiSelectCount], [position, setPosition], showBookmarkMenu() (+11 more)
+### Community 356 - "bookmarksStore.js"
+Cohesion: 0.33
+Nodes (5): [countText, setCountText], [emptyMessage, setEmptyMessage], [selectedId, setSelectedId], [toolbarDisabled, setToolbarDisabled], [tree, setTree]
 
 ### Community 357 - "open-pdf-studio/package.json"
 Cohesion: 0.33
@@ -1944,9 +1926,9 @@ Nodes (4): Open PDF Studio — Testing MCP Server, Prerequisites, Test Scripts, 
 Cohesion: 0.40
 Nodes (5): 1. PDF.js <-> pdf-lib (originalBytesCache bridge), 2. SolidJS <-> Vanilla JS (bridge.ts facade), 3. Tauri FS <-> PDF Bytes (dual IPC), 4. i18next <-> SolidJS (custom useTranslation hook), Technology Boundaries
 
-### Community 376 - "RibbonButton.jsx"
-Cohesion: 0.27
-Nodes (8): autoShrinkLabel(), observer, overflows(), shrink(), ColorPickerButton(), RibbonButton(), SplitButton(), PALETTE_COLUMNS
+### Community 376 - "TypeLengthHUD.jsx"
+Cohesion: 0.70
+Nodes (4): _hintFor(), TypeLengthHUD(), typeLengthBuffer, typeLengthFormat
 
 ### Community 379 - "_FS_RECTF_"
 Cohesion: 0.40
@@ -1980,13 +1962,13 @@ Nodes (4): get_content_stream(), inspect(), Iter 29 - quick pikepdf signature in
 Cohesion: 0.67
 Nodes (3): createIcon(), fs, sharp
 
-### Community 390 - "FluentBundle"
-Cohesion: 0.21
-Nodes (7): DATETIME(), FluentBundle, FluentType, getMemoizerForLocale(), keysFromBundle(), NUMBER(), values()
+### Community 390 - "_findElementAcrossTabs"
+Cohesion: 0.67
+Nodes (4): _findElementAcrossTabs(), handleClickElement(), handleUiState(), _isElementDisabled()
 
-### Community 391 - "render_pdf_page"
-Cohesion: 0.25
-Nodes (8): OnceCell, render_pdf_page(), render_pdf_page_region(), Arc, worker_pool_ready(), Request, Response, String
+### Community 391 - "email-pdf.js"
+Cohesion: 0.83
+Nodes (3): basename(), buildMailtoUrl(), emailCurrentPdf()
 
 ### Community 394 - "Building from Source"
 Cohesion: 0.50
@@ -2004,97 +1986,25 @@ Nodes (3): FS_POINTF_, x, y
 Cohesion: 0.67
 Nodes (3): FS_SIZEF_, height, width
 
-### Community 461 - "HelpTab.jsx"
-Cohesion: 0.24
-Nodes (9): HelpTab(), aboutIcon, extensionsIcon, fileAssocIcon, shortcutsIcon, updatesIcon, checkForUpdates(), showNoUpdateMessage() (+1 more)
-
-### Community 462 - "split-tool.js"
-Cohesion: 0.22
-Nodes (7): _breakState, breakTool, _lineFrom(), _newId(), _pieceType(), _redraw(), splitTool
-
-### Community 463 - "page-type-cache.js"
-Cohesion: 0.31
-Nodes (5): _cache, cacheBatchResults(), cachePageType(), getCachedPageType(), _key()
-
-### Community 464 - "LanguageSelect.jsx"
-Cohesion: 0.36
-Nodes (7): focusOption(), handleOptionKeyDown(), handleSearchKeyDown(), handleTriggerKeyDown(), position(), select(), toggle()
-
-### Community 466 - "takeoff.test.mjs"
-Cohesion: 0.29
-Nodes (7): check(), eq(), lenField, lineEls, md, poly, res
-
-### Community 467 - "interaction-quality.js"
-Cohesion: 0.50
-Nodes (7): ariaShortcut(), decorateAccessibleName(), decorateTitle(), decorateTree(), hasShortcutToken(), installInteractionQuality(), macShortcut()
-
-### Community 469 - "document.ts"
-Cohesion: 0.29
-Nodes (6): Bookmark, ScrollPosition, StylePreset, TextEdit, UndoCommand, Watermark
-
-### Community 470 - "catmullRomToBezier"
-Cohesion: 0.53
-Nodes (5): catmullRomToBezier(), sampleSplineArrow(), splineArrowEndTangent(), buildSplineArrowAP(), strokeSplineArrowCurve()
-
-### Community 471 - "PageMenuContent"
-Cohesion: 0.53
-Nodes (5): canRevealInFileManager(), desktopOsType(), revealInFileManager(), revealInFileManagerLabelKey(), PageMenuContent()
-
-### Community 472 - "SignaturesPanel.jsx"
-Cohesion: 0.33
-Nodes (3): [countText, setCountText], [emptyMessage, setEmptyMessage], [items, setItems]
-
-### Community 473 - "attachmentsStore.js"
-Cohesion: 0.33
-Nodes (5): [countText, setCountText], [emptyMessage, setEmptyMessage], [items, setItems], [selectedKey, setSelectedKey], [toolbarDisabled, setToolbarDisabled]
-
-### Community 474 - "linksStore.js"
-Cohesion: 0.33
-Nodes (5): [countText, setCountText], [emptyMessage, setEmptyMessage], [groups, setGroups], [selectedIndex, setSelectedIndex], [toolbarDisabled, setToolbarDisabled]
-
-### Community 475 - "Q: Why does getActiveDocument() bridge so many UI and PDF subsystems?"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: Why does getActiveDocument() bridge so many UI and PDF subsystems?, Source Nodes
-
-### Community 476 - "Q: What is the next phase after Phase 8?"
-Cohesion: 0.40
-Nodes (4): Answer, Outcome, Q: What is the next phase after Phase 8?, Source Nodes
-
-### Community 477 - "DimensionTypeSection.jsx"
-Cohesion: 0.60
-Nodes (3): _dashFor(), _hatchFamily(), PreviewSwatch()
-
-### Community 478 - "hatch-catalog.js"
-Cohesion: 0.50
-Nodes (3): FALLBACK_FAMILIES, getHatchLineFamilies(), HATCH_LINE_FAMILIES
-
-### Community 480 - "ParametricSymbolSection.jsx"
-Cohesion: 0.83
-Nodes (3): ParametricSymbolSection(), paramValue(), setParam()
-
-### Community 481 - "formFieldsStore.js"
-Cohesion: 0.50
-Nodes (3): [countText, setCountText], [emptyMessage, setEmptyMessage], [groups, setGroups]
-
 ## Knowledge Gaps
-- **2330 isolated node(s):** `obj`, `buf`, `PDFS`, `lastSeenTs`, `require` (+2325 more)
+- **2319 isolated node(s):** `obj`, `buf`, `PDFS`, `lastSeenTs`, `require` (+2314 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **62 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **57 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `/js/core/state.ts` connect `/js/core/state.ts` to `bench-end-to-end.mjs`, `test-pdf-text-native-editing.mjs`, `test-line-selection-visual.mjs`, `test-freetext-rotation.mjs`, `verify-page-nav.mjs`, `test-edit-undo-coverage.mjs`, `selftest.cjs`, `zoom-observer.mjs`, `verify-rotation-sweep.mjs`, `mcp-bridge.js`, `verify-mupdf-compare.mjs`, `zoom-wheel-probe.mjs`, `verify-all-pdfs.mjs`, `verify-continuous.mjs`?**
-  _High betweenness centrality (0.130) - this node is a cross-community bridge._
-- **Why does `getActiveDocument()` connect `getActiveDocument` to `manager.js`, `scheduleStore.js`, `tool-context.js`, `showMessage`, `redrawAnnotations`, `image-crop-overlay.js`, `renderer.js`, `SchedulesPanel.jsx`, `DrawingTab.jsx`, `DialogHost.jsx`, `useTranslation`, `isTauri`, `ribbonIcons.js`, `AppearanceSection.jsx`, `links.js`, `saver.js`, `loader.js`, `left-panel.js`, `LeftPanel.jsx`, `formatStore.js`, `keyboard-handlers.js`, `text-selection.js`, `rendering.js`, `PreferencesDialog.jsx`, `navigation-events.js`, `snap-engine.js`, `form-layer.js`, `ContextMenu.jsx`, `page-manager.js`, `find-bar.js`, `quantitiesStore.js`, `text-edit-tool.js`, `CommentTab.jsx`, `text-layer.js`, `pdf-viewport.js`, `inline-number-editing.js`, `WatermarkDialog.jsx`, `countStore.js`, `bridge.ts`, `MobileApp.jsx`, `ArrangeTab.jsx`, `stavenreeks.js`, `g-move-mode.js`, `split-tool.js`, `drafting-rules.js`, `FormatTab.jsx`, `tabs.js`, `PageMenuContent`, `imageEditStore.js`, `screenshot.js`, `elementVisibilityStore.js`, `schedulesStore.js`, `embedded-image-detector.js`, `cursor.js`, `dialogs.js`, `AssistantPanel.jsx`, `setup.js`, `symbolEditStore.js`, `state.ts`, `QuantitiesProperties.jsx`, `AppMenu.jsx`, `PrintDialog.jsx`, `AnnotationsPanel.jsx`?**
-  _High betweenness centrality (0.056) - this node is a cross-community bridge._
+- **Why does `/js/core/state.ts` connect `/js/core/state.ts` to `bench-end-to-end.mjs`, `test-pdf-text-native-editing.mjs`, `test-line-selection-visual.mjs`, `test-freetext-rotation.mjs`, `verify-page-nav.mjs`, `test-edit-undo-coverage.mjs`, `selftest.cjs`, `zoom-observer.mjs`, `verify-rotation-sweep.mjs`, `state.ts`, `verify-mupdf-compare.mjs`, `zoom-wheel-probe.mjs`, `verify-all-pdfs.mjs`, `verify-continuous.mjs`?**
+  _High betweenness centrality (0.152) - this node is a cross-community bridge._
+- **Why does `getActiveDocument()` connect `getActiveDocument` to `manager.js`, `scheduleStore.js`, `tool-context.js`, `xfdf.js`, `redrawAnnotations`, `renderer.js`, `propertiesStore.js`, `email-pdf.js`, `cloneAnnotation`, `useTranslation`, `ribbonIcons.js`, `isTauri`, `AppearanceSection.jsx`, `attachments.js`, `loader.js`, `saver.js`, `left-panel.js`, `links.js`, `formatStore.js`, `keyboard-handlers.js`, `state.ts`, `text-selection.js`, `rendering.js`, `OpenPanel.jsx`, `navigation-events.js`, `snap-engine.js`, `form-layer.js`, `ContextMenu.jsx`, `page-manager.js`, `find-bar.js`, `quantitiesStore.js`, `text-edit-tool.js`, `CommentTab.jsx`, `plugin-api.js`, `text-layer.js`, `pdf-viewport.js`, `inline-number-editing.js`, `dialogs.js`, `preferences.js`, `countStore.js`, `bridge.ts`, `alignment.js`, `stavenreeks.js`, `g-rotate-mode.js`, `geometry.js`, `FormatTab.jsx`, `DocumentTabs.jsx`, `screenshot.js`, `elementVisibilityStore.js`, `schedulesStore.js`, `embedded-image-detector.js`, `cursor.js`, `ifc-export.js`, `AssistantPanel.jsx`, `ViewTab.jsx`, `symbolEditStore.js`, `QuantitiesProperties.jsx`, `watermark-renderer.js`, `AnnotationsPanel.jsx`?**
+  _High betweenness centrality (0.059) - this node is a cross-community bridge._
 - **Why does `DocumentHandle` connect `DocumentHandle` to `open-pdf-render/src/lib.rs`, `FontRegistry`, `RenderedPage`, `PdfBytesCache`?**
-  _High betweenness centrality (0.049) - this node is a cross-community bridge._
+  _High betweenness centrality (0.051) - this node is a cross-community bridge._
 - **Are the 2 inferred relationships involving `redrawAnnotations()` (e.g. with `setTool()` and `buildToolContext()`) actually correct?**
   _`redrawAnnotations()` has 2 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `obj`, `buf`, `PDFS` to the rest of the system?**
-  _2330 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _2319 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `manager.js` be split into smaller, more focused modules?**
-  _Cohesion score 0.023872875092387287 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.02597579219366245 - nodes in this community are weakly interconnected._
 - **Should `viewer.mjs` be split into smaller, more focused modules?**
-  _Cohesion score 0.023990683229813663 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.02456575682382134 - nodes in this community are weakly interconnected._

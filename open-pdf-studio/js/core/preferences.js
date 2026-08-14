@@ -41,6 +41,7 @@ export async function loadPreferences() {
       if (loaded.textboxFontSize === 14) loaded.textboxFontSize = 8;
       // Merge with defaults to ensure all keys exist
       state.preferences = { ...DEFAULT_PREFERENCES, ...loaded };
+      state.preferences.density = normalizeDensity(state.preferences.density);
     }
 
     // Persist to both storages so they stay in sync
@@ -72,6 +73,7 @@ export async function loadPreferences() {
 // Save preferences to Rust file storage + localStorage mirror
 export function savePreferences() {
   try {
+    state.preferences.density = normalizeDensity(state.preferences.density);
     const json = JSON.stringify(state.preferences);
     // localStorage mirror for synchronous theme script in index.html
     localStorage.setItem('pdfEditorPreferences', json);
@@ -111,6 +113,16 @@ export function applyTheme(themeName) {
   setCurrentTheme(themeName);
 }
 
+export function normalizeDensity(densityName) {
+  return densityName === 'comfortable' ? 'comfortable' : 'compact';
+}
+
+export function applyDensity(densityName) {
+  const density = normalizeDensity(densityName);
+  document.documentElement.setAttribute('data-density', density);
+  return density;
+}
+
 // Initialize theme change listener using Tauri API (more reliable than matchMedia)
 async function initThemeListener() {
   if (isTauri() && window.__TAURI__?.window) {
@@ -144,6 +156,10 @@ export function applyPreferences() {
   if (state.preferences.theme) {
     applyTheme(state.preferences.theme);
   }
+
+  // Apply the shared interface density to the document root so shell, ribbon,
+  // panels, dialogs, and controls respond from one persisted preference.
+  state.preferences.density = applyDensity(state.preferences.density);
 
   // Update default author from preferences
   state.defaultAuthor = state.preferences.authorName || 'User';

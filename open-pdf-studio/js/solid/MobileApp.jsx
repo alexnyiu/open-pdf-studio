@@ -643,7 +643,7 @@ function MobilePreferences(props) {
       <div class="mobile-prefs-body">
         <div class="mobile-prefs-section">
           <div class="mobile-prefs-section-title">{t('general.theme')}</div>
-          <select value={state.preferences.theme || 'system'} onChange={e => handleThemeChange(e.target.value)}>
+          <select aria-label={t('general.applicationTheme')} value={state.preferences.theme || 'system'} onChange={e => handleThemeChange(e.target.value)}>
             <option value="system">{tRibbon('theme.system')}</option>
             <option value="light">{tRibbon('theme.light')}</option>
             <option value="dark">{tRibbon('theme.dark')}</option>
@@ -653,8 +653,16 @@ function MobilePreferences(props) {
         </div>
 
         <div class="mobile-prefs-section">
+          <div class="mobile-prefs-section-title">{t('general.density') || 'Interface Density'}</div>
+          <select aria-label={t('general.interfaceDensity') || 'Interface Density'} value={state.preferences.density || 'compact'} onChange={e => update('density', e.target.value)}>
+            <option value="compact">{t('general.compact') || 'Compact'}</option>
+            <option value="comfortable">{t('general.comfortable') || 'Comfortable'}</option>
+          </select>
+        </div>
+
+        <div class="mobile-prefs-section">
           <div class="mobile-prefs-section-title">{t('general.language')}</div>
-          <select value={state.preferences.language || 'auto'} onChange={e => handleLanguageChange(e.target.value)}>
+          <select aria-label={t('general.interfaceLanguage')} value={state.preferences.language || 'auto'} onChange={e => handleLanguageChange(e.target.value)}>
             <For each={LANGUAGES}>
               {(lang) => <option value={lang.code}>{lang.code === 'auto' ? 'Auto-detect' : lang.name}</option>}
             </For>
@@ -663,7 +671,7 @@ function MobilePreferences(props) {
 
         <div class="mobile-prefs-section">
           <div class="mobile-prefs-section-title">{t('general.author')}</div>
-          <input type="text" value={state.preferences.authorName || ''} onInput={e => update('authorName', e.target.value)} placeholder="Author name" />
+          <input aria-label={t('general.defaultAuthorName')} type="text" value={state.preferences.authorName || ''} onInput={e => update('authorName', e.target.value)} placeholder="Author name" />
         </div>
 
         <div class="mobile-prefs-section">

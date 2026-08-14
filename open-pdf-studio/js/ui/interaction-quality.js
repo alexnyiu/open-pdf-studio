@@ -35,12 +35,28 @@ function ariaShortcut(shortcut) {
   return normalized;
 }
 
-function decorateTitle(element) {
+function decorateAccessibleName(element) {
   if (!(element instanceof HTMLElement)) return;
-  if (element.hasAttribute('data-ui-tooltip')) return;
+  if (!element.matches('button, [role="button"], input, select, textarea')) return;
+  if (element.hasAttribute('aria-label') || element.hasAttribute('aria-labelledby')) return;
+  if (element.textContent?.replace(/\s+/g, ' ').trim()) return;
 
   const title = element.getAttribute('title')?.trim();
   if (!title) return;
+  const match = title.match(SHORTCUT_RE);
+  const label = (match ? match[1] : title).trim();
+  if (!label) return;
+  element.setAttribute('aria-label', label);
+  element.setAttribute('data-phase9-a11y', 'named-from-title');
+}
+
+function decorateTitle(element) {
+  if (!(element instanceof HTMLElement)) return;
+  decorateAccessibleName(element);
+
+  const title = element.getAttribute('title')?.trim();
+  if (!title) return;
+  if (element.hasAttribute('data-ui-tooltip')) return;
   const match = title.match(SHORTCUT_RE);
   if (!match || !hasShortcutToken(match[2])) return;
 
@@ -78,7 +94,7 @@ export function installInteractionQuality(root = document.getElementById('app-ro
     subtree: true,
     childList: true,
     attributes: true,
-    attributeFilter: ['title'],
+    attributeFilter: ['title', 'aria-label'],
   });
 
   root.__phase8InteractionQuality = { observer };

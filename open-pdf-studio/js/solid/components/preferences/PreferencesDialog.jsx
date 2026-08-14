@@ -76,6 +76,25 @@ export default function PreferencesDialog(props) {
 
   const prefs = createPrefSignals(state.preferences);
 
+  const visibleTabs = () => isMobile()
+    ? TAB_IDS.filter(tab => !DESKTOP_ONLY_TABS.includes(tab.id))
+    : TAB_IDS;
+
+  function handleTabKeyDown(e, index) {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const tabs = visibleTabs();
+    const direction = e.key === 'ArrowUp' ? -1 : 1;
+    const nextIndex = e.key === 'Home'
+      ? 0
+      : e.key === 'End'
+        ? tabs.length - 1
+        : (index() + direction + tabs.length) % tabs.length;
+    const nextTab = tabs[nextIndex];
+    setActiveTab(nextTab.id);
+    requestAnimationFrame(() => document.getElementById(`preferences-tab-${nextTab.id}`)?.focus());
+  }
+
   function close() {
     closeDialog('preferences');
   }
@@ -145,22 +164,30 @@ export default function PreferencesDialog(props) {
       footer={footer}
     >
       <div class="preferences-content">
-        <div class="pref-tabs">
-          <For each={isMobile() ? TAB_IDS.filter(t => !DESKTOP_ONLY_TABS.includes(t.id)) : TAB_IDS}>
-            {(tab) => (
+        <div class="pref-tabs" role="tablist" aria-label={t('title')}>
+          <For each={visibleTabs()}>
+            {(tab, index) => (
               <button
                 class="pref-tab"
+                id={`preferences-tab-${tab.id}`}
+                type="button"
+                role="tab"
                 classList={{ active: activeTab() === tab.id }}
+                aria-selected={activeTab() === tab.id ? 'true' : 'false'}
+                aria-controls={`preferences-panel-${tab.id}`}
+                tabIndex={activeTab() === tab.id ? 0 : -1}
                 onClick={() => setActiveTab(tab.id)}
+                onKeyDown={e => handleTabKeyDown(e, index)}
               >
-                <span class="pref-tab-icon">{TAB_ICONS[tab.id]}</span>
+                <span class="pref-tab-icon" aria-hidden="true">{TAB_ICONS[tab.id]}</span>
                 {t(tab.key)}
               </button>
             )}
           </For>
         </div>
 
-        <div class="pref-tab-content active">
+        <div class="pref-tab-content active" id={`preferences-panel-${activeTab()}`} role="tabpanel"
+          aria-labelledby={`preferences-tab-${activeTab()}`} tabIndex="0">
           <Switch>
             <Match when={activeTab() === 'general'}>
               <GeneralTab prefs={prefs} />

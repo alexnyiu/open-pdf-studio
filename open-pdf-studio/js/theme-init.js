@@ -8,4 +8,7 @@ try {
     }
     document.documentElement.setAttribute('data-theme', t);
   }
+  if (p.density === 'compact' || p.density === 'comfortable') {
+    document.documentElement.setAttribute('data-density', p.density);
+  }
 } catch(e) {}

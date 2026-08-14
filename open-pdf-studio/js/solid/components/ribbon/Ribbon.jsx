@@ -32,7 +32,7 @@ export default function Ribbon() {
 
   return (
     <>
-      <div class="ribbon-tabs">
+      <div class="ribbon-tabs" role="tablist" aria-label="Ribbon tabs">
         <RibbonTab label={t('tabs.file')} isFileTab={true} id="file-tab"
           onClick={() => openAppMenu()} />
         <RibbonTab label={t('tabs.home')} dataTab="home"
@@ -77,6 +77,7 @@ export default function Ribbon() {
           class="ribbon-collapse-toggle"
           id="ribbon-collapse-toggle"
           title={ribbonCollapsed() ? (t('common.expandRibbon') || 'Expand ribbon') : (t('common.collapseRibbon') || 'Collapse ribbon')}
+          aria-label={ribbonCollapsed() ? (t('common.expandRibbon') || 'Expand ribbon') : (t('common.collapseRibbon') || 'Collapse ribbon')}
           aria-expanded={!ribbonCollapsed() ? 'true' : 'false'}
           data-ui-tooltip={ribbonCollapsed() ? (t('common.expandRibbon') || 'Expand ribbon') : (t('common.collapseRibbon') || 'Collapse ribbon')}
           onClick={toggleCollapsed}
