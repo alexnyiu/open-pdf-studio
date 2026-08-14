@@ -6,6 +6,7 @@ import { state, getActiveDocument } from '../../../core/state.js';
 import { savePreferences, applyTheme } from '../../../core/preferences.js';
 import { useTranslation } from '../../../i18n/useTranslation.js';
 import { isMobile, isTauri, getUsername } from '../../../core/platform.js';
+import { showConfirm } from '../../../ui/chrome/confirm-dialog.js';
 
 import GeneralTab from './GeneralTab.jsx';
 import AnnotationsTab from './AnnotationsTab.jsx';
@@ -102,12 +103,12 @@ export default function PreferencesDialog(props) {
   }
 
   async function handleReset() {
-    let confirmed = false;
-    if (isTauri() && window.__TAURI__?.dialog) {
-      confirmed = await window.__TAURI__.dialog.ask(t('resetConfirm'), { title: t('resetToDefaults'), kind: 'warning' });
-    } else {
-      confirmed = confirm(t('resetConfirm'));
-    }
+    const confirmed = await showConfirm({
+      title: t('resetToDefaults'),
+      message: t('resetConfirm'),
+      confirmLabel: t('resetToDefaults'),
+      cancelLabel: tCommon('cancel'),
+    });
     if (confirmed) {
       for (const key of Object.keys(DEFAULT_PREFERENCES)) {
         prefs[key][1](DEFAULT_PREFERENCES[key]);

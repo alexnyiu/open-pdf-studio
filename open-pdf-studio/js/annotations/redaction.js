@@ -4,6 +4,7 @@ import { redrawAnnotations } from './rendering.js';
 import { recordAdd } from '../core/undo-manager.js';
 import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
+import { showConfirm } from '../ui/chrome/confirm-dialog.js';
 
 // Apply all redaction annotations permanently (flatten them)
 export async function applyRedactions() {
@@ -18,12 +19,12 @@ export async function applyRedactions() {
 
   const count = redactions.length;
   const msg = `Apply ${count} redaction${count > 1 ? 's' : ''} on page ${curPage}?\n\nThis will permanently black out the marked areas. This action cannot be undone.`;
-  let confirmed = false;
-  if (window.__TAURI__?.dialog?.ask) {
-    confirmed = await window.__TAURI__.dialog.ask(msg, { title: 'Apply Redactions', kind: 'warning' });
-  } else {
-    confirmed = confirm(msg);
-  }
+  const confirmed = await showConfirm({
+    title: 'Apply Redactions',
+    message: msg,
+    confirmLabel: 'Apply',
+    cancelLabel: 'Cancel',
+  });
 
   if (!confirmed) return;
 
@@ -67,12 +68,12 @@ export async function applyAllRedactions() {
   const count = allRedactions.length;
   const pages = [...new Set(allRedactions.map(a => a.page))].sort((a, b) => a - b);
   const msg = `Apply ${count} redaction${count > 1 ? 's' : ''} across ${pages.length} page${pages.length > 1 ? 's' : ''}?\n\nThis will permanently black out all marked areas. This action cannot be undone.`;
-  let confirmed = false;
-  if (window.__TAURI__?.dialog?.ask) {
-    confirmed = await window.__TAURI__.dialog.ask(msg, { title: 'Apply Redactions', kind: 'warning' });
-  } else {
-    confirmed = confirm(msg);
-  }
+  const confirmed = await showConfirm({
+    title: 'Apply Redactions',
+    message: msg,
+    confirmLabel: 'Apply All',
+    cancelLabel: 'Cancel',
+  });
 
   if (!confirmed) return;
 

@@ -10,49 +10,67 @@ const [targetPage, setTargetPage] = createSignal(null);
 // { handleType, holeIndex|null, nodeIndex } so the context menu can offer
 // vertex-specific actions (delete, insert before/after).
 const [vertexContext, setVertexContext] = createSignal(null);
+let returnFocus = null;
+
+function captureFocus() {
+  if (typeof document === 'undefined') return null;
+  const active = document.activeElement;
+  return active && active !== document.body ? active : null;
+}
+
+function beginMenu() {
+  if (!visible()) returnFocus = captureFocus();
+  setVisible(true);
+}
 
 export function showAnnotationMenu(x, y, annotation, vertex = null) {
   setTargetAnnotation(annotation);
   setVertexContext(vertex);
   setMenuType('annotation');
   setPosition({ x, y });
-  setVisible(true);
+  beginMenu();
 }
 
 export function showMultiAnnotationMenu(x, y, count) {
   setMultiSelectCount(count);
   setMenuType('annotationMulti');
   setPosition({ x, y });
-  setVisible(true);
+  beginMenu();
 }
 
 export function showPageMenu(x, y) {
   setMenuType('page');
   setPosition({ x, y });
-  setVisible(true);
+  beginMenu();
 }
 
 export function showTextSelectionMenu(x, y) {
   setMenuType('textSelection');
   setPosition({ x, y });
-  setVisible(true);
+  beginMenu();
 }
 
 export function showBookmarkMenu(x, y) {
   setMenuType('bookmark');
   setPosition({ x, y });
-  setVisible(true);
+  beginMenu();
 }
 
 export function showThumbnailMenu(x, y, pageNum) {
   setTargetPage(pageNum);
   setMenuType('thumbnail');
   setPosition({ x, y });
-  setVisible(true);
+  beginMenu();
 }
 
 export function hideMenu() {
+  if (!visible()) return;
   setVisible(false);
+  const target = returnFocus;
+  returnFocus = null;
+  queueMicrotask(() => {
+    if (target?.isConnected && !target.disabled) target.focus?.({ preventScroll: true });
+  });
 }
 
 export {

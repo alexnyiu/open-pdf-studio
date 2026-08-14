@@ -11,11 +11,13 @@ import { showDocPropertiesDialog, showNewDocDialog, showPrintDialog } from '../.
 import { hasUnsavedChanges, getUnsavedDocumentNames } from '../../../ui/chrome/tabs.js';
 import { closeWindow } from '../../../core/platform.js';
 import { useTranslation } from '../../../i18n/useTranslation.js';
+import { showConfirm } from '../../../ui/chrome/confirm-dialog.js';
 
 function MenuItem(props) {
   return (
     <button
       class={`app-menu-item${props.active ? ' active' : ''}`}
+      title={props.shortcut ? `${props.label} (${props.shortcut})` : undefined}
       onClick={props.onClick}
     >
       <span class="app-menu-item-icon" innerHTML={props.icon} />
@@ -60,15 +62,12 @@ export default function AppMenu() {
       const names = getUnsavedDocumentNames().join(', ');
       const message = tDialogs('unsavedChanges.message', { names });
       const title = tDialogs('unsavedChanges.title');
-      let result = false;
-      if (window.__TAURI__?.dialog?.ask) {
-        result = await window.__TAURI__.dialog.ask(
-          message,
-          { title: title, kind: 'warning' }
-        );
-      } else {
-        result = confirm(message);
-      }
+      const result = await showConfirm({
+        title,
+        message,
+        confirmLabel: 'Exit without saving',
+        cancelLabel: 'Cancel',
+      });
       if (!result) return;
     }
     closeWindow();

@@ -77,6 +77,8 @@ export default function Ribbon() {
           class="ribbon-collapse-toggle"
           id="ribbon-collapse-toggle"
           title={ribbonCollapsed() ? (t('common.expandRibbon') || 'Expand ribbon') : (t('common.collapseRibbon') || 'Collapse ribbon')}
+          aria-expanded={!ribbonCollapsed() ? 'true' : 'false'}
+          data-ui-tooltip={ribbonCollapsed() ? (t('common.expandRibbon') || 'Expand ribbon') : (t('common.collapseRibbon') || 'Collapse ribbon')}
           onClick={toggleCollapsed}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">

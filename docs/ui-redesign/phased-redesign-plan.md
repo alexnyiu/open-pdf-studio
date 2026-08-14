@@ -311,9 +311,14 @@ Also run:
 
 Each phase should end with a small, reviewable commit and a recorded test result. If a gate fails, fix or revert that slice before beginning the next phase.
 
-## Phase 8: Improve interaction quality
+## Phase 8: Improve interaction quality — completed
 
 Estimated time: 2–3 weeks.
+
+Phase 8 is complete. The shared interaction layer, workflow-wide confirmations,
+Escape/focus behavior, tooltip metadata, busy/progress semantics, and reduced
+motion support passed the recorded static and live gates in
+[phase-8-interaction-quality.md](/Users/alexander/Personal%20Projects/open-pdf-studio/docs/ui-redesign/phase-8-interaction-quality.md).
 
 Interaction states and accessibility begin in Phase 3 and are required by every implementation gate. This phase is a cross-workflow consistency pass for behavior that could not be resolved inside an individual slice:
 

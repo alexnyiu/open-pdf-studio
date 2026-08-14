@@ -14,6 +14,7 @@ import { state, getActiveDocument } from '../../core/state.js';
 import { setTool } from '../manager.js';
 import { getEffectiveScale } from '../tool-context.js';
 import { showMessage } from '../../bridge.js';
+import { showConfirm } from '../../ui/chrome/confirm-dialog.js';
 import i18next from '../../i18n/config.js';
 import {
   detectEmbeddedImages, getCachedEmbeddedImages, hitTestEmbeddedImage,
@@ -79,17 +80,15 @@ export const removeImageTool = {
 
     const msg = t('drawing.removeImageConfirm',
       'Remove this image from the page? This edits the PDF content and can be undone.');
-    let confirmed = false;
     try {
-      if (window.__TAURI__?.dialog?.ask) {
-        confirmed = await window.__TAURI__.dialog.ask(msg, {
-          title: t('drawing.removeImage', 'Remove image'), kind: 'warning',
-        });
-      } else {
-        confirmed = confirm(msg);
-      }
-    } catch { confirmed = false; }
-    if (!confirmed) return;
+      const confirmed = await showConfirm({
+        title: t('drawing.removeImage', 'Remove image'),
+        message: msg,
+        confirmLabel: t('drawing.removeImage', 'Remove image'),
+        cancelLabel: 'Cancel',
+      });
+      if (!confirmed) return;
+    } catch { return; }
 
     _busy = true;
     try {

@@ -10,6 +10,9 @@ export default function RibbonButton(props) {
       iconOnly={props.iconOnly}
       id={props.id}
       title={props.title}
+      tooltip={props.tooltip}
+      shortcut={props.shortcut}
+      ariaKeyshortcuts={props.ariaKeyshortcuts}
       ariaLabel={props.iconOnly ? props.title : undefined}
       disabled={props.disabled}
       onClick={props.onClick}

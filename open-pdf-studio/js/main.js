@@ -78,6 +78,7 @@ import './i18n/config.js';
 // Solid.js
 import { render } from 'solid-js/web';
 import App from './solid/App.jsx';
+import { installInteractionQuality } from './ui/interaction-quality.js';
 
 // Recent files (mobile)
 import { addRecentFile } from './mobile/recent-files.js';
@@ -225,6 +226,7 @@ async function init() {
   // Single render call — mounts the entire UI tree
   // render() is synchronous, so DOM elements exist immediately after
   render(() => App(), document.getElementById('app-root'));
+  installInteractionQuality();
   recordStartupDiagnostic('frontend-rendered');
 
   // Restore properties panel visibility from preferences

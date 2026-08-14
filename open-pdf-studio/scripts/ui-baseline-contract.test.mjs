@@ -296,3 +296,102 @@ test('phase 7 open workflow preserves document owners and adds an accessible emp
   const globalStyles = await source('styles.css');
   assert.ok(globalStyles.includes("@import './styles/phase-7-open-workflow.css';"));
 });
+
+test('phase 8 interaction quality centralizes shared states and progress semantics', async () => {
+  const button = await source('js/solid/components/ui/UiButton.jsx');
+  for (const marker of [
+    'aria-keyshortcuts',
+    'aria-busy',
+    'data-ui-tooltip',
+    'data-ui-shortcut',
+  ]) {
+    assert.ok(button.includes(marker), `UiButton.jsx must expose ${marker}`);
+  }
+
+  const qualityStyles = await source('styles/phase-8-interaction-quality.css');
+  for (const marker of [
+    ':focus-visible',
+    ':active:not(:disabled)',
+    '[aria-disabled="true"]',
+    'data-ui-tooltip',
+    'prefers-reduced-motion: reduce',
+    '--ui-transition-panel',
+  ]) {
+    assert.ok(qualityStyles.includes(marker), `phase-8-interaction-quality.css must cover ${marker}`);
+  }
+  assert.doesNotMatch(
+    qualityStyles,
+    /#pdf-container|#canvas-wrapper|#canvas-container|#pdf-canvas|#text-highlight-canvas|#annotation-canvas|#continuous-container/,
+    'Phase 8 interaction styles must not redefine protected PDF viewport selectors',
+  );
+
+  const emptyState = await source('js/solid/components/EmptyState.jsx');
+  assert.ok(emptyState.includes('data-phase8="interaction-quality"'));
+  assert.ok(emptyState.includes('shortcut="Ctrl+O"'));
+  assert.ok(emptyState.includes("import UiButton from './ui/UiButton.jsx';"));
+
+  const progress = await source('js/solid/components/PrintProgressToast.jsx');
+  assert.ok(progress.includes('role="progressbar"'));
+  assert.ok(progress.includes('aria-valuenow'));
+  assert.ok(progress.includes('aria-live='));
+
+  const globalStyles = await source('styles.css');
+  assert.ok(globalStyles.includes("@import './styles/phase-8-interaction-quality.css';"));
+});
+
+test('phase 8 applies shared metadata, confirmation, and focus behavior across legacy owners', async () => {
+  const adapter = await source('js/ui/interaction-quality.js');
+  for (const marker of [
+    'MutationObserver',
+    'data-ui-tooltip',
+    'data-ui-shortcut',
+    'aria-keyshortcuts',
+  ]) {
+    assert.ok(adapter.includes(marker), `interaction-quality.js must cover ${marker}`);
+  }
+
+  const dialogStore = await source('js/solid/stores/dialogStore.js');
+  assert.match(dialogStore, /returnFocus/);
+  assert.match(dialogStore, /queueMicrotask/);
+
+  const dialog = await source('js/solid/components/Dialog.jsx');
+  assert.match(dialog, /e\.key === 'Escape'/);
+  assert.match(dialog, /e\.key === 'Tab'/);
+  assert.ok(dialog.includes('data-phase8-dialog="true"'));
+
+  const loading = await source('js/solid/components/LoadingOverlay.jsx');
+  assert.ok(loading.includes('role="status"'));
+  assert.ok(loading.includes('aria-busy'));
+  assert.ok(loading.includes('role="progressbar"'));
+
+  const confirm = await source('js/ui/chrome/confirm-dialog.js');
+  assert.ok(confirm.includes('showConfirm'));
+  assert.ok(confirm.includes('showUnsavedChanges'));
+  const dialogHost = await source('js/solid/components/DialogHost.jsx');
+  assert.ok(dialogHost.includes("'unsaved-changes': UnsavedChangesDialog"));
+
+  const destructiveOwners = [
+    'js/annotations/redaction.js',
+    'js/tools/tools/remove-image-tool.js',
+    'js/ui/panels/bookmarks.js',
+    'js/tools/keyboard-handlers.js',
+    'js/solid/components/app-menu/AppMenu.jsx',
+    'js/solid/components/app-menu/ExtensionsPanel.jsx',
+    'js/solid/components/preferences/PreferencesDialog.jsx',
+    'js/solid/components/ribbon/CommentTab.jsx',
+    'js/ui/chrome/tabs.js',
+  ];
+  for (const relativePath of destructiveOwners) {
+    const contents = await source(relativePath);
+    assert.doesNotMatch(
+      contents,
+      /(^|[^\w.])confirm\s*\(/,
+      `${relativePath} must use the shared confirmation owner`,
+    );
+  }
+
+  const qualityStyles = await source('styles/phase-8-interaction-quality.css');
+  assert.match(qualityStyles, /\.context-menu-item/);
+  assert.match(qualityStyles, /\.find-toggle-btn/);
+  assert.match(qualityStyles, /\.app-menu-item/);
+});

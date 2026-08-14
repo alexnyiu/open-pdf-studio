@@ -3,6 +3,7 @@ import { state, getActiveDocument } from '../../core/state.js';
 import { goToPage } from '../../pdf/renderer.js';
 import { markDocumentModified } from '../../ui/chrome/tabs.js';
 import { isPdfAReadOnly } from '../../pdf/loader.js';
+import { showConfirm } from '../chrome/confirm-dialog.js';
 import {
   openDialog, setBookmarkTree as setTree, setBookmarkCountText as setCountText,
   setBookmarkEmptyMessage as setEmptyMessage, setBookmarkSelectedId as setSelectedId,
@@ -349,15 +350,12 @@ export async function deleteBookmark() {
 
   if (children.length > 0) {
     // Confirm with user
-    let confirmed = false;
-    if (window.__TAURI__?.dialog?.ask) {
-      confirmed = await window.__TAURI__.dialog.ask(
-        `Delete "${bm.title}" and its ${children.length} child bookmark${children.length !== 1 ? 's' : ''}?`,
-        { title: 'Delete Bookmark', kind: 'warning' }
-      );
-    } else {
-      confirmed = confirm(`Delete "${bm.title}" and its ${children.length} child bookmark(s)?`);
-    }
+    const confirmed = await showConfirm({
+      title: 'Delete Bookmark',
+      message: `Delete "${bm.title}" and its ${children.length} child bookmark${children.length !== 1 ? 's' : ''}?`,
+      confirmLabel: 'Delete',
+      cancelLabel: 'Cancel',
+    });
     if (!confirmed) return;
   }
 
@@ -397,4 +395,3 @@ function showBookmarkDialog(dialogTitle, currentTitle, currentPage) {
     });
   });
 }
-

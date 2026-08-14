@@ -36,7 +36,7 @@ export default function HomeTab() {
     <div class="ribbon-content active" id="tab-home">
       <AdaptiveGroups>
         <RibbonGroup label={t('home.document') || 'Document'}>
-          <RibbonButton id="btn-home-new" title={t('home.newDocument') || 'Nieuw document (kader of blanco)'}
+          <RibbonButton id="btn-home-new" title={t('home.newDocument') || 'Nieuw document (kader of blanco)'} shortcut="Ctrl+N"
             icon={newDocIcon} label={t('home.new') || 'Nieuw'}
             onClick={() => openDialog('new-doc')} />
           <RibbonButton id="btn-home-ifc-export" title="Opslaan als IFC-report (.ifcreport)"
@@ -126,17 +126,17 @@ export default function HomeTab() {
 
         <RibbonGroup label={t('home.view')}>
           <RibbonButtonStack>
-            <RibbonButton size="small" id="zoom-in-ribbon" title={t('home.zoomIn')} icon={zoomInIcon} label={t('home.zoomIn')}
+            <RibbonButton size="small" id="zoom-in-ribbon" title={t('home.zoomIn')} shortcut="Ctrl+=" icon={zoomInIcon} label={t('home.zoomIn')}
               disabled={noPdf()} onClick={() => zoomIn()} />
-            <RibbonButton size="small" id="zoom-out-ribbon" title={t('home.zoomOut')} icon={zoomOutIcon} label={t('home.zoomOut')}
+            <RibbonButton size="small" id="zoom-out-ribbon" title={t('home.zoomOut')} shortcut="Ctrl+-" icon={zoomOutIcon} label={t('home.zoomOut')}
               disabled={noPdf()} onClick={() => zoomOut()} />
-            <RibbonButton size="small" id="fit-width" title={t('home.fitWidth')} icon={fitWidthIcon} label={t('home.fitWidth')}
+            <RibbonButton size="small" id="fit-width" title={t('home.fitWidth')} shortcut="Ctrl+1" icon={fitWidthIcon} label={t('home.fitWidth')}
               disabled={noPdf()} onClick={() => fitWidth()} />
           </RibbonButtonStack>
           <RibbonButtonStack>
-            <RibbonButton size="small" id="actual-size-ribbon" title={t('home.actualSize')} icon={actualSizeIcon} label={t('home.hundredPercent')}
+            <RibbonButton size="small" id="actual-size-ribbon" title={t('home.actualSize')} shortcut="Ctrl+0" icon={actualSizeIcon} label={t('home.hundredPercent')}
               disabled={noPdf()} onClick={() => actualSize()} />
-            <RibbonButton size="small" id="fit-page-ribbon" title={t('home.fitPage')} icon={fitPageIcon} label={t('home.fitPageLabel')}
+            <RibbonButton size="small" id="fit-page-ribbon" title={t('home.fitPage')} shortcut="Ctrl+2" icon={fitPageIcon} label={t('home.fitPageLabel')}
               disabled={noPdf()} onClick={() => fitPage()} />
           </RibbonButtonStack>
           {/* Pagina-rotatie (bewerkt het document) staat bij de pagina-
@@ -161,7 +161,7 @@ export default function HomeTab() {
         </RibbonGroup>
 
         <RibbonGroup label={t('home.find')}>
-          <RibbonButton id="ribbon-find" title={t('home.findCtrlF')} icon={findIcon} label={t('home.find')}
+          <RibbonButton id="ribbon-find" title={t('home.findCtrlF')} shortcut="Ctrl+F" icon={findIcon} label={t('home.find')}
             disabled={noPdf()} onClick={() => openFindBar()} />
         </RibbonGroup>
 

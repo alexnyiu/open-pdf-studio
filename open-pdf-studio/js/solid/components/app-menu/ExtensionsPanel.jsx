@@ -3,9 +3,11 @@ import { closeAppMenu } from '../../stores/appMenuStore.js';
 import { useTranslation } from '../../../i18n/useTranslation.js';
 import { getLoadedPlugins, installPluginFromFile, loadInstalledPlugins, unloadPlugin, reinstallPlugin } from '../../../plugins/plugin-manager.js';
 import { isTauri } from '../../../core/platform.js';
+import { showConfirm } from '../../../ui/chrome/confirm-dialog.js';
 
 export default function ExtensionsPanel() {
   const { t } = useTranslation('appMenu');
+  const { t: tCommon } = useTranslation('common');
   const [plugins, setPlugins] = createSignal([]);
   const [installing, setInstalling] = createSignal(false);
   const [message, setMessage] = createSignal(null);
@@ -65,12 +67,12 @@ export default function ExtensionsPanel() {
     if (!isTauri()) return;
 
     try {
-      const confirmed = window.__TAURI__?.dialog?.ask
-        ? await window.__TAURI__.dialog.ask(
-            t('extensionsPanel.confirmUninstall').replace('{{name}}', pluginName),
-            { title: t('extensionsPanel.title'), kind: 'warning' }
-          )
-        : confirm(t('extensionsPanel.confirmUninstall').replace('{{name}}', pluginName));
+      const confirmed = await showConfirm({
+        title: t('extensionsPanel.title'),
+        message: t('extensionsPanel.confirmUninstall').replace('{{name}}', pluginName),
+        confirmLabel: 'Uninstall',
+        cancelLabel: tCommon('cancel'),
+      });
 
       if (!confirmed) return;
 
@@ -99,7 +101,7 @@ export default function ExtensionsPanel() {
       </Show>
 
       <div class="ext-install-section">
-        <button class="ext-install-btn" onClick={handleInstall} disabled={installing()}>
+        <button class="ext-install-btn" onClick={handleInstall} disabled={installing()} aria-busy={installing() ? 'true' : 'false'}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
             <polyline points="7 10 12 15 17 10"/>

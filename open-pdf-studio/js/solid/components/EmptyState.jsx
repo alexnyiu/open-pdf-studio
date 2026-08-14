@@ -4,6 +4,7 @@ import { openRecentFile } from '../../pdf/recent-file-opener.js';
 import { getRecentFiles } from '../../mobile/recent-files.js';
 import { openAppMenu } from '../../ui/chrome/menus.js';
 import { useTranslation } from '../../i18n/useTranslation.js';
+import UiButton from './ui/UiButton.jsx';
 
 const EMPTY_STATE_RECENT_LIMIT = 4;
 
@@ -28,7 +29,7 @@ export default function EmptyState() {
   }
 
   return (
-    <div id="placeholder" class="empty-state" data-phase7="open-recent-empty">
+    <div id="placeholder" class="empty-state" data-phase7="open-recent-empty" data-phase8="interaction-quality">
       <div class="empty-state-card">
         <div class="empty-state-hero">
           <div class="empty-state-icon" aria-hidden="true">
@@ -44,21 +45,23 @@ export default function EmptyState() {
         </div>
 
         <div class="empty-state-actions">
-          <button
+          <UiButton
             type="button"
+            variant="primary"
             class="empty-state-open"
+            label={tCommon('open')}
+            tooltip={tCommon('open')}
+            shortcut="Ctrl+O"
             onClick={() => openPDFFile()}
             aria-label={tCommon('open')}
-          >
-            {tCommon('open')}
-          </button>
-          <button
+          />
+          <UiButton
             type="button"
+            variant="secondary"
             class="empty-state-secondary"
+            label={tMenu('openPanel.recentFiles')}
             onClick={openAppMenu}
-          >
-            {tMenu('openPanel.recentFiles')}
-          </button>
+          />
         </div>
 
         <Show when={recentFiles().length > 0}>

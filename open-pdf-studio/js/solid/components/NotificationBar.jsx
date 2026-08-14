@@ -22,7 +22,7 @@ export default function NotificationBar() {
 
   return (
     <Show when={visible()}>
-      <div class="notification-bar">
+      <div class="notification-bar" role="status" aria-live="polite" aria-atomic="true">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
           <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5" fill="none"/>
           <path d="M7.5 5V4h1v1h-1zm0 7V6.5h1V12h-1z" fill="currentColor"/>

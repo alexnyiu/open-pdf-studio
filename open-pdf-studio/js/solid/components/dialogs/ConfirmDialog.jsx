@@ -1,4 +1,4 @@
-import { createSignal } from 'solid-js';
+import { createSignal, Show } from 'solid-js';
 import Dialog from '../Dialog.jsx';
 import { closeDialog } from '../../stores/dialogStore.js';
 import { state } from '../../../core/state.js';
@@ -7,6 +7,8 @@ import { savePreferences } from '../../../core/preferences.js';
 export default function ConfirmDialog(props) {
   const data = props.data || {};
   const [dontShow, setDontShow] = createSignal(false);
+  const confirmLabel = data.confirmLabel || 'Yes';
+  const cancelLabel = data.cancelLabel || 'No';
 
   const handleYes = () => {
     if (dontShow() && data.preferenceKey) {
@@ -26,6 +28,7 @@ export default function ConfirmDialog(props) {
     <Dialog
       title={data.title || 'Confirm'}
       dialogClass="confirm-dialog"
+      role="alertdialog"
       onClose={handleNo}
     >
       <div class="confirm-dialog-body">
@@ -38,13 +41,15 @@ export default function ConfirmDialog(props) {
         </div>
         <p class="confirm-dialog-message">{data.message || 'Are you sure?'}</p>
       </div>
-      <div class="confirm-dialog-checkbox" onClick={() => setDontShow(!dontShow())}>
-        <input type="checkbox" checked={dontShow()} />
-        <span>Don't show this again</span>
-      </div>
+      <Show when={data.preferenceKey}>
+        <label class="confirm-dialog-checkbox">
+          <input type="checkbox" checked={dontShow()} onChange={(e) => setDontShow(e.currentTarget.checked)} />
+          <span>Don't show this again</span>
+        </label>
+      </Show>
       <div class="confirm-dialog-buttons">
-        <button class="confirm-dialog-btn confirm-dialog-btn-yes" onClick={handleYes}>Yes</button>
-        <button class="confirm-dialog-btn confirm-dialog-btn-no" onClick={handleNo}>No</button>
+        <button class="confirm-dialog-btn confirm-dialog-btn-yes" onClick={handleYes}>{confirmLabel}</button>
+        <button class="confirm-dialog-btn confirm-dialog-btn-no" autofocus onClick={handleNo}>{cancelLabel}</button>
       </div>
     </Dialog>
   );

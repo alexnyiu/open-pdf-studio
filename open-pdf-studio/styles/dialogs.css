@@ -923,6 +923,32 @@
   background: var(--theme-accent-hover);
 }
 
+.unsaved-changes-dialog {
+  width: 430px;
+}
+
+.unsaved-changes-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--theme-border);
+}
+
+.confirm-dialog-btn-save {
+  background: var(--theme-accent);
+  color: #fff;
+  border-color: var(--theme-accent);
+}
+
+.confirm-dialog-btn-save:hover {
+  background: var(--theme-accent-hover);
+}
+
+.confirm-dialog-btn-dont-save {
+  color: var(--theme-danger, #b42318);
+}
+
 /* Title Block Edit Dialog */
 .title-block-dialog {
   width: 450px;

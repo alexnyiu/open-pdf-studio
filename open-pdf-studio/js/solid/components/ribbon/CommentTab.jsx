@@ -27,6 +27,7 @@ import { savePreferences } from '../../../core/preferences.js';
 import { toggleSchedule, scheduleVisible } from '../../stores/scheduleStore.js';
 import { isDynamicScalingEnabled, setDynamicScalingEnabled } from '../../../annotations/dynamic-scaling.js';
 import PrefSelect from '../preferences/PrefSelect.jsx';
+import { showConfirm } from '../../../ui/chrome/confirm-dialog.js';
 
 const scheduleIcon = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="1.5" stroke-width="1.5"/><line x1="3" y1="8" x2="21" y2="8" stroke-width="1.5"/><line x1="3" y1="13" x2="21" y2="13" stroke-width="1"/><line x1="3" y1="18" x2="21" y2="18" stroke-width="1"/><line x1="9" y1="8" x2="9" y2="21" stroke-width="1"/><line x1="15" y1="8" x2="15" y2="21" stroke-width="1"/></svg>`;
 
@@ -35,6 +36,7 @@ const scheduleIcon = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"
 // drawing groups inside a single AdaptiveGroups container.
 export function CommentGroups() {
   const { t } = useTranslation('ribbon');
+  const { t: tCommon } = useTranslation('common');
 
   return (
     <>
@@ -101,12 +103,12 @@ export function CommentGroups() {
           <RibbonButtonStack>
             <RibbonButton size="small" id="tool-clear" title={t('comment.clearPageAnnotations')} icon={clearPageIcon} label={t('comment.clearPage')}
               disabled={noPdf() || isPdfAReadOnly()} onClick={async () => {
-                let confirmed = false;
-                if (window.__TAURI__?.dialog?.ask) {
-                  confirmed = await window.__TAURI__.dialog.ask(t('comment.clearPageConfirm'), { title: t('comment.clearPage'), kind: 'warning' });
-                } else {
-                  confirmed = confirm(t('comment.clearPageConfirm'));
-                }
+                const confirmed = await showConfirm({
+                  title: t('comment.clearPage'),
+                  message: t('comment.clearPageConfirm'),
+                  confirmLabel: t('comment.clearPage'),
+                  cancelLabel: tCommon('cancel'),
+                });
                 if (confirmed) {
                   const cpDoc = getActiveDocument();
                   const cpPage = cpDoc ? cpDoc.currentPage : 1;
@@ -121,7 +123,12 @@ export function CommentGroups() {
               disabled={noPdf() || isPdfAReadOnly()} onClick={async () => {
                 const caDoc = getActiveDocument();
                 if (!caDoc || caDoc.annotations.length === 0) return;
-                const confirmed = await window.__TAURI__?.dialog?.ask(t('comment.clearAllConfirm'), { title: t('comment.clearAll'), kind: 'warning' });
+                const confirmed = await showConfirm({
+                  title: t('comment.clearAll'),
+                  message: t('comment.clearAllConfirm'),
+                  confirmLabel: t('comment.clearAll'),
+                  cancelLabel: tCommon('cancel'),
+                });
                 if (confirmed) {
                   recordClearAll(caDoc.annotations);
                   caDoc.annotations = [];

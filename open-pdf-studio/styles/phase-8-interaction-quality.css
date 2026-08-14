@@ -1,0 +1,156 @@
+/*
+ * Phase 8 — interaction quality, first slice
+ *
+ * Keep this layer focused on application controls. The PDF viewport and its
+ * geometry remain owned by the renderer/layout styles.
+ */
+
+:root {
+  --ui-transition-interaction: 120ms ease;
+  --ui-transition-panel: 160ms cubic-bezier(.2, .75, .2, 1);
+  --ui-tooltip-bg: color-mix(in srgb, var(--ui-color-text) 94%, #000 6%);
+  --ui-tooltip-ink: var(--ui-color-surface);
+}
+
+/* One visible keyboard-focus vocabulary for the shell and shared controls. */
+#app-root :where(
+  button,
+  input,
+  select,
+  textarea,
+  [role="button"],
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: var(--ui-focus-ring-width) solid var(--ui-color-focus);
+  outline-offset: var(--ui-focus-ring-offset);
+}
+
+/* Pressed, selected, disabled, and busy states should read consistently
+   without changing the compact layout or introducing a cursor change. */
+#app-root :where(
+  .ui-button,
+  .ui-tab,
+  .ui-segmented-control button,
+  .ribbon-btn,
+  .ribbon-tab,
+  .ribbon-collapse-toggle,
+  .ribbon-overflow-btn,
+  .quick-access-btn,
+  .document-tab,
+  .document-tabs-add,
+  .left-panel-tab,
+  .left-panel-toggle,
+  .status-nav-btn,
+  .page-btn,
+  .find-btn,
+  .empty-state button
+):active:not(:disabled):not([aria-disabled="true"]) {
+  filter: brightness(.96);
+}
+
+/* Legacy menus and icon controls use their own class names, but share the
+   same fast feedback curve and pressed treatment as the newer primitives. */
+#app-root :where(
+  button,
+  [role="button"],
+  .context-menu-item
+) {
+  transition: background-color var(--ui-transition-interaction), color var(--ui-transition-interaction), border-color var(--ui-transition-interaction), opacity var(--ui-transition-interaction);
+}
+
+#app-root :where(button, [role="button"], .context-menu-item):active:not(:disabled):not([aria-disabled="true"]):not(.disabled) {
+  filter: brightness(.96);
+}
+
+#app-root :where(button[disabled], [aria-disabled="true"], .ui-button.is-busy) {
+  opacity: .5;
+}
+
+/* Keep small controls easy to target while preserving their existing visual
+   proportions. */
+#app-root :where(
+  .ribbon-collapse-toggle,
+  .document-tabs-add,
+  .left-panel-toggle,
+  .status-nav-btn,
+  .find-btn,
+  .find-toggle-btn,
+  .find-close-btn
+) {
+  min-width: var(--ui-control-height);
+  min-height: var(--ui-control-height);
+}
+
+#app-root :where(.context-menu-item, .app-menu-item, .app-menu-back) {
+  min-height: var(--ui-control-height);
+}
+
+/* Panel changes use one short, predictable motion curve. */
+#app-root :where(.left-panel, .properties-panel-outer) {
+  transition-duration: var(--ui-transition-panel);
+  transition-timing-function: cubic-bezier(.2, .75, .2, 1);
+}
+
+/* Shared shortcut tooltips are opt-in. Native title text remains as a
+   fallback, while the custom surface makes the shortcut line visible on
+   keyboard focus as well as pointer hover. */
+#app-root [data-ui-tooltip][data-ui-shortcut] {
+  position: relative;
+  overflow: visible;
+}
+
+#app-root [data-ui-tooltip][data-ui-shortcut]::after {
+  background: var(--ui-tooltip-bg);
+  border: 1px solid color-mix(in srgb, var(--ui-color-surface) 26%, transparent);
+  border-radius: var(--ui-radius-control);
+  box-shadow: var(--ui-shadow-floating);
+  color: var(--ui-tooltip-ink);
+  content: attr(data-ui-tooltip) "\A" attr(data-ui-shortcut);
+  font-size: var(--ui-font-size-control);
+  font-weight: 500;
+  left: 50%;
+  line-height: 1.35;
+  max-width: min(280px, 70vw);
+  opacity: 0;
+  padding: 6px 8px;
+  pointer-events: none;
+  position: absolute;
+  text-align: center;
+  top: calc(100% + 6px);
+  transform: translate(-50%, -2px);
+  transition: opacity var(--ui-transition-interaction), transform var(--ui-transition-interaction);
+  visibility: hidden;
+  white-space: pre;
+  width: max-content;
+  z-index: 5000;
+}
+
+#app-root [data-ui-tooltip][data-ui-shortcut]:is(:hover, :focus-visible)::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  visibility: visible;
+}
+
+#app-root [data-ui-tooltip][data-ui-shortcut]:disabled::after {
+  display: none;
+}
+
+/* Modal dialogs keep focus inside the active task and return it to the
+   invoking command after Escape, Cancel, or completion. */
+#app-root [data-phase8-dialog] {
+  transition: box-shadow var(--ui-transition-interaction);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #app-root :where(.left-panel, .properties-panel-outer) {
+    transition-duration: .01ms;
+  }
+
+  #app-root [data-ui-tooltip][data-ui-shortcut]::after {
+    transition-duration: .01ms;
+  }
+
+  #app-root [data-phase8-dialog] {
+    transition-duration: .01ms;
+  }
+}

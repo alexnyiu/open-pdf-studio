@@ -517,12 +517,13 @@ export async function handleKeydown(e) {
 
   else if (ctrl && shift && e.key === 'C') {
     e.preventDefault();
-    let confirmed = false;
-    if (window.__TAURI__?.dialog?.ask) {
-      confirmed = await window.__TAURI__.dialog.ask('Clear all annotations on current page?', { title: 'Clear Page', kind: 'warning' });
-    } else {
-      confirmed = confirm('Clear all annotations on current page?');
-    }
+    const { showConfirm } = await import('../ui/chrome/confirm-dialog.js');
+    const confirmed = await showConfirm({
+      title: 'Clear Page',
+      message: 'Clear all annotations on current page?',
+      confirmLabel: 'Clear',
+      cancelLabel: 'Cancel',
+    });
     if (confirmed) {
       const cpDoc = getActiveDocument();
       const cpPage = cpDoc ? cpDoc.currentPage : 1;

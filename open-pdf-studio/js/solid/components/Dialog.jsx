@@ -59,8 +59,46 @@ export default function Dialog(props) {
   }
 
   function onKeyDown(e) {
+    if (!dialogRef?.contains(document.activeElement)) return;
+
     if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
       props.onClose?.();
+      return;
+    }
+
+    if (e.key === 'Tab') {
+      const focusable = [...dialogRef.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+      )].filter(el => el.getClientRects().length > 0);
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialogRef.focus({ preventScroll: true });
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  function focusInitialControl() {
+    if (!dialogRef) return;
+    const initial = dialogRef.querySelector('[autofocus], [data-dialog-autofocus]')
+      || dialogRef.querySelector(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+    if (initial) {
+      initial.focus({ preventScroll: true });
+    } else {
+      dialogRef.focus({ preventScroll: true });
     }
   }
 
@@ -106,7 +144,10 @@ export default function Dialog(props) {
     document.addEventListener('keydown', onKeyDown);
     window.addEventListener('resize', clampToViewport);
     // Clamp after first layout (content height is only known then)
-    requestAnimationFrame(clampToViewport);
+    requestAnimationFrame(() => {
+      clampToViewport();
+      focusInitialControl();
+    });
   });
 
   onCleanup(() => {
@@ -127,9 +168,11 @@ export default function Dialog(props) {
       <div
         ref={dialogRef}
         class={`modal-dialog ${props.dialogClass || ''}`}
-        role="dialog"
+        role={props.role || 'dialog'}
         aria-modal="true"
         aria-label={props.title}
+        tabindex="-1"
+        data-phase8-dialog="true"
         onAnimationEnd={() => dialogRef?.classList.remove('bump')}
       >
         <div

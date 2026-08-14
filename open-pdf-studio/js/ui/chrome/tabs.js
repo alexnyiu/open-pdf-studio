@@ -9,6 +9,7 @@ import { savePDF } from '../../pdf/saver.js';
 import { unlockFile, lockFile, renameFile, fileExists } from '../../core/platform.js';
 import { cancelPendingZoom } from '../setup/navigation-events.js';
 import { closeAllPopups } from '../../bridge.js';
+import { showUnsavedChanges } from './confirm-dialog.js';
 
 /**
  * Create a new tab for a document
@@ -257,29 +258,16 @@ export async function closeTab(index, force = false) {
 
 /**
  * Show unsaved changes dialog with Save / Don't Save / Cancel options.
- * Uses native Tauri 3-button dialog when available, falls back to browser confirm.
+ * Uses the shared in-app three-choice dialog so keyboard and focus behavior
+ * match the other destructive confirmations.
  * @param {string} fileName - Name of the file with unsaved changes
  * @returns {Promise<'save'|'dontsave'|'cancel'>}
  */
 async function showUnsavedChangesDialog(fileName) {
-  if (window.__TAURI__?.dialog?.message) {
-    const result = await window.__TAURI__.dialog.message(
-      `Do you want to save changes to "${fileName}"?`,
-      {
-        title: 'Save Changes',
-        kind: 'warning',
-        buttons: { yes: 'Save', no: "Don't Save", cancel: 'Cancel' }
-      }
-    );
-    // result is 'Yes', 'No', or 'Cancel' (or the custom label string)
-    if (result === 'Yes' || result === 'Save') return 'save';
-    if (result === 'No' || result === "Don't Save") return 'dontsave';
-    return 'cancel';
-  }
-
-  // Fallback for non-Tauri: browser confirm (only supports 2 choices)
-  const result = confirm(`"${fileName}" has unsaved changes.\n\nClick OK to save before closing, or Cancel to discard changes.`);
-  return result ? 'save' : 'dontsave';
+  return showUnsavedChanges({
+    title: 'Save Changes',
+    message: `"${fileName}" has unsaved changes. Choose Save, Don't Save, or Cancel.`,
+  });
 }
 
 /**
