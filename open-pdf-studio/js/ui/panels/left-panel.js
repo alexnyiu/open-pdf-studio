@@ -201,6 +201,13 @@ export function toggleLeftPanel() {
 
 // Track if processor is running
 let processorRunning = false;
+// Let the active document paint and become interactive before background
+// thumbnail rendering starts. PDF.js thumbnail rasterization runs on the
+// WebView main thread; starting it immediately after a large PDF opens can
+// starve MCP/UI events long enough to make the first screenshot or click
+// appear hung. The queue is still populated immediately and starts shortly
+// after the first meaningful frame.
+const THUMBNAIL_START_DELAY_MS = 1200;
 
 // Generate thumbnails for all pages (sets store signals and starts generation)
 export async function generateThumbnails() {
@@ -275,8 +282,14 @@ export async function generateThumbnails() {
   // Update priorities based on initially visible thumbnails
   setTimeout(updateVisiblePriorities, 50);
 
-  // Start the processor if not running
-  startProcessor();
+  // Start the processor after the first active-page paint. This preserves
+  // thumbnail generation while keeping the initial document screen
+  // responsive on large PDFs.
+  if (!processorRunning) {
+    setTimeout(() => {
+      if (!processorRunning) startProcessor();
+    }, THUMBNAIL_START_DELAY_MS);
+  }
 }
 
 // Pause/resume mechanism: when the user navigates pages, pause thumbnail

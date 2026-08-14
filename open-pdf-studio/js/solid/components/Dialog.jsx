@@ -59,14 +59,20 @@ export default function Dialog(props) {
   }
 
   function onKeyDown(e) {
-    if (!dialogRef?.contains(document.activeElement)) return;
-
     if (e.key === 'Escape') {
+      // Escape belongs to the top-most modal even when a synthetic/native
+      // event is dispatched to the document body instead of the focused
+      // control. The old focus-only guard left Compare and Scale dialogs
+      // stranded when the active element had moved outside the dialog.
+      const openDialogs = [...document.querySelectorAll('.modal-overlay .modal-dialog')];
+      if (openDialogs.at(-1) !== dialogRef) return;
       e.preventDefault();
       e.stopPropagation();
       props.onClose?.();
       return;
     }
+
+    if (!dialogRef?.contains(document.activeElement)) return;
 
     if (e.key === 'Tab') {
       const focusable = [...dialogRef.querySelectorAll(

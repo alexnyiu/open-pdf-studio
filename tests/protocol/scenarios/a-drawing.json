@@ -757,6 +757,14 @@
       "ms": 200
     },
     {
+      "action": "clickButton",
+      "selector": ".confirm-dialog-btn-yes"
+    },
+    {
+      "action": "wait",
+      "ms": 300
+    },
+    {
       "action": "probe",
       "store": "pDel"
     },
@@ -806,6 +814,14 @@
     {
       "action": "wait",
       "ms": 200
+    },
+    {
+      "action": "clickButton",
+      "selector": ".confirm-dialog-btn-yes"
+    },
+    {
+      "action": "wait",
+      "ms": 300
     },
     {
       "action": "probe",

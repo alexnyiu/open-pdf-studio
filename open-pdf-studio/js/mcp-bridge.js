@@ -114,6 +114,13 @@ async function compositeCurrentView(maxWidth = 2000) {
   const outW = Math.max(1, Math.round(pdfCanvas.width * scale));
   const outH = Math.max(1, Math.round(pdfCanvas.height * scale));
 
+  console.warn('[PERF] mcp screenshot composite START', {
+    source: `${pdfCanvas.width}x${pdfCanvas.height}`,
+    annotation: annCanvas ? `${annCanvas.width}x${annCanvas.height}` : 'none',
+    highlight: hlCanvas ? `${hlCanvas.width}x${hlCanvas.height}` : 'none',
+    output: `${outW}x${outH}`,
+  });
+
   const out = document.createElement('canvas');
   out.width = outW;
   out.height = outH;
@@ -128,7 +135,9 @@ async function compositeCurrentView(maxWidth = 2000) {
   if (annCanvas && annCanvas.width > 0 && annCanvas.height > 0) {
     ctx.drawImage(annCanvas, 0, 0, outW, outH);
   }
+  console.warn('[PERF] mcp screenshot composite DRAW DONE');
   const dataURL = out.toDataURL('image/png');
+  console.warn('[PERF] mcp screenshot composite PNG DONE', dataURL.length);
   // Strip the `data:image/png;base64,` prefix so the returned string is
   // pure base64 (matches the existing `screenshot_page` tool's shape).
   const b64 = dataURL.startsWith('data:') ? dataURL.split(',', 2)[1] : dataURL;
@@ -213,6 +222,7 @@ async function handleScreenshotView(params) {
   await new Promise((r) => requestAnimationFrame(() => r()));
   try {
     const out = await compositeCurrentView(width);
+    console.warn('[PERF] mcp screenshot handler response READY', out.png_base64?.length ?? 0);
     return { ok: true, ...out };
   } catch (e) {
     return { ok: false, error: `compositeCurrentView: ${e?.message ?? e}` };

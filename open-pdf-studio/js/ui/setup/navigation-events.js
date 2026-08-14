@@ -2,6 +2,10 @@ import { state, getActiveDocument } from '../../core/state.js';
 import { goToPage } from '../../pdf/renderer.js';
 import { viewport, zoomStepAtPoint, suppressNextFit, addPanVelocity, stopPanMomentum } from '../../pdf/pdf-viewport.js';
 import { getTool } from '../../tools/tool-registry.js';
+import {
+  createPageNavigationGestureGate,
+  getPageNavigationDirection,
+} from './page-navigation-gesture.mjs';
 
 // ─── Wheel Zoom + Pan + Page Navigation ───────────────────────────────────
 // Single source of truth for the wheel event on the main view.
@@ -11,7 +15,7 @@ import { getTool } from '../../tools/tool-registry.js';
 //                 direction, navigate to next/previous page.
 // In legacy mode it falls back to scroll-position-based page nav.
 
-let _pageNavCooldown = false;
+const _pageNavGate = createPageNavigationGestureGate();
 // Pixels of slack at the page edge before we treat the page as "at the edge"
 // and trigger a page change. Without this, sub-pixel float offsets prevent nav.
 const EDGE_SLACK = 1;
@@ -140,6 +144,13 @@ export function setupWheelZoom() {
       if (e.defaultPrevented) return;
     }
 
+    // Trackpad events are counted only after tools have had a chance to
+    // consume them. Continued same-direction scrolling gradually opens the
+    // next page-turn opportunity instead of requiring a pause.
+    if (activeDoc.viewMode === 'single') {
+      _pageNavGate.noteWheel(e.deltaY || 0);
+    }
+
     // ─── Vector viewport mode: pan + edge-triggered page nav ──────────────
     if (viewport.active) {
       e.preventDefault();
@@ -169,33 +180,44 @@ export function setupWheelZoom() {
       const atTop = pageTop >= -EDGE_SLACK;                       // can't pan up further
       const atBottom = pageBottom <= canvasH + EDGE_SLACK;        // can't pan down further
 
-      // Page nav: only if scroll direction matches an exhausted edge AND we're
-      // single-page mode AND not already cooling down from a previous nav.
-      if (activeDoc.viewMode === 'single' && !_pageNavCooldown && Math.abs(dy) > Math.abs(dx)) {
-        if (dy > 0 && atBottom && activeDoc.currentPage < activeDoc.pdfDoc.numPages) {
-          _pageNavCooldown = true;
-          // Kill any in-flight pan momentum so the new page doesn't inherit
-          // the previous page's residual scroll velocity (would slingshot
-          // past the top into the centered fit position).
-          stopPanMomentum();
-          // Tell the next setPage() to keep the current zoom instead of
-          // running fitToViewport(), so the user's zoom level survives the
-          // page change with no flash to fit-zoom in between.
-          suppressNextFit();
-          await goToPage(activeDoc.currentPage + 1);
-          alignPageToTop();
-          setTimeout(() => { _pageNavCooldown = false; }, 250);
-          return;
-        }
-        if (dy < 0 && atTop && activeDoc.currentPage > 1) {
-          _pageNavCooldown = true;
-          stopPanMomentum();
-          suppressNextFit();
-          await goToPage(activeDoc.currentPage - 1);
-          alignPageToBottom();
-          setTimeout(() => { _pageNavCooldown = false; }, 250);
-          return;
-        }
+      const pageNavDirectionCandidate = getPageNavigationDirection({
+        viewMode: activeDoc.viewMode,
+        gestureLocked: false,
+        dx,
+        dy,
+        atTop,
+        atBottom,
+        currentPage: activeDoc.currentPage,
+        pageCount: activeDoc.pdfDoc.numPages,
+      });
+      const pageNavDirection = _pageNavGate.isBlocked(pageNavDirectionCandidate)
+        ? 0
+        : pageNavDirectionCandidate;
+
+      // Page nav: only if scroll direction matches an exhausted edge. The
+      // accumulated-scroll gate allows continued paging without requiring a
+      // quiet gap between pages.
+      if (pageNavDirection > 0) {
+        _pageNavGate.block(pageNavDirection);
+        // Kill any in-flight pan momentum so the new page doesn't inherit
+        // the previous page's residual scroll velocity (would slingshot
+        // past the top into the centered fit position).
+        stopPanMomentum();
+        // Tell the next setPage() to keep the current zoom instead of
+        // running fitToViewport(), so the user's zoom level survives the
+        // page change with no flash to fit-zoom in between.
+        suppressNextFit();
+        await goToPage(activeDoc.currentPage + 1);
+        alignPageToTop();
+        return;
+      }
+      if (pageNavDirection < 0) {
+        _pageNavGate.block(pageNavDirection);
+        stopPanMomentum();
+        suppressNextFit();
+        await goToPage(activeDoc.currentPage - 1);
+        alignPageToBottom();
+        return;
       }
 
       // Smooth pan: feed wheel deltas into the velocity accumulator instead
@@ -214,7 +236,6 @@ export function setupWheelZoom() {
 
     // ─── Legacy mode: scroll-position-based page nav ──────────────────────
     if (activeDoc?.viewMode !== 'single') return;
-    if (_pageNavCooldown) return;
 
     const pdfContainer = document.getElementById('pdf-container');
     if (!pdfContainer) return;
@@ -223,16 +244,28 @@ export function setupWheelZoom() {
     const atBottomLegacy = !canScroll || pdfContainer.scrollTop + pdfContainer.clientHeight >= pdfContainer.scrollHeight - 5;
     const atTopLegacy = !canScroll || pdfContainer.scrollTop <= 5;
 
-    if (e.deltaY > 0 && atBottomLegacy && activeDoc.currentPage < activeDoc.pdfDoc.numPages) {
+    const pageNavDirectionCandidate = getPageNavigationDirection({
+      viewMode: activeDoc.viewMode,
+      gestureLocked: false,
+      dx: e.deltaX || 0,
+      dy: e.deltaY || 0,
+      atTop: atTopLegacy,
+      atBottom: atBottomLegacy,
+      currentPage: activeDoc.currentPage,
+      pageCount: activeDoc.pdfDoc.numPages,
+    });
+    const pageNavDirection = _pageNavGate.isBlocked(pageNavDirectionCandidate)
+      ? 0
+      : pageNavDirectionCandidate;
+
+    if (pageNavDirection > 0) {
       e.preventDefault();
-      _pageNavCooldown = true;
+      _pageNavGate.block(pageNavDirection);
       await goToPage(activeDoc.currentPage + 1);
-      setTimeout(() => { _pageNavCooldown = false; }, 300);
-    } else if (e.deltaY < 0 && atTopLegacy && activeDoc.currentPage > 1) {
+    } else if (pageNavDirection < 0) {
       e.preventDefault();
-      _pageNavCooldown = true;
+      _pageNavGate.block(pageNavDirection);
       await goToPage(activeDoc.currentPage - 1);
-      setTimeout(() => { _pageNavCooldown = false; }, 300);
     }
   }, { passive: false });
 }
