@@ -42,6 +42,8 @@ fn now_ms() -> u64 {
 /// voor ALLE volgende requests wedged raakt en de pagina blanco blijft. Bij
 /// timeout -> Err -> in-proc-PDFium-fallback + respawn van de worker.
 const WORKER_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const LOW_PRIORITY_IDLE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const LOW_PRIORITY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
 
 /// Pad naar de pdfium-worker-sidecar naast de hoofdbinary. Platform-correct
 /// (`.exe` alleen op Windows) zodat respawn ook op Linux/macOS de juiste naam
@@ -156,6 +158,51 @@ impl WorkerPool {
         let result2 = self.render_on_worker(worker2.clone(), path, page_index, scale, rotation).await;
         worker2.queue_depth.fetch_sub(1, Ordering::Release);
         result2
+    }
+
+    /// Render only when one worker is completely idle. This is the Phase A
+    /// OCR raster lane: it never starts behind an already queued or active
+    /// request, and it fails after a bounded wait instead of falling back to
+    /// in-process PDFium on the Tauri main process.
+    pub async fn render_low_priority(
+        &self,
+        path: &str,
+        page_index: u32,
+        scale: f32,
+        rotation: i32,
+    ) -> Result<(u32, u32, Vec<u8>)> {
+        let wait_started = std::time::Instant::now();
+        let worker = loop {
+            let depths = self.depths();
+            if let Some(slot) = routing::pick_idle_worker(&depths) {
+                let worker = self.workers[slot].clone();
+                if worker.status() == Status::Ready
+                    && worker
+                        .queue_depth
+                        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok()
+                {
+                    break worker;
+                }
+            }
+            if wait_started.elapsed() >= LOW_PRIORITY_IDLE_WAIT {
+                return Err(anyhow!(
+                    "low-priority OCR raster deferred: no idle PDFium worker within {} ms",
+                    LOW_PRIORITY_IDLE_WAIT.as_millis()
+                ));
+            }
+            tokio::time::sleep(LOW_PRIORITY_POLL_INTERVAL).await;
+        };
+
+        self.touch(&worker);
+        let result = self
+            .render_on_worker(worker.clone(), path, page_index, scale, rotation)
+            .await;
+        worker.queue_depth.fetch_sub(1, Ordering::Release);
+        if result.is_err() {
+            tokio::spawn(recovery::handle_worker_crash(worker, worker_exe_path()));
+        }
+        result
     }
 
     async fn render_on_worker(

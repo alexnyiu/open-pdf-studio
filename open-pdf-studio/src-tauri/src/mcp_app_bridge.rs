@@ -19,7 +19,7 @@
 //! pending entry is cleaned up so the slot doesn't leak.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -33,6 +33,7 @@ use tokio::sync::oneshot;
 pub struct McpAppBridge {
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, oneshot::Sender<Value>>>,
+    ready: AtomicBool,
 }
 
 impl McpAppBridge {
@@ -40,11 +41,20 @@ impl McpAppBridge {
         Self {
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
+            ready: AtomicBool::new(false),
         }
     }
 
     fn next_request_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::Acquire)
+    }
+
+    fn mark_ready(&self) {
+        self.ready.store(true, Ordering::Release);
     }
 }
 
@@ -141,7 +151,11 @@ pub fn app_response(
 /// step. Kept lightweight so its presence in production builds is
 /// harmless. Logged to stderr only.
 #[tauri::command]
-pub fn mcp_bridge_ready(events: Vec<String>) -> Result<bool, String> {
+pub fn mcp_bridge_ready(
+    events: Vec<String>,
+    bridge: tauri::State<McpAppBridge>,
+) -> Result<bool, String> {
+    bridge.mark_ready();
     eprintln!("[mcp-bridge] WebView ready, listening for: {events:?}");
     Ok(true)
 }

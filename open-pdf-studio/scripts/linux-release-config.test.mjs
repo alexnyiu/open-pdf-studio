@@ -37,6 +37,8 @@ test('desktop runtime resources stay on their own platform', async () => {
     base.bundle.windows.webviewInstallMode.type,
     'embedBootstrapper',
   );
+  assert.deepEqual(base.bundle.externalBin, ['binaries/pdfium-worker']);
+  assert.equal(Object.hasOwn(linux.bundle, 'externalBin'), false);
 });
 
 test('CI builds and starts the AppImage on Debian 13', async () => {
@@ -58,6 +60,14 @@ test('CI builds and starts the AppImage on Debian 13', async () => {
   assert.match(workflow, /libgles2/);
   assert.match(workflow, /libgtk-3-0t64/);
   assert.match(workflow, /linux-appimage-smoke\.sh/);
+
+  const smoke = await readFile(
+    new URL('scripts/linux-appimage-smoke.sh', appRoot),
+    'utf8',
+  );
+  assert.match(smoke, /pdfium-worker is missing from the AppImage/);
+  assert.match(smoke, /"\$worker" --probe-pdfium/);
+  assert.match(smoke, /pdfium-worker could not initialize bundled PDFium/);
 });
 
 test('the AppImage GIO guard runs before Tauri setup', async () => {

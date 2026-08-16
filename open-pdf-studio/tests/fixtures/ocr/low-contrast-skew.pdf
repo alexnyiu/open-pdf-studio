@@ -1,0 +1,50 @@
+%PDF-1.4
+% OCR golden fixture; SPDX-License-Identifier: CC0-1.0
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 240] /CropBox [0 0 420 240] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 271 >>
+stream
+q
+0.58 0.58 0.58 rg
+BT
+/F1 26 Tf
+0.998630 0.052336 -0.052336 0.998630 30 174 Tm
+(Low contrast sample) Tj
+/F1 22 Tf
+0.998630 0.052336 -0.052336 0.998630 30 112 Tm
+(Skewed by 3 degrees) Tj
+/F1 20 Tf
+0.998630 0.052336 -0.052336 0.998630 30 54 Tm
+(Fallback evidence) Tj
+ET
+Q
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Title (OCR golden fixture: low-contrast-skew) /Creator (Open PDF Studio Phase A fixture generator) /CreationDate (D:20260814000000Z) /ModDate (D:20260814000000Z) >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000064 00000 n 
+0000000113 00000 n 
+0000000170 00000 n 
+0000000319 00000 n 
+0000000640 00000 n 
+0000000737 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R /Info 6 0 R /ID [<748D7B933761A0942382D5B9D2B772F1><748D7B933761A0942382D5B9D2B772F1>] >>
+startxref
+921
+%%EOF

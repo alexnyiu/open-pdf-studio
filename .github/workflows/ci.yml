@@ -44,7 +44,7 @@ jobs:
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf dbus-x11 xvfb
 
       - name: Install frontend dependencies
         run: npm ci
@@ -79,6 +79,7 @@ jobs:
           cargo build --release -p pdfium-worker
           New-Item -ItemType Directory -Force open-pdf-studio/src-tauri/binaries | Out-Null
           Copy-Item target/release/pdfium-worker.exe open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-pc-windows-msvc.exe -Force
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs x86_64-pc-windows-msvc open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-pc-windows-msvc.exe
 
       - name: Build pdfium-worker sidecar (Linux)
         if: matrix.platform == 'ubuntu-22.04'
@@ -87,6 +88,7 @@ jobs:
           cargo build --release -p pdfium-worker
           mkdir -p open-pdf-studio/src-tauri/binaries
           cp target/release/pdfium-worker open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-unknown-linux-gnu
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs x86_64-unknown-linux-gnu open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-unknown-linux-gnu
 
       - name: Build pdfium-worker sidecar (macOS universal)
         if: matrix.platform == 'macos-26'
@@ -102,6 +104,9 @@ jobs:
           lipo -create -output open-pdf-studio/src-tauri/binaries/pdfium-worker-universal-apple-darwin \
             target/aarch64-apple-darwin/release/pdfium-worker \
             target/x86_64-apple-darwin/release/pdfium-worker
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs aarch64-apple-darwin open-pdf-studio/src-tauri/binaries/pdfium-worker-aarch64-apple-darwin
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs x86_64-apple-darwin open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-apple-darwin
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs universal-apple-darwin open-pdf-studio/src-tauri/binaries/pdfium-worker-universal-apple-darwin
 
       - name: Fetch libpdfium.so (Linux)
         if: matrix.platform == 'ubuntu-22.04'
@@ -114,6 +119,16 @@ jobs:
       - name: Build Tauri app
         if: matrix.platform == 'windows-latest'
         run: npm run tauri build -- --no-bundle
+
+      - name: Run OCR Phase A gate (Windows)
+        if: matrix.platform == 'windows-latest'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Copy-Item src-tauri/binaries/win-x64/pdfium.dll ../target/release/pdfium.dll -Force
+          node scripts/run-ocr-phase-a-gate.mjs `
+            --app ../target/release/open-pdf-studio.exe `
+            --report "$env:RUNNER_TEMP/ocr-phase-a-$env:RUNNER_OS-$env:RUNNER_ARCH.json"
 
       - name: Build Tauri AppImage
         if: matrix.platform == 'ubuntu-22.04'
@@ -132,6 +147,18 @@ jobs:
             debian:13-slim \
             bash -lc 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dbus-x11 gvfs libegl1 libgles2 libgtk-3-0t64 xauth xvfb && cp /input/open-pdf-studio.AppImage /tmp/open-pdf-studio.AppImage && bash /input/linux-appimage-smoke.sh /tmp/open-pdf-studio.AppImage 10'
 
+      - name: Run OCR Phase A gate (Linux AppImage)
+        if: matrix.platform == 'ubuntu-22.04'
+        continue-on-error: true
+        shell: bash
+        run: |
+          appimage=$(find ../target/release/bundle/appimage -maxdepth 1 -type f -name '*.AppImage' -print -quit)
+          test -n "$appimage"
+          chmod +x "$appimage"
+          dbus-run-session -- xvfb-run -a node scripts/run-ocr-phase-a-gate.mjs \
+            --app "$appimage" \
+            --report "$RUNNER_TEMP/ocr-phase-a-$RUNNER_OS-$RUNNER_ARCH.json"
+
       - name: Build ad-hoc signed macOS app
         if: matrix.platform == 'macos-26'
         env:
@@ -144,3 +171,73 @@ jobs:
           APP_PATH="../target/universal-apple-darwin/release/bundle/macos/Open PDF Studio.app"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           bash scripts/macos-startup-smoke.sh "$APP_PATH"
+
+      - name: Run OCR Phase A gate (macOS)
+        if: matrix.platform == 'macos-26'
+        shell: bash
+        run: |
+          APP_BINARY="../target/universal-apple-darwin/release/bundle/macos/Open PDF Studio.app/Contents/MacOS/open-pdf-studio"
+          node scripts/run-ocr-phase-a-gate.mjs \
+            --app "$APP_BINARY" \
+            --report "$RUNNER_TEMP/ocr-phase-a-$RUNNER_OS-$RUNNER_ARCH.json"
+
+      - name: Evaluate macOS OCR production decision
+        if: matrix.platform == 'macos-26'
+        shell: bash
+        run: |
+          APP_PATH="../target/universal-apple-darwin/release/bundle/macos/Open PDF Studio.app"
+          node scripts/evaluate-ocr-phase-a-macos-report.mjs \
+            "$RUNNER_TEMP/ocr-phase-a-$RUNNER_OS-$RUNNER_ARCH.json" \
+            --app "$APP_PATH" \
+            --output "$RUNNER_TEMP/ocr-phase-a-macos-production-decision.json"
+
+      - name: Upload OCR Phase A platform evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-phase-a-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/ocr-phase-a-${{ runner.os }}-${{ runner.arch }}.json
+          if-no-files-found: warn
+
+      - name: Upload macOS OCR production decision
+        if: always() && matrix.platform == 'macos-26'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-phase-a-macos-production-decision
+          path: ${{ runner.temp }}/ocr-phase-a-macos-production-decision.json
+          if-no-files-found: error
+
+  ocr-phase-a-production-gate:
+    name: OCR Phase A all-desktop future qualification (advisory)
+    needs: build
+    if: always()
+    continue-on-error: true
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Download platform evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ocr-phase-a-*
+          path: ${{ runner.temp }}/ocr-phase-a-reports
+          merge-multiple: true
+
+      - name: Evaluate complete desktop matrix for future support
+        run: |
+          node open-pdf-studio/scripts/evaluate-ocr-phase-a-reports.mjs \
+            "$RUNNER_TEMP/ocr-phase-a-reports" \
+            --output "$RUNNER_TEMP/ocr-phase-a-production-decision.json"
+
+      - name: Upload production decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-phase-a-production-decision
+          path: ${{ runner.temp }}/ocr-phase-a-production-decision.json
+          if-no-files-found: warn

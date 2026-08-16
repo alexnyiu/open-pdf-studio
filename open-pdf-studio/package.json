@@ -15,10 +15,14 @@
     "tauri:build": "npm run build && tauri build",
     "bump": "node scripts/bump-version.js",
     "typecheck": "tsc --noEmit",
+    "generate:ocr-fixtures": "node scripts/generate-ocr-fixtures.mjs",
+    "verify:ocr-assets": "node scripts/verify-ocr-assets.mjs",
+    "test:ocr": "node --test js/ocr/contracts/v1.test.mjs js/ocr/contracts/production.test.mjs js/ocr/engine.test.mjs js/ocr/child-runner.test.mjs js/ocr/paddleocr/adapter.test.mjs scripts/ocr-assets.test.mjs scripts/evaluate-ocr-phase-a-reports.test.mjs scripts/evaluate-ocr-phase-a-macos-report.test.mjs scripts/ocr-process-attribution.test.mjs scripts/ocr-build-kind.test.mjs",
+    "measure:ocr": "node scripts/measure-ocr-phase-a.mjs",
     "test:unit": "node --test scripts/test-nen-ifc-map.mjs scripts/test-systeemraster.mjs js/drafting/tekeningtype.test.mjs js/annotations/editable-numbers.test.mjs js/symbols/templates/wapeningskorf.test.mjs js/pdf/progressive-render.test.mjs js/pdf/tile-coverage.test.mjs js/quantities/engine.test.mjs js/quantities/schedule-image.test.mjs js/quantities/takeoff.test.mjs js/text/text-edit-appearance.test.mjs js/tools/embedded-image-parser.test.mjs",
     "test:render": "..\\scripts\\.venv-test\\Scripts\\python.exe ../scripts/render-regression-test.py",
     "test:render:auto": "node ../scripts/run-render-regression.mjs",
-    "test:quality": "node --test scripts/native-runtime.test.mjs scripts/release-config.test.mjs scripts/square-image-annotation.test.mjs"
+    "test:quality": "node --test scripts/native-runtime.test.mjs scripts/release-config.test.mjs scripts/linux-release-config.test.mjs scripts/pdfium-sidecar.test.mjs scripts/square-image-annotation.test.mjs"
   },
   "keywords": [
     "tauri",
@@ -51,6 +55,7 @@
     "i18next": "^25.8.13",
     "i18next-browser-languagedetector": "^8.2.1",
     "mupdf": "^1.27.0",
+    "onnxruntime-web": "1.27.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.4.624",
     "solid-js": "^1.9.11"

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/engine.v1.schema.json",
+  "title": "Open PDF Studio OCR engine contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schemaVersion",
+    "engineId",
+    "adapterVersion",
+    "provider",
+    "model",
+    "runtime",
+    "capabilities"
+  ],
+  "properties": {
+    "contract": { "const": "open-pdf-studio.ocr.engine" },
+    "schemaVersion": { "const": 1 },
+    "engineId": { "type": "string", "minLength": 1 },
+    "adapterVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "provider": { "type": "string", "minLength": 1 },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "tier", "detection", "recognition"],
+      "properties": {
+        "family": { "type": "string", "minLength": 1 },
+        "tier": { "type": "string", "minLength": 1 },
+        "detection": { "type": "string", "minLength": 1 },
+        "recognition": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "executionProvider", "offline"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "executionProvider": { "type": "string", "minLength": 1 },
+        "offline": { "type": "boolean" }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["textDetection", "textRecognition", "wordBoxes", "pdfWriting"],
+      "properties": {
+        "textDetection": { "type": "boolean" },
+        "textRecognition": { "type": "boolean" },
+        "wordBoxes": { "type": "boolean" },
+        "pdfWriting": { "type": "boolean" }
+      }
+    }
+  }
+}

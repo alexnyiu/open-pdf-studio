@@ -1,0 +1,1742 @@
+{
+  "schemaVersion": 2,
+  "measuredAt": "2026-08-15T08:19:31.518Z",
+  "environment": {
+    "platform": "darwin",
+    "release": "25.5.0",
+    "arch": "arm64",
+    "node": "v25.6.1",
+    "endpoint": "http://127.0.0.1:9223/mcp",
+    "debugBuild": true
+  },
+  "fixture": {
+    "id": "clean-latin",
+    "path": "tests/fixtures/ocr/clean-latin.pdf",
+    "pageIndex": 0,
+    "sha256": "687f34cffe6eb5d49200c0c37139c42bd27a0ecf3ce021657207663f459a6164",
+    "unchangedAfterRun": true,
+    "expectedLines": [
+      "OPEN PDF STUDIO",
+      "Offline OCR Phase A",
+      "Total 42.50 EUR"
+    ]
+  },
+  "result": {
+    "contract": "open-pdf-studio.ocr.result",
+    "engine": {
+      "adapterVersion": "0.1.0",
+      "capabilities": {
+        "pdfWriting": false,
+        "textDetection": true,
+        "textRecognition": true,
+        "wordBoxes": false
+      },
+      "contract": "open-pdf-studio.ocr.engine",
+      "engineId": "paddleocr-pp-ocrv6-small-onnx-wasm",
+      "model": {
+        "detection": "PP-OCRv6_small_det_onnx",
+        "family": "PP-OCRv6",
+        "recognition": "PP-OCRv6_small_rec_onnx",
+        "tier": "small"
+      },
+      "provider": "PaddleOCR",
+      "runtime": {
+        "executionProvider": "wasm",
+        "name": "onnxruntime-web",
+        "offline": true,
+        "version": "1.27.0"
+      },
+      "schemaVersion": 1
+    },
+    "lines": [
+      {
+        "boundingBox": {
+          "height": 43.7,
+          "width": 534.03,
+          "x": 67.67,
+          "y": 79.65
+        },
+        "confidence": 0.963585,
+        "id": "line-1",
+        "polygon": [
+          [
+            67.67,
+            79.65
+          ],
+          [
+            601.7,
+            79.65
+          ],
+          [
+            601.7,
+            123.35
+          ],
+          [
+            67.67,
+            123.35
+          ]
+        ],
+        "text": "OPEN PDF STUDIO"
+      },
+      {
+        "boundingBox": {
+          "height": 38,
+          "width": 406.74,
+          "x": 65.69,
+          "y": 213
+        },
+        "confidence": 0.971305,
+        "id": "line-2",
+        "polygon": [
+          [
+            65.69,
+            213
+          ],
+          [
+            472.43,
+            213
+          ],
+          [
+            472.43,
+            251
+          ],
+          [
+            65.69,
+            251
+          ]
+        ],
+        "text": "Offline OCR Phase A"
+      },
+      {
+        "boundingBox": {
+          "height": 34.2,
+          "width": 287.22,
+          "x": 64.37,
+          "y": 332.9
+        },
+        "confidence": 0.971397,
+        "id": "line-3",
+        "polygon": [
+          [
+            64.37,
+            332.9
+          ],
+          [
+            351.59,
+            332.9
+          ],
+          [
+            351.59,
+            367.1
+          ],
+          [
+            64.37,
+            367.1
+          ]
+        ],
+        "text": "Total 42.50 EUR"
+      }
+    ],
+    "metrics": {
+      "detectionMs": 222,
+      "modelStartupMs": 249,
+      "rasterMs": 58.92,
+      "recognitionMs": 253,
+      "totalOcrMs": 476,
+      "workerStartupMs": 21
+    },
+    "requestId": "27704595-f3e2-4e49-b93a-0f5d085acc15",
+    "schemaVersion": 1,
+    "source": {
+      "heightPx": 480,
+      "kind": "pdf-page",
+      "pageIndex": 0,
+      "path": "/Users/alexander/Personal Projects/open-pdf-studio/open-pdf-studio/tests/fixtures/ocr/clean-latin.pdf",
+      "scale": 2,
+      "widthPx": 840
+    },
+    "text": "OPEN PDF STUDIO\nOffline OCR Phase A\nTotal 42.50 EUR",
+    "warnings": [
+      "Phase A uses axis-aligned connected-component DB postprocessing; rotated and curved text remain unqualified."
+    ]
+  },
+  "timing": {
+    "coldIsolatedWallMs": 1484.8,
+    "detectionMs": 222,
+    "modelStartupMs": 249,
+    "rasterMs": 58.92,
+    "recognitionMs": 253,
+    "totalOcrMs": 476,
+    "workerStartupMs": 21,
+    "recognitionCycles": {
+      "minimumWallMs": 1321.93,
+      "medianWallMs": 1326.6,
+      "maximumWallMs": 1484.8
+    },
+    "cancellationCycles": {
+      "minimumWallMs": 604.47,
+      "medianWallMs": 704.5,
+      "maximumWallMs": 919.79
+    }
+  },
+  "memory": {
+    "method": "sum of RSS for the MCP app tree, its launch-cohort WebKit XPC processes, and each disposable OCR child plus adjacent WebKit XPC cohort, sampled every 50 ms",
+    "caveat": "OS RSS includes shared and allocator-retained pages; lifecycle checkpoints distinguish released live objects from resident allocator pages.",
+    "checkpoints": {
+      "processStart": {
+        "atEpochMs": 1786781910753,
+        "rssBytes": 542785536,
+        "rssMiB": 517.64,
+        "deltaFromProcessStartBytes": 0,
+        "deltaFromProcessStartMiB": 0,
+        "processCount": 8,
+        "roles": {
+          "app": {
+            "rssBytes": 134135808,
+            "rssMiB": 127.92
+          },
+          "app-webkit": {
+            "rssBytes": 345915392,
+            "rssMiB": 329.89
+          },
+          "pdfium-worker": {
+            "rssBytes": 62734336,
+            "rssMiB": 59.83
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": []
+      },
+      "beforeModelInitialization": {
+        "atEpochMs": 1786781911546,
+        "rssBytes": 979058688,
+        "rssMiB": 933.7,
+        "deltaFromProcessStartBytes": 436273152,
+        "deltaFromProcessStartMiB": 416.06,
+        "processCount": 12,
+        "roles": {
+          "app": {
+            "rssBytes": 139460608,
+            "rssMiB": 133
+          },
+          "app-webkit": {
+            "rssBytes": 345718784,
+            "rssMiB": 329.7
+          },
+          "ocr-child-app": {
+            "rssBytes": 134512640,
+            "rssMiB": 128.28
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 287326208,
+            "rssMiB": 274.02
+          },
+          "pdfium-worker": {
+            "rssBytes": 72040448,
+            "rssMiB": 68.7
+          }
+        },
+        "activeOcrChildPids": [
+          61840
+        ],
+        "activeOcrChildWebKitPids": [
+          61855,
+          61856,
+          61857
+        ],
+        "lifecycleStage": "before-model-initialization",
+        "lifecycleAtEpochMs": 1786781911512,
+        "sampleOffsetMs": 34,
+        "lifecycleDetail": {
+          "adapterInstances": 1,
+          "adapterLoadCount": 1,
+          "detectorSession": false,
+          "recognizerSession": false
+        }
+      },
+      "afterModelInitialization": {
+        "atEpochMs": 1786781911730,
+        "rssBytes": 1207959552,
+        "rssMiB": 1152,
+        "deltaFromProcessStartBytes": 665174016,
+        "deltaFromProcessStartMiB": 634.36,
+        "processCount": 12,
+        "roles": {
+          "app": {
+            "rssBytes": 139444224,
+            "rssMiB": 132.98
+          },
+          "app-webkit": {
+            "rssBytes": 345767936,
+            "rssMiB": 329.75
+          },
+          "ocr-child-app": {
+            "rssBytes": 134496256,
+            "rssMiB": 128.27
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 516210688,
+            "rssMiB": 492.3
+          },
+          "pdfium-worker": {
+            "rssBytes": 72040448,
+            "rssMiB": 68.7
+          }
+        },
+        "activeOcrChildPids": [
+          61840
+        ],
+        "activeOcrChildWebKitPids": [
+          61855,
+          61856,
+          61857
+        ],
+        "lifecycleStage": "after-model-initialization",
+        "lifecycleAtEpochMs": 1786781911761,
+        "sampleOffsetMs": -31,
+        "lifecycleDetail": {
+          "adapterInstances": 1,
+          "adapterLoadCount": 1,
+          "detectorSession": true,
+          "modelByteReferencesDropped": true,
+          "modelStartupMs": 249,
+          "recognizerSession": true
+        }
+      },
+      "afterOnePageInference": {
+        "atEpochMs": 1786781912235,
+        "rssBytes": 1366556672,
+        "rssMiB": 1303.25,
+        "deltaFromProcessStartBytes": 823771136,
+        "deltaFromProcessStartMiB": 785.61,
+        "processCount": 12,
+        "roles": {
+          "app": {
+            "rssBytes": 139460608,
+            "rssMiB": 133
+          },
+          "app-webkit": {
+            "rssBytes": 345767936,
+            "rssMiB": 329.75
+          },
+          "ocr-child-app": {
+            "rssBytes": 134545408,
+            "rssMiB": 128.31
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 674742272,
+            "rssMiB": 643.48
+          },
+          "pdfium-worker": {
+            "rssBytes": 72040448,
+            "rssMiB": 68.7
+          }
+        },
+        "activeOcrChildPids": [
+          61840
+        ],
+        "activeOcrChildWebKitPids": [
+          61855,
+          61856,
+          61857
+        ],
+        "lifecycleStage": "after-one-page-inference",
+        "lifecycleAtEpochMs": 1786781912237,
+        "sampleOffsetMs": -2,
+        "lifecycleDetail": {
+          "adapterLoadCount": 1,
+          "detectorSession": true,
+          "inferenceTensorsDisposed": true,
+          "recognizerSession": true
+        }
+      },
+      "immediatelyBeforeDisposal": {
+        "atEpochMs": 1786781912235,
+        "rssBytes": 1366556672,
+        "rssMiB": 1303.25,
+        "deltaFromProcessStartBytes": 823771136,
+        "deltaFromProcessStartMiB": 785.61,
+        "processCount": 12,
+        "roles": {
+          "app": {
+            "rssBytes": 139460608,
+            "rssMiB": 133
+          },
+          "app-webkit": {
+            "rssBytes": 345767936,
+            "rssMiB": 329.75
+          },
+          "ocr-child-app": {
+            "rssBytes": 134545408,
+            "rssMiB": 128.31
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 674742272,
+            "rssMiB": 643.48
+          },
+          "pdfium-worker": {
+            "rssBytes": 72040448,
+            "rssMiB": 68.7
+          }
+        },
+        "activeOcrChildPids": [
+          61840
+        ],
+        "activeOcrChildWebKitPids": [
+          61855,
+          61856,
+          61857
+        ],
+        "lifecycleStage": "immediately-before-engine-disposal",
+        "lifecycleAtEpochMs": 1786781912238,
+        "sampleOffsetMs": -3,
+        "lifecycleDetail": {
+          "livePageBufferReferences": 0
+        }
+      },
+      "afterOcrEngineDisposal": {
+        "atEpochMs": 1786781912235,
+        "rssBytes": 1366556672,
+        "rssMiB": 1303.25,
+        "deltaFromProcessStartBytes": 823771136,
+        "deltaFromProcessStartMiB": 785.61,
+        "processCount": 12,
+        "roles": {
+          "app": {
+            "rssBytes": 139460608,
+            "rssMiB": 133
+          },
+          "app-webkit": {
+            "rssBytes": 345767936,
+            "rssMiB": 329.75
+          },
+          "ocr-child-app": {
+            "rssBytes": 134545408,
+            "rssMiB": 128.31
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 674742272,
+            "rssMiB": 643.48
+          },
+          "pdfium-worker": {
+            "rssBytes": 72040448,
+            "rssMiB": 68.7
+          }
+        },
+        "activeOcrChildPids": [
+          61840
+        ],
+        "activeOcrChildWebKitPids": [
+          61855,
+          61856,
+          61857
+        ],
+        "lifecycleStage": "after-ocr-engine-disposal",
+        "lifecycleAtEpochMs": 1786781912240,
+        "sampleOffsetMs": -5,
+        "lifecycleDetail": {
+          "adapterLoadCount": 1,
+          "detectorSession": false,
+          "onnxSessionsReleased": true,
+          "recognizerSession": false
+        }
+      },
+      "afterWorkerTermination2s": {
+        "atEpochMs": 1786781914293,
+        "rssBytes": 560414720,
+        "rssMiB": 534.45,
+        "deltaFromProcessStartBytes": 17629184,
+        "deltaFromProcessStartMiB": 16.81,
+        "processCount": 8,
+        "roles": {
+          "app": {
+            "rssBytes": 139657216,
+            "rssMiB": 133.19
+          },
+          "app-webkit": {
+            "rssBytes": 348717056,
+            "rssMiB": 332.56
+          },
+          "pdfium-worker": {
+            "rssBytes": 72040448,
+            "rssMiB": 68.7
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": [],
+        "delayAfterWorkerTerminationMs": 2000
+      },
+      "afterWorkerTermination5s": {
+        "atEpochMs": 1786781917290,
+        "rssBytes": 560316416,
+        "rssMiB": 534.36,
+        "deltaFromProcessStartBytes": 17530880,
+        "deltaFromProcessStartMiB": 16.72,
+        "processCount": 8,
+        "roles": {
+          "app": {
+            "rssBytes": 139624448,
+            "rssMiB": 133.16
+          },
+          "app-webkit": {
+            "rssBytes": 348651520,
+            "rssMiB": 332.5
+          },
+          "pdfium-worker": {
+            "rssBytes": 72040448,
+            "rssMiB": 68.7
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": [],
+        "delayAfterWorkerTerminationMs": 5000
+      },
+      "afterWorkerTermination30s": {
+        "atEpochMs": 1786781942294,
+        "rssBytes": 558202880,
+        "rssMiB": 532.34,
+        "deltaFromProcessStartBytes": 15417344,
+        "deltaFromProcessStartMiB": 14.7,
+        "processCount": 8,
+        "roles": {
+          "app": {
+            "rssBytes": 139755520,
+            "rssMiB": 133.28
+          },
+          "app-webkit": {
+            "rssBytes": 346406912,
+            "rssMiB": 330.36
+          },
+          "pdfium-worker": {
+            "rssBytes": 72040448,
+            "rssMiB": 68.7
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": [],
+        "delayAfterWorkerTerminationMs": 30000
+      },
+      "afterRepeatedRecognitionAndCancellationCycles": {
+        "atEpochMs": 1786781969856,
+        "rssBytes": 562511872,
+        "rssMiB": 536.45,
+        "deltaFromProcessStartBytes": 19726336,
+        "deltaFromProcessStartMiB": 18.81,
+        "processCount": 8,
+        "roles": {
+          "app": {
+            "rssBytes": 140181504,
+            "rssMiB": 133.69
+          },
+          "app-webkit": {
+            "rssBytes": 350142464,
+            "rssMiB": 333.92
+          },
+          "pdfium-worker": {
+            "rssBytes": 72187904,
+            "rssMiB": 68.84
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": [],
+        "recognitionCycles": 10,
+        "cancellationCycles": 10
+      }
+    },
+    "repeatedCycles": {
+      "recognition": [
+        {
+          "index": 1,
+          "type": "recognition",
+          "wallMs": 1484.8,
+          "cancelAfterMs": null,
+          "childPid": 61840,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1367113728,
+          "peakRssMiB": 1303.78,
+          "settledRssBytes": 560414720,
+          "settledRssMiB": 534.45,
+          "settledDeltaFromProcessStartBytes": 17629184,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 249,
+          "totalOcrMs": 476,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 2,
+          "type": "recognition",
+          "wallMs": 1378.35,
+          "cancelAfterMs": null,
+          "childPid": 62129,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1374928896,
+          "peakRssMiB": 1311.23,
+          "settledRssBytes": 562757632,
+          "settledRssMiB": 536.69,
+          "settledDeltaFromProcessStartBytes": 19972096,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 227,
+          "totalOcrMs": 474,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 3,
+          "type": "recognition",
+          "wallMs": 1327.84,
+          "cancelAfterMs": null,
+          "childPid": 62390,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1402290176,
+          "peakRssMiB": 1337.33,
+          "settledRssBytes": 562905088,
+          "settledRssMiB": 536.83,
+          "settledDeltaFromProcessStartBytes": 20119552,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 232,
+          "totalOcrMs": 472,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 4,
+          "type": "recognition",
+          "wallMs": 1324.22,
+          "cancelAfterMs": null,
+          "childPid": 62648,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1380122624,
+          "peakRssMiB": 1316.19,
+          "settledRssBytes": 562921472,
+          "settledRssMiB": 536.84,
+          "settledDeltaFromProcessStartBytes": 20135936,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 221,
+          "totalOcrMs": 471,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 5,
+          "type": "recognition",
+          "wallMs": 1331.19,
+          "cancelAfterMs": null,
+          "childPid": 62905,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1377271808,
+          "peakRssMiB": 1313.47,
+          "settledRssBytes": 562970624,
+          "settledRssMiB": 536.89,
+          "settledDeltaFromProcessStartBytes": 20185088,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 220,
+          "totalOcrMs": 472,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 6,
+          "type": "recognition",
+          "wallMs": 1323.75,
+          "cancelAfterMs": null,
+          "childPid": 63164,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1380843520,
+          "peakRssMiB": 1316.88,
+          "settledRssBytes": 559415296,
+          "settledRssMiB": 533.5,
+          "settledDeltaFromProcessStartBytes": 16629760,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 225,
+          "totalOcrMs": 472,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 7,
+          "type": "recognition",
+          "wallMs": 1326.6,
+          "cancelAfterMs": null,
+          "childPid": 63421,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1375846400,
+          "peakRssMiB": 1312.11,
+          "settledRssBytes": 559431680,
+          "settledRssMiB": 533.52,
+          "settledDeltaFromProcessStartBytes": 16646144,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 221,
+          "totalOcrMs": 473,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 8,
+          "type": "recognition",
+          "wallMs": 1321.93,
+          "cancelAfterMs": null,
+          "childPid": 63679,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1374273536,
+          "peakRssMiB": 1310.61,
+          "settledRssBytes": 559480832,
+          "settledRssMiB": 533.56,
+          "settledDeltaFromProcessStartBytes": 16695296,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 221,
+          "totalOcrMs": 472,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 9,
+          "type": "recognition",
+          "wallMs": 1324.55,
+          "cancelAfterMs": null,
+          "childPid": 63938,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1379155968,
+          "peakRssMiB": 1315.27,
+          "settledRssBytes": 559415296,
+          "settledRssMiB": 533.5,
+          "settledDeltaFromProcessStartBytes": 16629760,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 223,
+          "totalOcrMs": 472,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 10,
+          "type": "recognition",
+          "wallMs": 1322.21,
+          "cancelAfterMs": null,
+          "childPid": 64195,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1374404608,
+          "peakRssMiB": 1310.73,
+          "settledRssBytes": 559464448,
+          "settledRssMiB": 533.55,
+          "settledDeltaFromProcessStartBytes": 16678912,
+          "activeOcrChildPidsAfterSettle": [],
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 222,
+          "totalOcrMs": 472,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        }
+      ],
+      "cancellation": [
+        {
+          "index": 1,
+          "type": "cancellation",
+          "wallMs": 604.47,
+          "cancelAfterMs": 0,
+          "childPid": 64452,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 952647680,
+          "peakRssMiB": 908.52,
+          "settledRssBytes": 559513600,
+          "settledRssMiB": 533.59,
+          "settledDeltaFromProcessStartBytes": 16728064,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 0,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": null,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "not-transferred-before-cancellation"
+          }
+        },
+        {
+          "index": 2,
+          "type": "cancellation",
+          "wallMs": 640.17,
+          "cancelAfterMs": 25,
+          "childPid": 64583,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1022853120,
+          "peakRssMiB": 975.47,
+          "settledRssBytes": 559529984,
+          "settledRssMiB": 533.61,
+          "settledDeltaFromProcessStartBytes": 16744448,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 3,
+          "type": "cancellation",
+          "wallMs": 699.85,
+          "cancelAfterMs": 75,
+          "childPid": 64730,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1080000512,
+          "peakRssMiB": 1029.97,
+          "settledRssBytes": 559546368,
+          "settledRssMiB": 533.63,
+          "settledDeltaFromProcessStartBytes": 16760832,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 4,
+          "type": "cancellation",
+          "wallMs": 789.08,
+          "cancelAfterMs": 150,
+          "childPid": 64875,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1201192960,
+          "peakRssMiB": 1145.55,
+          "settledRssBytes": 559546368,
+          "settledRssMiB": 533.63,
+          "settledDeltaFromProcessStartBytes": 16760832,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 5,
+          "type": "cancellation",
+          "wallMs": 919.79,
+          "cancelAfterMs": 300,
+          "childPid": 65034,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1376272384,
+          "peakRssMiB": 1312.52,
+          "settledRssBytes": 559595520,
+          "settledRssMiB": 533.67,
+          "settledDeltaFromProcessStartBytes": 16809984,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 6,
+          "type": "cancellation",
+          "wallMs": 635.98,
+          "cancelAfterMs": 0,
+          "childPid": 65221,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 952762368,
+          "peakRssMiB": 908.63,
+          "settledRssBytes": 559661056,
+          "settledRssMiB": 533.73,
+          "settledDeltaFromProcessStartBytes": 16875520,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 0,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": null,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "not-transferred-before-cancellation"
+          }
+        },
+        {
+          "index": 7,
+          "type": "cancellation",
+          "wallMs": 635.94,
+          "cancelAfterMs": 25,
+          "childPid": 65366,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1021001728,
+          "peakRssMiB": 973.7,
+          "settledRssBytes": 559677440,
+          "settledRssMiB": 533.75,
+          "settledDeltaFromProcessStartBytes": 16891904,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 8,
+          "type": "cancellation",
+          "wallMs": 704.5,
+          "cancelAfterMs": 75,
+          "childPid": 65513,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1080426496,
+          "peakRssMiB": 1030.38,
+          "settledRssBytes": 559693824,
+          "settledRssMiB": 533.77,
+          "settledDeltaFromProcessStartBytes": 16908288,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 9,
+          "type": "cancellation",
+          "wallMs": 790.48,
+          "cancelAfterMs": 150,
+          "childPid": 65658,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1183760384,
+          "peakRssMiB": 1128.92,
+          "settledRssBytes": 559742976,
+          "settledRssMiB": 533.81,
+          "settledDeltaFromProcessStartBytes": 16957440,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 10,
+          "type": "cancellation",
+          "wallMs": 915.13,
+          "cancelAfterMs": 300,
+          "childPid": 65818,
+          "childExitStatus": 0,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 1342291968,
+          "peakRssMiB": 1280.11,
+          "settledRssBytes": 559808512,
+          "settledRssMiB": 533.88,
+          "settledDeltaFromProcessStartBytes": 17022976,
+          "activeOcrChildPidsAfterSettle": [],
+          "cancelled": true,
+          "cancellationMethod": "worker.terminate",
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "onnxSessionsReleased": false,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": false,
+            "typedArrayOwnership": "transferred"
+          }
+        }
+      ],
+      "uniqueChildProcesses": 20,
+      "maximumPerCycleSettledDeltaBytes": 20185088,
+      "maximumPerCycleSettledDeltaMiB": 19.25,
+      "maximumSettledDeltaBytes": 20185088,
+      "maximumSettledDeltaMiB": 19.25,
+      "finalRetainedDeltaBytes": 19726336,
+      "finalRetainedDeltaMiB": 18.81,
+      "linearTrendBytesPerCycle": -140126.32,
+      "linearTrendMiBPerCycle": -0.13,
+      "acceptance": {
+        "retainedBudgetBytes": 33554432,
+        "retainedBudgetMiB": 32,
+        "trendBudgetBytesPerCycle": 2097152,
+        "trendBudgetMiBPerCycle": 2,
+        "minimumRecognitionCycles": 10,
+        "minimumCancellationCycles": 10,
+        "freshChildRequiredPerCycle": true,
+        "noActiveChildAfterSettle": true
+      },
+      "bounded": true
+    }
+  },
+  "resourceLifetime": {
+    "classification": "WebView allocator retention, bounded by one-job native child process; no cycle-over-cycle process leak observed",
+    "liveJavaScriptReferencesDropped": true,
+    "jobEnvelopeDropped": true,
+    "onnxSessionsReleased": true,
+    "openCv": {
+      "allocations": 0,
+      "resourcesReleased": true,
+      "used": false
+    },
+    "imageData": {
+      "used": false
+    },
+    "imageBitmap": {
+      "closed": true,
+      "used": false
+    },
+    "typedArrayOwnership": "transferred",
+    "senderBufferDetached": true,
+    "transferredBuffersDropped": true,
+    "eventListenersRemoved": true,
+    "messagePorts": {
+      "closed": true,
+      "used": false
+    },
+    "modelCache": {
+      "fetchMode": "no-store",
+      "modelByteReferencesDropped": true
+    },
+    "maximumAdapterInstancesPerChild": 1,
+    "duplicateModelInstances": false,
+    "staleResultRetentionPrevented": true,
+    "staleResultVerification": "js/ocr/engine.test.mjs removes listeners, empties pending requests, and ignores a saved stale callback after cancellation",
+    "cancellationNote": "Forced cancellation terminates the Worker immediately; the enclosing one-job child process then exits, so in-flight ONNX/WASM allocations are reclaimed by the OS rather than asynchronously disposed.",
+    "trueProcessLeakObserved": false
+  },
+  "isolation": {
+    "boundary": "native-child-process",
+    "oneJob": true,
+    "rationale": "Worker termination did not release WebKit allocator pages to the long-lived app process; process exit is the reclamation boundary."
+  },
+  "accuracy": {
+    "normalizedExpected": "open pdf studio offline ocr phase a total 42.50 eur",
+    "normalizedActual": "open pdf studio offline ocr phase a total 42.50 eur",
+    "editDistance": 0,
+    "characterAccuracy": 1,
+    "exactNormalizedMatch": true,
+    "allRecognitionCyclesExact": true
+  },
+  "cancellation": {
+    "cycles": 10,
+    "delaysMs": [
+      0,
+      25,
+      75,
+      150,
+      300
+    ],
+    "allTerminatedWorkers": true
+  },
+  "offline": {
+    "pass": true,
+    "externalNetworkRequestsRequired": false,
+    "sameOriginAssetGuard": true,
+    "vendoredAssetsChecksumVerified": true,
+    "physicalNetworkDisabledDuringRun": false,
+    "limitation": "This run proves the local-only code path and checksums; it did not disable the host network interface."
+  },
+  "viewerResponsiveness": {
+    "method": "MCP round-trip timing for awaited viewer zoom renders and viewport probes while a separate isolated OCR request is in flight",
+    "fixtureOpened": {
+      "name": "app_open_pdf",
+      "arguments": {
+        "path": "/Users/alexander/Personal Projects/open-pdf-studio/open-pdf-studio/tests/fixtures/ocr/clean-latin.pdf"
+      },
+      "wallMs": 323.47,
+      "ok": true,
+      "completedBeforeOcrResult": null,
+      "result": {
+        "file_path": "/Users/alexander/Personal Projects/open-pdf-studio/open-pdf-studio/tests/fixtures/ocr/clean-latin.pdf",
+        "ok": true,
+        "page_count": 1,
+        "tab_id": 0
+      }
+    },
+    "baseline": [
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1
+        },
+        "wallMs": 12.6,
+        "ok": true,
+        "completedBeforeOcrResult": null,
+        "result": {
+          "actual": 1,
+          "ok": true,
+          "requested": 1
+        }
+      },
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1.15
+        },
+        "wallMs": 2.06,
+        "ok": true,
+        "completedBeforeOcrResult": null,
+        "result": {
+          "actual": 1.15,
+          "ok": true,
+          "requested": 1.15
+        }
+      },
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1
+        },
+        "wallMs": 1.15,
+        "ok": true,
+        "completedBeforeOcrResult": null,
+        "result": {
+          "actual": 1,
+          "ok": true,
+          "requested": 1
+        }
+      },
+      {
+        "name": "app_get_viewport_state",
+        "arguments": {},
+        "wallMs": 1.06,
+        "ok": true,
+        "completedBeforeOcrResult": null,
+        "result": {
+          "engine": "Raster (PDFium)",
+          "docScale": 1.4642857142857142,
+          "viewportZoom": 1,
+          "canvasWidth": 1230,
+          "canvasHeight": 1194
+        }
+      }
+    ],
+    "duringOcr": [
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1.1
+        },
+        "wallMs": 1.57,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "actual": 1.1,
+          "ok": true,
+          "requested": 1.1
+        }
+      },
+      {
+        "name": "app_get_viewport_state",
+        "arguments": {},
+        "wallMs": 1.64,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "engine": "Raster (PDFium)",
+          "docScale": 1.4642857142857142,
+          "viewportZoom": 1.1,
+          "canvasWidth": 1230,
+          "canvasHeight": 1194
+        }
+      },
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1.25
+        },
+        "wallMs": 0.75,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "actual": 1.25,
+          "ok": true,
+          "requested": 1.25
+        }
+      },
+      {
+        "name": "app_get_viewport_state",
+        "arguments": {},
+        "wallMs": 0.82,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "engine": "Raster (PDFium)",
+          "docScale": 1.4642857142857142,
+          "viewportZoom": 1.25,
+          "canvasWidth": 1230,
+          "canvasHeight": 1194
+        }
+      },
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1
+        },
+        "wallMs": 0.75,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "actual": 1,
+          "ok": true,
+          "requested": 1
+        }
+      },
+      {
+        "name": "app_get_viewport_state",
+        "arguments": {},
+        "wallMs": 0.71,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "engine": "Raster (PDFium)",
+          "docScale": 1.4642857142857142,
+          "viewportZoom": 1,
+          "canvasWidth": 1230,
+          "canvasHeight": 1194
+        }
+      }
+    ],
+    "baselineMaximumWallMs": 12.6,
+    "duringOcrMaximumWallMs": 1.64,
+    "ocrWallMs": 1287.11,
+    "ocrExactNormalizedMatch": true,
+    "allDuringRequestsSucceeded": true,
+    "allDuringRequestsCompletedBeforeOcr": true,
+    "responsiveWhileOcrActive": true,
+    "activeOcrChildPidsAfterProbe": [],
+    "acceptanceNote": "No approved viewer-latency threshold was provided; raw baseline and concurrent timings are reported without inventing one."
+  },
+  "packageSize": {
+    "builtOcrBytes": 44747818,
+    "builtOcrMiB": 42.67,
+    "totalDistBytes": 69168261,
+    "artifacts": [
+      {
+        "file": "assets/ort-wasm-simd-threaded-Bb4gTywK.mjs",
+        "bytes": 24180
+      },
+      {
+        "file": "assets/ort-wasm-simd-threaded-Cpm-ox6i.wasm",
+        "bytes": 13479978
+      },
+      {
+        "file": "assets/worker-CvSll1t6.js",
+        "bytes": 90020
+      },
+      {
+        "file": "ocr/pp-ocrv6-small/characters.json",
+        "bytes": 112503
+      },
+      {
+        "file": "ocr/pp-ocrv6-small/detection.onnx",
+        "bytes": 9880512
+      },
+      {
+        "file": "ocr/pp-ocrv6-small/manifest.json",
+        "bytes": 1247
+      },
+      {
+        "file": "ocr/pp-ocrv6-small/recognition.onnx",
+        "bytes": 21159378
+      }
+    ]
+  },
+  "gate": {
+    "memoryRemediationPass": true,
+    "platformValidated": "darwin-arm64",
+    "crossPlatformProductionDecision": "Windows and Linux live runs still required"
+  }
+}

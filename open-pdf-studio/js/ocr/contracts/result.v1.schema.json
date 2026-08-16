@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/result.v1.schema.json",
+  "title": "Open PDF Studio OCR result contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schemaVersion",
+    "requestId",
+    "engine",
+    "source",
+    "text",
+    "lines",
+    "metrics",
+    "warnings"
+  ],
+  "properties": {
+    "contract": { "const": "open-pdf-studio.ocr.result" },
+    "schemaVersion": { "const": 1 },
+    "requestId": { "type": "string", "minLength": 1 },
+    "engine": { "$ref": "engine.v1.schema.json" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "pageIndex", "widthPx", "heightPx", "scale"],
+      "properties": {
+        "kind": { "const": "pdf-page" },
+        "path": { "type": "string", "minLength": 1 },
+        "pageIndex": { "type": "integer", "minimum": 0 },
+        "widthPx": { "type": "integer", "minimum": 1 },
+        "heightPx": { "type": "integer", "minimum": 1 },
+        "scale": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "text": { "type": "string" },
+    "lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text", "confidence", "boundingBox", "polygon"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "text": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "boundingBox": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["x", "y", "width", "height"],
+            "properties": {
+              "x": { "type": "number", "minimum": 0 },
+              "y": { "type": "number", "minimum": 0 },
+              "width": { "type": "number", "exclusiveMinimum": 0 },
+              "height": { "type": "number", "exclusiveMinimum": 0 }
+            }
+          },
+          "polygon": {
+            "type": "array",
+            "minItems": 4,
+            "items": {
+              "type": "array",
+              "prefixItems": [{ "type": "number" }, { "type": "number" }],
+              "minItems": 2,
+              "maxItems": 2
+            }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workerStartupMs",
+        "modelStartupMs",
+        "rasterMs",
+        "detectionMs",
+        "recognitionMs",
+        "totalOcrMs"
+      ],
+      "properties": {
+        "workerStartupMs": { "type": "number", "minimum": 0 },
+        "modelStartupMs": { "type": "number", "minimum": 0 },
+        "rasterMs": { "type": "number", "minimum": 0 },
+        "detectionMs": { "type": "number", "minimum": 0 },
+        "recognitionMs": { "type": "number", "minimum": 0 },
+        "totalOcrMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

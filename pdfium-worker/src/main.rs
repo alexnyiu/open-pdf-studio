@@ -15,6 +15,12 @@ use shm::Shm;
 use std::io::{BufRead, Write};
 
 fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--probe-pdfium") {
+        let _renderer = Renderer::new().context("probe PDFium runtime")?;
+        println!(r#"{{"pdfium":"ready"}}"#);
+        return Ok(());
+    }
+
     // Slot is passed as argv[1] (set by the spawner). Default to 0 for
     // standalone testing. Namespace (owning app PID) is argv[2] so multiple
     // app instances don't collide on the same SHM file; default "0".

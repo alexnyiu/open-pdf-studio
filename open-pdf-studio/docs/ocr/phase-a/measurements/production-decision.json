@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "classification": "EVALUATION GO, PRODUCTION NO-GO",
+  "evaluatedAt": "2026-08-16T06:16:46.275Z",
+  "platforms": {
+    "darwin": {
+      "present": true,
+      "architecture": "arm64",
+      "measuredAt": "2026-08-16T06:16:33.852Z",
+      "failures": [],
+      "finalRetainedDeltaMiB": 5.84,
+      "linearTrendMiBPerCycle": -0.35,
+      "recognitionCycles": 10,
+      "cancellationCycles": 10
+    },
+    "win32": {
+      "present": false,
+      "failures": [
+        "live report is missing"
+      ]
+    },
+    "linux": {
+      "present": false,
+      "failures": [
+        "live report is missing"
+      ]
+    }
+  },
+  "failures": [
+    "win32: live report is missing",
+    "linux: live report is missing"
+  ]
+}

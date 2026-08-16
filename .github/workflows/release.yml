@@ -118,6 +118,7 @@ jobs:
           cargo build --release -p pdfium-worker
           New-Item -ItemType Directory -Force open-pdf-studio/src-tauri/binaries | Out-Null
           Copy-Item target/release/pdfium-worker.exe open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-pc-windows-msvc.exe -Force
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs x86_64-pc-windows-msvc open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-pc-windows-msvc.exe
 
       # Sign the pdfium-worker sidecar BEFORE Tauri bundles it into the installer.
       # The installer-signing step below only signs the installer + main exe; the
@@ -149,6 +150,7 @@ jobs:
           cargo build --release -p pdfium-worker
           mkdir -p open-pdf-studio/src-tauri/binaries
           cp target/release/pdfium-worker open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-unknown-linux-gnu
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs x86_64-unknown-linux-gnu open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-unknown-linux-gnu
 
       # Linux bundelt in-proc PDFium: tauri.linux.conf.json verwijst naar
       # binaries/linux-x64/libpdfium.so. Zelfde stap als nightly.yml — zonder
@@ -175,6 +177,9 @@ jobs:
           lipo -create -output open-pdf-studio/src-tauri/binaries/pdfium-worker-universal-apple-darwin \
             target/aarch64-apple-darwin/release/pdfium-worker \
             target/x86_64-apple-darwin/release/pdfium-worker
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs aarch64-apple-darwin open-pdf-studio/src-tauri/binaries/pdfium-worker-aarch64-apple-darwin
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs x86_64-apple-darwin open-pdf-studio/src-tauri/binaries/pdfium-worker-x86_64-apple-darwin
+          node open-pdf-studio/scripts/verify-pdfium-sidecar.mjs universal-apple-darwin open-pdf-studio/src-tauri/binaries/pdfium-worker-universal-apple-darwin
 
       # macOS bundelt in-proc PDFium: tauri.macos.conf.json verwijst naar
       # binaries/macos-universal/libpdfium.dylib. Universal (arm64+x86_64)

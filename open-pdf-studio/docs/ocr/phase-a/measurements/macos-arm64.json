@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 1,
+  "measuredAt": "2026-08-15T06:56:59.655Z",
+  "environment": {
+    "platform": "darwin",
+    "release": "25.5.0",
+    "arch": "arm64",
+    "node": "v25.6.1",
+    "endpoint": "http://127.0.0.1:9223/mcp"
+  },
+  "fixture": {
+    "id": "clean-latin",
+    "path": "tests/fixtures/ocr/clean-latin.pdf",
+    "pageIndex": 0,
+    "sha256": "687f34cffe6eb5d49200c0c37139c42bd27a0ecf3ce021657207663f459a6164",
+    "unchangedAfterRun": true,
+    "expectedLines": [
+      "OPEN PDF STUDIO",
+      "Offline OCR Phase A",
+      "Total 42.50 EUR"
+    ]
+  },
+  "result": {
+    "contract": "open-pdf-studio.ocr.result",
+    "schemaVersion": 1,
+    "requestId": "652197aa-d264-4645-99b6-dd71abc8c3c0",
+    "engine": {
+      "contract": "open-pdf-studio.ocr.engine",
+      "schemaVersion": 1,
+      "engineId": "paddleocr-pp-ocrv6-small-onnx-wasm",
+      "adapterVersion": "0.1.0",
+      "provider": "PaddleOCR",
+      "model": {
+        "family": "PP-OCRv6",
+        "tier": "small",
+        "detection": "PP-OCRv6_small_det_onnx",
+        "recognition": "PP-OCRv6_small_rec_onnx"
+      },
+      "runtime": {
+        "name": "onnxruntime-web",
+        "version": "1.27.0",
+        "executionProvider": "wasm",
+        "offline": true
+      },
+      "capabilities": {
+        "textDetection": true,
+        "textRecognition": true,
+        "wordBoxes": false,
+        "pdfWriting": false
+      }
+    },
+    "source": {
+      "kind": "pdf-page",
+      "path": "tests/fixtures/ocr/clean-latin.pdf",
+      "pageIndex": 0,
+      "widthPx": 840,
+      "heightPx": 480,
+      "scale": 2
+    },
+    "text": "OPEN PDF STUDIO\nOffline OCR Phase A\nTotal 42.50 EUR",
+    "lines": [
+      {
+        "id": "line-1",
+        "text": "OPEN PDF STUDIO",
+        "confidence": 0.963585,
+        "boundingBox": {
+          "x": 67.67,
+          "y": 79.65,
+          "width": 534.03,
+          "height": 43.7
+        },
+        "polygon": [
+          [67.67, 79.65],
+          [601.7, 79.65],
+          [601.7, 123.35],
+          [67.67, 123.35]
+        ]
+      },
+      {
+        "id": "line-2",
+        "text": "Offline OCR Phase A",
+        "confidence": 0.971305,
+        "boundingBox": {
+          "x": 65.69,
+          "y": 213,
+          "width": 406.74,
+          "height": 38
+        },
+        "polygon": [
+          [65.69, 213],
+          [472.43, 213],
+          [472.43, 251],
+          [65.69, 251]
+        ]
+      },
+      {
+        "id": "line-3",
+        "text": "Total 42.50 EUR",
+        "confidence": 0.971397,
+        "boundingBox": {
+          "x": 64.37,
+          "y": 332.9,
+          "width": 287.22,
+          "height": 34.2
+        },
+        "polygon": [
+          [64.37, 332.9],
+          [351.59, 332.9],
+          [351.59, 367.1],
+          [64.37, 367.1]
+        ]
+      }
+    ],
+    "metrics": {
+      "workerStartupMs": 16,
+      "modelStartupMs": 230,
+      "rasterMs": 15,
+      "detectionMs": 217,
+      "recognitionMs": 247,
+      "totalOcrMs": 464
+    },
+    "warnings": [
+      "Phase A uses axis-aligned connected-component DB postprocessing; rotated and curved text remain unqualified."
+    ]
+  },
+  "timing": {
+    "coldWallMs": 738.44,
+    "workerStartupMs": 16,
+    "modelStartupMs": 230,
+    "rasterMs": 15,
+    "detectionMs": 217,
+    "recognitionMs": 247,
+    "totalOcrMs": 464,
+    "cancellationWallMs": 4.48
+  },
+  "memory": {
+    "method": "sum of RSS for the --mcp-server app, descendants, and its adjacent-launch WebKit XPC cohort, sampled every 100 ms",
+    "baselineRssBytes": 541245440,
+    "peakRssBytes": 946225152,
+    "peakDeltaBytes": 404979712,
+    "settledRssBytes": 946225152,
+    "settledAfterMs": 2000,
+    "samples": 6
+  },
+  "accuracy": {
+    "normalizedExpected": "open pdf studio offline ocr phase a total 42.50 eur",
+    "normalizedActual": "open pdf studio offline ocr phase a total 42.50 eur",
+    "editDistance": 0,
+    "characterAccuracy": 1,
+    "exactNormalizedMatch": true
+  },
+  "cancellation": {
+    "ok": true,
+    "cancelled": true,
+    "cancellation": {
+      "method": "worker.terminate",
+      "message": "OCR Phase A cancellation probe fired after 0 ms"
+    }
+  },
+  "offline": {
+    "pass": true,
+    "externalNetworkRequestsRequired": false,
+    "sameOriginAssetGuard": true,
+    "vendoredAssetsChecksumVerified": true,
+    "physicalNetworkDisabledDuringRun": false,
+    "limitation": "This run proves the local-only code path and checksums; it did not disable the host network interface."
+  },
+  "packageSize": {
+    "builtOcrBytes": 44755796,
+    "builtOcrMiB": 42.68,
+    "totalDistBytes": 69158852,
+    "artifacts": [
+      { "file": "assets/ort-wasm-simd-threaded-Bb4gTywK.mjs", "bytes": 24180 },
+      { "file": "assets/ort-wasm-simd-threaded-Cpm-ox6i.wasm", "bytes": 13479978 },
+      { "file": "assets/spike-B64dIWuZ.js", "bytes": 10263 },
+      { "file": "assets/worker-D7sOA21D.js", "bytes": 87735 },
+      { "file": "ocr/pp-ocrv6-small/characters.json", "bytes": 112503 },
+      { "file": "ocr/pp-ocrv6-small/detection.onnx", "bytes": 9880512 },
+      { "file": "ocr/pp-ocrv6-small/manifest.json", "bytes": 1247 },
+      { "file": "ocr/pp-ocrv6-small/recognition.onnx", "bytes": 21159378 }
+    ]
+  }
+}

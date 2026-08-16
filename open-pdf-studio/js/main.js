@@ -71,6 +71,7 @@ import { initFontDropdowns } from './utils/fonts.js';
 // server (started with `--mcp-server`) can drive the LIVE WebView from
 // outside. Inert when Tauri isn't present.
 import { initMcpBridge } from './mcp-bridge.js';
+import { runOcrPhaseAChildIfRequested } from './ocr/child-runner.js';
 
 // i18n
 import './i18n/config.js';
@@ -180,6 +181,8 @@ function disableBrowserShortcuts() {
 
 // Initialize application
 async function init() {
+  if (await runOcrPhaseAChildIfRequested()) return;
+
   const mobile = isMobile();
 
   // STANDALONE PRINT-QUEUE WINDOW (?view=printqueue): a separate Tauri window

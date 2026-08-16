@@ -106,7 +106,7 @@ fn rpc_error(id: Value, code: i32, message: impl Into<String>) -> Value {
 
 /// Handle the MCP `initialize` method. Identifies the server and advertises
 /// the `tools` capability (the actual list will populate as tasks 6-9 land).
-fn handle_initialize() -> Value {
+fn handle_initialize(webview_ready: bool) -> Value {
     json!({
         "protocolVersion": "2025-03-26",
         "serverInfo": {
@@ -118,6 +118,11 @@ fn handle_initialize() -> Value {
                 "listChanged": false
             }
         },
+        "_meta": {
+            "openPdfStudio": {
+                "webviewReady": webview_ready
+            }
+        }
     })
 }
 
@@ -167,6 +172,21 @@ fn handle_tools_list() -> Value {
                     "properties": {
                         "path":  { "type": "string" },
                         "width": { "type": "integer", "minimum": 1, "default": 2000 }
+                    },
+                    "required": ["path"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "app_ocr_phase_a_spike",
+                "description": "Run the non-UI OCR Phase A feasibility path on one PDF page: idle PDFium sidecar raster, offline PP-OCRv6 Small isolated child process and Web Worker, and validated result JSON. Development measurement only; does not edit or save the PDF.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "page_index": { "type": "integer", "minimum": 0, "default": 0 },
+                        "scale": { "type": "number", "minimum": 0.5, "maximum": 4.0, "default": 2.0 },
+                        "cancel_after_ms": { "type": "number", "minimum": 0 }
                     },
                     "required": ["path"],
                     "additionalProperties": false
@@ -771,6 +791,15 @@ async fn handle_tools_call(state: &AppState, params: &Value) -> Result<Value, (i
         "screenshot_page" => tool_screenshot_page(state, &arguments).await,
         "get_pdf_metadata" => tool_get_pdf_metadata(state, &arguments).await,
         "screenshot_all" => tool_screenshot_all(state, &arguments).await,
+        "app_ocr_phase_a_spike" => {
+            tool_app_request(
+                state,
+                "mcp:ocr-phase-a-spike",
+                &arguments,
+                Duration::from_secs(180),
+            )
+            .await
+        }
         "app_open_pdf" => tool_app_request(state, "mcp:open-pdf", &arguments, Duration::from_secs(60)).await,
         "app_set_zoom" => tool_app_request(state, "mcp:set-zoom", &arguments, Duration::from_secs(15)).await,
         "app_zoom_in" => tool_app_request(state, "mcp:zoom-in", &arguments, Duration::from_secs(15)).await,
@@ -1265,7 +1294,14 @@ async fn mcp_handler(
     };
 
     let response = match method {
-        "initialize" => rpc_result(id, handle_initialize()),
+        "initialize" => {
+            let webview_ready = state
+                .app_handle
+                .as_ref()
+                .map(|app| app.state::<McpAppBridge>().is_ready())
+                .unwrap_or(false);
+            rpc_result(id, handle_initialize(webview_ready))
+        }
         "tools/list" => rpc_result(id, handle_tools_list()),
         "tools/call" => {
             let empty = Value::Null;
@@ -1338,11 +1374,12 @@ mod tests {
 
     #[test]
     fn initialize_response_shape() {
-        let v = handle_initialize();
+        let v = handle_initialize(false);
         assert_eq!(v["serverInfo"]["name"], "open-pdf-studio");
         assert_eq!(v["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(v["capabilities"]["tools"]["listChanged"], false);
         assert_eq!(v["protocolVersion"], "2025-03-26");
+        assert_eq!(v["_meta"]["openPdfStudio"]["webviewReady"], false);
     }
 
     #[test]
@@ -1635,6 +1672,7 @@ mod tests {
         let arr = v["tools"].as_array().expect("tools is an array");
         let names: Vec<&str> = arr.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for tool in [
+            "app_ocr_phase_a_spike",
             "app_set_tool",
             "app_get_current_tool",
             "app_click_element",

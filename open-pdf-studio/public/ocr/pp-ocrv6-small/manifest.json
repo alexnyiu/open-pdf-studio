@@ -1,0 +1,57 @@
+{
+  "contract": "open-pdf-studio.ocr.model-pack",
+  "schemaVersion": 1,
+  "packId": "paddleocr-pp-ocrv6-small-macos",
+  "packVersion": "1.0.0",
+  "platform": {
+    "os": "macos",
+    "architectures": ["arm64", "x86_64"]
+  },
+  "engineCompatibility": {
+    "engineId": "paddleocr-pp-ocrv6-small-onnx-wasm",
+    "adapterVersion": "0.1.0",
+    "runtime": {
+      "name": "onnxruntime-web",
+      "version": "1.27.0",
+      "executionProvider": "wasm"
+    },
+    "models": {
+      "detection": "PP-OCRv6_small_det_onnx",
+      "recognition": "PP-OCRv6_small_rec_onnx"
+    }
+  },
+  "modelFamily": "PP-OCRv6",
+  "modelTier": "small",
+  "characterCount": 18708,
+  "languages": ["und"],
+  "license": "Apache-2.0",
+  "upstream": {
+    "detection": {
+      "repository": "PaddlePaddle/PP-OCRv6_small_det_onnx",
+      "revision": "28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
+      "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/28fe5895c24fd108c19eb3e8479f4ab385fbfc62/inference.onnx"
+    },
+    "recognition": {
+      "repository": "PaddlePaddle/PP-OCRv6_small_rec_onnx",
+      "revision": "b8f84f0b80c529de40b4fbb3544b84fa7233a513",
+      "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/b8f84f0b80c529de40b4fbb3544b84fa7233a513/inference.onnx"
+    }
+  },
+  "assets": {
+    "detection": {
+      "file": "detection.onnx",
+      "bytes": 9880512,
+      "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+    },
+    "recognition": {
+      "file": "recognition.onnx",
+      "bytes": 21159378,
+      "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+    },
+    "dictionary": {
+      "file": "characters.json",
+      "bytes": 112503,
+      "sha256": "d5b428957abd863137f0b98f81f38fea3eb70bc279f778fbea41e1a68fa090ec"
+    }
+  }
+}

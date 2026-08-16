@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/engine.v2.schema.json",
+  "title": "Open PDF Studio OCR engine contract v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schemaVersion",
+    "engineId",
+    "adapterVersion",
+    "provider",
+    "model",
+    "modelPack",
+    "runtime",
+    "capabilities"
+  ],
+  "properties": {
+    "contract": { "const": "open-pdf-studio.ocr.engine" },
+    "schemaVersion": { "const": 2 },
+    "engineId": { "$ref": "#/$defs/id" },
+    "adapterVersion": { "$ref": "#/$defs/semver" },
+    "provider": { "type": "string", "minLength": 1 },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "tier", "detection", "recognition"],
+      "properties": {
+        "family": { "type": "string", "minLength": 1 },
+        "tier": { "type": "string", "minLength": 1 },
+        "detection": { "type": "string", "minLength": 1 },
+        "recognition": { "type": "string", "minLength": 1 }
+      }
+    },
+    "modelPack": { "$ref": "#/$defs/modelPackIdentity" },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "executionProvider", "offline"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "executionProvider": { "type": "string", "minLength": 1 },
+        "offline": { "const": true }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "textDetection",
+        "textRecognition",
+        "blockResults",
+        "lineResults",
+        "wordResults",
+        "linePolygons",
+        "wordPolygons",
+        "alternatives",
+        "languageMetadata",
+        "writingDirectionMetadata",
+        "preprocessingMetadata",
+        "pdfWriting"
+      ],
+      "properties": {
+        "textDetection": { "type": "boolean" },
+        "textRecognition": { "type": "boolean" },
+        "blockResults": { "type": "boolean" },
+        "lineResults": { "const": true },
+        "wordResults": { "type": "boolean" },
+        "linePolygons": { "const": true },
+        "wordPolygons": { "type": "boolean" },
+        "alternatives": { "type": "boolean" },
+        "languageMetadata": { "type": "boolean" },
+        "writingDirectionMetadata": { "type": "boolean" },
+        "preprocessingMetadata": { "type": "boolean" },
+        "pdfWriting": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "modelPackIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "packId", "packVersion"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.model-pack" },
+        "schemaVersion": { "const": 1 },
+        "packId": { "$ref": "#/$defs/id" },
+        "packVersion": { "$ref": "#/$defs/semver" }
+      }
+    }
+  }
+}

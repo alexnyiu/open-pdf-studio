@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/progress.v1.schema.json",
+  "title": "Open PDF Studio OCR progress contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schemaVersion",
+    "jobId",
+    "documentId",
+    "pageId",
+    "pageIndex",
+    "pageStatus",
+    "stage",
+    "completedPages",
+    "totalPages",
+    "fraction",
+    "timestamp"
+  ],
+  "properties": {
+    "contract": { "const": "open-pdf-studio.ocr.progress" },
+    "schemaVersion": { "const": 1 },
+    "jobId": { "$ref": "#/$defs/id" },
+    "documentId": { "$ref": "#/$defs/id" },
+    "pageId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+    "pageIndex": { "type": ["integer", "null"], "minimum": 0 },
+    "pageStatus": {
+      "type": ["string", "null"],
+      "enum": [
+        "queued",
+        "rasterizing",
+        "preprocessing",
+        "recognizing",
+        "completed",
+        "partial",
+        "unsupported",
+        "failed",
+        "cancelled",
+        null
+      ]
+    },
+    "stage": {
+      "enum": [
+        "queued",
+        "rasterizing",
+        "preprocessing",
+        "recognizing",
+        "finalizing",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "completedPages": { "type": "integer", "minimum": 0 },
+    "totalPages": { "type": "integer", "minimum": 1, "maximum": 100000 },
+    "fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+    "message": { "type": "string", "maxLength": 4096 },
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "Z$" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+    }
+  }
+}

@@ -28,6 +28,26 @@ if ! find "$tmp/squashfs-root" -type f -name libpdfium.so -print -quit | grep -q
   exit 1
 fi
 
+worker=$(find "$tmp/squashfs-root" -type f -name pdfium-worker -print -quit)
+if [[ -z "$worker" ]]; then
+  echo "pdfium-worker is missing from the AppImage" >&2
+  exit 1
+fi
+if [[ ! -x "$worker" ]]; then
+  echo "pdfium-worker is not executable in the AppImage" >&2
+  exit 1
+fi
+if ! "$worker" --probe-pdfium >"$tmp/pdfium-worker-probe.log" 2>&1; then
+  echo "pdfium-worker could not initialize bundled PDFium" >&2
+  cat "$tmp/pdfium-worker-probe.log" >&2
+  exit 1
+fi
+if ! grep -q '"pdfium":"ready"' "$tmp/pdfium-worker-probe.log"; then
+  echo "pdfium-worker returned an invalid PDFium probe response" >&2
+  cat "$tmp/pdfium-worker-probe.log" >&2
+  exit 1
+fi
+
 launcher=("$appimage")
 # SMOKE_NO_DISPLAY_WRAPPERS=1 slaat xvfb-run/dbus-run-session over. De
 # zelftest (linux-appimage-smoke.test.sh) gebruikt dit: zijn fake-AppImage

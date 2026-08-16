@@ -8,6 +8,7 @@ mod email;
 pub mod linux_runtime;
 pub mod mcp_app_bridge;
 pub mod mcp_server;
+pub mod ocr_phase_a;
 pub mod pdfium_renderer;
 pub mod render_to_png;
 pub mod window_mgmt;
@@ -17,11 +18,16 @@ pub mod worker_pool;
 pub struct StartupOpts {
     pub mcp_server: bool,
     pub mcp_port: u16,
+    pub ocr_phase_a_child: Option<std::path::PathBuf>,
 }
 
 impl Default for StartupOpts {
     fn default() -> Self {
-        Self { mcp_server: false, mcp_port: 9223 }
+        Self {
+            mcp_server: false,
+            mcp_port: 9223,
+            ocr_phase_a_child: None,
+        }
     }
 }
 
@@ -1680,6 +1686,40 @@ async fn render_pdf_page(
     Ok(tauri::ipc::Response::new(data))
 }
 
+/// Phase A OCR-only PDFium raster lane. It uses an idle sidecar worker and
+/// intentionally has no in-process fallback, cache insertion, UI state, or
+/// PDF mutation. A busy app therefore defers/fails this background request
+/// instead of allowing OCR to compete with visible rendering.
+#[tauri::command]
+async fn rasterize_page_for_ocr(
+    path: String,
+    page_index: u32,
+    scale: f32,
+    pool: tauri::State<'_, std::sync::Arc<tokio::sync::OnceCell<worker_pool::WorkerPool>>>,
+) -> Result<tauri::ipc::Response, String> {
+    if path.is_empty() {
+        return Err("OCR raster path must not be empty".to_string());
+    }
+    if !scale.is_finite() || !(0.5..=4.0).contains(&scale) {
+        return Err("OCR raster scale must be between 0.5 and 4.0".to_string());
+    }
+    let pool = pool
+        .get()
+        .ok_or_else(|| {
+            "PDFium worker pool is not ready; low-priority OCR will not use in-process fallback"
+                .to_string()
+        })?;
+    let (width, height, rgba) = pool
+        .render_low_priority(&path, page_index, scale, 0)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut out = Vec::with_capacity(8 + rgba.len());
+    out.extend_from_slice(&width.to_le_bytes());
+    out.extend_from_slice(&height.to_le_bytes());
+    out.extend_from_slice(&rgba);
+    Ok(tauri::ipc::Response::new(out))
+}
+
 #[tauri::command]
 async fn render_pdf_page_region(
     path: String,
@@ -2226,8 +2266,10 @@ fn run_mobile() {
 
 pub fn run(opts: StartupOpts) {
     eprintln!(
-        "[startup] mcp_server={}, mcp_port={}",
-        opts.mcp_server, opts.mcp_port
+        "[startup] mcp_server={}, mcp_port={}, ocr_child={}",
+        opts.mcp_server,
+        opts.mcp_port,
+        opts.ocr_phase_a_child.is_some()
     );
 
     // Capture the MCP options for `setup()` — we now spawn the MCP server
@@ -2236,6 +2278,10 @@ pub fn run(opts: StartupOpts) {
     // started here (before the builder ran) and never had a handle.
     let mcp_enabled = opts.mcp_server;
     let mcp_port = opts.mcp_port;
+    let ocr_child_state = ocr_phase_a::OcrChildJobState::from_request_path(
+        opts.ocr_phase_a_child.clone(),
+    );
+    let is_ocr_child = ocr_child_state.is_child();
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -2275,49 +2321,51 @@ pub fn run(opts: StartupOpts) {
     // existing in-proc PDFium path serves as fallback when the pool is
     // unavailable.
     let pool: Arc<tokio::sync::OnceCell<worker_pool::WorkerPool>> = Arc::new(tokio::sync::OnceCell::new());
-    let pool_for_init = pool.clone();
-    tauri::async_runtime::spawn(async move {
-        // De pdfium-worker-sidecar staat na bundling naast de hoofdbinary. De
-        // bestandsnaam is platform-afhankelijk (`pdfium-worker.exe` op Windows,
-        // `pdfium-worker` zonder extensie op macOS/Linux); worker_exe_path()
-        // levert het juiste pad zodat de pool ook op macOS/Linux gevonden wordt.
-        let worker_exe = worker_pool::worker_exe_path();
+    if !is_ocr_child {
+        let pool_for_init = pool.clone();
+        tauri::async_runtime::spawn(async move {
+            // De pdfium-worker-sidecar staat na bundling naast de hoofdbinary. De
+            // bestandsnaam is platform-afhankelijk (`pdfium-worker.exe` op Windows,
+            // `pdfium-worker` zonder extensie op macOS/Linux); worker_exe_path()
+            // levert het juiste pad zodat de pool ook op macOS/Linux gevonden wordt.
+            let worker_exe = worker_pool::worker_exe_path();
 
-        if !worker_exe.exists() {
-            eprintln!("[pool] pdfium-worker sidecar not found at {:?} — pool disabled, using in-proc PDFium", worker_exe);
-            return;
-        }
+            if !worker_exe.exists() {
+                eprintln!("[pool] pdfium-worker sidecar not found at {:?} — pool disabled, using in-proc PDFium", worker_exe);
+                return;
+            }
 
-        match worker_pool::spawn::spawn_pool(4, &worker_exe).await {
-            Ok(workers) => {
-                let pool = worker_pool::WorkerPool::new(workers);
-                if pool.is_ready() {
-                    eprintln!("[pool] initialised with {} workers", pool.workers.len());
-                    let _ = pool_for_init.set(pool);
-                    // Idle-trim: open pagina-handles in de workers kosten op
-                    // zware CAD-pagina's ruim 1 GB per worker. Na 5 min zonder
-                    // renders geven de workers die parse-state terug; de
-                    // eerstvolgende render betaalt eenmalig de her-parse.
-                    // 5 min (niet korter): tijdens actief werken moet de
-                    // handle heet blijven, anders voelt elke zoom na een
-                    // denkpauze weer traag. Eigen OS-thread (geen
-                    // tokio::time-afhankelijkheid).
-                    let pool_for_trim = pool_for_init.clone();
-                    std::thread::spawn(move || loop {
-                        std::thread::sleep(std::time::Duration::from_secs(60));
-                        if let Some(p) = pool_for_trim.get() {
-                            tauri::async_runtime::block_on(p.trim_if_idle(300_000));
-                        }
-                    });
-                } else {
-                    eprintln!("[pool] no workers became ready — pool disabled");
+            match worker_pool::spawn::spawn_pool(4, &worker_exe).await {
+                Ok(workers) => {
+                    let pool = worker_pool::WorkerPool::new(workers);
+                    if pool.is_ready() {
+                        eprintln!("[pool] initialised with {} workers", pool.workers.len());
+                        let _ = pool_for_init.set(pool);
+                        // Idle-trim: open pagina-handles in de workers kosten op
+                        // zware CAD-pagina's ruim 1 GB per worker. Na 5 min zonder
+                        // renders geven de workers die parse-state terug; de
+                        // eerstvolgende render betaalt eenmalig de her-parse.
+                        // 5 min (niet korter): tijdens actief werken moet de
+                        // handle heet blijven, anders voelt elke zoom na een
+                        // denkpauze weer traag. Eigen OS-thread (geen
+                        // tokio::time-afhankelijkheid).
+                        let pool_for_trim = pool_for_init.clone();
+                        std::thread::spawn(move || loop {
+                            std::thread::sleep(std::time::Duration::from_secs(60));
+                            if let Some(p) = pool_for_trim.get() {
+                                tauri::async_runtime::block_on(p.trim_if_idle(300_000));
+                            }
+                        });
+                    } else {
+                        eprintln!("[pool] no workers became ready — pool disabled");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[pool] spawn_pool failed: {} — pool disabled", e);
                 }
             }
-            Err(e) => {
-                eprintln!("[pool] spawn_pool failed: {} — pool disabled", e);
-            }
-        }
-    });
+        });
+    }
 
     let mut builder = tauri::Builder::default()
         .manage(OpenedFiles(Mutex::new(opened_files)))
@@ -2330,6 +2378,7 @@ pub fn run(opts: StartupOpts) {
         .manage(pdfium_renderer::PdfiumDocCache::default())
         .manage(pdfium_renderer::PixmapCacheState::default())
         .manage(pool.clone())
+        .manage(ocr_child_state)
         .manage(mcp_app_bridge::McpAppBridge::new())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -2355,7 +2404,7 @@ pub fn run(opts: StartupOpts) {
     #[cfg(not(target_os = "android"))]
     {
         let is_detached = std::env::var("OPDS_DETACHED").as_deref() == Ok("1");
-        if !is_detached {
+        if !is_detached && !is_ocr_child {
             builder = builder
                 .plugin(tauri_plugin_single_instance::init(|app: &tauri::AppHandle, argv: Vec<String>, _cwd: String| {
                     if let Some(window) = app.get_webview_window("main") {
@@ -2414,6 +2463,20 @@ pub fn run(opts: StartupOpts) {
             diagnostics.record("native-created", None);
             app.manage(diagnostics);
 
+            // This internal Phase A process owns no end-user surface. It
+            // exists only long enough to host one OCR Worker, then exits.
+            if is_ocr_child {
+                if let Some(window) = app.get_webview_window("main") {
+                    // WKWebView does not finish booting a page that is hidden
+                    // during setup on macOS. Keep a 1x1 window off-screen so
+                    // the Worker runtime initializes without exposing UI.
+                    let _ = window.set_size(tauri::PhysicalSize::new(1, 1));
+                    let _ = window.set_position(tauri::PhysicalPosition::new(-32_000, -32_000));
+                    #[cfg(not(target_os = "android"))]
+                    let _ = window.set_skip_taskbar(true);
+                }
+            }
+
             // Grant FS plugin scope for command-line files (file association)
             for path in app.state::<OpenedFiles>().0.lock().unwrap().iter() {
                 let _ = app.fs_scope().allow_file(path);
@@ -2457,9 +2520,11 @@ pub fn run(opts: StartupOpts) {
             // Non-fatal: if PDFium can't load (e.g. libpdfium.so missing from a
             // Linux bundle), the app still starts and the UI loads — rendering
             // reports an error instead of aborting at startup.
-            match pdfium_renderer::init_pdfium(&resource_dir) {
-                Ok(()) => log::info!("PDFium initialised from {:?}", resource_dir),
-                Err(e) => log::error!("PDFium initialisation failed (rendering disabled): {}", e),
+            if !is_ocr_child {
+                match pdfium_renderer::init_pdfium(&resource_dir) {
+                    Ok(()) => log::info!("PDFium initialised from {:?}", resource_dir),
+                    Err(e) => log::error!("PDFium initialisation failed (rendering disabled): {}", e),
+                }
             }
 
             // Windows-only: pre-warm shell32.dll + comdlg32.dll + the
@@ -2574,6 +2639,10 @@ pub fn run(opts: StartupOpts) {
             uninstall_plugin,
             read_plugin_file,
             render_pdf_page,
+            rasterize_page_for_ocr,
+            ocr_phase_a::run_ocr_phase_a_isolated,
+            ocr_phase_a::ocr_phase_a_child_take_job,
+            ocr_phase_a::ocr_phase_a_child_complete,
             worker_pool_ready,
             render_pdf_page_region,
             render_tile_scene_region,

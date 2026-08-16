@@ -16,6 +16,19 @@ pub struct RenderResult {
 // deze ene instantie.
 static PDFIUM: OnceLock<Pdfium> = OnceLock::new();
 
+fn pdfium_library_directories(exe_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    vec![
+        exe_dir.to_path_buf(),
+        // macOS application bundle resources.
+        exe_dir.join("../Resources"),
+        // Tauri AppImage/deb resources. Product-name and identifier-style
+        // directories are both accepted because bundle layouts can differ.
+        exe_dir.join("../lib/Open PDF Studio"),
+        exe_dir.join("../lib/open-pdf-studio"),
+        std::path::PathBuf::from("."),
+    ]
+}
+
 fn pdfium() -> Result<&'static Pdfium> {
     if PDFIUM.get().is_none() {
         // Zoekvolgorde voor de PDFium-bibliotheek:
@@ -24,19 +37,24 @@ fn pdfium() -> Result<&'static Pdfium> {
         //   3. ../Resources t.o.v. de binary — op macOS draait de sidecar in
         //      Contents/MacOS terwijl de gebundelde libpdfium.dylib als resource
         //      in Contents/Resources staat;
-        //   4. de huidige werkdirectory (dev / handmatige runs).
-        // Zonder 2/3 zou de worker op macOS geen dylib vinden en elke render
-        // laten terugvallen op in-proc PDFium in de hoofd-app.
+        //   4. ../lib/<product> — Tauri AppImage/deb resource layout;
+        //   5. de huidige werkdirectory (dev / handmatige runs).
         let exe_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let res_dir = exe_dir.join("../Resources");
-        let bindings = Pdfium::bind_to_system_library()
-            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&exe_dir)))
-            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(&res_dir)))
-            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")))
-            .context("PDFium library not found (system, exe-dir, ../Resources, or ./)")?;
+        let mut bindings = Pdfium::bind_to_system_library();
+        for directory in pdfium_library_directories(&exe_dir) {
+            if bindings.is_ok() {
+                break;
+            }
+            bindings = Pdfium::bind_to_library(
+                Pdfium::pdfium_platform_library_name_at_path(&directory),
+            );
+        }
+        let bindings = bindings.context(
+            "PDFium library not found (system, exe-dir, macOS resources, Tauri Linux resources, or cwd)",
+        )?;
         let _ = PDFIUM.set(Pdfium::new(bindings));
     }
     Ok(PDFIUM.get().expect("PDFIUM set above"))
@@ -282,6 +300,19 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn bundled_platform_resource_directories_are_searched() {
+        let directories = pdfium_library_directories(Path::new("/bundle/usr/bin"));
+        assert!(directories.contains(&PathBuf::from("/bundle/usr/bin/../Resources")));
+        assert!(directories.contains(&PathBuf::from(
+            "/bundle/usr/bin/../lib/Open PDF Studio",
+        )));
+        assert!(directories.contains(&PathBuf::from(
+            "/bundle/usr/bin/../lib/open-pdf-studio",
+        )));
+    }
 
     #[test]
     #[ignore]

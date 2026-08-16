@@ -100,6 +100,8 @@ test('Linux resources exclude Windows-only runtime files', async () => {
 
   assert.equal(resources['WebView2Loader.dll'], undefined);
   assert.equal(resources['binaries/win-x64/pdfium.dll'], undefined);
+  assert.deepEqual(config.bundle.externalBin, ['binaries/pdfium-worker']);
+  assert.equal(Object.hasOwn(linux.bundle, 'externalBin'), false);
 });
 
 test('CI exercises macOS 26 startup and frontend readiness', async () => {
@@ -108,6 +110,11 @@ test('CI exercises macOS 26 startup and frontend readiness', async () => {
   assert.match(workflow, /macos-26/);
   assert.match(workflow, /npm run prepare:native-runtime/);
   assert.match(workflow, /macos-startup-smoke\.sh/);
+  assert.match(
+    workflow,
+    /Open PDF Studio\.app\/Contents\/MacOS\/open-pdf-studio/,
+    'the OCR gate must launch the CFBundleExecutable, not the display name',
+  );
   assert.match(workflow, /createUpdaterArtifacts\\?"?:false/);
   assert.match(smoke, /survival_seconds=10/);
   assert.match(smoke, /kill -0 "\$pid"/);

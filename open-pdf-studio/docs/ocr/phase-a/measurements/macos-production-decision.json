@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "scope": "macos-arm64",
+  "classification": "MACOS PRODUCTION GO",
+  "evaluatedAt": "2026-08-16T08:45:18.627Z",
+  "productionTarget": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "windows": "deferred-not-supported",
+    "linux": "deferred-not-supported"
+  },
+  "evidence": {
+    "reportMeasuredAt": "2026-08-16T06:16:33.852Z",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "buildKind": "packaged-release",
+    "recognitionCycles": 10,
+    "cancellationCycles": 10,
+    "uniqueChildProcesses": 20,
+    "maximumSettledDeltaMiB": 12.73,
+    "finalRetainedDeltaMiB": 5.84,
+    "linearTrendMiBPerCycle": -0.35,
+    "engine": "PaddleOCR",
+    "artifacts": {
+      "appBundle": "Open PDF Studio.app",
+      "applicationArchitectures": [
+        "arm64"
+      ],
+      "packagedSidecarArchitectures": [
+        "arm64"
+      ],
+      "packagedPdfiumArchitectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "stagedSidecarArchitectures": {
+        "arm64": [
+          "arm64"
+        ],
+        "x86_64": [
+          "x86_64"
+        ]
+      },
+      "universalPdfiumArchitectures": [
+        "x86_64",
+        "arm64"
+      ],
+      "checksumVerification": {
+        "models": 3,
+        "runtimeAssets": 2,
+        "dependency": {
+          "name": "onnxruntime-web",
+          "version": "1.27.0",
+          "license": "MIT",
+          "integrity": "sha512-ogDLsqIozHZwifPuN37OproAo0byX6t43/bP8GzeZWBWD6MOGExswFAx3up4NS/vvWBOg2u2PXomDt3rMmdQSg=="
+        }
+      }
+    }
+  },
+  "limits": {
+    "settledRetainedRssMiB": 32,
+    "growthMiBPerCycle": 2,
+    "minimumRecognitionCycles": 10,
+    "minimumCancellationCycles": 10
+  },
+  "criteria": {
+    "packagedReleaseApp": true,
+    "macosArm64LiveExecution": true,
+    "tenRecognitionCycles": true,
+    "tenCancellationCycles": true,
+    "uniqueDisposableChildPerJob": true,
+    "noSurvivingChild": true,
+    "settledRetainedRssWithin32MiB": true,
+    "growthWithin2MiBPerCycle": true,
+    "exactGoldenFixtureText": true,
+    "offlineEnforcement": true,
+    "staleResultRejection": true,
+    "viewerResponsiveness": true,
+    "resourceCleanup": true,
+    "modelAndDependencyChecksumVerification": true,
+    "validMacosSidecarArchitecture": true,
+    "universalPackagingArchitectureChecked": true,
+    "pdfiumInitialization": true,
+    "paddleOcrPrimaryEngine": true,
+    "basePlatformContract": true
+  },
+  "failures": []
+}

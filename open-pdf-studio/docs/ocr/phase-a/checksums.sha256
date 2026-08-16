@@ -1,0 +1,12 @@
+98c566ecc935d18f889af654cd49ff4bf2f5239e471da32d276f922de3a596e6  public/ocr/pp-ocrv6-small/manifest.json
+d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e  public/ocr/pp-ocrv6-small/detection.onnx
+5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634  public/ocr/pp-ocrv6-small/recognition.onnx
+d5b428957abd863137f0b98f81f38fea3eb70bc279f778fbea41e1a68fa090ec  public/ocr/pp-ocrv6-small/characters.json
+d1ab1b94b16a65b29d710d0b587b29e7bed336827577623913479b8afe8113e6  node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm
+0a1e718d99c41b22c21f2520ff4f9e883a6b5533856e398d21816ee8eb8185d3  node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs
+687f34cffe6eb5d49200c0c37139c42bd27a0ecf3ce021657207663f459a6164  tests/fixtures/ocr/clean-latin.pdf
+52d2d0baf4da0391577a3fef18296c3c465a20b0e51d2e748d5a5630436eff72  tests/fixtures/ocr/numbers-symbols.pdf
+f9b3059b478aa64264f4f5f303bf59de10c61730863fe96a90c0cf12d3fc4253  tests/fixtures/ocr/low-contrast-skew.pdf
+a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499  tests/fixtures/ocr/LICENSE-CC0-1.0.txt
+3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e  docs/ocr/phase-a/licenses/PaddleOCR-Apache-2.0.txt
+2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c  docs/ocr/phase-a/licenses/onnxruntime-web-MIT.txt

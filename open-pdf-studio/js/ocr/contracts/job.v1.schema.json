@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/job.v1.schema.json",
+  "title": "Open PDF Studio OCR job contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "schemaVersion",
+    "jobId",
+    "engineId",
+    "modelPack",
+    "document",
+    "pages",
+    "options",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "contract": { "const": "open-pdf-studio.ocr.job" },
+    "schemaVersion": { "const": 1 },
+    "jobId": { "$ref": "#/$defs/id" },
+    "engineId": { "$ref": "#/$defs/id" },
+    "modelPack": { "$ref": "#/$defs/modelPackIdentity" },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "pageCount"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "pageCount": { "type": "integer", "minimum": 1, "maximum": 100000 }
+      }
+    },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100000,
+      "items": { "$ref": "#/$defs/page" }
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["languages", "includeWords"],
+      "properties": {
+        "languages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/languageTag" }
+        },
+        "includeWords": { "type": "boolean" }
+      }
+    },
+    "createdAt": { "$ref": "#/$defs/timestamp" },
+    "updatedAt": { "$ref": "#/$defs/timestamp" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "languageTag": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z]{2,8}|und)(?:-[A-Za-z0-9]{1,8})*$"
+    },
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "modelPackIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "packId", "packVersion"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.model-pack" },
+        "schemaVersion": { "const": 1 },
+        "packId": { "$ref": "#/$defs/id" },
+        "packVersion": { "$ref": "#/$defs/semver" }
+      }
+    },
+    "pageError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "$ref": "#/$defs/id" },
+        "message": { "type": "string", "minLength": 1 },
+        "retryable": { "type": "boolean" }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "index", "status", "attempts"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "index": { "type": "integer", "minimum": 0 },
+        "status": {
+          "enum": [
+            "queued",
+            "rasterizing",
+            "preprocessing",
+            "recognizing",
+            "completed",
+            "partial",
+            "unsupported",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "lastError": { "$ref": "#/$defs/pageError" }
+      }
+    }
+  }
+}

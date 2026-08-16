@@ -18,6 +18,13 @@ use std::hash::{Hash, Hasher};
 /// Dead slots (depth == usize::MAX as sentinel) are skipped.
 pub const OVERFLOW_THRESHOLD: usize = 2;
 
+/// Low-priority work may start only on a live worker with no queued or active
+/// request. Unlike interactive routing, this deliberately ignores affinity:
+/// OCR must not wait in front of a page render the user can see.
+pub fn pick_idle_worker(depths: &[usize]) -> Option<usize> {
+    depths.iter().position(|&depth| depth == 0)
+}
+
 pub fn pick_worker(path: &str, page_index: u32, depths: &[usize], pin: bool) -> usize {
     assert!(!depths.is_empty(), "depths cannot be empty");
 
@@ -103,6 +110,12 @@ mod tests {
             let picked = pick_worker("foo.pdf", p, &depths, false);
             assert!(picked == 1 || picked == 3, "got {}", picked);
         }
+    }
+
+    #[test]
+    fn low_priority_uses_only_an_idle_worker() {
+        assert_eq!(pick_idle_worker(&[usize::MAX, 2, 0, 1]), Some(2));
+        assert_eq!(pick_idle_worker(&[usize::MAX, 2, 1]), None);
     }
 
     #[test]

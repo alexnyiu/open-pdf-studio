@@ -171,6 +171,48 @@ async function handleOpenPdf(params) {
   };
 }
 
+async function handleOcrPhaseASpike(params) {
+  const path = params?.path;
+  if (typeof path !== 'string' || !path) {
+    return { ok: false, error: 'missing or invalid params.path' };
+  }
+  const pageIndex = Number(params?.page_index ?? 0);
+  const scale = Number(params?.scale ?? 2);
+  const cancelAfterMs = params?.cancel_after_ms == null
+    ? null
+    : Number(params.cancel_after_ms);
+  const lifecycle = [];
+  let runSummary = {};
+  try {
+    const spike = await import('./ocr/spike.js');
+    const result = await spike.runOcrPhaseASpike({
+      path,
+      pageIndex,
+      scale,
+      cancelAfterMs,
+      onLifecycle: (checkpoint) => lifecycle.push(checkpoint),
+      onRunSummary: (summary) => { runSummary = summary; },
+    });
+    return { ok: true, cancelled: false, result, lifecycle, ...runSummary };
+  } catch (error) {
+    if (error?.name === 'OcrCancelledError' || error?.code === 'OCR_CANCELLED') {
+      return {
+        ok: true,
+        cancelled: true,
+        cancellation: { method: 'worker.terminate', message: error.message },
+        lifecycle,
+        ...runSummary,
+      };
+    }
+    return {
+      ok: false,
+      error: `OCR Phase A spike: ${error?.message ?? error}`,
+      lifecycle,
+      ...runSummary,
+    };
+  }
+}
+
 async function handleSetZoom(params) {
   const scale = Number(params?.scale);
   if (!Number.isFinite(scale) || scale <= 0) {
@@ -2019,6 +2061,7 @@ async function handleUiState(params) {
 
 const HANDLERS = {
   'mcp:open-pdf':           handleOpenPdf,
+  'mcp:ocr-phase-a-spike':  handleOcrPhaseASpike,
   'mcp:set-zoom':           handleSetZoom,
   'mcp:zoom-in':            handleZoomIn,
   'mcp:zoom-out':           handleZoomOut,

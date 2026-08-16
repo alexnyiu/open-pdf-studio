@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "license": "CC0-1.0",
+  "copyright": "OpenAEC Foundation contributors",
+  "generatedBy": "scripts/generate-ocr-fixtures.mjs",
+  "fixtures": [
+    {
+      "id": "clean-latin",
+      "file": "clean-latin.pdf",
+      "pageIndex": 0,
+      "selectedForSpike": true,
+      "description": "High-contrast Latin text at three sizes.",
+      "expectedLines": [
+        "OPEN PDF STUDIO",
+        "Offline OCR Phase A",
+        "Total 42.50 EUR"
+      ],
+      "bytes": 1196,
+      "sha256": "687f34cffe6eb5d49200c0c37139c42bd27a0ecf3ce021657207663f459a6164"
+    },
+    {
+      "id": "numbers-symbols",
+      "file": "numbers-symbols.pdf",
+      "pageIndex": 0,
+      "selectedForSpike": false,
+      "description": "Latin identifiers, punctuation, and decimal numbers.",
+      "expectedLines": [
+        "Invoice 2026-0814",
+        "Page 1 of 3",
+        "Amount 1234.56"
+      ],
+      "bytes": 1193,
+      "sha256": "52d2d0baf4da0391577a3fef18296c3c465a20b0e51d2e748d5a5630436eff72"
+    },
+    {
+      "id": "low-contrast-skew",
+      "file": "low-contrast-skew.pdf",
+      "pageIndex": 0,
+      "selectedForSpike": false,
+      "description": "Light gray Latin text rotated by three degrees.",
+      "expectedLines": [
+        "Low contrast sample",
+        "Skewed by 3 degrees",
+        "Fallback evidence"
+      ],
+      "bytes": 1211,
+      "sha256": "f9b3059b478aa64264f4f5f303bf59de10c61730863fe96a90c0cf12d3fc4253"
+    }
+  ]
+}
