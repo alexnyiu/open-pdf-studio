@@ -1,6 +1,8 @@
 import { state, getActiveDocument, getPageRotation, setPageRotation } from './state.js';
 import { cloneAnnotation } from '../annotations/factory.js';
+import { restoreOcrCommandState } from '../ocr/document-state.js';
 const MAX_UNDO_STACK = 100;
+const OCR_COMMAND_TYPES = new Set(['ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned']);
 let undoTransactionDepth = 0;
 let undoTransactionCommands = null;
 let undoTransactionDocumentId = null;
@@ -12,8 +14,8 @@ function clonePlainValue(value) {
 }
 
 // Sync the modified flag based on whether the undo stack matches the saved clean point
-function syncModifiedState() {
-  const doc = getActiveDocument();
+function syncModifiedState(targetDocument = null) {
+  const doc = targetDocument || getActiveDocument();
   if (!doc) return;
   const isClean = doc.savedUndoStackLength >= 0 &&
                   (doc.undoStack || []).length === doc.savedUndoStackLength;
@@ -35,22 +37,16 @@ function getRedoStack() {
   return doc.redoStack;
 }
 
-function pushUndo(cmd) {
-  const stack = getUndoStack();
-  stack.push(cmd);
-  if (stack.length > MAX_UNDO_STACK) {
-    stack.shift();
-    const doc = getActiveDocument();
-    if (doc && doc.savedUndoStackLength >= 0) {
+function pushUndoForDocument(doc, cmd) {
+  if (!doc.undoStack) doc.undoStack = [];
+  doc.undoStack.push(cmd);
+  if (doc.undoStack.length > MAX_UNDO_STACK) {
+    doc.undoStack.shift();
+    if (doc.savedUndoStackLength >= 0) {
       doc.savedUndoStackLength--;
       if (doc.savedUndoStackLength < 0) doc.savedUndoStackLength = -1;
     }
   }
-}
-
-function clearRedo() {
-  const doc = getActiveDocument();
-  if (doc) doc.redoStack = [];
 }
 
 // No-op: TitleBar.jsx now derives undo/redo enabled from reactive state
@@ -71,6 +67,7 @@ function updateButtons() {}
 function pagesForCommand(cmd) {
   const pages = new Set();
   if (!cmd) return pages;
+  if (OCR_COMMAND_TYPES.has(cmd.type)) return pages;
   const addPage = (p) => { if (Number.isInteger(p) && p >= 1) pages.add(p); };
   const addFrom = (obj) => { if (obj && typeof obj === 'object') addPage(obj.page); };
 
@@ -95,6 +92,7 @@ function pagesForCommand(cmd) {
       for (const page of pagesForCommand(command)) pages.add(page);
     }
   }
+  if (Array.isArray(cmd.pageNumbers)) cmd.pageNumbers.forEach(addPage);
 
   // Watermark/bookmark commands don't carry a page and don't affect the page
   // thumbnail composite — skip them entirely (empty set = no refresh).
@@ -105,6 +103,7 @@ function pagesForCommand(cmd) {
     // handled by restorePageState → clearThumbnailCache + generateThumbnails,
     // which regenerates every thumbnail. A per-page hook here would be wrong.
     'pageStructure',
+    'ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned',
   ]);
   if (pages.size === 0 && !skipTypes.has(cmd.type)) {
     const doc = getActiveDocument();
@@ -160,21 +159,28 @@ async function persistMeasureScaleIfNeeded(cmd) {
 
 // Execute a command: push to undo, clear redo, sync modified state
 export function execute(cmd) {
+  return executeForDocument(getActiveDocument(), cmd);
+}
+
+/** Record a command against its owning document even while another tab is active. */
+export function executeForDocument(doc, cmd) {
+  if (!doc || !cmd || typeof cmd.type !== 'string') return false;
   if (pendingPropertyChange) flushPropertyChange();
-  if (undoTransactionDepth > 0) {
+  if (undoTransactionDepth > 0 && undoTransactionDocumentId === doc.id &&
+      !OCR_COMMAND_TYPES.has(cmd.type)) {
     undoTransactionCommands.push(cmd);
-    return;
+    return true;
   }
-  const doc = getActiveDocument();
   // If clean point was beyond current position, it's now unreachable (divergent edit)
   if (doc && doc.savedUndoStackLength > (doc.undoStack || []).length) {
     doc.savedUndoStackLength = -1;
   }
-  pushUndo(cmd);
-  clearRedo();
-  syncModifiedState();
+  pushUndoForDocument(doc, cmd);
+  doc.redoStack = [];
+  syncModifiedState(doc);
   updateButtons();
-  scheduleThumbnailRefresh(cmd);
+  if (doc === getActiveDocument()) scheduleThumbnailRefresh(cmd);
+  return true;
 }
 
 // Undo
@@ -199,6 +205,11 @@ export async function undo() {
   applyUndo(cmd);
   await persistMeasureScaleIfNeeded(cmd);
   syncModifiedState();
+
+  if (OCR_COMMAND_TYPES.has(cmd.type)) {
+    updateButtons();
+    return;
+  }
 
   // For modify operations, keep selection intact and refresh properties
   if (commandPreservesSelection(cmd)) {
@@ -248,6 +259,11 @@ export async function redo() {
   applyRedo(cmd);
   await persistMeasureScaleIfNeeded(cmd);
   syncModifiedState();
+
+  if (OCR_COMMAND_TYPES.has(cmd.type)) {
+    updateButtons();
+    return;
+  }
 
   // For modify operations, keep selection intact and refresh properties
   if (commandPreservesSelection(cmd)) {
@@ -369,6 +385,12 @@ function applyUndo(cmd) {
       if (Array.isArray(cmd.beforeSelectionIds)) {
         restoreSelectionByIds(doc, cmd.beforeSelectionIds);
       }
+      break;
+    }
+    case 'ocrApplyCompound':
+    case 'ocrCorrectPage':
+    case 'ocrRemoveOwned': {
+      restoreOcrCommandState(doc, cmd.before);
       break;
     }
     case 'bulkDelete': {
@@ -549,6 +571,12 @@ function applyRedo(cmd) {
       if (Array.isArray(cmd.afterSelectionIds)) {
         restoreSelectionByIds(doc, cmd.afterSelectionIds);
       }
+      break;
+    }
+    case 'ocrApplyCompound':
+    case 'ocrCorrectPage':
+    case 'ocrRemoveOwned': {
+      restoreOcrCommandState(doc, cmd.after);
       break;
     }
     case 'bulkDelete': {

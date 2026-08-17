@@ -93,7 +93,7 @@ export async function runNativeOcrPage({ sourcePdfPath, request }) {
  * separately validated production contract from the same parent-side raster;
  * the PDF path remains parent-only and is never added to the child request.
  */
-export async function runNativeOcrPageIntoDocument({
+export async function runNativeOcrPageForDocument({
   document,
   sourcePdfPath,
   request,
@@ -151,11 +151,28 @@ export async function runNativeOcrPageIntoDocument({
       sourceRasterId: outcome.result.sourceRaster.id,
       sourceRasterFingerprint: outcome.result.sourceRaster.fingerprint,
     });
+    return { outcome, pageGeometry: resultGeometry };
+  }
+  return { outcome, pageGeometry: null };
+}
+
+/**
+ * Backward-compatible one-page helper. Application-level orchestration uses
+ * runNativeOcrPageForDocument so validation and application are observable
+ * stages and can be recorded as one multi-page undo command.
+ */
+export async function runNativeOcrPageIntoDocument(input) {
+  const { document, token } = input;
+  const prepared = await runNativeOcrPageForDocument(input);
+  const { outcome, pageGeometry } = prepared;
+  if (!outcome) return prepared;
+  if (outcome.status === 'completed') {
     return {
       outcome,
+      pageGeometry,
       stateUpdate: applyOcrPageResult(document, {
         result: outcome.result,
-        pageGeometry: resultGeometry,
+        pageGeometry,
         token,
       }),
     };
@@ -170,7 +187,7 @@ export async function runNativeOcrPageIntoDocument({
       entityIds: [],
     }]);
   }
-  return { outcome, stateUpdate: { applied: false, reason: outcome.status } };
+  return { outcome, pageGeometry: null, stateUpdate: { applied: false, reason: outcome.status } };
 }
 
 export async function cancelNativeOcrJob(jobId) {

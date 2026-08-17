@@ -9,7 +9,11 @@ export type OcrPageStatus =
   | 'checking-existing-text'
   | 'skipped-existing-text'
   | 'queued'
+  | 'rasterizing'
+  | 'preprocessing'
   | 'recognizing'
+  | 'validating'
+  | 'applying'
   | 'ready'
   | 'unsupported'
   | 'failed'
@@ -169,4 +173,61 @@ export interface DocumentOcrState {
   pages: Record<number, OcrPageState>;
   warnings: OcrWarning[];
   dirty: boolean;
+}
+
+export type OcrApplicationPageState =
+  | 'queued'
+  | 'rasterizing'
+  | 'preprocessing'
+  | 'recognizing'
+  | 'validating'
+  | 'applying'
+  | 'completed'
+  | 'skipped'
+  | 'unsupported'
+  | 'failed'
+  | 'cancelled';
+
+export type OcrModelPackStateName =
+  | 'installed'
+  | 'missing'
+  | 'incompatible'
+  | 'corrupt'
+  | 'updating';
+
+export interface OcrPageJobSummary {
+  pageNumber: number;
+  state: OcrApplicationPageState;
+  fraction: number;
+  attempts: number;
+  retries: number;
+  retryableFailureSeen: boolean;
+  failure: { code: string; stage: string; retryable: boolean } | null;
+  staleRejected: boolean;
+  cache: string;
+  retained: boolean;
+  measuredStageCosts: {
+    sampleCount: number;
+    costsMs: Record<string, number>;
+  } | null;
+}
+
+export interface OcrDocumentJobSummary {
+  jobId: string;
+  documentId: string;
+  documentGeneration: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  cancellationReason: string | null;
+  keepCompletedPages: boolean;
+  startedAt: string;
+  finishedAt: string | null;
+  counts: Record<OcrApplicationPageState, number>;
+  pages: OcrPageJobSummary[];
+  stageCosts: {
+    sampleCount: number;
+    costsMs: Record<string, number>;
+  };
+  appliedPageNumbers: number[];
+  rolledBackPageNumbers: number[];
 }

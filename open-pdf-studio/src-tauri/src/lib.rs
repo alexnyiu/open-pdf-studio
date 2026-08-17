@@ -9,6 +9,7 @@ pub mod linux_runtime;
 pub mod mcp_app_bridge;
 pub mod mcp_server;
 pub mod ocr_controller;
+pub mod ocr_cache;
 pub mod pdfium_renderer;
 pub mod render_to_png;
 pub mod window_mgmt;
@@ -2711,6 +2712,11 @@ pub fn run(opts: StartupOpts) {
             ocr_controller::ocr_child_take_job,
             ocr_controller::ocr_child_complete,
             ocr_controller::ocr_child_abort,
+            ocr_cache::ocr_cache_get,
+            ocr_cache::ocr_cache_put,
+            ocr_cache::ocr_cache_invalidate_page,
+            ocr_cache::ocr_cache_clear,
+            ocr_cache::ocr_document_fingerprint,
             worker_pool_ready,
             render_pdf_page_region,
             render_tile_scene_region,

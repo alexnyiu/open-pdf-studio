@@ -18,7 +18,7 @@
     "generate:ocr-fixtures": "node scripts/generate-ocr-fixtures.mjs",
     "generate:ocr-quality-fixtures": "node scripts/generate-ocr-quality-fixtures.mjs",
     "verify:ocr-assets": "node scripts/verify-ocr-assets.mjs",
-    "test:ocr": "node --test js/ocr/contracts/v1.test.mjs js/ocr/contracts/production.test.mjs js/ocr/searchable-layer.test.mjs js/ocr/engine.test.mjs js/ocr/child-runner.test.mjs js/ocr/paddleocr/adapter.test.mjs js/ocr/paddleocr/postprocess.test.mjs scripts/ocr-assets.test.mjs scripts/evaluate-ocr-phase-a-reports.test.mjs scripts/evaluate-ocr-phase-a-macos-report.test.mjs scripts/ocr-process-attribution.test.mjs scripts/ocr-build-kind.test.mjs scripts/ocr-quality-benchmark.test.mjs",
+    "test:ocr": "node --test js/ocr/contracts/v1.test.mjs js/ocr/contracts/production.test.mjs js/ocr/searchable-layer.test.mjs js/ocr/application-controller.test.mjs js/ocr/cache.test.mjs js/ocr/model-state.test.mjs js/ocr/engine.test.mjs js/ocr/child-runner.test.mjs js/ocr/paddleocr/adapter.test.mjs js/ocr/paddleocr/postprocess.test.mjs scripts/ocr-assets.test.mjs scripts/evaluate-ocr-phase-a-reports.test.mjs scripts/evaluate-ocr-phase-a-macos-report.test.mjs scripts/ocr-process-attribution.test.mjs scripts/ocr-build-kind.test.mjs scripts/ocr-quality-benchmark.test.mjs",
     "test:ocr-ui:macos": "node scripts/test-ocr-searchable-layer-macos.mjs",
     "benchmark:ocr": "node scripts/run-ocr-quality-benchmark.mjs",
     "measure:ocr": "node scripts/measure-ocr-phase-a.mjs",

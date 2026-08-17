@@ -9,7 +9,8 @@ import { savePDF } from '../../pdf/saver.js';
 import { unlockFile, lockFile, renameFile, fileExists } from '../../core/platform.js';
 import { cancelPendingZoom } from '../setup/navigation-events.js';
 import { closeAllPopups } from '../../bridge.js';
-import { cancelNativeOcrDocument } from '../../ocr/native-controller.js';
+import { cancelApplicationOcrDocument } from '../../ocr/application-controller.js';
+import { forgetRegisteredDocumentOcrCache } from '../../ocr/cache.js';
 import { invalidateTextCache } from '../../search/text-cache.js';
 
 /**
@@ -215,7 +216,7 @@ export async function closeTab(index, force = false) {
   // Document identity is the cancellation boundary for background OCR. Wait
   // for the disposable child to be reaped before removing application state.
   try {
-    await cancelNativeOcrDocument(doc.id);
+    await cancelApplicationOcrDocument(doc.id, 'document-close');
   } catch (error) {
     console.warn('Failed to cancel document OCR jobs:', error);
   }
@@ -242,6 +243,7 @@ export async function closeTab(index, force = false) {
   // Clear thumbnail cache for this document
   clearThumbnailCache(doc.id);
   invalidateTextCache(doc.id);
+  forgetRegisteredDocumentOcrCache(doc.id);
 
   // Remove the document
   state.documents.splice(index, 1);

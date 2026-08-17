@@ -72,7 +72,7 @@ import { initFontDropdowns } from './utils/fonts.js';
 // outside. Inert when Tauri isn't present.
 import { initMcpBridge } from './mcp-bridge.js';
 import { runOcrChildIfRequested } from './ocr/child-runner.js';
-import { cancelAllNativeOcrJobs } from './ocr/native-controller.js';
+import { cancelAllApplicationOcrJobs } from './ocr/application-controller.js';
 
 // i18n
 import './i18n/config.js';
@@ -429,7 +429,7 @@ function setupSessionSaveOnClose() {
               return;
             }
           }
-          await cancelAllNativeOcrJobs();
+          await cancelAllApplicationOcrJobs('application-close');
           await saveSessionData();
         });
       }
@@ -439,6 +439,7 @@ function setupSessionSaveOnClose() {
   }
 
   window.addEventListener('beforeunload', async () => {
+    void cancelAllApplicationOcrJobs('application-close');
     await saveSessionData();
   });
 }

@@ -62,6 +62,11 @@ function notifyPageChanged(doc, pageNum) {
   }
 }
 
+/** @param {unknown} left @param {unknown} right */
+export function sameOcrState(left, right) {
+  return sameJson(left, right);
+}
+
 /**
  * @param {string} documentId
  * @returns {import('../types/ocr.js').DocumentOcrState}
@@ -93,7 +98,10 @@ export function ensureOcrPageState(doc, pageNum) {
       pageNumber: pageNum,
       pageId: `ocr-page-${pageNum}`,
       status: 'idle',
-      pageRevision: 0,
+      // Seed from the document OCR revision so a page created after a
+      // structure-generation reset cannot collide with a persistent cache key
+      // from the earlier page occupying this one-based position.
+      pageRevision: ocr.revision,
       generation: ocr.generation,
       recognition: {
         revision: 0,
@@ -161,6 +169,88 @@ export function clearOpenPdfStudioOcrPage(doc, pageNum) {
   ocr.dirty = true;
   doc.modified = true;
   notifyPageChanged(doc, pageNum);
+  return true;
+}
+
+/**
+ * Capture plain application state for typed OCR undo commands. Recognized
+ * result and geometry contracts remain immutable after the snapshot is
+ * restored; the snapshot itself is never used as an engine result boundary.
+ * @param {any} doc
+ * @param {number[]} pageNumbers
+ */
+export function snapshotOcrCommandState(doc, pageNumbers) {
+  const ocr = ensureDocumentOcrState(doc);
+  const uniquePages = [...new Set(pageNumbers)].sort((left, right) => left - right);
+  for (const pageNum of uniquePages) {
+    if (!Number.isSafeInteger(pageNum) || pageNum < 1) {
+      throw new RangeError('OCR undo snapshot page numbers must be one-based');
+    }
+  }
+  return {
+    documentId: doc.id,
+    documentGeneration: ocr.generation,
+    documentRevision: ocr.revision,
+    dirty: ocr.dirty === true,
+    pages: uniquePages.map((pageNum) => {
+      const exists = Object.prototype.hasOwnProperty.call(ocr.pages, pageNum);
+      return {
+        pageNumber: pageNum,
+        exists,
+        state: exists ? clone(unwrap(ocr.pages[pageNum])) : null,
+      };
+    }),
+  };
+}
+
+/**
+ * Select a page subset from an earlier command snapshot without recapturing
+ * already-mutated state.
+ * @param {ReturnType<typeof snapshotOcrCommandState>} snapshot
+ * @param {number[]} pageNumbers
+ */
+export function selectOcrCommandSnapshot(snapshot, pageNumbers) {
+  const selected = new Set(pageNumbers);
+  return {
+    ...clone(snapshot),
+    pages: snapshot.pages.filter((page) => selected.has(page.pageNumber)).map(clone),
+  };
+}
+
+/**
+ * Restore typed OCR command state. This is the authoritative undo/redo path:
+ * it changes application state, invalidates search, and asks every rendered
+ * text layer to re-project from state. It never treats DOM nodes as storage.
+ * @param {any} doc
+ * @param {ReturnType<typeof snapshotOcrCommandState>} snapshot
+ */
+export function restoreOcrCommandState(doc, snapshot, { restoreDocumentState = true } = {}) {
+  const ocr = ensureDocumentOcrState(doc);
+  if (!snapshot || snapshot.documentId !== doc.id ||
+      snapshot.documentGeneration !== ocr.generation || !Array.isArray(snapshot.pages)) {
+    return false;
+  }
+  for (const pageSnapshot of snapshot.pages) {
+    const pageNum = pageSnapshot.pageNumber;
+    if (!Number.isSafeInteger(pageNum) || pageNum < 1) return false;
+    if (pageSnapshot.exists) {
+      ocr.pages[pageNum] = clone(pageSnapshot.state);
+    } else {
+      delete ocr.pages[pageNum];
+    }
+  }
+  if (restoreDocumentState) {
+    ocr.revision = snapshot.documentRevision;
+    ocr.dirty = snapshot.dirty === true;
+  } else {
+    ocr.revision += 1;
+    ocr.dirty = Object.values(ocr.pages).some((page) => page?.review?.dirty === true);
+  }
+  const undoDepth = Array.isArray(doc.undoStack) ? doc.undoStack.length : 0;
+  const atSavedPoint = Number.isSafeInteger(doc.savedUndoStackLength) &&
+    doc.savedUndoStackLength >= 0 && undoDepth === doc.savedUndoStackLength;
+  doc.modified = !atSavedPoint || ocr.dirty;
+  for (const pageSnapshot of snapshot.pages) notifyPageChanged(doc, pageSnapshot.pageNumber);
   return true;
 }
 
@@ -242,8 +332,22 @@ export function isCurrentOcrPageToken(doc, token) {
 
 /** @param {any} doc @param {import('../types/ocr.js').OcrPageGenerationToken} token */
 export function markOcrPageRecognizing(doc, token) {
+  return markOcrPageStage(doc, token, 'recognizing');
+}
+
+/**
+ * Publish a non-terminal application stage without changing OCR ownership or
+ * dirty state.
+ * @param {any} doc
+ * @param {import('../types/ocr.js').OcrPageGenerationToken} token
+ * @param {'queued'|'rasterizing'|'preprocessing'|'recognizing'|'validating'|'applying'} stage
+ */
+export function markOcrPageStage(doc, token, stage) {
+  if (!['queued', 'rasterizing', 'preprocessing', 'recognizing', 'validating', 'applying'].includes(stage)) {
+    throw new TypeError('OCR page stage is unsupported');
+  }
   if (!isCurrentOcrPageToken(doc, token)) return false;
-  doc.ocr.pages[token.pageNumber].status = 'recognizing';
+  doc.ocr.pages[token.pageNumber].status = stage;
   notifyPageChanged(doc, token.pageNumber);
   return true;
 }
@@ -344,6 +448,8 @@ export function acceptOcrLineCorrection(doc, pageNum, lineId, correctedText) {
   const line = page.recognition.result?.lines?.find((entry) => entry.id === lineId);
   if (!line) throw new RangeError(`OCR line ${lineId} is not present on page ${pageNum}`);
   if (typeof correctedText !== 'string') throw new TypeError('OCR correction text must be a string');
+  const existing = page.review.corrections[lineId];
+  if (existing?.correctedText === correctedText) return existing;
   const revision = page.review.revision + 1;
   page.review.revision = revision;
   const now = new Date().toISOString();
@@ -439,6 +545,12 @@ export function getPendingOcrTextItems(doc, pageNum) {
  */
 export function resetDocumentOcrGeneration(doc) {
   const previous = ensureDocumentOcrState(doc);
+  // Page-structure replacement invalidates every cached revision registered
+  // for this document. Cache storage remains path-private and performs its own
+  // exact page matching.
+  void import('./cache.js')
+    .then(({ invalidateRegisteredDocumentOcrCache }) => invalidateRegisteredDocumentOcrCache(doc.id))
+    .catch(() => {});
   doc.ocr = createDocumentOcrState(doc.id);
   doc.ocr.revision = previous.revision + 1;
   invalidateTextCache(doc.id);

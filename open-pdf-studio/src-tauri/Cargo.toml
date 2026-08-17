@@ -48,6 +48,7 @@ clap = { version = "4", features = ["derive"] }
 # token storage + multipart uploads to the Accounts API.
 keyring = { version = "3", features = ["windows-native"] }
 sha2 = "0.10"
+flate2 = "1"
 rand = "0.8"
 url = "2"
 urlencoding = "2"
