@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/native-job.v1.schema.json",
+  "title": "Open PDF Studio bounded native OCR child job envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract", "schemaVersion", "job", "raster", "rasterMs",
+    "preprocessingRequest", "limits", "resultFile"
+  ],
+  "properties": {
+    "contract": { "const": "open-pdf-studio.ocr.native-job" },
+    "schemaVersion": { "const": 1 },
+    "job": { "$ref": "job.v1.schema.json" },
+    "raster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "widthPx", "heightPx", "rowBytes", "byteLength"],
+      "properties": {
+        "format": { "const": "rgba8" },
+        "widthPx": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "heightPx": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "rowBytes": { "type": "integer", "minimum": 4, "maximum": 32768 },
+        "byteLength": { "type": "integer", "minimum": 4, "maximum": 67108832 }
+      }
+    },
+    "rasterMs": { "type": "number", "minimum": 0 },
+    "preprocessingRequest": { "$ref": "job.v1.schema.json#/$defs/preprocessing" },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxWidthPx", "maxHeightPx", "maxPixels", "maxMetadataBytes",
+        "maxRasterBytes", "maxResultBytes", "timeoutMs"
+      ],
+      "properties": {
+        "maxWidthPx": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "maxHeightPx": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "maxPixels": { "type": "integer", "minimum": 1, "maximum": 16000000 },
+        "maxMetadataBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "maxRasterBytes": { "type": "integer", "minimum": 4, "maximum": 67108832 },
+        "maxResultBytes": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 120000 }
+      }
+    },
+    "resultFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    }
+  },
+  "x-maxUtf8Bytes": 1048576,
+  "x-ocrSemantic": "native-job-v1"
+}

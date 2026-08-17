@@ -1,0 +1,1709 @@
+{
+  "schemaVersion": 3,
+  "measuredAt": "2026-08-17T04:38:55.860Z",
+  "environment": {
+    "platform": "darwin",
+    "release": "25.5.0",
+    "arch": "arm64",
+    "node": "v25.6.1",
+    "endpoint": "http://127.0.0.1:9223/mcp",
+    "buildKind": "packaged-release",
+    "debugBuild": false
+  },
+  "fixture": {
+    "id": "clean-latin",
+    "path": "tests/fixtures/ocr/clean-latin.pdf",
+    "pageIndex": 0,
+    "sha256": "687f34cffe6eb5d49200c0c37139c42bd27a0ecf3ce021657207663f459a6164",
+    "unchangedAfterRun": true,
+    "expectedLines": [
+      "OPEN PDF STUDIO",
+      "Offline OCR Phase A",
+      "Total 42.50 EUR"
+    ]
+  },
+  "result": {
+    "contract": "open-pdf-studio.ocr.result",
+    "engine": {
+      "adapterVersion": "0.1.0",
+      "capabilities": {
+        "pdfWriting": false,
+        "textDetection": true,
+        "textRecognition": true,
+        "wordBoxes": false
+      },
+      "contract": "open-pdf-studio.ocr.engine",
+      "engineId": "paddleocr-pp-ocrv6-small-onnx-wasm",
+      "model": {
+        "detection": "PP-OCRv6_small_det_onnx",
+        "family": "PP-OCRv6",
+        "recognition": "PP-OCRv6_small_rec_onnx",
+        "tier": "small"
+      },
+      "provider": "PaddleOCR",
+      "runtime": {
+        "executionProvider": "wasm",
+        "name": "onnxruntime-web",
+        "offline": true,
+        "version": "1.27.0"
+      },
+      "schemaVersion": 1
+    },
+    "lines": [
+      {
+        "boundingBox": {
+          "height": 53.64,
+          "width": 720.42,
+          "x": 0,
+          "y": 75.18
+        },
+        "confidence": 0.979062,
+        "id": "line-1",
+        "polygon": [
+          [
+            0,
+            75.18
+          ],
+          [
+            720.42,
+            75.18
+          ],
+          [
+            720.42,
+            128.82
+          ],
+          [
+            0,
+            128.82
+          ]
+        ],
+        "text": "OPEN PDF STUDIO"
+      },
+      {
+        "boundingBox": {
+          "height": 48.28,
+          "width": 575,
+          "x": 0,
+          "y": 208.08
+        },
+        "confidence": 0.973695,
+        "id": "line-2",
+        "polygon": [
+          [
+            0,
+            208.08
+          ],
+          [
+            575,
+            210.31
+          ],
+          [
+            574.82,
+            256.36
+          ],
+          [
+            0,
+            254.13
+          ]
+        ],
+        "text": "Offline OCR Phase A"
+      },
+      {
+        "boundingBox": {
+          "height": 40.99,
+          "width": 441.16,
+          "x": 0,
+          "y": 329.01
+        },
+        "confidence": 0.97457,
+        "id": "line-3",
+        "polygon": [
+          [
+            0,
+            329.01
+          ],
+          [
+            441.16,
+            329.01
+          ],
+          [
+            441.16,
+            369.99
+          ],
+          [
+            0,
+            369.99
+          ]
+        ],
+        "text": "Total 42.50 EUR"
+      }
+    ],
+    "metrics": {
+      "detectionMs": 230,
+      "modelStartupMs": 395,
+      "rasterMs": 54.14,
+      "recognitionMs": 282,
+      "totalOcrMs": 908,
+      "workerStartupMs": 5
+    },
+    "requestId": "phase-a-request-1786941480297-2",
+    "schemaVersion": 1,
+    "source": {
+      "heightPx": 480,
+      "kind": "pdf-page",
+      "pageIndex": 0,
+      "path": "/Users/alexander/Personal Projects/open-pdf-studio/open-pdf-studio/tests/fixtures/ocr/clean-latin.pdf",
+      "scale": 2,
+      "widthPx": 840
+    },
+    "text": "OPEN PDF STUDIO\nOffline OCR Phase A\nTotal 42.50 EUR",
+    "warnings": [
+      "Detection uses bounded DB-style quadrilateral extraction and deterministic layout ordering."
+    ]
+  },
+  "timing": {
+    "coldIsolatedWallMs": 1434.61,
+    "detectionMs": 230,
+    "modelStartupMs": 395,
+    "rasterMs": 54.14,
+    "recognitionMs": 282,
+    "totalOcrMs": 908,
+    "workerStartupMs": 5,
+    "recognitionCycles": {
+      "minimumWallMs": 1375.06,
+      "medianWallMs": 1386.89,
+      "maximumWallMs": 1434.61
+    },
+    "cancellationCycles": {
+      "minimumWallMs": 80.68,
+      "medianWallMs": 164.43,
+      "maximumWallMs": 421.81
+    }
+  },
+  "memory": {
+    "method": "sum of RSS for the MCP app/PDFium process tree plus WebKit XPC processes born while each disposable OCR child is alive, sampled every 50 ms",
+    "caveat": "OS RSS includes shared and allocator-retained pages. The editor WebView is excluded because launchd reparenting makes its XPC ownership unprovable from process metadata and the isolated OCR path never transfers raster/model bytes into it; parent native allocations, PDFium, the OCR child, and its newly born WebKit cohort are included.",
+    "checkpoints": {
+      "processStart": {
+        "atEpochMs": 1786941480198,
+        "rssBytes": 175783936,
+        "rssMiB": 167.64,
+        "deltaFromProcessStartBytes": 0,
+        "deltaFromProcessStartMiB": 0,
+        "processCount": 5,
+        "roles": {
+          "app": {
+            "rssBytes": 114081792,
+            "rssMiB": 108.8
+          },
+          "pdfium-worker": {
+            "rssBytes": 61702144,
+            "rssMiB": 58.84
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": []
+      },
+      "beforeModelInitialization": {
+        "atEpochMs": 1786941480715,
+        "rssBytes": 408977408,
+        "rssMiB": 390.03,
+        "deltaFromProcessStartBytes": 233193472,
+        "deltaFromProcessStartMiB": 222.39,
+        "processCount": 9,
+        "roles": {
+          "app": {
+            "rssBytes": 110706688,
+            "rssMiB": 105.58
+          },
+          "ocr-child-app": {
+            "rssBytes": 107347968,
+            "rssMiB": 102.38
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 118751232,
+            "rssMiB": 113.25
+          },
+          "pdfium-worker": {
+            "rssBytes": 72171520,
+            "rssMiB": 68.83
+          }
+        },
+        "activeOcrChildPids": [
+          59736
+        ],
+        "activeOcrChildWebKitPids": [
+          59744,
+          59745,
+          59746
+        ],
+        "lifecycleStage": "before-model-initialization",
+        "lifecycleAtEpochMs": 1786941480722,
+        "sampleOffsetMs": -7,
+        "lifecycleDetail": {
+          "adapterInstances": 1,
+          "adapterLoadCount": 1,
+          "detectorSession": false,
+          "recognizerSession": false
+        }
+      },
+      "afterModelInitialization": {
+        "atEpochMs": 1786941481147,
+        "rssBytes": 811417600,
+        "rssMiB": 773.83,
+        "deltaFromProcessStartBytes": 635633664,
+        "deltaFromProcessStartMiB": 606.19,
+        "processCount": 9,
+        "roles": {
+          "app": {
+            "rssBytes": 110706688,
+            "rssMiB": 105.58
+          },
+          "ocr-child-app": {
+            "rssBytes": 171802624,
+            "rssMiB": 163.84
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 456736768,
+            "rssMiB": 435.58
+          },
+          "pdfium-worker": {
+            "rssBytes": 72171520,
+            "rssMiB": 68.83
+          }
+        },
+        "activeOcrChildPids": [
+          59736
+        ],
+        "activeOcrChildWebKitPids": [
+          59744,
+          59745,
+          59746
+        ],
+        "lifecycleStage": "after-model-initialization",
+        "lifecycleAtEpochMs": 1786941481117,
+        "sampleOffsetMs": 30,
+        "lifecycleDetail": {
+          "adapterInstances": 1,
+          "adapterLoadCount": 1,
+          "detectorSession": true,
+          "modelByteReferencesDropped": true,
+          "modelStartupMs": 395,
+          "recognizerSession": true
+        }
+      },
+      "afterOnePageInference": {
+        "atEpochMs": 1786941481644,
+        "rssBytes": 855752704,
+        "rssMiB": 816.11,
+        "deltaFromProcessStartBytes": 679968768,
+        "deltaFromProcessStartMiB": 648.47,
+        "processCount": 9,
+        "roles": {
+          "app": {
+            "rssBytes": 110739456,
+            "rssMiB": 105.61
+          },
+          "ocr-child-app": {
+            "rssBytes": 171851776,
+            "rssMiB": 163.89
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 500989952,
+            "rssMiB": 477.78
+          },
+          "pdfium-worker": {
+            "rssBytes": 72171520,
+            "rssMiB": 68.83
+          }
+        },
+        "activeOcrChildPids": [
+          59736
+        ],
+        "activeOcrChildWebKitPids": [
+          59744,
+          59745,
+          59746
+        ],
+        "lifecycleStage": "after-one-page-inference",
+        "lifecycleAtEpochMs": 1786941481632,
+        "sampleOffsetMs": 12,
+        "lifecycleDetail": {
+          "adapterLoadCount": 1,
+          "detectorSession": true,
+          "inferenceTensorsDisposed": true,
+          "recognizerSession": true
+        }
+      },
+      "immediatelyBeforeDisposal": {
+        "atEpochMs": 1786941481644,
+        "rssBytes": 855752704,
+        "rssMiB": 816.11,
+        "deltaFromProcessStartBytes": 679968768,
+        "deltaFromProcessStartMiB": 648.47,
+        "processCount": 9,
+        "roles": {
+          "app": {
+            "rssBytes": 110739456,
+            "rssMiB": 105.61
+          },
+          "ocr-child-app": {
+            "rssBytes": 171851776,
+            "rssMiB": 163.89
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 500989952,
+            "rssMiB": 477.78
+          },
+          "pdfium-worker": {
+            "rssBytes": 72171520,
+            "rssMiB": 68.83
+          }
+        },
+        "activeOcrChildPids": [
+          59736
+        ],
+        "activeOcrChildWebKitPids": [
+          59744,
+          59745,
+          59746
+        ],
+        "lifecycleStage": "immediately-before-engine-disposal",
+        "lifecycleAtEpochMs": 1786941481634,
+        "sampleOffsetMs": 10,
+        "lifecycleDetail": {
+          "livePageBufferReferences": 0
+        }
+      },
+      "afterOcrEngineDisposal": {
+        "atEpochMs": 1786941481644,
+        "rssBytes": 855752704,
+        "rssMiB": 816.11,
+        "deltaFromProcessStartBytes": 679968768,
+        "deltaFromProcessStartMiB": 648.47,
+        "processCount": 9,
+        "roles": {
+          "app": {
+            "rssBytes": 110739456,
+            "rssMiB": 105.61
+          },
+          "ocr-child-app": {
+            "rssBytes": 171851776,
+            "rssMiB": 163.89
+          },
+          "ocr-child-webkit": {
+            "rssBytes": 500989952,
+            "rssMiB": 477.78
+          },
+          "pdfium-worker": {
+            "rssBytes": 72171520,
+            "rssMiB": 68.83
+          }
+        },
+        "activeOcrChildPids": [
+          59736
+        ],
+        "activeOcrChildWebKitPids": [
+          59744,
+          59745,
+          59746
+        ],
+        "lifecycleStage": "after-ocr-engine-disposal",
+        "lifecycleAtEpochMs": 1786941481636,
+        "sampleOffsetMs": 8,
+        "lifecycleDetail": {
+          "adapterLoadCount": 1,
+          "detectorSession": false,
+          "onnxSessionsReleased": true,
+          "recognizerSession": false
+        }
+      },
+      "afterWorkerTermination2s": {
+        "atEpochMs": 1786941483680,
+        "rssBytes": 183140352,
+        "rssMiB": 174.66,
+        "deltaFromProcessStartBytes": 7356416,
+        "deltaFromProcessStartMiB": 7.02,
+        "processCount": 5,
+        "roles": {
+          "app": {
+            "rssBytes": 111034368,
+            "rssMiB": 105.89
+          },
+          "pdfium-worker": {
+            "rssBytes": 72105984,
+            "rssMiB": 68.77
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": [],
+        "delayAfterWorkerTerminationMs": 2000
+      },
+      "afterWorkerTermination5s": {
+        "atEpochMs": 1786941486680,
+        "rssBytes": 182976512,
+        "rssMiB": 174.5,
+        "deltaFromProcessStartBytes": 7192576,
+        "deltaFromProcessStartMiB": 6.86,
+        "processCount": 5,
+        "roles": {
+          "app": {
+            "rssBytes": 110870528,
+            "rssMiB": 105.73
+          },
+          "pdfium-worker": {
+            "rssBytes": 72105984,
+            "rssMiB": 68.77
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": [],
+        "delayAfterWorkerTerminationMs": 5000
+      },
+      "afterWorkerTermination30s": {
+        "atEpochMs": 1786941511687,
+        "rssBytes": 182910976,
+        "rssMiB": 174.44,
+        "deltaFromProcessStartBytes": 7127040,
+        "deltaFromProcessStartMiB": 6.8,
+        "processCount": 5,
+        "roles": {
+          "app": {
+            "rssBytes": 110804992,
+            "rssMiB": 105.67
+          },
+          "pdfium-worker": {
+            "rssBytes": 72105984,
+            "rssMiB": 68.77
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": [],
+        "delayAfterWorkerTerminationMs": 30000
+      },
+      "afterRepeatedRecognitionAndCancellationCycles": {
+        "atEpochMs": 1786941534424,
+        "rssBytes": 183500800,
+        "rssMiB": 175,
+        "deltaFromProcessStartBytes": 7716864,
+        "deltaFromProcessStartMiB": 7.36,
+        "processCount": 5,
+        "roles": {
+          "app": {
+            "rssBytes": 111214592,
+            "rssMiB": 106.06
+          },
+          "pdfium-worker": {
+            "rssBytes": 72286208,
+            "rssMiB": 68.94
+          }
+        },
+        "activeOcrChildPids": [],
+        "activeOcrChildWebKitPids": [],
+        "recognitionCycles": 10,
+        "cancellationCycles": 10
+      }
+    },
+    "repeatedCycles": {
+      "recognition": [
+        {
+          "index": 1,
+          "type": "recognition",
+          "wallMs": 1434.61,
+          "cancelAfterMs": null,
+          "childPid": 59736,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 855752704,
+          "peakRssMiB": 816.11,
+          "settledRssBytes": 183140352,
+          "settledRssMiB": 174.66,
+          "settledDeltaFromProcessStartBytes": 7356416,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 395,
+          "totalOcrMs": 908,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 2,
+          "type": "recognition",
+          "wallMs": 1383.73,
+          "cancelAfterMs": null,
+          "childPid": 59882,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 879755264,
+          "peakRssMiB": 839,
+          "settledRssBytes": 183042048,
+          "settledRssMiB": 174.56,
+          "settledDeltaFromProcessStartBytes": 7258112,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 379,
+          "totalOcrMs": 891,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 3,
+          "type": "recognition",
+          "wallMs": 1388.61,
+          "cancelAfterMs": null,
+          "childPid": 60020,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 874921984,
+          "peakRssMiB": 834.39,
+          "settledRssBytes": 183074816,
+          "settledRssMiB": 174.59,
+          "settledDeltaFromProcessStartBytes": 7290880,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 383,
+          "totalOcrMs": 897,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 4,
+          "type": "recognition",
+          "wallMs": 1386.89,
+          "cancelAfterMs": null,
+          "childPid": 60158,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 859996160,
+          "peakRssMiB": 820.16,
+          "settledRssBytes": 183222272,
+          "settledRssMiB": 174.73,
+          "settledDeltaFromProcessStartBytes": 7438336,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 378,
+          "totalOcrMs": 890,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 5,
+          "type": "recognition",
+          "wallMs": 1388.66,
+          "cancelAfterMs": null,
+          "childPid": 60296,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 865042432,
+          "peakRssMiB": 824.97,
+          "settledRssBytes": 183238656,
+          "settledRssMiB": 174.75,
+          "settledDeltaFromProcessStartBytes": 7454720,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 379,
+          "totalOcrMs": 893,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 6,
+          "type": "recognition",
+          "wallMs": 1379.56,
+          "cancelAfterMs": null,
+          "childPid": 60434,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 863977472,
+          "peakRssMiB": 823.95,
+          "settledRssBytes": 183238656,
+          "settledRssMiB": 174.75,
+          "settledDeltaFromProcessStartBytes": 7454720,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 381,
+          "totalOcrMs": 891,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 7,
+          "type": "recognition",
+          "wallMs": 1382.35,
+          "cancelAfterMs": null,
+          "childPid": 60573,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 870531072,
+          "peakRssMiB": 830.2,
+          "settledRssBytes": 183238656,
+          "settledRssMiB": 174.75,
+          "settledDeltaFromProcessStartBytes": 7454720,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 382,
+          "totalOcrMs": 894,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 8,
+          "type": "recognition",
+          "wallMs": 1387.11,
+          "cancelAfterMs": null,
+          "childPid": 60711,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 859635712,
+          "peakRssMiB": 819.81,
+          "settledRssBytes": 183238656,
+          "settledRssMiB": 174.75,
+          "settledDeltaFromProcessStartBytes": 7454720,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 375,
+          "totalOcrMs": 889,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 9,
+          "type": "recognition",
+          "wallMs": 1378.07,
+          "cancelAfterMs": null,
+          "childPid": 60849,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 867057664,
+          "peakRssMiB": 826.89,
+          "settledRssBytes": 183255040,
+          "settledRssMiB": 174.77,
+          "settledDeltaFromProcessStartBytes": 7471104,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 376,
+          "totalOcrMs": 888,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        },
+        {
+          "index": 10,
+          "type": "recognition",
+          "wallMs": 1375.06,
+          "cancelAfterMs": null,
+          "childPid": 60987,
+          "childExitStatus": 0,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 864927744,
+          "peakRssMiB": 824.86,
+          "settledRssBytes": 183255040,
+          "settledRssMiB": 174.77,
+          "settledDeltaFromProcessStartBytes": 7471104,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "exactNormalizedMatch": true,
+          "modelStartupMs": 377,
+          "totalOcrMs": 892,
+          "resources": {
+            "duplicateModelInstances": false,
+            "eventListenersRemoved": true,
+            "imageBitmap": {
+              "closed": true,
+              "used": false
+            },
+            "imageData": {
+              "used": false
+            },
+            "jobEnvelopeDropped": true,
+            "liveJavaScriptPageReferences": 0,
+            "maximumAdapterInstances": 1,
+            "messagePorts": {
+              "closed": true,
+              "used": false
+            },
+            "offline": {
+              "allowedOrigin": "tauri://localhost",
+              "allowedRequestCount": 5,
+              "blockedExternalRequestCount": 1,
+              "blockedOrigins": [
+                "https://ocr-offline-probe.invalid"
+              ],
+              "policyEnforced": true,
+              "selfTestPassed": true
+            },
+            "onnxSessionsReleased": true,
+            "openCv": {
+              "allocations": 0,
+              "resourcesReleased": true,
+              "used": false
+            },
+            "senderBufferDetached": true,
+            "transferredBuffersDropped": true,
+            "typedArrayOwnership": "transferred"
+          }
+        }
+      ],
+      "cancellation": [
+        {
+          "index": 1,
+          "type": "cancellation",
+          "wallMs": 83.26,
+          "cancelAfterMs": 0,
+          "childPid": 61125,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 183336960,
+          "peakRssMiB": 174.84,
+          "settledRssBytes": 183353344,
+          "settledRssMiB": 174.86,
+          "settledDeltaFromProcessStartBytes": 7569408,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 24,
+          "resources": {}
+        },
+        {
+          "index": 2,
+          "type": "cancellation",
+          "wallMs": 108.57,
+          "cancelAfterMs": 25,
+          "childPid": 61147,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 183402496,
+          "peakRssMiB": 174.91,
+          "settledRssBytes": 183402496,
+          "settledRssMiB": 174.91,
+          "settledDeltaFromProcessStartBytes": 7618560,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 21,
+          "resources": {}
+        },
+        {
+          "index": 3,
+          "type": "cancellation",
+          "wallMs": 164.43,
+          "cancelAfterMs": 75,
+          "childPid": 61178,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 222101504,
+          "peakRssMiB": 211.81,
+          "settledRssBytes": 183418880,
+          "settledRssMiB": 174.92,
+          "settledDeltaFromProcessStartBytes": 7634944,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 23,
+          "resources": {}
+        },
+        {
+          "index": 4,
+          "type": "cancellation",
+          "wallMs": 249.43,
+          "cancelAfterMs": 150,
+          "childPid": 61209,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 263225344,
+          "peakRssMiB": 251.03,
+          "settledRssBytes": 183418880,
+          "settledRssMiB": 174.92,
+          "settledDeltaFromProcessStartBytes": 7634944,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 11,
+          "resources": {}
+        },
+        {
+          "index": 5,
+          "type": "cancellation",
+          "wallMs": 421.16,
+          "cancelAfterMs": 300,
+          "childPid": 61248,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 406929408,
+          "peakRssMiB": 388.08,
+          "settledRssBytes": 183451648,
+          "settledRssMiB": 174.95,
+          "settledDeltaFromProcessStartBytes": 7667712,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 23,
+          "resources": {}
+        },
+        {
+          "index": 6,
+          "type": "cancellation",
+          "wallMs": 80.68,
+          "cancelAfterMs": 0,
+          "childPid": 61301,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 183468032,
+          "peakRssMiB": 174.97,
+          "settledRssBytes": 183468032,
+          "settledRssMiB": 174.97,
+          "settledDeltaFromProcessStartBytes": 7684096,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 13,
+          "resources": {}
+        },
+        {
+          "index": 7,
+          "type": "cancellation",
+          "wallMs": 109.65,
+          "cancelAfterMs": 25,
+          "childPid": 61323,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 183468032,
+          "peakRssMiB": 174.97,
+          "settledRssBytes": 183468032,
+          "settledRssMiB": 174.97,
+          "settledDeltaFromProcessStartBytes": 7684096,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 23,
+          "resources": {}
+        },
+        {
+          "index": 8,
+          "type": "cancellation",
+          "wallMs": 164,
+          "cancelAfterMs": 75,
+          "childPid": 61352,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 216612864,
+          "peakRssMiB": 206.58,
+          "settledRssBytes": 183468032,
+          "settledRssMiB": 174.97,
+          "settledDeltaFromProcessStartBytes": 7684096,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 22,
+          "resources": {}
+        },
+        {
+          "index": 9,
+          "type": "cancellation",
+          "wallMs": 251.35,
+          "cancelAfterMs": 150,
+          "childPid": 61381,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 260931584,
+          "peakRssMiB": 248.84,
+          "settledRssBytes": 183484416,
+          "settledRssMiB": 174.98,
+          "settledDeltaFromProcessStartBytes": 7700480,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 21,
+          "resources": {}
+        },
+        {
+          "index": 10,
+          "type": "cancellation",
+          "wallMs": 421.81,
+          "cancelAfterMs": 300,
+          "childPid": 61422,
+          "childExitStatus": null,
+          "childReaped": true,
+          "isolationBoundary": "native-child-process",
+          "peakRssBytes": 407830528,
+          "peakRssMiB": 388.94,
+          "settledRssBytes": 183484416,
+          "settledRssMiB": 174.98,
+          "settledDeltaFromProcessStartBytes": 7700480,
+          "activeOcrChildPidsAfterSettle": [],
+          "cleanup": {
+            "noChildSurvived": true,
+            "requestFileRemoved": true,
+            "resultFileRemoved": true,
+            "sessionDirectoryPrivate": true
+          },
+          "cancelled": true,
+          "cancellationMethod": "native-child-process-terminate",
+          "cancellationLatencyMs": 15,
+          "resources": {}
+        }
+      ],
+      "uniqueChildProcesses": 20,
+      "maximumPerCycleSettledDeltaBytes": 7700480,
+      "maximumPerCycleSettledDeltaMiB": 7.34,
+      "maximumSettledDeltaBytes": 7716864,
+      "maximumSettledDeltaMiB": 7.36,
+      "minimumSettledDeltaBytes": 7258112,
+      "minimumSettledDeltaMiB": 6.92,
+      "finalRetainedDeltaBytes": 7716864,
+      "finalRetainedDeltaMiB": 7.36,
+      "linearTrendBytesPerCycle": 22777.46,
+      "linearTrendMiBPerCycle": 0.02,
+      "attributionStable": true,
+      "acceptance": {
+        "retainedBudgetBytes": 33554432,
+        "retainedBudgetMiB": 32,
+        "trendBudgetBytesPerCycle": 2097152,
+        "trendBudgetMiBPerCycle": 2,
+        "baselineDropToleranceBytes": 67108864,
+        "baselineDropToleranceMiB": 64,
+        "minimumRecognitionCycles": 10,
+        "minimumCancellationCycles": 10,
+        "freshChildRequiredPerCycle": true,
+        "noActiveChildAfterSettle": true
+      },
+      "bounded": true
+    }
+  },
+  "resourceLifetime": {
+    "classification": "WebView allocator retention, bounded by one-job native child process; no cycle-over-cycle process leak observed",
+    "liveJavaScriptReferencesDropped": true,
+    "jobEnvelopeDropped": true,
+    "onnxSessionsReleased": true,
+    "openCv": {
+      "allocations": 0,
+      "resourcesReleased": true,
+      "used": false
+    },
+    "imageData": {
+      "used": false
+    },
+    "imageBitmap": {
+      "closed": true,
+      "used": false
+    },
+    "typedArrayOwnership": "transferred",
+    "senderBufferDetached": true,
+    "transferredBuffersDropped": true,
+    "eventListenersRemoved": true,
+    "messagePorts": {
+      "closed": true,
+      "used": false
+    },
+    "modelCache": {
+      "fetchMode": "no-store",
+      "modelByteReferencesDropped": true
+    },
+    "maximumAdapterInstancesPerChild": 1,
+    "duplicateModelInstances": false,
+    "staleResultRetentionPrevented": true,
+    "staleResultVerification": "js/ocr/engine.test.mjs removes listeners, empties pending requests, and ignores a saved stale callback after cancellation",
+    "cancellationNote": "Parent-controlled cancellation terminates and reaps the one-job application child, so in-flight ONNX/WASM allocations are reclaimed at the process boundary.",
+    "trueProcessLeakObserved": false
+  },
+  "isolation": {
+    "boundary": "native-child-process",
+    "oneJob": true,
+    "rationale": "Worker termination did not release WebKit allocator pages to the long-lived app process; process exit is the reclamation boundary."
+  },
+  "accuracy": {
+    "normalizedExpected": "open pdf studio offline ocr phase a total 42.50 eur",
+    "normalizedActual": "open pdf studio offline ocr phase a total 42.50 eur",
+    "editDistance": 0,
+    "characterAccuracy": 1,
+    "exactNormalizedMatch": true,
+    "allRecognitionCyclesExact": true
+  },
+  "cancellation": {
+    "cycles": 10,
+    "delaysMs": [
+      0,
+      25,
+      75,
+      150,
+      300
+    ],
+    "allTerminatedWorkers": true,
+    "method": "native-child-process-terminate",
+    "maximumLatencyMs": 24
+  },
+  "offline": {
+    "pass": true,
+    "externalNetworkRequestsRequired": false,
+    "sameOriginAssetGuard": true,
+    "allWorkerFetchesGuarded": true,
+    "externalBlockSelfTestPassed": true,
+    "allowedOrigin": "tauri://localhost",
+    "coldRunAllowedRequestCount": 5,
+    "blockedExternalRequestCount": 10,
+    "vendoredAssetsChecksumVerified": true,
+    "physicalNetworkDisabledDuringRun": false,
+    "limitation": "Every Worker fetch is mechanically restricted to its application origin and vendored assets are checksum-verified; this run did not disable the host network interface."
+  },
+  "viewerResponsiveness": {
+    "method": "MCP round-trip timing for awaited viewer zoom renders and viewport probes while a separate isolated OCR request is in flight",
+    "fixtureOpened": {
+      "name": "app_open_pdf",
+      "arguments": {
+        "path": "/Users/alexander/Personal Projects/open-pdf-studio/open-pdf-studio/tests/fixtures/ocr/clean-latin.pdf"
+      },
+      "wallMs": 76.03,
+      "ok": true,
+      "completedBeforeOcrResult": null,
+      "result": {
+        "file_path": "/Users/alexander/Personal Projects/open-pdf-studio/open-pdf-studio/tests/fixtures/ocr/clean-latin.pdf",
+        "ok": true,
+        "page_count": 1,
+        "tab_id": 0
+      }
+    },
+    "baseline": [
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1
+        },
+        "wallMs": 11.19,
+        "ok": true,
+        "completedBeforeOcrResult": null,
+        "result": {
+          "actual": 1,
+          "ok": true,
+          "requested": 1
+        }
+      },
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1.15
+        },
+        "wallMs": 0.77,
+        "ok": true,
+        "completedBeforeOcrResult": null,
+        "result": {
+          "actual": 1.15,
+          "ok": true,
+          "requested": 1.15
+        }
+      },
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1
+        },
+        "wallMs": 0.66,
+        "ok": true,
+        "completedBeforeOcrResult": null,
+        "result": {
+          "actual": 1,
+          "ok": true,
+          "requested": 1
+        }
+      },
+      {
+        "name": "app_get_viewport_state",
+        "arguments": {},
+        "wallMs": 0.97,
+        "ok": true,
+        "completedBeforeOcrResult": null,
+        "result": {
+          "engine": "Raster (PDFium)",
+          "docScale": 1.4642857142857142,
+          "viewportZoom": 1,
+          "canvasWidth": 1230,
+          "canvasHeight": 1194
+        }
+      }
+    ],
+    "duringOcr": [
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1.1
+        },
+        "wallMs": 1.36,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "actual": 1.1,
+          "ok": true,
+          "requested": 1.1
+        }
+      },
+      {
+        "name": "app_get_viewport_state",
+        "arguments": {},
+        "wallMs": 1.35,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "engine": "Raster (PDFium)",
+          "docScale": 1.4642857142857142,
+          "viewportZoom": 1.1,
+          "canvasWidth": 1230,
+          "canvasHeight": 1194
+        }
+      },
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1.25
+        },
+        "wallMs": 0.76,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "actual": 1.25,
+          "ok": true,
+          "requested": 1.25
+        }
+      },
+      {
+        "name": "app_get_viewport_state",
+        "arguments": {},
+        "wallMs": 0.59,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "engine": "Raster (PDFium)",
+          "docScale": 1.4642857142857142,
+          "viewportZoom": 1.25,
+          "canvasWidth": 1230,
+          "canvasHeight": 1194
+        }
+      },
+      {
+        "name": "app_set_zoom",
+        "arguments": {
+          "scale": 1
+        },
+        "wallMs": 0.62,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "actual": 1,
+          "ok": true,
+          "requested": 1
+        }
+      },
+      {
+        "name": "app_get_viewport_state",
+        "arguments": {},
+        "wallMs": 0.72,
+        "ok": true,
+        "completedBeforeOcrResult": true,
+        "result": {
+          "engine": "Raster (PDFium)",
+          "docScale": 1.4642857142857142,
+          "viewportZoom": 1,
+          "canvasWidth": 1230,
+          "canvasHeight": 1194
+        }
+      }
+    ],
+    "baselineMaximumWallMs": 11.19,
+    "duringOcrMaximumWallMs": 1.36,
+    "ocrWallMs": 1313.81,
+    "ocrExactNormalizedMatch": true,
+    "allDuringRequestsSucceeded": true,
+    "allDuringRequestsCompletedBeforeOcr": true,
+    "responsiveWhileOcrActive": true,
+    "activeOcrChildPidsAfterProbe": [],
+    "acceptanceNote": "No approved viewer-latency threshold was provided; raw baseline and concurrent timings are reported without inventing one."
+  },
+  "packageSize": {
+    "builtOcrBytes": 44814340,
+    "builtOcrMiB": 42.74,
+    "totalDistBytes": 69288728,
+    "artifacts": [
+      {
+        "file": "assets/ort-wasm-simd-threaded-Bb4gTywK.mjs",
+        "bytes": 24180
+      },
+      {
+        "file": "assets/ort-wasm-simd-threaded-Cpm-ox6i.wasm",
+        "bytes": 13479978
+      },
+      {
+        "file": "assets/spike-BzR4i3DK.js",
+        "bytes": 8796
+      },
+      {
+        "file": "assets/worker-D99_Xgx1.js",
+        "bytes": 146389
+      },
+      {
+        "file": "ocr/pp-ocrv6-small/characters.json",
+        "bytes": 112503
+      },
+      {
+        "file": "ocr/pp-ocrv6-small/detection.onnx",
+        "bytes": 9880512
+      },
+      {
+        "file": "ocr/pp-ocrv6-small/manifest.json",
+        "bytes": 2604
+      },
+      {
+        "file": "ocr/pp-ocrv6-small/recognition.onnx",
+        "bytes": 21159378
+      }
+    ]
+  },
+  "gate": {
+    "memoryRemediationPass": true,
+    "platformValidated": "darwin-arm64",
+    "crossPlatformProductionDecision": "Windows and Linux live runs still required"
+  }
+}

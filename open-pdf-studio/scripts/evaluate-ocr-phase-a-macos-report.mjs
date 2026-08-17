@@ -21,6 +21,10 @@ function finiteAtMost(value, limit) {
   return Number.isFinite(value) && value <= limit;
 }
 
+function acceptedCancellationMethod(value) {
+  return value === 'worker.terminate' || value === 'native-child-process-terminate';
+}
+
 function viewerUsesPdfium(viewer) {
   const probes = [...(viewer?.baseline ?? []), ...(viewer?.duringOcr ?? [])];
   return probes.some((probe) => probe?.result?.engine === 'Raster (PDFium)');
@@ -66,7 +70,7 @@ export function evaluateMacosProductionReport(report, artifactEvidence = {}) {
     tenRecognitionCycles: recognition.length >= 10,
     tenCancellationCycles: cancellation.length >= 10
       && cancellation.every((job) => job?.cancelled === true)
-      && cancellation.every((job) => job?.cancellationMethod === 'worker.terminate'),
+      && cancellation.every((job) => acceptedCancellationMethod(job?.cancellationMethod)),
     uniqueDisposableChildPerJob: jobs.length >= 20
       && childPids.every((pid) => Number.isInteger(pid) && pid > 0)
       && uniqueChildPids.size === jobs.length
@@ -74,7 +78,8 @@ export function evaluateMacosProductionReport(report, artifactEvidence = {}) {
       && report?.isolation?.boundary === 'native-child-process'
       && report?.isolation?.oneJob === true
       && jobs.every((job) => job?.isolationBoundary === 'native-child-process')
-      && jobs.every((job) => job?.childExitStatus === 0),
+      && jobs.every((job) => job?.childExitStatus === 0 ||
+        (job?.cancelled === true && job?.childReaped === true)),
     noSurvivingChild: jobs.every((job) => noPids(job?.activeOcrChildPidsAfterSettle))
       && noPids(finalCheckpoint?.activeOcrChildPids)
       && noPids(viewer?.activeOcrChildPidsAfterProbe),

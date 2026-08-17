@@ -30,11 +30,10 @@
 - When creating a modal window, the window shall be movable and do not disappear when user click on somewhere outside of it. just like a default behaviour of modal form.
 - Do not run app when some changes are implimented when app is running and hot reload is true.
 
-## Github commit
-- Remove all comments that reference to Adobe, pdf-xchange, foxit or any third parties that are not opensource
-- Create a commit comment by comparing the current files to the commited changes.
-- Do not include the Claude and Anthropic stuff in the commit comment
-- Show the commit comment to user and ask for approval.
-- when wanted to commit and push, increase the minor revision, for example 0.1.0 to 0.2.0 everywhere.
-- For every push, run github action to create a new installers. wait to the end make sure they are created successfully.
-- also publish the a new draft release
+## Git workflow and releases
+- Use generic product terminology in source comments and commit messages. Do not use proprietary third-party product names as comparisons or shorthand.
+- Create a proposed commit message by comparing the current files with the committed changes.
+- Do not include Claude or Anthropic references in commit messages.
+- Show the proposed commit message to the user and obtain explicit approval before committing.
+- Normal feature-branch commits and pushes do not change the application version.
+- Version bumps, installer workflows, and draft releases are release operations. Run them only when the user explicitly requests a release candidate, release branch, version tag, or final release task.

@@ -37,7 +37,7 @@ async function verifyRecord(root, record) {
 export async function verifyOcrAssets() {
   const modelRoot = path.join(projectDir, 'public', 'ocr', 'pp-ocrv6-small');
   const manifest = JSON.parse(await readFile(path.join(modelRoot, 'manifest.json'), 'utf8'));
-  assertCompatibleOcrModelPack(manifest, createPaddleOcrEngineDescriptor(), { platform: 'macos' });
+  assertCompatibleOcrModelPack(manifest, createPaddleOcrEngineDescriptor(manifest), { platform: 'macos' });
   const models = [];
   for (const record of Object.values(manifest.assets)) models.push(await verifyRecord(modelRoot, record));
   const runtime = [];

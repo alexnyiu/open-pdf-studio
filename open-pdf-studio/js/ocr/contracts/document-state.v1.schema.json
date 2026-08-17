@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/document-state.v1.schema.json",
+  "title": "Open PDF Studio mutable document OCR state contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "schemaVersion", "stateId", "document", "stateRevision", "pages", "undo", "updatedAt"],
+  "properties": {
+    "contract": { "const": "open-pdf-studio.ocr.document-state" },
+    "schemaVersion": { "const": 1 },
+    "stateId": { "$ref": "common.schema.json#/$defs/id" },
+    "document": { "$ref": "common.schema.json#/$defs/documentIdentity" },
+    "stateRevision": { "type": "integer", "minimum": 0 },
+    "pages": {
+      "type": "array",
+      "maxItems": 100000,
+      "x-uniqueBy": "id",
+      "items": { "$ref": "#/$defs/pageState" }
+    },
+    "undo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "undoDepth", "redoDepth", "lastOperationId"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0 },
+        "undoDepth": { "type": "integer", "minimum": 0 },
+        "redoDepth": { "type": "integer", "minimum": 0 },
+        "lastOperationId": {
+          "anyOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/id" }]
+        }
+      }
+    },
+    "updatedAt": { "$ref": "common.schema.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "resultRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jobId", "requestId", "engineId", "modelPack", "documentRevision",
+        "documentGeneration", "pageRevision", "sourceRasterId",
+        "sourceRasterFingerprint", "recognitionConfigurationHash"
+      ],
+      "properties": {
+        "jobId": { "$ref": "common.schema.json#/$defs/id" },
+        "requestId": { "$ref": "common.schema.json#/$defs/id" },
+        "engineId": { "$ref": "common.schema.json#/$defs/id" },
+        "modelPack": { "$ref": "common.schema.json#/$defs/modelPackIdentity" },
+        "documentRevision": { "type": "integer", "minimum": 0 },
+        "documentGeneration": { "$ref": "common.schema.json#/$defs/id" },
+        "pageRevision": { "type": "integer", "minimum": 0 },
+        "sourceRasterId": { "$ref": "common.schema.json#/$defs/id" },
+        "sourceRasterFingerprint": { "$ref": "common.schema.json#/$defs/fingerprint" },
+        "recognitionConfigurationHash": { "$ref": "common.schema.json#/$defs/fingerprint" }
+      }
+    },
+    "correction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "target", "originalText", "correctedText", "status", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "id"],
+          "properties": {
+            "kind": { "enum": ["line", "word"] },
+            "id": { "$ref": "common.schema.json#/$defs/id" }
+          }
+        },
+        "originalText": { "type": "string", "maxLength": 4194304 },
+        "correctedText": { "type": "string", "maxLength": 4194304 },
+        "status": { "enum": ["pending", "accepted", "rejected"] },
+        "createdAt": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "updatedAt": { "$ref": "common.schema.json#/$defs/timestamp" }
+      }
+    },
+    "estimatedBaselineRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "lineId", "baseline", "createdAt", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "lineId": { "$ref": "common.schema.json#/$defs/id" },
+        "baseline": { "$ref": "common.schema.json#/$defs/estimatedBaseline" },
+        "createdAt": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "updatedAt": { "$ref": "common.schema.json#/$defs/timestamp" }
+      }
+    },
+    "editRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "lineIds", "polygon", "eligibility", "background", "status", "unsupportedReasons"
+      ],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "lineIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/id" }
+        },
+        "polygon": { "$ref": "common.schema.json#/$defs/coordinatePolygon" },
+        "eligibility": { "enum": ["unknown", "eligible", "ineligible"] },
+        "background": { "enum": ["unknown", "flat", "complex"] },
+        "status": { "enum": ["candidate", "approved", "rejected"] },
+        "unsupportedReasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/id" }
+        }
+      }
+    },
+    "pageState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "index", "revision", "resultRef", "applicationStatus", "reviewStatus",
+        "corrections", "estimatedBaselines", "visibleEditRegions"
+      ],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "index": { "type": "integer", "minimum": 0 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "resultRef": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/resultRef" }]
+        },
+        "applicationStatus": { "enum": ["idle", "applying", "applied", "skipped"] },
+        "reviewStatus": { "enum": ["unreviewed", "in-review", "accepted", "rejected"] },
+        "corrections": {
+          "type": "array",
+          "maxItems": 100000,
+          "x-uniqueBy": "id",
+          "items": { "$ref": "#/$defs/correction" }
+        },
+        "estimatedBaselines": {
+          "type": "array",
+          "maxItems": 100000,
+          "x-uniqueBy": "id",
+          "items": { "$ref": "#/$defs/estimatedBaselineRecord" }
+        },
+        "visibleEditRegions": {
+          "type": "array",
+          "maxItems": 100000,
+          "x-uniqueBy": "id",
+          "items": { "$ref": "#/$defs/editRegion" }
+        }
+      }
+    }
+  },
+  "x-maxUtf8Bytes": 16777216,
+  "x-ocrSemantic": "document-state-v1"
+}

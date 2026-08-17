@@ -1,6 +1,9 @@
 export const OCR_CONTRACT_LIMITS = Object.freeze({
   maxResultBytes: 16 * 1024 * 1024,
   maxJobBytes: 4 * 1024 * 1024,
+  maxProgressBytes: 64 * 1024,
+  maxDocumentStateBytes: 16 * 1024 * 1024,
+  maxPageGeometryBytes: 256 * 1024,
   maxBlocksPerPage: 10_000,
   maxLinesPerPage: 100_000,
   maxWordsPerPage: 500_000,
@@ -11,6 +14,7 @@ export const OCR_CONTRACT_LIMITS = Object.freeze({
   maxCorrectionsPerPage: 100_000,
   maxEditRegionsPerPage: 100_000,
   maxPagesPerJob: 100_000,
+  maxPreprocessingOperations: 32,
   maxTextCodeUnits: 4 * 1024 * 1024,
 });
 
@@ -129,6 +133,153 @@ export function validateSerializedSize(value, path, issues, maxBytes) {
     return false;
   }
   return true;
+}
+
+export function validateJsonValue(value, path, issues, {
+  maxDepth = 64,
+  maxNodes = 1_000_000,
+} = {}) {
+  const ancestors = new Set();
+  let nodes = 0;
+
+  function visit(current, currentPath, depth) {
+    nodes += 1;
+    if (nodes > maxNodes) {
+      issues.push(`${path} exceeds ${maxNodes} JSON values`);
+      return;
+    }
+    if (depth > maxDepth) {
+      issues.push(`${currentPath} exceeds maximum JSON depth ${maxDepth}`);
+      return;
+    }
+    if (current === null || typeof current === 'boolean') return;
+    if (typeof current === 'number') {
+      if (!Number.isFinite(current)) issues.push(`${currentPath} must be a finite JSON number`);
+      return;
+    }
+    if (typeof current === 'string') {
+      if (!isValidUnicode(current)) issues.push(`${currentPath} must contain valid Unicode`);
+      return;
+    }
+    if (typeof current !== 'object') {
+      issues.push(`${currentPath} contains a non-JSON ${typeof current} value`);
+      return;
+    }
+    if (ancestors.has(current)) {
+      issues.push(`${currentPath} must not contain a cyclic reference`);
+      return;
+    }
+    if (!Array.isArray(current)) {
+      const prototype = Object.getPrototypeOf(current);
+      if (prototype !== Object.prototype && prototype !== null) {
+        issues.push(`${currentPath} must be a plain JSON object`);
+        return;
+      }
+    }
+    ancestors.add(current);
+    if (Array.isArray(current)) {
+      current.forEach((entry, index) => visit(entry, `${currentPath}[${index}]`, depth + 1));
+    } else {
+      for (const [key, entry] of Object.entries(current)) {
+        if (!isValidUnicode(key)) issues.push(`${currentPath} contains an invalid Unicode property name`);
+        visit(entry, `${currentPath}.${key}`, depth + 1);
+      }
+    }
+    ancestors.delete(current);
+  }
+
+  visit(value, path, 0);
+  return issues.length === 0;
+}
+
+export function validateFingerprint(value, path, issues) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set(['algorithm', 'value']), path, issues);
+  if (value.algorithm !== 'sha256') issues.push(`${path}.algorithm must be sha256`);
+  const valid = validateString(value.value, `${path}.value`, issues, { nonEmpty: true, maxCodeUnits: 64 });
+  if (valid && !/^[0-9a-f]{64}$/.test(value.value)) {
+    issues.push(`${path}.value must be a lowercase SHA-256 digest`);
+  }
+}
+
+export function validateNonNegativeInteger(value, path, issues, { maximum = Number.MAX_SAFE_INTEGER } = {}) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    issues.push(`${path} must be a non-negative safe integer no greater than ${maximum}`);
+  }
+}
+
+export function validatePositiveInteger(value, path, issues, { maximum = Number.MAX_SAFE_INTEGER } = {}) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    issues.push(`${path} must be a positive safe integer no greater than ${maximum}`);
+  }
+}
+
+export function validatePolyline(points, path, issues, {
+  width = null,
+  height = null,
+  minPoints = 2,
+  maxPoints = OCR_CONTRACT_LIMITS.maxPolygonPoints,
+} = {}) {
+  if (!Array.isArray(points)) {
+    issues.push(`${path} must be an array`);
+    return;
+  }
+  if (points.length < minPoints || points.length > maxPoints) {
+    issues.push(`${path} must contain between ${minPoints} and ${maxPoints} points`);
+    return;
+  }
+  let distinctSegment = false;
+  points.forEach((point, index) => {
+    if (!Array.isArray(point) || point.length !== 2 || !point.every(isFiniteNumber)) {
+      issues.push(`${path}[${index}] must be a finite [x, y] point`);
+      return;
+    }
+    if (point[0] < 0 || point[1] < 0) issues.push(`${path}[${index}] must be non-negative`);
+    if (isFiniteNumber(width) && point[0] > width + 0.5) issues.push(`${path}[${index}] exceeds page width`);
+    if (isFiniteNumber(height) && point[1] > height + 0.5) issues.push(`${path}[${index}] exceeds page height`);
+    if (index > 0 && !samePoint(points[index - 1], point)) distinctSegment = true;
+  });
+  if (!distinctSegment) issues.push(`${path} must contain a non-zero-length segment`);
+}
+
+export function validateAffineMatrix(value, path, issues) {
+  if (!Array.isArray(value) || value.length !== 6 || !value.every(isFiniteNumber)) {
+    issues.push(`${path} must contain six finite numbers`);
+    return false;
+  }
+  const determinant = value[0] * value[3] - value[1] * value[2];
+  if (!Number.isFinite(determinant) || Math.abs(determinant) <= 1e-12) {
+    issues.push(`${path} must be invertible`);
+    return false;
+  }
+  return true;
+}
+
+function affineProduct(left, right) {
+  return [
+    left[0] * right[0] + left[2] * right[1],
+    left[1] * right[0] + left[3] * right[1],
+    left[0] * right[2] + left[2] * right[3],
+    left[1] * right[2] + left[3] * right[3],
+    left[0] * right[4] + left[2] * right[5] + left[4],
+    left[1] * right[4] + left[3] * right[5] + left[5],
+  ];
+}
+
+export function validateAffineInverse(matrix, inverseMatrix, path, issues) {
+  const matrixValid = validateAffineMatrix(matrix, `${path}.matrix`, issues);
+  const inverseValid = validateAffineMatrix(inverseMatrix, `${path}.inverseMatrix`, issues);
+  if (!matrixValid || !inverseValid) return;
+  const identity = [1, 0, 0, 1, 0, 0];
+  const forward = affineProduct(matrix, inverseMatrix);
+  const reverse = affineProduct(inverseMatrix, matrix);
+  if (forward.some((entry, index) => Math.abs(entry - identity[index]) > 1e-6) ||
+      reverse.some((entry, index) => Math.abs(entry - identity[index]) > 1e-6)) {
+    issues.push(`${path}.inverseMatrix must invert ${path}.matrix`);
+  }
 }
 
 function samePoint(left, right) {

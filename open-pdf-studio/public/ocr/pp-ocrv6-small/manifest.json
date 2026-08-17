@@ -23,7 +23,30 @@
   "modelFamily": "PP-OCRv6",
   "modelTier": "small",
   "characterCount": 18708,
-  "languages": ["und"],
+  "recognitionSupport": {
+    "selectionMode": "fixed-multilingual",
+    "languageSelector": "none",
+    "languages": [
+      "zh-Hans", "zh-Hant", "en", "ja", "fr", "de", "it", "es", "pt", "nl",
+      "pl", "ro", "cs", "sv", "no", "da", "fi", "hu", "tr", "vi", "id", "ms",
+      "az", "af", "bs", "hr", "cy", "et", "ga", "is", "ku", "lt", "lv", "mt",
+      "mi", "oc", "sk", "sl", "sq", "sw", "tl", "uz", "la", "sr-Latn", "ca",
+      "eu", "gl", "lb", "rm", "qu"
+    ],
+    "scripts": ["Hans", "Hant", "Jpan", "Latn"]
+  },
+  "distribution": {
+    "bundled": true,
+    "downloadable": false
+  },
+  "trust": {
+    "integrity": "sha256",
+    "trustRootId": "open-pdf-studio-bundled-model-packs-v1"
+  },
+  "applicationCompatibility": {
+    "minimumVersion": "1.85.0",
+    "maximumVersionExclusive": null
+  },
   "license": "Apache-2.0",
   "upstream": {
     "detection": {

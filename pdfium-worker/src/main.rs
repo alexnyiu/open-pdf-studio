@@ -10,7 +10,7 @@ mod shm;
 
 use anyhow::{Context, Result};
 use protocol::{Request, Response};
-use render::Renderer;
+use render::{RasterLimits, Renderer};
 use shm::Shm;
 use std::io::{BufRead, Write};
 
@@ -82,6 +82,66 @@ fn main() -> Result<()> {
                     Err(e) => Response::RenderErr {
                         id, ok: false,
                         error: format!("{}", e),
+                    },
+                };
+                writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
+                stdout.flush()?;
+            }
+            Request::RenderOcr {
+                id, path, page_index, scale, rotation, max_width, max_height,
+                max_pixels, max_raster_bytes,
+            } => {
+                let limits = RasterLimits {
+                    max_width,
+                    max_height,
+                    max_pixels,
+                    max_raster_bytes,
+                };
+                let resp = match renderer.render_ocr(
+                    &path, page_index, scale, rotation, limits,
+                ) {
+                    Ok(result) => match shm_region.write_bitmap(result.width, result.height, &result.rgba) {
+                        Ok(bytes) => Response::RenderOcrOk {
+                            id,
+                            ok: true,
+                            w: result.width,
+                            h: result.height,
+                            shm_bytes: bytes,
+                            page_geometry: result.page_geometry
+                                .expect("bounded OCR render always records page geometry"),
+                        },
+                        Err(error) => Response::RenderErr {
+                            id, ok: false, error: format!("SHM write: {error}"),
+                        },
+                    },
+                    Err(error) => Response::RenderErr {
+                        id, ok: false, error: error.to_string(),
+                    },
+                };
+                writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
+                stdout.flush()?;
+            }
+            Request::PageGeometry {
+                id, path, page_index, scale, rotation, max_width, max_height,
+                max_pixels, max_raster_bytes,
+            } => {
+                let limits = RasterLimits {
+                    max_width,
+                    max_height,
+                    max_pixels,
+                    max_raster_bytes,
+                };
+                let resp = match renderer.render_ocr(&path, page_index, scale, rotation, limits) {
+                    Ok(result) => Response::PageGeometryOk {
+                        id,
+                        ok: true,
+                        page_geometry: result.page_geometry
+                            .expect("bounded geometry render always records page geometry"),
+                    },
+                    Err(error) => Response::RenderErr {
+                        id,
+                        ok: false,
+                        error: error.to_string(),
                     },
                 };
                 writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;

@@ -4,6 +4,7 @@ node_modules/
 # Build output
 dist/
 out/
+**/build/
 
 # Rust / Cargo build output — elke target-map op elk niveau
 # (root workspace, open-pdf-render, src-tauri) plus losse iteratie-varianten
@@ -11,10 +12,10 @@ target/
 target-*/
 
 # pdfium-worker-sidecar: build-artefact dat build.rs/CI zelf plaatsen
-binaries/pdfium-worker-*
+**/binaries/pdfium-worker-*
 
 # macOS in-proc PDFium: door CI opgehaald (SHA-256-geverifieerd), niet gecommit
-binaries/macos-universal/
+**/binaries/macos-universal/
 
 # OS files
 .DS_Store
@@ -43,6 +44,9 @@ nul
 
 # Temporary files
 temp/
+
+# Graphify generated extraction output
+**/graphify-out/
 
 # Internal notes
 Missing.md

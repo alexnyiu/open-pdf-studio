@@ -9,6 +9,7 @@ import { savePDF } from '../../pdf/saver.js';
 import { unlockFile, lockFile, renameFile, fileExists } from '../../core/platform.js';
 import { cancelPendingZoom } from '../setup/navigation-events.js';
 import { closeAllPopups } from '../../bridge.js';
+import { cancelNativeOcrDocument } from '../../ocr/native-controller.js';
 
 /**
  * Create a new tab for a document
@@ -204,6 +205,14 @@ export async function closeTab(index, force = false) {
       if (!saved) return false; // Save failed or was cancelled
     }
     // action === 'dontsave' → proceed to close without saving
+  }
+
+  // Document identity is the cancellation boundary for background OCR. Wait
+  // for the disposable child to be reaped before removing application state.
+  try {
+    await cancelNativeOcrDocument(doc.id);
+  } catch (error) {
+    console.warn('Failed to cancel document OCR jobs:', error);
   }
 
   // Close all open sticky note popups

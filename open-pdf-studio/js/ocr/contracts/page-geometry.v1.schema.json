@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/page-geometry.v1.schema.json",
+  "title": "Open PDF Studio canonical PDF page geometry and transform chain v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract", "schemaVersion", "geometryId", "document", "page", "coordinateSpaces",
+    "boxes", "userUnit", "rotations", "displayedPage", "sourceRaster", "rendering",
+    "preprocessing", "engineGeometry", "transformChain"
+  ],
+  "properties": {
+    "contract": { "const": "open-pdf-studio.ocr.page-geometry" },
+    "schemaVersion": { "const": 1 },
+    "geometryId": { "$ref": "common.schema.json#/$defs/id" },
+    "document": { "$ref": "common.schema.json#/$defs/documentIdentity" },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "index", "revision"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "index": { "type": "integer", "minimum": 0 },
+        "revision": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "coordinateSpaces": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "x-uniqueBy": "id",
+      "items": { "$ref": "#/$defs/coordinateSpace" }
+    },
+    "boxes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mediaBox", "cropBox", "bleedBox", "trimBox", "artBox"],
+      "properties": {
+        "mediaBox": { "$ref": "#/$defs/pdfBox" },
+        "cropBox": { "$ref": "#/$defs/pdfBox" },
+        "bleedBox": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/pdfBox" }] },
+        "trimBox": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/pdfBox" }] },
+        "artBox": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/pdfBox" }] }
+      }
+    },
+    "userUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "pointsPerUnit", "provenance"],
+      "properties": {
+        "value": { "type": "number", "exclusiveMinimum": 0, "maximum": 75000 },
+        "pointsPerUnit": { "type": "number", "exclusiveMinimum": 0, "maximum": 75000 },
+        "provenance": { "enum": ["pdf-page-dictionary", "pdf-default"] }
+      }
+    },
+    "rotations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intrinsicDegreesClockwise", "applicationDegreesClockwise", "totalDegreesClockwise"],
+      "properties": {
+        "intrinsicDegreesClockwise": { "$ref": "#/$defs/rightAngle" },
+        "applicationDegreesClockwise": { "$ref": "#/$defs/rightAngle" },
+        "totalDegreesClockwise": { "$ref": "#/$defs/rightAngle" }
+      }
+    },
+    "displayedPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinateSpace", "width", "height"],
+      "properties": {
+        "coordinateSpace": { "const": "cropped-display-pdf-points" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "sourceRaster": { "$ref": "#/$defs/sourceRaster" },
+    "rendering": { "$ref": "#/$defs/rendering" },
+    "preprocessing": { "$ref": "#/$defs/preprocessing" },
+    "engineGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinateSpace", "width", "height"],
+      "properties": {
+        "coordinateSpace": { "const": "ocr-engine-geometry" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "transformChain": { "$ref": "#/$defs/transformChain" }
+  },
+  "$defs": {
+    "rightAngle": { "enum": [0, 90, 180, 270] },
+    "spaceId": {
+      "enum": [
+        "pdf-default-user-space", "cropped-display-pdf-points", "source-raster-pixels",
+        "orientation-adjusted-ocr-pixels", "preprocessed-raster-pixels", "ocr-engine-geometry"
+      ]
+    },
+    "coordinateSpace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "unit", "origin", "xAxis", "yAxis"],
+      "properties": {
+        "id": { "$ref": "#/$defs/spaceId" },
+        "unit": { "enum": ["pdf-user-unit", "pdf-point", "pixel", "engine-pixel"] },
+        "origin": { "enum": ["pdf-user-space-zero", "displayed-crop-top-left", "top-left-pixel-edge"] },
+        "xAxis": { "const": "right" },
+        "yAxis": { "enum": ["up", "down"] }
+      }
+    },
+    "pdfBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinateSpace", "x", "y", "width", "height"],
+      "properties": {
+        "coordinateSpace": { "const": "pdf-default-user-space" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "sourceRaster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fingerprint", "coordinateSpace", "widthPx", "heightPx", "dpi"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "fingerprint": { "$ref": "common.schema.json#/$defs/fingerprint" },
+        "coordinateSpace": { "const": "source-raster-pixels" },
+        "widthPx": { "type": "integer", "minimum": 1 },
+        "heightPx": { "type": "integer", "minimum": 1 },
+        "dpi": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "rendering": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "exclusions", "rounding"],
+      "properties": {
+        "requested": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dpi", "scale"],
+          "properties": {
+            "dpi": { "type": "number", "exclusiveMinimum": 0 },
+            "scale": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "exclusions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["annotationsExcluded", "formsExcluded"],
+          "properties": {
+            "annotationsExcluded": { "type": "boolean" },
+            "formsExcluded": { "type": "boolean" }
+          }
+        },
+        "rounding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "idealWidthPx", "idealHeightPx", "requestedWidthPx", "requestedHeightPx",
+            "actualWidthPx", "actualHeightPx", "widthDeltaPx", "heightDeltaPx",
+            "pdfiumAdjusted", "method"
+          ],
+          "properties": {
+            "idealWidthPx": { "type": "number", "exclusiveMinimum": 0 },
+            "idealHeightPx": { "type": "number", "exclusiveMinimum": 0 },
+            "requestedWidthPx": { "type": "integer", "minimum": 1 },
+            "requestedHeightPx": { "type": "integer", "minimum": 1 },
+            "actualWidthPx": { "type": "integer", "minimum": 1 },
+            "actualHeightPx": { "type": "integer", "minimum": 1 },
+            "widthDeltaPx": { "type": "number" },
+            "heightDeltaPx": { "type": "number" },
+            "pdfiumAdjusted": { "type": "boolean" },
+            "method": { "const": "ceil-target-then-pdfium" }
+          }
+        }
+      }
+    },
+    "preprocessing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orientation", "deskew", "output"],
+      "properties": {
+        "orientation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["degreesClockwise", "provenance"],
+          "properties": {
+            "degreesClockwise": { "$ref": "#/$defs/rightAngle" },
+            "provenance": { "enum": ["none", "requested", "engine-detected"] }
+          }
+        },
+        "deskew": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["degreesClockwise", "provenance"],
+          "properties": {
+            "degreesClockwise": { "type": "number", "exclusiveMinimum": -45, "exclusiveMaximum": 45 },
+            "provenance": { "enum": ["none", "requested", "engine-detected"] }
+          }
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coordinateSpace", "widthPx", "heightPx"],
+          "properties": {
+            "coordinateSpace": { "const": "preprocessed-raster-pixels" },
+            "widthPx": { "type": "integer", "minimum": 1 },
+            "heightPx": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "detail"],
+      "properties": {
+        "source": {
+          "enum": ["pdf-page-dictionary", "application-state", "pdfium-render", "ocr-preprocessing", "ocr-engine-adapter"]
+        },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "fromSpace", "toSpace", "matrix", "inverseMatrix", "provenance"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "kind": {
+          "enum": [
+            "crop-user-unit-display-rotation", "pdfium-rasterization", "orientation-preprocessing",
+            "deskew-preprocessing", "engine-geometry-mapping"
+          ]
+        },
+        "fromSpace": { "$ref": "#/$defs/spaceId" },
+        "toSpace": { "$ref": "#/$defs/spaceId" },
+        "matrix": { "$ref": "#/$defs/homography" },
+        "inverseMatrix": { "$ref": "#/$defs/homography" },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      },
+      "x-ocrHomography": true
+    },
+    "homography": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": { "type": "number" }
+    },
+    "transformChain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "operations"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.transform-chain" },
+        "schemaVersion": { "const": 1 },
+        "operations": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "x-uniqueBy": "id",
+          "items": { "$ref": "#/$defs/operation" }
+        }
+      }
+    }
+  },
+  "x-maxUtf8Bytes": 262144,
+  "x-ocrSemantic": "page-geometry-v1"
+}

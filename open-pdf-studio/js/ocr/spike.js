@@ -1,6 +1,16 @@
 import { invoke } from '../core/platform.js';
-import { assertOcrResultV1, toValidatedOcrResultJson } from './contracts/v1.js';
 import { OcrCancelledError, createOcrEngine } from './engine.js';
+import {
+  cancelNativeOcrJob,
+  getNativeOcrJobStatus,
+  runNativeOcrPage,
+} from './native-controller.js';
+import { runOcrJob } from './run-job.js';
+import {
+  createPhaseACompatibilityJob,
+  createPhaseACompatibilityNativeRequest,
+  toPhaseACompatibilityResult,
+} from './phase-a-compat.js';
 
 function now() {
   return globalThis.performance?.now?.() ?? Date.now();
@@ -8,6 +18,24 @@ function now() {
 
 function roundMs(value) {
   return Math.max(0, Math.round(value * 100) / 100);
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function cancelActiveCompatibilityChild(jobId, delayAfterSpawnMs, isSettled) {
+  const deadline = Date.now() + 30_000;
+  while (!isSettled() && Date.now() < deadline) {
+    const status = await getNativeOcrJobStatus(jobId);
+    if (status?.found && Number.isInteger(status.childPid) && status.childPid > 0) {
+      await delay(delayAfterSpawnMs);
+      if (!isSettled()) return cancelNativeOcrJob(jobId);
+      return null;
+    }
+    await delay(10);
+  }
+  return null;
 }
 
 export async function waitForOcrIdleSlot() {
@@ -77,22 +105,50 @@ export async function runOcrPhaseASpike({
       onRunSummary,
     });
   }
-  const encoded = await invoke('run_ocr_phase_a_isolated', {
-    path,
-    pageIndex,
-    scale,
-    cancelAfterMs,
+  const source = { kind: 'pdf-page', path, pageIndex, scale };
+  const request = await createPhaseACompatibilityNativeRequest({ source });
+  const recognition = runNativeOcrPage({
+    sourcePdfPath: path,
+    request,
   });
-  const response = typeof encoded === 'string' ? JSON.parse(encoded) : encoded;
-  for (const checkpoint of response?.lifecycle ?? []) onLifecycle?.(checkpoint);
-  onRunSummary?.({ resources: response?.resources ?? null, isolation: response?.isolation ?? null });
-  if (response?.cancelled) {
-    throw new OcrCancelledError(
-      response.cancellation?.message ?? 'OCR cancelled by terminating its Worker',
+  let settled = false;
+  let cancellationTask = null;
+  if (Number.isFinite(cancelAfterMs) && cancelAfterMs >= 0) {
+    cancellationTask = cancelActiveCompatibilityChild(
+      request.jobId,
+      cancelAfterMs,
+      () => settled,
     );
   }
-  if (!response?.ok) throw new Error(response?.error ?? 'Isolated OCR child failed');
-  return toValidatedOcrResultJson(assertOcrResultV1(response.result));
+  let response;
+  try {
+    response = await recognition;
+  } finally {
+    settled = true;
+    await cancellationTask;
+  }
+  for (const checkpoint of response?.lifecycle ?? []) onLifecycle?.(checkpoint);
+  onRunSummary?.({
+    resources: response?.resources ?? null,
+    isolation: response?.isolation ?? null,
+    cleanup: response?.cleanup ?? null,
+    cancellation: response?.cancellation ?? null,
+    failure: response?.failure ?? null,
+  });
+  if (response?.status === 'cancelled') {
+    const error = new OcrCancelledError(
+      response.cancellation?.message ?? 'OCR cancelled by terminating its application child',
+    );
+    error.cancellationMethod = response.cancellation?.method ?? 'native-child-process-terminate';
+    error.cancellationLatencyMs = response.cancellation?.latencyMs ?? null;
+    throw error;
+  }
+  if (response?.status !== 'completed') {
+    const error = new Error(response?.failure?.message ?? 'Isolated OCR child failed');
+    error.code = response?.failure?.code ?? 'OCR_NATIVE_CHILD_FAILED';
+    throw error;
+  }
+  return toPhaseACompatibilityResult(response.result, source);
 }
 
 export async function runOcrPhaseAInCurrentProcess({
@@ -133,36 +189,26 @@ export async function runOcrWorkerJob({
   engineFactory = createOcrEngine,
   onLifecycle = null,
 }) {
+  const job = await createPhaseACompatibilityJob({ image, source });
   const engine = engineFactory({ onLifecycle });
   let cancellationTimer = null;
+  let result;
   try {
-    const recognition = engine.recognize({
-      image,
-      source,
-      rasterMs,
-    });
+    const recognition = engine.recognize({ image, job, rasterMs });
     if (Number.isFinite(cancelAfterMs) && cancelAfterMs >= 0) {
       cancellationTimer = setTimeout(() => {
-        engine.cancel(`OCR Phase A cancellation probe fired after ${cancelAfterMs} ms`);
+        engine.cancel(`OCR cancellation probe fired after ${cancelAfterMs} ms`);
       }, cancelAfterMs);
     }
-    const result = await recognition;
-    return toValidatedOcrResultJson(assertOcrResultV1(result));
+    result = await recognition;
   } finally {
     if (cancellationTimer !== null) clearTimeout(cancellationTimer);
     if (image) image.rgba = null;
-    onLifecycle?.({
-      stage: 'immediately-before-engine-disposal',
-      atEpochMs: Date.now(),
-      livePageBufferReferences: 0,
-    });
     await engine.dispose();
-    onLifecycle?.({
-      stage: 'after-engine-disposal-complete',
-      atEpochMs: Date.now(),
-      livePageBufferReferences: 0,
-    });
   }
+  return toPhaseACompatibilityResult(result, source);
 }
+
+export { runOcrJob };
 
 export { OcrCancelledError };

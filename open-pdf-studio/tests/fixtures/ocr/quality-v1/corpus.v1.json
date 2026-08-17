@@ -1,0 +1,3731 @@
+{
+  "contract": "open-pdf-studio.ocr.quality-corpus",
+  "schemaVersion": 1,
+  "corpusId": "macos-searchable-ocr-v1",
+  "platformScope": [
+    "macos"
+  ],
+  "generatedBy": "scripts/generate-ocr-quality-fixtures.mjs",
+  "normalization": "unicode-nfkc-casefold-collapse-whitespace-v1",
+  "geometrySpace": {
+    "id": "source-raster-pixels",
+    "unit": "pixel",
+    "origin": "top-left-pixel-edge",
+    "xAxis": "right",
+    "yAxis": "down"
+  },
+  "license": {
+    "fixtureContent": "CC0-1.0",
+    "fixtureLicenseFile": "../LICENSE-CC0-1.0.txt",
+    "renderingFont": "Liberation Sans",
+    "renderingFontLicense": "SIL-OFL-1.1",
+    "renderingFontLicenseFile": "../../../../public/pdfjs/web/standard_fonts/LICENSE_LIBERATION"
+  },
+  "excludedPassingScope": [
+    "handwriting",
+    "table-structure-recovery",
+    "curved-text",
+    "severe-perspective-warping",
+    "scripts-not-listed-by-the-model-pack"
+  ],
+  "fixtures": [
+    {
+      "id": "clean-300dpi",
+      "category": "clean-300-dpi-latin",
+      "classification": "supported",
+      "description": "High-contrast Latin page raster at exactly 300 DPI.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "clean-300dpi.png",
+        "widthPx": 1200,
+        "heightPx": 800,
+        "dpi": 300,
+        "bytes": 18537,
+        "sha256": "e8156ecc01f8364943ec4be3e206878f9e1b2d94ec36fddba9d0b711a2e2cff6"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "OPEN PDF STUDIO\nSearchable OCR benchmark\nReference page 2026\nTotal 42.50 EUR",
+        "readingOrder": [
+          "clean-1",
+          "clean-2",
+          "clean-3",
+          "clean-4"
+        ],
+        "lines": [
+          {
+            "id": "clean-1",
+            "text": "OPEN PDF STUDIO",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  90,
+                  117
+                ],
+                [
+                  630,
+                  117
+                ],
+                [
+                  630,
+                  189.5
+                ],
+                [
+                  90,
+                  189.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "clean-2",
+            "text": "Searchable OCR benchmark",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  90,
+                  264
+                ],
+                [
+                  740,
+                  264
+                ],
+                [
+                  740,
+                  321.5
+                ],
+                [
+                  90,
+                  321.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "clean-3",
+            "text": "Reference page 2026",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  90,
+                  393
+                ],
+                [
+                  600,
+                  393
+                ],
+                [
+                  600,
+                  445.5
+                ],
+                [
+                  90,
+                  445.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "clean-4",
+            "text": "Total 42.50 EUR",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  90,
+                  518
+                ],
+                [
+                  480,
+                  518
+                ],
+                [
+                  480,
+                  570.5
+                ],
+                [
+                  90,
+                  570.5
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "lower-resolution",
+      "category": "lower-resolution-text",
+      "classification": "supported",
+      "description": "Compact 96-DPI page with smaller Latin text.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "lower-resolution.png",
+        "widthPx": 600,
+        "heightPx": 400,
+        "dpi": 96,
+        "bytes": 9184,
+        "sha256": "d0ee6d887e5e21427f20f7e528e29e0c4f00bbc7066860600328509c5107b25a"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "Lower resolution sample\nSmall text remains searchable\nCode A17-204\nPage 2 of 8",
+        "readingOrder": [
+          "lowres-1",
+          "lowres-2",
+          "lowres-3",
+          "lowres-4"
+        ],
+        "lines": [
+          {
+            "id": "lowres-1",
+            "text": "Lower resolution sample",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  40,
+                  64
+                ],
+                [
+                  430,
+                  64
+                ],
+                [
+                  430,
+                  99
+                ],
+                [
+                  40,
+                  99
+                ]
+              ]
+            }
+          },
+          {
+            "id": "lowres-2",
+            "text": "Small text remains searchable",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  40,
+                  146
+                ],
+                [
+                  470,
+                  146
+                ],
+                [
+                  470,
+                  176
+                ],
+                [
+                  40,
+                  176
+                ]
+              ]
+            }
+          },
+          {
+            "id": "lowres-3",
+            "text": "Code A17-204",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  40,
+                  220
+                ],
+                [
+                  250,
+                  220
+                ],
+                [
+                  250,
+                  250
+                ],
+                [
+                  40,
+                  250
+                ]
+              ]
+            }
+          },
+          {
+            "id": "lowres-4",
+            "text": "Page 2 of 8",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  40,
+                  294
+                ],
+                [
+                  230,
+                  294
+                ],
+                [
+                  230,
+                  324
+                ],
+                [
+                  40,
+                  324
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "low-contrast",
+      "category": "low-contrast",
+      "classification": "supported",
+      "description": "Low-contrast gray Latin text on an off-white page.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "low-contrast.png",
+        "widthPx": 1200,
+        "heightPx": 800,
+        "dpi": 300,
+        "bytes": 17761,
+        "sha256": "355512f9ac72491b60aafbbfadc302ea2b4b72c98f3d37112c2389345a2bc088"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "Low contrast document\nFaded archive copy\nRecord number 7305\nRetain punctuation: A-17.",
+        "readingOrder": [
+          "contrast-1",
+          "contrast-2",
+          "contrast-3",
+          "contrast-4"
+        ],
+        "lines": [
+          {
+            "id": "contrast-1",
+            "text": "Low contrast document",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  100,
+                  138
+                ],
+                [
+                  670,
+                  138
+                ],
+                [
+                  670,
+                  203
+                ],
+                [
+                  100,
+                  203
+                ]
+              ]
+            }
+          },
+          {
+            "id": "contrast-2",
+            "text": "Faded archive copy",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  100,
+                  284
+                ],
+                [
+                  560,
+                  284
+                ],
+                [
+                  560,
+                  341.5
+                ],
+                [
+                  100,
+                  341.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "contrast-3",
+            "text": "Record number 7305",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  100,
+                  426
+                ],
+                [
+                  570,
+                  426
+                ],
+                [
+                  570,
+                  481
+                ],
+                [
+                  100,
+                  481
+                ]
+              ]
+            }
+          },
+          {
+            "id": "contrast-4",
+            "text": "Retain punctuation: A-17.",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  100,
+                  568
+                ],
+                [
+                  680,
+                  568
+                ],
+                [
+                  680,
+                  620.5
+                ],
+                [
+                  100,
+                  620.5
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "mild-skew",
+      "category": "mild-skew",
+      "classification": "supported",
+      "description": "Latin text skewed three degrees clockwise without deskew preprocessing.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "mild-skew.png",
+        "widthPx": 1200,
+        "heightPx": 800,
+        "dpi": 300,
+        "bytes": 19327,
+        "sha256": "af6be5b339d0e76646fe2624491cb400251695f224cb032a8ebc4059439feeb5"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "Mildly skewed scan\nThree degrees clockwise\nDocument ID SK-300",
+        "readingOrder": [
+          "skew-1",
+          "skew-2",
+          "skew-3"
+        ],
+        "lines": [
+          {
+            "id": "skew-1",
+            "text": "Mildly skewed scan",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  172.483,
+                  150.283
+                ],
+                [
+                  721.73,
+                  179.068
+                ],
+                [
+                  718.328,
+                  243.979
+                ],
+                [
+                  169.081,
+                  215.194
+                ]
+              ]
+            }
+          },
+          {
+            "id": "skew-2",
+            "text": "Three degrees clockwise",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  164.842,
+                  296.083
+                ],
+                [
+                  783.993,
+                  328.531
+                ],
+                [
+                  780.983,
+                  385.953
+                ],
+                [
+                  161.833,
+                  353.504
+                ]
+              ]
+            }
+          },
+          {
+            "id": "skew-3",
+            "text": "Document ID SK-300",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  157.411,
+                  437.889
+                ],
+                [
+                  656.725,
+                  464.057
+                ],
+                [
+                  653.847,
+                  518.981
+                ],
+                [
+                  154.532,
+                  492.813
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "rotation-90",
+      "category": "page-rotation-90",
+      "classification": "unsupported",
+      "description": "90-degree raster orientation; the current engine has no orientation capability.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "rotation-90.png",
+        "widthPx": 900,
+        "heightPx": 900,
+        "dpi": 300,
+        "bytes": 14528,
+        "sha256": "0546d5657ddc051f56c1cb785936fa26b49c46f9f7bbec60d2a77087944737ab"
+      },
+      "expected": {
+        "disposition": "unsupported",
+        "text": "Rotation 90 degrees\nOrientation is not enabled\nExplicit unsupported case",
+        "readingOrder": [
+          "rotation-90-1",
+          "rotation-90-2",
+          "rotation-90-3"
+        ],
+        "lines": [
+          {
+            "id": "rotation-90-1",
+            "text": "Rotation 90 degrees",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  574,
+                  245
+                ],
+                [
+                  574,
+                  655
+                ],
+                [
+                  519,
+                  655
+                ],
+                [
+                  519,
+                  245
+                ]
+              ]
+            }
+          },
+          {
+            "id": "rotation-90-2",
+            "text": "Orientation is not enabled",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  468,
+                  205
+                ],
+                [
+                  468,
+                  695
+                ],
+                [
+                  420.5,
+                  695
+                ],
+                [
+                  420.5,
+                  205
+                ]
+              ]
+            }
+          },
+          {
+            "id": "rotation-90-3",
+            "text": "Explicit unsupported case",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  368,
+                  215
+                ],
+                [
+                  368,
+                  685
+                ],
+                [
+                  320.5,
+                  685
+                ],
+                [
+                  320.5,
+                  215
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "rotation-180",
+      "category": "page-rotation-180",
+      "classification": "unsupported",
+      "description": "180-degree raster orientation; the current engine has no orientation capability.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "rotation-180.png",
+        "widthPx": 900,
+        "heightPx": 900,
+        "dpi": 300,
+        "bytes": 14244,
+        "sha256": "0f79c72ca2b0df93a711d3e85ca64e6755f97ac10d3f721675ceecf1fae8cb85"
+      },
+      "expected": {
+        "disposition": "unsupported",
+        "text": "Rotation 180 degrees\nOrientation is not enabled\nExplicit unsupported case",
+        "readingOrder": [
+          "rotation-180-1",
+          "rotation-180-2",
+          "rotation-180-3"
+        ],
+        "lines": [
+          {
+            "id": "rotation-180-1",
+            "text": "Rotation 180 degrees",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  655,
+                  574
+                ],
+                [
+                  245,
+                  574
+                ],
+                [
+                  245,
+                  519
+                ],
+                [
+                  655,
+                  519
+                ]
+              ]
+            }
+          },
+          {
+            "id": "rotation-180-2",
+            "text": "Orientation is not enabled",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  695,
+                  468
+                ],
+                [
+                  205,
+                  468
+                ],
+                [
+                  205,
+                  420.5
+                ],
+                [
+                  695,
+                  420.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "rotation-180-3",
+            "text": "Explicit unsupported case",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  685,
+                  368
+                ],
+                [
+                  215,
+                  368
+                ],
+                [
+                  215,
+                  320.5
+                ],
+                [
+                  685,
+                  320.5
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "rotation-270",
+      "category": "page-rotation-270",
+      "classification": "unsupported",
+      "description": "270-degree raster orientation; the current engine has no orientation capability.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "rotation-270.png",
+        "widthPx": 900,
+        "heightPx": 900,
+        "dpi": 300,
+        "bytes": 14689,
+        "sha256": "9752024c08f3f7ac9404654ec97200e2ca4a8f640348f52ba5c04651f0dda136"
+      },
+      "expected": {
+        "disposition": "unsupported",
+        "text": "Rotation 270 degrees\nOrientation is not enabled\nExplicit unsupported case",
+        "readingOrder": [
+          "rotation-270-1",
+          "rotation-270-2",
+          "rotation-270-3"
+        ],
+        "lines": [
+          {
+            "id": "rotation-270-1",
+            "text": "Rotation 270 degrees",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  326,
+                  655
+                ],
+                [
+                  326,
+                  245
+                ],
+                [
+                  381,
+                  245
+                ],
+                [
+                  381,
+                  655
+                ]
+              ]
+            }
+          },
+          {
+            "id": "rotation-270-2",
+            "text": "Orientation is not enabled",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  432,
+                  695
+                ],
+                [
+                  432,
+                  205
+                ],
+                [
+                  479.5,
+                  205
+                ],
+                [
+                  479.5,
+                  695
+                ]
+              ]
+            }
+          },
+          {
+            "id": "rotation-270-3",
+            "text": "Explicit unsupported case",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  532,
+                  685
+                ],
+                [
+                  532,
+                  215
+                ],
+                [
+                  579.5,
+                  215
+                ],
+                [
+                  579.5,
+                  685
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "mixed-image-native-text",
+      "category": "mixed-image-native-text",
+      "classification": "supported",
+      "description": "Flattened raster containing image-origin and native-text-origin lines.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "mixed-image-native-text.png",
+        "widthPx": 1200,
+        "heightPx": 900,
+        "dpi": 300,
+        "bytes": 18673,
+        "sha256": "037a8de7b1b262989047076eeeee6649ae1e6e1f9deb0001c52a11bbd8bb057e"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "SCANNED RECEIPT IMAGE\nItem total 87.40 EUR\nNative reference A-204\nArchive note: verified",
+        "readingOrder": [
+          "mixed-1",
+          "mixed-2",
+          "mixed-3",
+          "mixed-4"
+        ],
+        "lines": [
+          {
+            "id": "mixed-1",
+            "text": "SCANNED RECEIPT IMAGE",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  105,
+                  127
+                ],
+                [
+                  765,
+                  127
+                ],
+                [
+                  765,
+                  187
+                ],
+                [
+                  105,
+                  187
+                ]
+              ]
+            }
+          },
+          {
+            "id": "mixed-2",
+            "text": "Item total 87.40 EUR",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  105,
+                  268
+                ],
+                [
+                  605,
+                  268
+                ],
+                [
+                  605,
+                  320.5
+                ],
+                [
+                  105,
+                  320.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "mixed-3",
+            "text": "Native reference A-204",
+            "sourceLayer": "native-text",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  105,
+                  571
+                ],
+                [
+                  665,
+                  571
+                ],
+                [
+                  665,
+                  626
+                ],
+                [
+                  105,
+                  626
+                ]
+              ]
+            }
+          },
+          {
+            "id": "mixed-4",
+            "text": "Archive note: verified",
+            "sourceLayer": "native-text",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  105,
+                  693
+                ],
+                [
+                  605,
+                  693
+                ],
+                [
+                  605,
+                  745.5
+                ],
+                [
+                  105,
+                  745.5
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "multiple-columns",
+      "category": "multiple-columns",
+      "classification": "supported",
+      "description": "Two-column page with explicit column-major reading order.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "multiple-columns.png",
+        "widthPx": 1300,
+        "heightPx": 900,
+        "dpi": 300,
+        "bytes": 19962,
+        "sha256": "0b6ce812e91c97bf5dcd34842277d7ca6ad6772375cd7df8d183de27f9436a64"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "Left column heading\nFirst left paragraph\nSecond left paragraph\nRight column heading\nFirst right paragraph\nSecond right paragraph",
+        "readingOrder": [
+          "columns-left-1",
+          "columns-left-2",
+          "columns-left-3",
+          "columns-right-1",
+          "columns-right-2",
+          "columns-right-3"
+        ],
+        "lines": [
+          {
+            "id": "columns-left-1",
+            "text": "Left column heading",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  140
+                ],
+                [
+                  540,
+                  140
+                ],
+                [
+                  540,
+                  190
+                ],
+                [
+                  70,
+                  190
+                ]
+              ]
+            }
+          },
+          {
+            "id": "columns-left-2",
+            "text": "First left paragraph",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  269
+                ],
+                [
+                  500,
+                  269
+                ],
+                [
+                  500,
+                  314
+                ],
+                [
+                  70,
+                  314
+                ]
+              ]
+            }
+          },
+          {
+            "id": "columns-left-3",
+            "text": "Second left paragraph",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  394
+                ],
+                [
+                  525,
+                  394
+                ],
+                [
+                  525,
+                  439
+                ],
+                [
+                  70,
+                  439
+                ]
+              ]
+            }
+          },
+          {
+            "id": "columns-right-1",
+            "text": "Right column heading",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  700,
+                  140
+                ],
+                [
+                  1180,
+                  140
+                ],
+                [
+                  1180,
+                  190
+                ],
+                [
+                  700,
+                  190
+                ]
+              ]
+            }
+          },
+          {
+            "id": "columns-right-2",
+            "text": "First right paragraph",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  700,
+                  269
+                ],
+                [
+                  1145,
+                  269
+                ],
+                [
+                  1145,
+                  314
+                ],
+                [
+                  700,
+                  314
+                ]
+              ]
+            }
+          },
+          {
+            "id": "columns-right-3",
+            "text": "Second right paragraph",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  700,
+                  394
+                ],
+                [
+                  1170,
+                  394
+                ],
+                [
+                  1170,
+                  439
+                ],
+                [
+                  700,
+                  439
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "forms-numeric",
+      "category": "forms-and-numeric-content",
+      "classification": "supported",
+      "description": "Static form layout with identifiers, dates, decimals, and percentages.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "forms-numeric.png",
+        "widthPx": 1200,
+        "heightPx": 950,
+        "dpi": 300,
+        "bytes": 23553,
+        "sha256": "929adb825c2b76a37788f22e6ce080ed6ed9b7680b24fb5351996a96adb7df34"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "INVOICE FORM 2026-0816\nAccount: A17-204-88\nDate: 2026-08-16\nSubtotal: 1,234.56 EUR\nTax: 20.00%  Total: 1,481.47",
+        "readingOrder": [
+          "form-1",
+          "form-2",
+          "form-3",
+          "form-4",
+          "form-5"
+        ],
+        "lines": [
+          {
+            "id": "form-1",
+            "text": "INVOICE FORM 2026-0816",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  100,
+                  131
+                ],
+                [
+                  750,
+                  131
+                ],
+                [
+                  750,
+                  186
+                ],
+                [
+                  100,
+                  186
+                ]
+              ]
+            }
+          },
+          {
+            "id": "form-2",
+            "text": "Account: A17-204-88",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  100,
+                  295
+                ],
+                [
+                  630,
+                  295
+                ],
+                [
+                  630,
+                  345
+                ],
+                [
+                  100,
+                  345
+                ]
+              ]
+            }
+          },
+          {
+            "id": "form-3",
+            "text": "Date: 2026-08-16",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  100,
+                  455
+                ],
+                [
+                  530,
+                  455
+                ],
+                [
+                  530,
+                  505
+                ],
+                [
+                  100,
+                  505
+                ]
+              ]
+            }
+          },
+          {
+            "id": "form-4",
+            "text": "Subtotal: 1,234.56 EUR",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  100,
+                  615
+                ],
+                [
+                  660,
+                  615
+                ],
+                [
+                  660,
+                  665
+                ],
+                [
+                  100,
+                  665
+                ]
+              ]
+            }
+          },
+          {
+            "id": "form-5",
+            "text": "Tax: 20.00%  Total: 1,481.47",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  100,
+                  775
+                ],
+                [
+                  860,
+                  775
+                ],
+                [
+                  860,
+                  825
+                ],
+                [
+                  100,
+                  825
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "punctuation-unicode",
+      "category": "punctuation-and-supported-unicode",
+      "classification": "supported",
+      "description": "Latin-script Unicode, diacritics, currency, typographic punctuation, and symbols.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "punctuation-unicode.png",
+        "widthPx": 1300,
+        "heightPx": 850,
+        "dpi": 300,
+        "bytes": 19622,
+        "sha256": "6ea60eb861fa9963b1b89db85135e69ca42f7555f39129dde1c5c659a3e85f8b"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "Café naïve façade\nRésumé: élève, déjà vu.\n€ 1,234.56 — discount 20%\n“Quoted text” • No. 42",
+        "readingOrder": [
+          "unicode-1",
+          "unicode-2",
+          "unicode-3",
+          "unicode-4"
+        ],
+        "lines": [
+          {
+            "id": "unicode-1",
+            "text": "Café naïve façade",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  90,
+                  142
+                ],
+                [
+                  590,
+                  142
+                ],
+                [
+                  590,
+                  202
+                ],
+                [
+                  90,
+                  202
+                ]
+              ]
+            }
+          },
+          {
+            "id": "unicode-2",
+            "text": "Résumé: élève, déjà vu.",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  90,
+                  286
+                ],
+                [
+                  710,
+                  286
+                ],
+                [
+                  710,
+                  341
+                ],
+                [
+                  90,
+                  341
+                ]
+              ]
+            }
+          },
+          {
+            "id": "unicode-3",
+            "text": "€ 1,234.56 — discount 20%",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  90,
+                  426
+                ],
+                [
+                  810,
+                  426
+                ],
+                [
+                  810,
+                  481
+                ],
+                [
+                  90,
+                  481
+                ]
+              ]
+            }
+          },
+          {
+            "id": "unicode-4",
+            "text": "“Quoted text” • No. 42",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  90,
+                  566
+                ],
+                [
+                  710,
+                  566
+                ],
+                [
+                  710,
+                  621
+                ],
+                [
+                  90,
+                  621
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dense-70-lines",
+      "category": "dense-more-than-64-lines",
+      "classification": "supported",
+      "description": "Dense page with seventy independently labeled lines.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "dense-70-lines.png",
+        "widthPx": 1200,
+        "heightPx": 2000,
+        "dpi": 300,
+        "bytes": 30360,
+        "sha256": "e7765f58e74d733ae09bcf88ffda4d124f71a4961d98ed505617beaa5cad7d53"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "Line 01 value 1001\nLine 02 value 1002\nLine 03 value 1003\nLine 04 value 1004\nLine 05 value 1005\nLine 06 value 1006\nLine 07 value 1007\nLine 08 value 1008\nLine 09 value 1009\nLine 10 value 1010\nLine 11 value 1011\nLine 12 value 1012\nLine 13 value 1013\nLine 14 value 1014\nLine 15 value 1015\nLine 16 value 1016\nLine 17 value 1017\nLine 18 value 1018\nLine 19 value 1019\nLine 20 value 1020\nLine 21 value 1021\nLine 22 value 1022\nLine 23 value 1023\nLine 24 value 1024\nLine 25 value 1025\nLine 26 value 1026\nLine 27 value 1027\nLine 28 value 1028\nLine 29 value 1029\nLine 30 value 1030\nLine 31 value 1031\nLine 32 value 1032\nLine 33 value 1033\nLine 34 value 1034\nLine 35 value 1035\nLine 36 value 1036\nLine 37 value 1037\nLine 38 value 1038\nLine 39 value 1039\nLine 40 value 1040\nLine 41 value 1041\nLine 42 value 1042\nLine 43 value 1043\nLine 44 value 1044\nLine 45 value 1045\nLine 46 value 1046\nLine 47 value 1047\nLine 48 value 1048\nLine 49 value 1049\nLine 50 value 1050\nLine 51 value 1051\nLine 52 value 1052\nLine 53 value 1053\nLine 54 value 1054\nLine 55 value 1055\nLine 56 value 1056\nLine 57 value 1057\nLine 58 value 1058\nLine 59 value 1059\nLine 60 value 1060\nLine 61 value 1061\nLine 62 value 1062\nLine 63 value 1063\nLine 64 value 1064\nLine 65 value 1065\nLine 66 value 1066\nLine 67 value 1067\nLine 68 value 1068\nLine 69 value 1069\nLine 70 value 1070",
+        "readingOrder": [
+          "dense-line-01",
+          "dense-line-02",
+          "dense-line-03",
+          "dense-line-04",
+          "dense-line-05",
+          "dense-line-06",
+          "dense-line-07",
+          "dense-line-08",
+          "dense-line-09",
+          "dense-line-10",
+          "dense-line-11",
+          "dense-line-12",
+          "dense-line-13",
+          "dense-line-14",
+          "dense-line-15",
+          "dense-line-16",
+          "dense-line-17",
+          "dense-line-18",
+          "dense-line-19",
+          "dense-line-20",
+          "dense-line-21",
+          "dense-line-22",
+          "dense-line-23",
+          "dense-line-24",
+          "dense-line-25",
+          "dense-line-26",
+          "dense-line-27",
+          "dense-line-28",
+          "dense-line-29",
+          "dense-line-30",
+          "dense-line-31",
+          "dense-line-32",
+          "dense-line-33",
+          "dense-line-34",
+          "dense-line-35",
+          "dense-line-36",
+          "dense-line-37",
+          "dense-line-38",
+          "dense-line-39",
+          "dense-line-40",
+          "dense-line-41",
+          "dense-line-42",
+          "dense-line-43",
+          "dense-line-44",
+          "dense-line-45",
+          "dense-line-46",
+          "dense-line-47",
+          "dense-line-48",
+          "dense-line-49",
+          "dense-line-50",
+          "dense-line-51",
+          "dense-line-52",
+          "dense-line-53",
+          "dense-line-54",
+          "dense-line-55",
+          "dense-line-56",
+          "dense-line-57",
+          "dense-line-58",
+          "dense-line-59",
+          "dense-line-60",
+          "dense-line-61",
+          "dense-line-62",
+          "dense-line-63",
+          "dense-line-64",
+          "dense-line-65",
+          "dense-line-66",
+          "dense-line-67",
+          "dense-line-68",
+          "dense-line-69",
+          "dense-line-70"
+        ],
+        "lines": [
+          {
+            "id": "dense-line-01",
+            "text": "Line 01 value 1001",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  38
+                ],
+                [
+                  520,
+                  38
+                ],
+                [
+                  520,
+                  63
+                ],
+                [
+                  70,
+                  63
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-02",
+            "text": "Line 02 value 1002",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  65
+                ],
+                [
+                  520,
+                  65
+                ],
+                [
+                  520,
+                  90
+                ],
+                [
+                  70,
+                  90
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-03",
+            "text": "Line 03 value 1003",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  92
+                ],
+                [
+                  520,
+                  92
+                ],
+                [
+                  520,
+                  117
+                ],
+                [
+                  70,
+                  117
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-04",
+            "text": "Line 04 value 1004",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  119
+                ],
+                [
+                  520,
+                  119
+                ],
+                [
+                  520,
+                  144
+                ],
+                [
+                  70,
+                  144
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-05",
+            "text": "Line 05 value 1005",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  146
+                ],
+                [
+                  520,
+                  146
+                ],
+                [
+                  520,
+                  171
+                ],
+                [
+                  70,
+                  171
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-06",
+            "text": "Line 06 value 1006",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  173
+                ],
+                [
+                  520,
+                  173
+                ],
+                [
+                  520,
+                  198
+                ],
+                [
+                  70,
+                  198
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-07",
+            "text": "Line 07 value 1007",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  200
+                ],
+                [
+                  520,
+                  200
+                ],
+                [
+                  520,
+                  225
+                ],
+                [
+                  70,
+                  225
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-08",
+            "text": "Line 08 value 1008",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  227
+                ],
+                [
+                  520,
+                  227
+                ],
+                [
+                  520,
+                  252
+                ],
+                [
+                  70,
+                  252
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-09",
+            "text": "Line 09 value 1009",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  254
+                ],
+                [
+                  520,
+                  254
+                ],
+                [
+                  520,
+                  279
+                ],
+                [
+                  70,
+                  279
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-10",
+            "text": "Line 10 value 1010",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  281
+                ],
+                [
+                  520,
+                  281
+                ],
+                [
+                  520,
+                  306
+                ],
+                [
+                  70,
+                  306
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-11",
+            "text": "Line 11 value 1011",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  308
+                ],
+                [
+                  520,
+                  308
+                ],
+                [
+                  520,
+                  333
+                ],
+                [
+                  70,
+                  333
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-12",
+            "text": "Line 12 value 1012",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  335
+                ],
+                [
+                  520,
+                  335
+                ],
+                [
+                  520,
+                  360
+                ],
+                [
+                  70,
+                  360
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-13",
+            "text": "Line 13 value 1013",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  362
+                ],
+                [
+                  520,
+                  362
+                ],
+                [
+                  520,
+                  387
+                ],
+                [
+                  70,
+                  387
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-14",
+            "text": "Line 14 value 1014",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  389
+                ],
+                [
+                  520,
+                  389
+                ],
+                [
+                  520,
+                  414
+                ],
+                [
+                  70,
+                  414
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-15",
+            "text": "Line 15 value 1015",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  416
+                ],
+                [
+                  520,
+                  416
+                ],
+                [
+                  520,
+                  441
+                ],
+                [
+                  70,
+                  441
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-16",
+            "text": "Line 16 value 1016",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  443
+                ],
+                [
+                  520,
+                  443
+                ],
+                [
+                  520,
+                  468
+                ],
+                [
+                  70,
+                  468
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-17",
+            "text": "Line 17 value 1017",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  470
+                ],
+                [
+                  520,
+                  470
+                ],
+                [
+                  520,
+                  495
+                ],
+                [
+                  70,
+                  495
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-18",
+            "text": "Line 18 value 1018",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  497
+                ],
+                [
+                  520,
+                  497
+                ],
+                [
+                  520,
+                  522
+                ],
+                [
+                  70,
+                  522
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-19",
+            "text": "Line 19 value 1019",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  524
+                ],
+                [
+                  520,
+                  524
+                ],
+                [
+                  520,
+                  549
+                ],
+                [
+                  70,
+                  549
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-20",
+            "text": "Line 20 value 1020",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  551
+                ],
+                [
+                  520,
+                  551
+                ],
+                [
+                  520,
+                  576
+                ],
+                [
+                  70,
+                  576
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-21",
+            "text": "Line 21 value 1021",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  578
+                ],
+                [
+                  520,
+                  578
+                ],
+                [
+                  520,
+                  603
+                ],
+                [
+                  70,
+                  603
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-22",
+            "text": "Line 22 value 1022",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  605
+                ],
+                [
+                  520,
+                  605
+                ],
+                [
+                  520,
+                  630
+                ],
+                [
+                  70,
+                  630
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-23",
+            "text": "Line 23 value 1023",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  632
+                ],
+                [
+                  520,
+                  632
+                ],
+                [
+                  520,
+                  657
+                ],
+                [
+                  70,
+                  657
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-24",
+            "text": "Line 24 value 1024",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  659
+                ],
+                [
+                  520,
+                  659
+                ],
+                [
+                  520,
+                  684
+                ],
+                [
+                  70,
+                  684
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-25",
+            "text": "Line 25 value 1025",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  686
+                ],
+                [
+                  520,
+                  686
+                ],
+                [
+                  520,
+                  711
+                ],
+                [
+                  70,
+                  711
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-26",
+            "text": "Line 26 value 1026",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  713
+                ],
+                [
+                  520,
+                  713
+                ],
+                [
+                  520,
+                  738
+                ],
+                [
+                  70,
+                  738
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-27",
+            "text": "Line 27 value 1027",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  740
+                ],
+                [
+                  520,
+                  740
+                ],
+                [
+                  520,
+                  765
+                ],
+                [
+                  70,
+                  765
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-28",
+            "text": "Line 28 value 1028",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  767
+                ],
+                [
+                  520,
+                  767
+                ],
+                [
+                  520,
+                  792
+                ],
+                [
+                  70,
+                  792
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-29",
+            "text": "Line 29 value 1029",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  794
+                ],
+                [
+                  520,
+                  794
+                ],
+                [
+                  520,
+                  819
+                ],
+                [
+                  70,
+                  819
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-30",
+            "text": "Line 30 value 1030",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  821
+                ],
+                [
+                  520,
+                  821
+                ],
+                [
+                  520,
+                  846
+                ],
+                [
+                  70,
+                  846
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-31",
+            "text": "Line 31 value 1031",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  848
+                ],
+                [
+                  520,
+                  848
+                ],
+                [
+                  520,
+                  873
+                ],
+                [
+                  70,
+                  873
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-32",
+            "text": "Line 32 value 1032",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  875
+                ],
+                [
+                  520,
+                  875
+                ],
+                [
+                  520,
+                  900
+                ],
+                [
+                  70,
+                  900
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-33",
+            "text": "Line 33 value 1033",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  902
+                ],
+                [
+                  520,
+                  902
+                ],
+                [
+                  520,
+                  927
+                ],
+                [
+                  70,
+                  927
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-34",
+            "text": "Line 34 value 1034",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  929
+                ],
+                [
+                  520,
+                  929
+                ],
+                [
+                  520,
+                  954
+                ],
+                [
+                  70,
+                  954
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-35",
+            "text": "Line 35 value 1035",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  956
+                ],
+                [
+                  520,
+                  956
+                ],
+                [
+                  520,
+                  981
+                ],
+                [
+                  70,
+                  981
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-36",
+            "text": "Line 36 value 1036",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  983
+                ],
+                [
+                  520,
+                  983
+                ],
+                [
+                  520,
+                  1008
+                ],
+                [
+                  70,
+                  1008
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-37",
+            "text": "Line 37 value 1037",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1010
+                ],
+                [
+                  520,
+                  1010
+                ],
+                [
+                  520,
+                  1035
+                ],
+                [
+                  70,
+                  1035
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-38",
+            "text": "Line 38 value 1038",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1037
+                ],
+                [
+                  520,
+                  1037
+                ],
+                [
+                  520,
+                  1062
+                ],
+                [
+                  70,
+                  1062
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-39",
+            "text": "Line 39 value 1039",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1064
+                ],
+                [
+                  520,
+                  1064
+                ],
+                [
+                  520,
+                  1089
+                ],
+                [
+                  70,
+                  1089
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-40",
+            "text": "Line 40 value 1040",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1091
+                ],
+                [
+                  520,
+                  1091
+                ],
+                [
+                  520,
+                  1116
+                ],
+                [
+                  70,
+                  1116
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-41",
+            "text": "Line 41 value 1041",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1118
+                ],
+                [
+                  520,
+                  1118
+                ],
+                [
+                  520,
+                  1143
+                ],
+                [
+                  70,
+                  1143
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-42",
+            "text": "Line 42 value 1042",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1145
+                ],
+                [
+                  520,
+                  1145
+                ],
+                [
+                  520,
+                  1170
+                ],
+                [
+                  70,
+                  1170
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-43",
+            "text": "Line 43 value 1043",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1172
+                ],
+                [
+                  520,
+                  1172
+                ],
+                [
+                  520,
+                  1197
+                ],
+                [
+                  70,
+                  1197
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-44",
+            "text": "Line 44 value 1044",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1199
+                ],
+                [
+                  520,
+                  1199
+                ],
+                [
+                  520,
+                  1224
+                ],
+                [
+                  70,
+                  1224
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-45",
+            "text": "Line 45 value 1045",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1226
+                ],
+                [
+                  520,
+                  1226
+                ],
+                [
+                  520,
+                  1251
+                ],
+                [
+                  70,
+                  1251
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-46",
+            "text": "Line 46 value 1046",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1253
+                ],
+                [
+                  520,
+                  1253
+                ],
+                [
+                  520,
+                  1278
+                ],
+                [
+                  70,
+                  1278
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-47",
+            "text": "Line 47 value 1047",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1280
+                ],
+                [
+                  520,
+                  1280
+                ],
+                [
+                  520,
+                  1305
+                ],
+                [
+                  70,
+                  1305
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-48",
+            "text": "Line 48 value 1048",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1307
+                ],
+                [
+                  520,
+                  1307
+                ],
+                [
+                  520,
+                  1332
+                ],
+                [
+                  70,
+                  1332
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-49",
+            "text": "Line 49 value 1049",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1334
+                ],
+                [
+                  520,
+                  1334
+                ],
+                [
+                  520,
+                  1359
+                ],
+                [
+                  70,
+                  1359
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-50",
+            "text": "Line 50 value 1050",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1361
+                ],
+                [
+                  520,
+                  1361
+                ],
+                [
+                  520,
+                  1386
+                ],
+                [
+                  70,
+                  1386
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-51",
+            "text": "Line 51 value 1051",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1388
+                ],
+                [
+                  520,
+                  1388
+                ],
+                [
+                  520,
+                  1413
+                ],
+                [
+                  70,
+                  1413
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-52",
+            "text": "Line 52 value 1052",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1415
+                ],
+                [
+                  520,
+                  1415
+                ],
+                [
+                  520,
+                  1440
+                ],
+                [
+                  70,
+                  1440
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-53",
+            "text": "Line 53 value 1053",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1442
+                ],
+                [
+                  520,
+                  1442
+                ],
+                [
+                  520,
+                  1467
+                ],
+                [
+                  70,
+                  1467
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-54",
+            "text": "Line 54 value 1054",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1469
+                ],
+                [
+                  520,
+                  1469
+                ],
+                [
+                  520,
+                  1494
+                ],
+                [
+                  70,
+                  1494
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-55",
+            "text": "Line 55 value 1055",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1496
+                ],
+                [
+                  520,
+                  1496
+                ],
+                [
+                  520,
+                  1521
+                ],
+                [
+                  70,
+                  1521
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-56",
+            "text": "Line 56 value 1056",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1523
+                ],
+                [
+                  520,
+                  1523
+                ],
+                [
+                  520,
+                  1548
+                ],
+                [
+                  70,
+                  1548
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-57",
+            "text": "Line 57 value 1057",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1550
+                ],
+                [
+                  520,
+                  1550
+                ],
+                [
+                  520,
+                  1575
+                ],
+                [
+                  70,
+                  1575
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-58",
+            "text": "Line 58 value 1058",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1577
+                ],
+                [
+                  520,
+                  1577
+                ],
+                [
+                  520,
+                  1602
+                ],
+                [
+                  70,
+                  1602
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-59",
+            "text": "Line 59 value 1059",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1604
+                ],
+                [
+                  520,
+                  1604
+                ],
+                [
+                  520,
+                  1629
+                ],
+                [
+                  70,
+                  1629
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-60",
+            "text": "Line 60 value 1060",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1631
+                ],
+                [
+                  520,
+                  1631
+                ],
+                [
+                  520,
+                  1656
+                ],
+                [
+                  70,
+                  1656
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-61",
+            "text": "Line 61 value 1061",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1658
+                ],
+                [
+                  520,
+                  1658
+                ],
+                [
+                  520,
+                  1683
+                ],
+                [
+                  70,
+                  1683
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-62",
+            "text": "Line 62 value 1062",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1685
+                ],
+                [
+                  520,
+                  1685
+                ],
+                [
+                  520,
+                  1710
+                ],
+                [
+                  70,
+                  1710
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-63",
+            "text": "Line 63 value 1063",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1712
+                ],
+                [
+                  520,
+                  1712
+                ],
+                [
+                  520,
+                  1737
+                ],
+                [
+                  70,
+                  1737
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-64",
+            "text": "Line 64 value 1064",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1739
+                ],
+                [
+                  520,
+                  1739
+                ],
+                [
+                  520,
+                  1764
+                ],
+                [
+                  70,
+                  1764
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-65",
+            "text": "Line 65 value 1065",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1766
+                ],
+                [
+                  520,
+                  1766
+                ],
+                [
+                  520,
+                  1791
+                ],
+                [
+                  70,
+                  1791
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-66",
+            "text": "Line 66 value 1066",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1793
+                ],
+                [
+                  520,
+                  1793
+                ],
+                [
+                  520,
+                  1818
+                ],
+                [
+                  70,
+                  1818
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-67",
+            "text": "Line 67 value 1067",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1820
+                ],
+                [
+                  520,
+                  1820
+                ],
+                [
+                  520,
+                  1845
+                ],
+                [
+                  70,
+                  1845
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-68",
+            "text": "Line 68 value 1068",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1847
+                ],
+                [
+                  520,
+                  1847
+                ],
+                [
+                  520,
+                  1872
+                ],
+                [
+                  70,
+                  1872
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-69",
+            "text": "Line 69 value 1069",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1874
+                ],
+                [
+                  520,
+                  1874
+                ],
+                [
+                  520,
+                  1899
+                ],
+                [
+                  70,
+                  1899
+                ]
+              ]
+            }
+          },
+          {
+            "id": "dense-line-70",
+            "text": "Line 70 value 1070",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  70,
+                  1901
+                ],
+                [
+                  520,
+                  1901
+                ],
+                [
+                  520,
+                  1926
+                ],
+                [
+                  70,
+                  1926
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "blank-page",
+      "category": "blank-page",
+      "classification": "supported",
+      "description": "Completely blank white page.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "blank-page.png",
+        "widthPx": 1200,
+        "heightPx": 800,
+        "dpi": 300,
+        "bytes": 1569,
+        "sha256": "85d4e13e0ca943747f01bb24258de72ec545c68c1aed859d8a73e67aea48d1a4"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "",
+        "readingOrder": [],
+        "lines": []
+      }
+    },
+    {
+      "id": "no-text-image",
+      "category": "no-text-image",
+      "classification": "supported",
+      "description": "Geometric illustration with no text content.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "no-text-image.png",
+        "widthPx": 1200,
+        "heightPx": 800,
+        "dpi": 300,
+        "bytes": 8451,
+        "sha256": "459e7ea596de98ea037550f0e209961ed30e293efb4a3e5caaffe84fdad01f5d"
+      },
+      "expected": {
+        "disposition": "completed",
+        "text": "",
+        "readingOrder": [],
+        "lines": []
+      }
+    },
+    {
+      "id": "unsupported-table",
+      "category": "table-layout",
+      "classification": "unsupported",
+      "description": "Table structure is outside the first-release reading-order scope.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "unsupported-table.png",
+        "widthPx": 1200,
+        "heightPx": 850,
+        "dpi": 300,
+        "bytes": 9949,
+        "sha256": "b68eb09975d3c92de30db90d2d8abcb5e604ed10dc58fadab00638aa1d9bbe85"
+      },
+      "expected": {
+        "disposition": "unsupported",
+        "text": "Item\nCount\nValue\nAlpha\n12\n48.20",
+        "readingOrder": [
+          "table-1",
+          "table-2",
+          "table-3",
+          "table-4",
+          "table-5",
+          "table-6"
+        ],
+        "lines": [
+          {
+            "id": "table-1",
+            "text": "Item",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  125,
+                  152
+                ],
+                [
+                  315,
+                  152
+                ],
+                [
+                  315,
+                  199.5
+                ],
+                [
+                  125,
+                  199.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "table-2",
+            "text": "Count",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  500,
+                  152
+                ],
+                [
+                  680,
+                  152
+                ],
+                [
+                  680,
+                  199.5
+                ],
+                [
+                  500,
+                  199.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "table-3",
+            "text": "Value",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  850,
+                  152
+                ],
+                [
+                  1020,
+                  152
+                ],
+                [
+                  1020,
+                  199.5
+                ],
+                [
+                  850,
+                  199.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "table-4",
+            "text": "Alpha",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  125,
+                  319
+                ],
+                [
+                  305,
+                  319
+                ],
+                [
+                  305,
+                  364
+                ],
+                [
+                  125,
+                  364
+                ]
+              ]
+            }
+          },
+          {
+            "id": "table-5",
+            "text": "12",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  500,
+                  319
+                ],
+                [
+                  580,
+                  319
+                ],
+                [
+                  580,
+                  364
+                ],
+                [
+                  500,
+                  364
+                ]
+              ]
+            }
+          },
+          {
+            "id": "table-6",
+            "text": "48.20",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  850,
+                  319
+                ],
+                [
+                  980,
+                  319
+                ],
+                [
+                  980,
+                  364
+                ],
+                [
+                  850,
+                  364
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "unsupported-cyrillic",
+      "category": "unsupported-script",
+      "classification": "unsupported",
+      "description": "Cyrillic is not listed by the bundled model pack.",
+      "input": {
+        "kind": "rgba-page-raster",
+        "file": "unsupported-cyrillic.png",
+        "widthPx": 1200,
+        "heightPx": 700,
+        "dpi": 300,
+        "bytes": 13741,
+        "sha256": "39b82e180a4e09a604060544fd0b3bedd2c1b9c5f6815c0b6910dac6556ce7e6"
+      },
+      "expected": {
+        "disposition": "unsupported",
+        "text": "Тестовая страница\nНеподдерживаемый текст\nДокумент 2026",
+        "readingOrder": [
+          "cyrillic-1",
+          "cyrillic-2",
+          "cyrillic-3"
+        ],
+        "lines": [
+          {
+            "id": "cyrillic-1",
+            "text": "Тестовая страница",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  120,
+                  170
+                ],
+                [
+                  680,
+                  170
+                ],
+                [
+                  680,
+                  232.5
+                ],
+                [
+                  120,
+                  232.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "cyrillic-2",
+            "text": "Неподдерживаемый текст",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  120,
+                  334
+                ],
+                [
+                  800,
+                  334
+                ],
+                [
+                  800,
+                  391.5
+                ],
+                [
+                  120,
+                  391.5
+                ]
+              ]
+            }
+          },
+          {
+            "id": "cyrillic-3",
+            "text": "Документ 2026",
+            "sourceLayer": "image",
+            "polygon": {
+              "coordinateSpace": "source-raster-pixels",
+              "points": [
+                [
+                  120,
+                  496
+                ],
+                [
+                  520,
+                  496
+                ],
+                [
+                  520,
+                  551
+                ],
+                [
+                  120,
+                  551
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "malformed-rgba",
+      "category": "malformed-input",
+      "classification": "rejected",
+      "description": "RGBA buffer is one byte shorter than its declared dimensions.",
+      "input": {
+        "kind": "malformed-rgba",
+        "width": 128,
+        "height": 64,
+        "expectedError": "RGBA bytes; expected"
+      },
+      "expected": {
+        "disposition": "rejected",
+        "text": "",
+        "readingOrder": [],
+        "lines": [],
+        "geometry": "not-applicable-before-allocation-or-inference"
+      }
+    },
+    {
+      "id": "resource-heavy",
+      "category": "resource-limit-enforcement",
+      "classification": "rejected",
+      "description": "Declared 10000 by 10000 source raster exceeds the bounded job without allocation.",
+      "input": {
+        "kind": "resource-heavy-job",
+        "width": 10000,
+        "height": 10000,
+        "maximumPixels": 16000000,
+        "maximumSide": 8192,
+        "expectedError": "exceed"
+      },
+      "expected": {
+        "disposition": "rejected",
+        "text": "",
+        "readingOrder": [],
+        "lines": [],
+        "geometry": "not-applicable-before-allocation-or-inference"
+      }
+    }
+  ]
+}

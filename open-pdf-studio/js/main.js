@@ -71,7 +71,8 @@ import { initFontDropdowns } from './utils/fonts.js';
 // server (started with `--mcp-server`) can drive the LIVE WebView from
 // outside. Inert when Tauri isn't present.
 import { initMcpBridge } from './mcp-bridge.js';
-import { runOcrPhaseAChildIfRequested } from './ocr/child-runner.js';
+import { runOcrChildIfRequested } from './ocr/child-runner.js';
+import { cancelAllNativeOcrJobs } from './ocr/native-controller.js';
 
 // i18n
 import './i18n/config.js';
@@ -181,7 +182,7 @@ function disableBrowserShortcuts() {
 
 // Initialize application
 async function init() {
-  if (await runOcrPhaseAChildIfRequested()) return;
+  if (await runOcrChildIfRequested()) return;
 
   const mobile = isMobile();
 
@@ -428,6 +429,7 @@ function setupSessionSaveOnClose() {
               return;
             }
           }
+          await cancelAllNativeOcrJobs();
           await saveSessionData();
         });
       }

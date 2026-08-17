@@ -1,61 +1,45 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openpdfstudio.org/contracts/ocr/result.v2.schema.json",
-  "title": "Open PDF Studio OCR result contract v2",
+  "title": "Open PDF Studio immutable OCR result contract v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "contract",
-    "schemaVersion",
-    "jobId",
-    "engine",
-    "document",
-    "page",
-    "text",
-    "blocks",
-    "languages",
-    "warnings",
-    "unsupportedContentReasons",
-    "preprocessing",
-    "pageTransform",
-    "metrics",
-    "reviewCorrections",
-    "visibleEditRegions"
+    "contract", "schemaVersion", "jobId", "requestId", "engine", "document",
+    "page", "recognitionConfigurationHash", "sourceRaster", "text", "lines",
+    "detectedLanguages", "warnings", "unsupportedContentReasons", "preprocessing", "metrics"
   ],
   "properties": {
     "contract": { "const": "open-pdf-studio.ocr.result" },
     "schemaVersion": { "const": 2 },
-    "jobId": { "$ref": "#/$defs/id" },
+    "jobId": { "$ref": "common.schema.json#/$defs/id" },
+    "requestId": { "$ref": "common.schema.json#/$defs/id" },
     "engine": { "$ref": "engine.v2.schema.json" },
-    "document": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id"],
-      "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "fingerprint": { "$ref": "#/$defs/fingerprint" }
-      }
-    },
+    "document": { "$ref": "common.schema.json#/$defs/documentIdentity" },
     "page": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "index", "status", "raster"],
+      "required": ["id", "index", "revision", "status"],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
+        "id": { "$ref": "common.schema.json#/$defs/id" },
         "index": { "type": "integer", "minimum": 0 },
-        "status": { "enum": ["completed", "partial", "unsupported", "failed", "cancelled"] },
-        "raster": { "$ref": "#/$defs/raster" }
+        "revision": { "type": "integer", "minimum": 0 },
+        "status": { "enum": ["completed", "partial", "unsupported", "failed", "cancelled"] }
       }
     },
+    "recognitionConfigurationHash": { "$ref": "common.schema.json#/$defs/fingerprint" },
+    "sourceRaster": { "$ref": "#/$defs/sourceRaster" },
     "text": { "type": "string", "maxLength": 4194304 },
-    "blocks": {
+    "lines": {
       "type": "array",
-      "maxItems": 10000,
-      "items": { "$ref": "#/$defs/block" }
+      "maxItems": 100000,
+      "x-uniqueBy": "id",
+      "items": { "$ref": "#/$defs/line" }
     },
-    "languages": {
+    "detectedLanguages": {
       "type": "array",
-      "items": { "$ref": "#/$defs/language" }
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/detectedLanguage" }
     },
     "warnings": {
       "type": "array",
@@ -65,71 +49,37 @@
     "unsupportedContentReasons": {
       "type": "array",
       "maxItems": 256,
+      "x-uniqueBy": "id",
       "items": { "$ref": "#/$defs/unsupportedReason" }
     },
     "preprocessing": { "$ref": "#/$defs/preprocessing" },
-    "pageTransform": {
-      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/pageTransform" }]
-    },
-    "metrics": { "$ref": "#/$defs/metrics" },
-    "reviewCorrections": {
-      "type": "array",
-      "maxItems": 100000,
-      "items": { "$ref": "#/$defs/reviewCorrection" }
-    },
-    "visibleEditRegions": {
-      "type": "array",
-      "maxItems": 100000,
-      "items": { "$ref": "#/$defs/visibleEditRegion" }
-    }
+    "metrics": { "$ref": "#/$defs/metrics" }
   },
   "$defs": {
-    "id": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 256,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
-    },
-    "fingerprint": {
+    "sourceRaster": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["algorithm", "value"],
+      "required": ["id", "fingerprint", "coordinateSpace", "widthPx", "heightPx", "dpi"],
       "properties": {
-        "algorithm": { "const": "sha256" },
-        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
-      }
-    },
-    "raster": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["widthPx", "heightPx", "scale"],
-      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "fingerprint": { "$ref": "common.schema.json#/$defs/fingerprint" },
+        "coordinateSpace": { "const": "source-raster-pixels" },
         "widthPx": { "type": "integer", "minimum": 1 },
         "heightPx": { "type": "integer", "minimum": 1 },
-        "scale": { "type": "number", "exclusiveMinimum": 0 }
+        "dpi": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
-    "point": {
-      "type": "array",
-      "prefixItems": [{ "type": "number", "minimum": 0 }, { "type": "number", "minimum": 0 }],
-      "minItems": 2,
-      "maxItems": 2
-    },
-    "polygon": {
-      "type": "array",
-      "minItems": 4,
-      "maxItems": 64,
-      "items": { "$ref": "#/$defs/point" }
-    },
-    "boundingBox": {
+    "outputRaster": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["x", "y", "width", "height"],
+      "required": ["id", "fingerprint", "coordinateSpace", "widthPx", "heightPx", "dpi"],
       "properties": {
-        "x": { "type": "number", "minimum": 0 },
-        "y": { "type": "number", "minimum": 0 },
-        "width": { "type": "number", "exclusiveMinimum": 0 },
-        "height": { "type": "number", "exclusiveMinimum": 0 }
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "fingerprint": { "$ref": "common.schema.json#/$defs/fingerprint" },
+        "coordinateSpace": { "const": "preprocessed-raster-pixels" },
+        "widthPx": { "type": "integer", "minimum": 1 },
+        "heightPx": { "type": "integer", "minimum": 1 },
+        "dpi": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
     "alternative": {
@@ -137,61 +87,57 @@
       "additionalProperties": false,
       "required": ["text", "confidence"],
       "properties": {
-        "text": { "type": "string" },
+        "text": { "type": "string", "maxLength": 4194304 },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     },
-    "language": {
+    "detectedLanguage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tag", "source"],
+      "required": ["tag", "confidence"],
       "properties": {
         "tag": {
           "type": "string",
-          "pattern": "^(?:[A-Za-z]{2,8}|und)(?:-[A-Za-z0-9]{1,8})*$"
+          "maxLength": 64,
+          "pattern": "^(?!und$)(?:[A-Za-z]{2,8})(?:-[A-Za-z0-9]{1,8})*$"
         },
-        "source": { "enum": ["engine", "requested", "review", "unknown"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     },
     "word": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "text", "confidence", "alternatives"],
+      "required": ["id", "text", "confidence"],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "text": { "type": "string" },
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "text": { "type": "string", "maxLength": 4194304 },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "polygon": { "$ref": "#/$defs/polygon" },
-        "boundingBox": { "$ref": "#/$defs/boundingBox" },
+        "polygon": { "$ref": "common.schema.json#/$defs/coordinatePolygon" },
+        "boundingBox": { "$ref": "common.schema.json#/$defs/coordinateBox" },
         "alternatives": {
           "type": "array",
           "maxItems": 16,
           "items": { "$ref": "#/$defs/alternative" }
         },
-        "language": { "$ref": "#/$defs/language" }
+        "detectedLanguage": { "$ref": "#/$defs/detectedLanguage" },
+        "detectedWritingDirection": { "enum": ["ltr", "rtl", "ttb", "btt"] }
       }
     },
     "line": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "id",
-        "text",
-        "confidence",
-        "polygon",
-        "alternatives",
-        "language",
-        "writingDirection"
-      ],
+      "required": ["id", "text", "confidence", "polygon", "baseline"],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "text": { "type": "string" },
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "text": { "type": "string", "maxLength": 4194304 },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "polygon": { "$ref": "#/$defs/polygon" },
-        "boundingBox": { "$ref": "#/$defs/boundingBox" },
+        "polygon": { "$ref": "common.schema.json#/$defs/coordinatePolygon" },
+        "boundingBox": { "$ref": "common.schema.json#/$defs/coordinateBox" },
+        "baseline": { "$ref": "common.schema.json#/$defs/engineBaseline" },
         "words": {
           "type": "array",
+          "maxItems": 500000,
+          "x-uniqueBy": "id",
           "items": { "$ref": "#/$defs/word" }
         },
         "alternatives": {
@@ -199,144 +145,93 @@
           "maxItems": 16,
           "items": { "$ref": "#/$defs/alternative" }
         },
-        "language": { "$ref": "#/$defs/language" },
-        "writingDirection": { "enum": ["ltr", "rtl", "ttb", "btt", "unknown"] }
-      }
-    },
-    "block": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "kind", "text", "confidence", "polygon", "lines"],
-      "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "kind": { "enum": ["text", "unknown"] },
-        "text": { "type": "string" },
-        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "polygon": { "$ref": "#/$defs/polygon" },
-        "lines": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/line" }
-        }
+        "detectedLanguage": { "$ref": "#/$defs/detectedLanguage" },
+        "detectedWritingDirection": { "enum": ["ltr", "rtl", "ttb", "btt"] }
       }
     },
     "warning": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "message", "severity"],
+      "required": ["code", "message", "severity", "entityIds"],
       "properties": {
-        "code": { "$ref": "#/$defs/id" },
-        "message": { "type": "string", "minLength": 1 },
+        "code": { "$ref": "common.schema.json#/$defs/id" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 4194304 },
         "severity": { "enum": ["info", "warning", "error"] },
         "entityIds": {
           "type": "array",
-          "items": { "$ref": "#/$defs/id" }
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/id" }
         }
       }
     },
     "unsupportedReason": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["code", "message"],
+      "required": ["id", "code", "message"],
       "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
         "code": {
           "enum": [
-            "handwriting",
-            "table",
-            "math",
-            "vertical-text",
-            "curved-text",
-            "rotated-text",
-            "low-confidence",
-            "unknown-language",
-            "complex-layout",
-            "other"
+            "handwriting", "table", "math", "vertical-text", "curved-text",
+            "rotated-text", "low-confidence", "unknown-language", "complex-layout", "other"
           ]
         },
-        "message": { "type": "string", "minLength": 1 },
-        "polygon": { "$ref": "#/$defs/polygon" }
+        "message": { "type": "string", "minLength": 1, "maxLength": 4194304 },
+        "polygon": { "$ref": "common.schema.json#/$defs/coordinatePolygon" }
       }
     },
     "preprocessingOperation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "applied"],
+      "required": ["kind", "applied", "value", "unit"],
       "properties": {
-        "kind": {
-          "enum": ["orientation", "deskew", "denoise", "contrast", "binarize", "resize", "crop"]
-        },
+        "kind": { "enum": ["orientation", "deskew", "denoise", "contrast", "binarize", "resize", "crop"] },
         "applied": { "type": "boolean" },
-        "value": { "type": ["number", "string"] },
-        "unit": { "type": "string", "minLength": 1 }
+        "value": { "type": ["number", "string", "null"], "maxLength": 256 },
+        "unit": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 }
       }
+    },
+    "preprocessingTransform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fromSpace", "toSpace", "matrix", "inverseMatrix"],
+      "properties": {
+        "fromSpace": { "const": "source-raster-pixels" },
+        "toSpace": { "const": "preprocessed-raster-pixels" },
+        "matrix": {
+          "type": "array", "minItems": 6, "maxItems": 6, "items": { "type": "number" }
+        },
+        "inverseMatrix": {
+          "type": "array", "minItems": 6, "maxItems": 6, "items": { "type": "number" }
+        }
+      },
+      "x-ocrAffine": true
     },
     "preprocessing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "operations"],
+      "required": ["status", "operations", "outputRaster", "transform"],
       "properties": {
         "status": { "enum": ["unknown", "none", "applied"] },
         "operations": {
           "type": "array",
           "maxItems": 32,
           "items": { "$ref": "#/$defs/preprocessingOperation" }
+        },
+        "outputRaster": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/outputRaster" }]
+        },
+        "transform": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/preprocessingTransform" }]
         }
-      }
-    },
-    "size": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["width", "height"],
-      "properties": {
-        "width": { "type": "number", "exclusiveMinimum": 0 },
-        "height": { "type": "number", "exclusiveMinimum": 0 }
-      }
-    },
-    "matrix": {
-      "type": "array",
-      "prefixItems": [
-        { "type": "number" },
-        { "type": "number" },
-        { "type": "number" },
-        { "type": "number" },
-        { "type": "number" },
-        { "type": "number" }
-      ],
-      "minItems": 6,
-      "maxItems": 6
-    },
-    "pageTransform": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "sourceSpace",
-        "targetSpace",
-        "matrix",
-        "inverseMatrix",
-        "sourceSize",
-        "targetSize",
-        "rotationDegrees"
-      ],
-      "properties": {
-        "sourceSpace": { "const": "ocr-image-pixels" },
-        "targetSpace": { "const": "pdf-page-points" },
-        "matrix": { "$ref": "#/$defs/matrix" },
-        "inverseMatrix": { "$ref": "#/$defs/matrix" },
-        "sourceSize": { "$ref": "#/$defs/size" },
-        "targetSize": { "$ref": "#/$defs/size" },
-        "rotationDegrees": { "enum": [0, 90, 180, 270] }
       }
     },
     "metrics": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "workerStartupMs",
-        "modelStartupMs",
-        "rasterMs",
-        "detectionMs",
-        "recognitionMs",
-        "totalOcrMs"
+        "workerStartupMs", "modelStartupMs", "rasterMs", "detectionMs",
+        "recognitionMs", "totalOcrMs"
       ],
       "properties": {
         "workerStartupMs": { "type": "number", "minimum": 0 },
@@ -346,70 +241,8 @@
         "recognitionMs": { "type": "number", "minimum": 0 },
         "totalOcrMs": { "type": "number", "minimum": 0 }
       }
-    },
-    "reviewCorrection": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "target", "originalText", "correctedText", "status", "createdAt"],
-      "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "target": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "id"],
-          "properties": {
-            "kind": { "enum": ["line", "word"] },
-            "id": { "$ref": "#/$defs/id" }
-          }
-        },
-        "originalText": { "type": "string" },
-        "correctedText": { "type": "string" },
-        "status": { "enum": ["pending", "accepted", "rejected"] },
-        "createdAt": { "type": "string", "format": "date-time", "pattern": "Z$" }
-      }
-    },
-    "visibleEditRegion": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "lineIds",
-        "polygon",
-        "eligibility",
-        "background",
-        "status",
-        "unsupportedReasons"
-      ],
-      "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "lineIds": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": { "$ref": "#/$defs/id" }
-        },
-        "polygon": { "$ref": "#/$defs/polygon" },
-        "eligibility": { "enum": ["unknown", "eligible", "ineligible"] },
-        "background": { "enum": ["unknown", "flat", "complex"] },
-        "status": { "enum": ["candidate", "approved", "rejected"] },
-        "unsupportedReasons": {
-          "type": "array",
-          "items": {
-            "enum": [
-              "handwriting",
-              "table",
-              "math",
-              "vertical-text",
-              "curved-text",
-              "rotated-text",
-              "low-confidence",
-              "unknown-language",
-              "complex-layout",
-              "other"
-            ]
-          }
-        }
-      }
     }
-  }
+  },
+  "x-maxUtf8Bytes": 16777216,
+  "x-ocrSemantic": "result-v2"
 }

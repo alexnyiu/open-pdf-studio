@@ -29,6 +29,10 @@ const baselineDropToleranceBytes = 64 * 1024 * 1024;
 const attribution = createOcrProcessAttribution();
 let requestId = 0;
 
+function isOcrChildCommand(command) {
+  return command.includes('--ocr-child-job') || command.includes('--ocr-phase-a-child');
+}
+
 function round(value, digits = 2) {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
@@ -169,7 +173,7 @@ async function processMemorySnapshot() {
   const root = findRootProcess(processes);
   if (!root) return null;
 
-  const activeChildren = processes.filter((entry) => entry.command.includes('--ocr-phase-a-child'));
+  const activeChildren = processes.filter((entry) => isOcrChildCommand(entry.command));
 
   if (process.platform === 'darwin') {
     // macOS reparents WebKit XPC processes to launchd, so neither PPID nor PID
@@ -193,7 +197,7 @@ async function processMemorySnapshot() {
     let role = 'app-descendant';
     if (entry.pid === root.pid) role = 'app';
     else if (attribution.childWebKitPids.has(entry.pid)) role = 'ocr-child-webkit';
-    else if (childTrees.has(entry.pid)) role = entry.command.includes('--ocr-phase-a-child')
+    else if (childTrees.has(entry.pid)) role = isOcrChildCommand(entry.command)
       ? 'ocr-child-app'
       : 'ocr-child-descendant';
     else if (entry.command.includes('pdfium-worker')) role = 'pdfium-worker';
@@ -356,6 +360,7 @@ function cycleRecord({ index, type, cancelAfterMs = null, run, after, processSta
     cancelAfterMs,
     childPid: response.isolation?.childPid ?? null,
     childExitStatus: response.isolation?.exitStatus ?? null,
+    childReaped: response.isolation?.reaped === true,
     isolationBoundary: response.isolation?.boundary ?? null,
     peakRssBytes: peak?.rssBytes ?? null,
     peakRssMiB: peak ? toMiB(peak.rssBytes) : null,
@@ -363,6 +368,7 @@ function cycleRecord({ index, type, cancelAfterMs = null, run, after, processSta
     settledRssMiB: after ? toMiB(after.rssBytes) : null,
     settledDeltaFromProcessStartBytes: after ? after.rssBytes - processStart.rssBytes : null,
     activeOcrChildPidsAfterSettle: after?.activeOcrChildPids ?? [],
+    cleanup: response.cleanup ?? null,
   };
   if (type === 'recognition') {
     const result = assertOcrResultV1(response.result);
@@ -378,6 +384,7 @@ function cycleRecord({ index, type, cancelAfterMs = null, run, after, processSta
     ...common,
     cancelled: response.cancelled === true,
     cancellationMethod: response.cancellation?.method ?? null,
+    cancellationLatencyMs: response.cancellation?.latencyMs ?? null,
     resources: response.resources,
   };
 }
@@ -545,8 +552,8 @@ for (let index = 1; index <= cancellationCycles; index += 1) {
     cancel_after_ms: cancelAfterMs,
   }, processStart);
   if (!cycle.run.value.ok || !cycle.run.value.cancelled ||
-      cycle.run.value.cancellation?.method !== 'worker.terminate') {
-    throw new Error(`Cancellation cycle ${index} did not terminate its Worker`);
+      cycle.run.value.cancellation?.method !== 'native-child-process-terminate') {
+    throw new Error(`Cancellation cycle ${index} was not initiated by the parent controller`);
   }
   cancellationRecords.push(cycleRecord({
     index,
@@ -602,7 +609,8 @@ const bounded = maximumSettledDeltaBytes !== null &&
   trendBytesPerCycle <= trendBudgetBytesPerCycle &&
   afterRepeatedCycles.activeOcrChildPids.length === 0 &&
   recognitionRecords.every((record) => record.exactNormalizedMatch && record.childExitStatus === 0) &&
-  cancellationRecords.every((record) => record.cancelled && record.childExitStatus === 0) &&
+  cancellationRecords.every((record) => record.cancelled && record.childReaped &&
+    record.cleanup?.requestFileRemoved === true && record.cleanup?.resultFileRemoved === true) &&
   uniqueChildPids.size === recognitionCycles + cancellationCycles;
 
 const checkpoints = {
@@ -747,7 +755,7 @@ const report = {
     ),
     staleResultRetentionPrevented: true,
     staleResultVerification: 'js/ocr/engine.test.mjs removes listeners, empties pending requests, and ignores a saved stale callback after cancellation',
-    cancellationNote: 'Forced cancellation terminates the Worker immediately; the enclosing one-job child process then exits, so in-flight ONNX/WASM allocations are reclaimed by the OS rather than asynchronously disposed.',
+    cancellationNote: 'Parent-controlled cancellation terminates and reaps the one-job application child, so in-flight ONNX/WASM allocations are reclaimed at the process boundary.',
     trueProcessLeakObserved: !bounded,
   },
   isolation: {
@@ -767,8 +775,13 @@ const report = {
     cycles: cancellationCycles,
     delaysMs: cancellationDelays,
     allTerminatedWorkers: cancellationRecords.every(
-      (record) => record.cancelled && record.cancellationMethod === 'worker.terminate',
+      (record) => record.cancelled &&
+        record.cancellationMethod === 'native-child-process-terminate' && record.childReaped,
     ),
+    method: 'native-child-process-terminate',
+    maximumLatencyMs: Math.max(...cancellationRecords.map(
+      (record) => record.cancellationLatencyMs ?? 0,
+    )),
   },
   offline: {
     pass: offlinePolicyEnforced && assets.ok,

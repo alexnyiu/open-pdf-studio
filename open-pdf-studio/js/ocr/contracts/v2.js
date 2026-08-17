@@ -6,9 +6,9 @@ import {
 } from './v1.js';
 import {
   OCR_MODEL_PACK_CONTRACT,
-  OCR_MODEL_PACK_SCHEMA_VERSION,
   assertCompatibleOcrModelPack,
   modelPackIdentity,
+  validateOcrModelPackIdentity,
 } from './model-pack.v1.js';
 import {
   OCR_CONTRACT_LIMITS,
@@ -16,19 +16,40 @@ import {
   isFiniteNumber,
   isObject,
   requireExactKeys,
+  validateAffineInverse,
   validateBoundingBox,
   validateConfidence,
+  validateFingerprint,
   validateIdentifier,
   validateIsoTimestamp,
+  validateJsonValue,
   validateLanguageTag,
+  validateNonNegativeInteger,
   validateNonNegativeNumber,
-  validatePolygon,
+  validatePositiveInteger,
   validatePositiveNumber,
+  validatePolygon,
   validateSemver,
   validateSerializedSize,
   validateString,
 } from './validation.js';
+import {
+  OCR_PREPROCESSED_RASTER_SPACE,
+  OCR_SOURCE_RASTER_SPACE,
+  validateAffineTransform,
+  validateBaseline,
+  validateCoordinateBoundingBox,
+  validateCoordinatePolygon,
+  validateRasterIdentity,
+} from './geometry.js';
+import {
+  OCR_DOCUMENT_STATE_CONTRACT,
+  OCR_DOCUMENT_STATE_SCHEMA_VERSION,
+  toValidatedOcrDocumentStateV1Json,
+} from './document-state.v1.js';
+import { toValidatedOcrPageGeometryV1Json } from './page-geometry.v1.js';
 
+export { OCR_ENGINE_CONTRACT, OCR_RESULT_CONTRACT };
 export const OCR_CURRENT_SCHEMA_VERSION = 2;
 export const OCR_RESULT_PAGE_STATUSES = Object.freeze([
   'completed',
@@ -37,7 +58,7 @@ export const OCR_RESULT_PAGE_STATUSES = Object.freeze([
   'failed',
   'cancelled',
 ]);
-export const OCR_WRITING_DIRECTIONS = Object.freeze(['ltr', 'rtl', 'ttb', 'btt', 'unknown']);
+export const OCR_WRITING_DIRECTIONS = Object.freeze(['ltr', 'rtl', 'ttb', 'btt']);
 export const OCR_UNSUPPORTED_CONTENT_CODES = Object.freeze([
   'handwriting',
   'table',
@@ -51,19 +72,30 @@ export const OCR_UNSUPPORTED_CONTENT_CODES = Object.freeze([
   'other',
 ]);
 
+const PADDLE_ENGINE_ID = 'paddleocr-pp-ocrv6-small-onnx-wasm';
 const ENGINE_CAPABILITIES = [
   'textDetection',
   'textRecognition',
-  'blockResults',
   'lineResults',
-  'wordResults',
   'linePolygons',
+  'lineBaselines',
+  'wordResults',
   'wordPolygons',
   'alternatives',
-  'languageMetadata',
-  'writingDirectionMetadata',
+  'languageDetection',
+  'writingDirectionDetection',
   'preprocessingMetadata',
-  'pdfWriting',
+  'nativePdfWriting',
+];
+const PADDLE_UNSUPPORTED_CAPABILITIES = [
+  'lineBaselines',
+  'wordResults',
+  'wordPolygons',
+  'alternatives',
+  'languageDetection',
+  'writingDirectionDetection',
+  'preprocessingMetadata',
+  'nativePdfWriting',
 ];
 const METRIC_KEYS = [
   'workerStartupMs',
@@ -73,18 +105,6 @@ const METRIC_KEYS = [
   'recognitionMs',
   'totalOcrMs',
 ];
-
-function validateModelPackIdentity(value, path, issues) {
-  if (!isObject(value)) {
-    issues.push(`${path} must be an object`);
-    return;
-  }
-  requireExactKeys(value, new Set(['contract', 'schemaVersion', 'packId', 'packVersion']), path, issues);
-  if (value.contract !== OCR_MODEL_PACK_CONTRACT) issues.push(`${path}.contract must be ${OCR_MODEL_PACK_CONTRACT}`);
-  if (value.schemaVersion !== OCR_MODEL_PACK_SCHEMA_VERSION) issues.push(`${path}.schemaVersion must be 1`);
-  validateIdentifier(value.packId, `${path}.packId`, issues);
-  validateSemver(value.packVersion, `${path}.packVersion`, issues);
-}
 
 function validateEngineV2(value, issues, path = 'engine') {
   if (!isObject(value)) {
@@ -100,7 +120,6 @@ function validateEngineV2(value, issues, path = 'engine') {
   validateIdentifier(value.engineId, `${path}.engineId`, issues);
   validateSemver(value.adapterVersion, `${path}.adapterVersion`, issues);
   validateString(value.provider, `${path}.provider`, issues, { nonEmpty: true, maxCodeUnits: 128 });
-
   if (!isObject(value.model)) {
     issues.push(`${path}.model must be an object`);
   } else {
@@ -109,8 +128,8 @@ function validateEngineV2(value, issues, path = 'engine') {
       validateString(value.model[key], `${path}.model.${key}`, issues, { nonEmpty: true, maxCodeUnits: 256 });
     }
   }
-  validateModelPackIdentity(value.modelPack, `${path}.modelPack`, issues);
-
+  const modelValidation = validateOcrModelPackIdentity(value.modelPack, `${path}.modelPack`);
+  issues.push(...modelValidation.issues);
   if (!isObject(value.runtime)) {
     issues.push(`${path}.runtime must be an object`);
   } else {
@@ -120,7 +139,6 @@ function validateEngineV2(value, issues, path = 'engine') {
     }
     if (value.runtime.offline !== true) issues.push(`${path}.runtime.offline must be true`);
   }
-
   if (!isObject(value.capabilities)) {
     issues.push(`${path}.capabilities must be an object`);
   } else {
@@ -130,17 +148,27 @@ function validateEngineV2(value, issues, path = 'engine') {
         issues.push(`${path}.capabilities.${capability} must be boolean`);
       }
     }
-    if (value.capabilities.lineResults !== true) issues.push(`${path}.capabilities.lineResults must be true`);
-    if (value.capabilities.linePolygons !== true) issues.push(`${path}.capabilities.linePolygons must be true`);
+    for (const capability of ['textDetection', 'textRecognition', 'lineResults', 'linePolygons']) {
+      if (value.capabilities[capability] !== true) issues.push(`${path}.capabilities.${capability} must be true`);
+    }
     if (value.capabilities.wordPolygons === true && value.capabilities.wordResults !== true) {
       issues.push(`${path}.capabilities.wordPolygons requires wordResults`);
     }
-    if (value.capabilities.pdfWriting !== false) issues.push(`${path}.capabilities.pdfWriting must remain false`);
+    if (value.engineId === PADDLE_ENGINE_ID) {
+      for (const capability of PADDLE_UNSUPPORTED_CAPABILITIES) {
+        if (value.capabilities[capability] !== false) {
+          issues.push(`${path}.capabilities.${capability} must be false for the current Paddle adapter`);
+        }
+      }
+    }
   }
 }
 
 export function validateOcrEngineV2(value) {
   const issues = [];
+  if (!isObject(value)) return { ok: false, issues: ['engine must be an object'] };
+  validateJsonValue(value, 'engine', issues);
+  validateSerializedSize(value, 'engine', issues, 256 * 1024);
   validateEngineV2(value, issues);
   return { ok: issues.length === 0, issues };
 }
@@ -151,60 +179,44 @@ export function assertOcrEngineV2(value) {
   return value;
 }
 
-function validateFingerprint(value, path, issues) {
-  if (!isObject(value)) {
-    issues.push(`${path} must be an object`);
-    return;
-  }
-  requireExactKeys(value, new Set(['algorithm', 'value']), path, issues);
-  if (value.algorithm !== 'sha256') issues.push(`${path}.algorithm must be sha256`);
-  const valid = validateString(value.value, `${path}.value`, issues, { nonEmpty: true, maxCodeUnits: 64 });
-  if (valid && !/^[0-9a-f]{64}$/.test(value.value)) issues.push(`${path}.value must be a lowercase SHA-256 digest`);
-}
-
 function validateDocument(value, issues) {
   if (!isObject(value)) {
     issues.push('document must be an object');
     return;
   }
-  requireExactKeys(value, new Set(['id', 'fingerprint']), 'document', issues);
+  requireExactKeys(value, new Set(['id', 'fingerprint', 'revision', 'generation', 'pageCount']), 'document', issues);
   validateIdentifier(value.id, 'document.id', issues);
-  if (value.fingerprint !== undefined) validateFingerprint(value.fingerprint, 'document.fingerprint', issues);
+  validateFingerprint(value.fingerprint, 'document.fingerprint', issues);
+  validateNonNegativeInteger(value.revision, 'document.revision', issues);
+  validateIdentifier(value.generation, 'document.generation', issues);
+  validatePositiveInteger(value.pageCount, 'document.pageCount', issues, { maximum: OCR_CONTRACT_LIMITS.maxPagesPerJob });
 }
 
-function validateRaster(value, issues) {
-  if (!isObject(value)) {
-    issues.push('page.raster must be an object');
-    return;
-  }
-  requireExactKeys(value, new Set(['widthPx', 'heightPx', 'scale']), 'page.raster', issues);
-  if (!Number.isInteger(value.widthPx) || value.widthPx <= 0) issues.push('page.raster.widthPx must be a positive integer');
-  if (!Number.isInteger(value.heightPx) || value.heightPx <= 0) issues.push('page.raster.heightPx must be a positive integer');
-  validatePositiveNumber(value.scale, 'page.raster.scale', issues);
-}
-
-function validatePage(value, issues) {
+function validatePage(value, pageCount, issues) {
   if (!isObject(value)) {
     issues.push('page must be an object');
     return;
   }
-  requireExactKeys(value, new Set(['id', 'index', 'status', 'raster']), 'page', issues);
+  requireExactKeys(value, new Set(['id', 'index', 'revision', 'status']), 'page', issues);
   validateIdentifier(value.id, 'page.id', issues);
-  if (!Number.isInteger(value.index) || value.index < 0) issues.push('page.index must be a non-negative integer');
+  validateNonNegativeInteger(value.index, 'page.index', issues);
+  validateNonNegativeInteger(value.revision, 'page.revision', issues);
+  if (Number.isSafeInteger(value.index) && Number.isSafeInteger(pageCount) && value.index >= pageCount) {
+    issues.push('page.index must identify a page in document.pageCount');
+  }
   if (!OCR_RESULT_PAGE_STATUSES.includes(value.status)) issues.push('page.status is unsupported');
-  validateRaster(value.raster, issues);
 }
 
-function validateLanguage(value, path, issues, state = null) {
+function validateDetectedLanguage(value, path, issues, state) {
   if (!isObject(value)) {
     issues.push(`${path} must be an object`);
     return;
   }
-  requireExactKeys(value, new Set(['tag', 'source', 'confidence']), path, issues);
+  requireExactKeys(value, new Set(['tag', 'confidence']), path, issues);
   validateLanguageTag(value.tag, `${path}.tag`, issues);
-  if (!['engine', 'requested', 'review', 'unknown'].includes(value.source)) issues.push(`${path}.source is unsupported`);
-  if (value.confidence !== undefined) validateConfidence(value.confidence, `${path}.confidence`, issues);
-  if (state && value.source === 'engine') state.hasEngineLanguage = true;
+  if (value.tag === 'und') issues.push(`${path}.tag must name a detected language`);
+  validateConfidence(value.confidence, `${path}.confidence`, issues);
+  state.hasDetectedLanguage = true;
 }
 
 function validateAlternatives(value, path, issues, state) {
@@ -215,104 +227,163 @@ function validateAlternatives(value, path, issues, state) {
   if (value.length > OCR_CONTRACT_LIMITS.maxAlternativesPerItem) {
     issues.push(`${path} exceeds ${OCR_CONTRACT_LIMITS.maxAlternativesPerItem} items`);
   }
-  const count = Math.min(value.length, OCR_CONTRACT_LIMITS.maxAlternativesPerItem);
-  for (let index = 0; index < count; index += 1) {
-    const alternative = value[index];
+  value.slice(0, OCR_CONTRACT_LIMITS.maxAlternativesPerItem).forEach((alternative, index) => {
     const itemPath = `${path}[${index}]`;
     if (!isObject(alternative)) {
       issues.push(`${itemPath} must be an object`);
-      continue;
+      return;
     }
     requireExactKeys(alternative, new Set(['text', 'confidence']), itemPath, issues);
     validateString(alternative.text, `${itemPath}.text`, issues);
     validateConfidence(alternative.confidence, `${itemPath}.confidence`, issues);
-  }
+  });
   if (value.length > 0) state.hasAlternatives = true;
 }
 
-function validateWord(value, path, raster, issues, state) {
+function validateWritingDirection(value, path, issues, state) {
+  if (!OCR_WRITING_DIRECTIONS.includes(value)) issues.push(`${path} is unsupported`);
+  else state.hasWritingDirection = true;
+}
+
+function validateWord(value, path, rasters, issues, state) {
   if (!isObject(value)) {
     issues.push(`${path} must be an object`);
     return;
   }
   requireExactKeys(value, new Set([
-    'id', 'text', 'confidence', 'polygon', 'boundingBox', 'alternatives', 'language',
+    'id', 'text', 'confidence', 'polygon', 'boundingBox', 'alternatives',
+    'detectedLanguage', 'detectedWritingDirection',
   ]), path, issues);
   validateIdentifier(value.id, `${path}.id`, issues);
+  if (state.entityIds.has(value.id)) issues.push(`${path}.id must be unique across result entities`);
+  state.entityIds.add(value.id);
   validateString(value.text, `${path}.text`, issues);
   validateConfidence(value.confidence, `${path}.confidence`, issues);
   if (value.polygon !== undefined) {
-    validatePolygon(value.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+    validateCoordinatePolygon(value.polygon, `${path}.polygon`, issues, { rasters });
     state.hasWordPolygons = true;
+    state.geometrySpaces.add(value.polygon?.coordinateSpace);
   }
   if (value.boundingBox !== undefined) {
-    validateBoundingBox(value.boundingBox, `${path}.boundingBox`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+    validateCoordinateBoundingBox(value.boundingBox, `${path}.boundingBox`, issues, { rasters });
+    state.geometrySpaces.add(value.boundingBox?.coordinateSpace);
   }
-  validateAlternatives(value.alternatives, `${path}.alternatives`, issues, state);
-  if (value.language !== undefined) validateLanguage(value.language, `${path}.language`, issues, state);
+  if (value.alternatives !== undefined) validateAlternatives(value.alternatives, `${path}.alternatives`, issues, state);
+  if (value.detectedLanguage !== undefined) {
+    validateDetectedLanguage(value.detectedLanguage, `${path}.detectedLanguage`, issues, state);
+  }
+  if (value.detectedWritingDirection !== undefined) {
+    validateWritingDirection(value.detectedWritingDirection, `${path}.detectedWritingDirection`, issues, state);
+  }
   state.totalWords += 1;
-  if (typeof value.id === 'string' && state.wordIds.has(value.id)) issues.push(`${path}.id must be unique`);
-  state.wordIds.add(value.id);
 }
 
-function validateLine(value, path, raster, issues, state) {
+function validateLine(value, index, rasters, issues, state) {
+  const path = `lines[${index}]`;
   if (!isObject(value)) {
     issues.push(`${path} must be an object`);
     return;
   }
   requireExactKeys(value, new Set([
-    'id', 'text', 'confidence', 'polygon', 'boundingBox', 'words', 'alternatives',
-    'language', 'writingDirection',
+    'id', 'text', 'confidence', 'polygon', 'boundingBox', 'baseline', 'words',
+    'alternatives', 'detectedLanguage', 'detectedWritingDirection',
   ]), path, issues);
   validateIdentifier(value.id, `${path}.id`, issues);
+  if (state.entityIds.has(value.id)) issues.push(`${path}.id must be unique across result entities`);
+  state.entityIds.add(value.id);
   validateString(value.text, `${path}.text`, issues);
   validateConfidence(value.confidence, `${path}.confidence`, issues);
-  validatePolygon(value.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+  validateCoordinatePolygon(value.polygon, `${path}.polygon`, issues, { rasters });
+  state.geometrySpaces.add(value.polygon?.coordinateSpace);
   if (value.boundingBox !== undefined) {
-    validateBoundingBox(value.boundingBox, `${path}.boundingBox`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+    validateCoordinateBoundingBox(value.boundingBox, `${path}.boundingBox`, issues, { rasters });
+    state.geometrySpaces.add(value.boundingBox?.coordinateSpace);
   }
-  validateAlternatives(value.alternatives, `${path}.alternatives`, issues, state);
-  validateLanguage(value.language, `${path}.language`, issues, state);
-  if (!OCR_WRITING_DIRECTIONS.includes(value.writingDirection)) issues.push(`${path}.writingDirection is unsupported`);
-  if (value.writingDirection !== 'unknown') state.hasWritingDirection = true;
+  validateBaseline(value.baseline, `${path}.baseline`, issues, { rasters, allowedProvenance: ['engine'] });
+  state.geometrySpaces.add(value.baseline?.coordinateSpace);
+  if (value.baseline?.status === 'provided') state.hasEngineBaselines = true;
   if (value.words !== undefined) {
     if (!Array.isArray(value.words)) {
       issues.push(`${path}.words must be an array`);
     } else {
-      for (let index = 0; index < value.words.length && state.totalWords <= OCR_CONTRACT_LIMITS.maxWordsPerPage; index += 1) {
-        validateWord(value.words[index], `${path}.words[${index}]`, raster, issues, state);
-      }
+      value.words.forEach((word, wordIndex) => {
+        if (state.totalWords < OCR_CONTRACT_LIMITS.maxWordsPerPage) {
+          validateWord(word, `${path}.words[${wordIndex}]`, rasters, issues, state);
+        }
+      });
     }
   }
-  state.totalLines += 1;
-  if (typeof value.id === 'string' && state.lineIds.has(value.id)) issues.push(`${path}.id must be unique`);
-  state.lineIds.add(value.id);
+  if (value.alternatives !== undefined) validateAlternatives(value.alternatives, `${path}.alternatives`, issues, state);
+  if (value.detectedLanguage !== undefined) {
+    validateDetectedLanguage(value.detectedLanguage, `${path}.detectedLanguage`, issues, state);
+  }
+  if (value.detectedWritingDirection !== undefined) {
+    validateWritingDirection(value.detectedWritingDirection, `${path}.detectedWritingDirection`, issues, state);
+  }
 }
 
-function validateBlock(value, index, raster, issues, state) {
-  const path = `blocks[${index}]`;
+function validatePreprocessing(value, sourceRaster, issues, capabilities) {
   if (!isObject(value)) {
-    issues.push(`${path} must be an object`);
-    return;
+    issues.push('preprocessing must be an object');
+    return { [OCR_SOURCE_RASTER_SPACE]: sourceRaster };
   }
-  requireExactKeys(value, new Set(['id', 'kind', 'text', 'confidence', 'polygon', 'lines']), path, issues);
-  validateIdentifier(value.id, `${path}.id`, issues);
-  if (!['text', 'unknown'].includes(value.kind)) issues.push(`${path}.kind is unsupported`);
-  validateString(value.text, `${path}.text`, issues);
-  validateConfidence(value.confidence, `${path}.confidence`, issues);
-  validatePolygon(value.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
-  if (!Array.isArray(value.lines) || value.lines.length === 0) {
-    issues.push(`${path}.lines must be a non-empty array`);
+  requireExactKeys(value, new Set(['status', 'operations', 'outputRaster', 'transform']), 'preprocessing', issues);
+  if (!['unknown', 'none', 'applied'].includes(value.status)) issues.push('preprocessing.status is unsupported');
+  if (!Array.isArray(value.operations)) {
+    issues.push('preprocessing.operations must be an array');
   } else {
-    for (let lineIndex = 0; lineIndex < value.lines.length && state.totalLines <= OCR_CONTRACT_LIMITS.maxLinesPerPage; lineIndex += 1) {
-      validateLine(value.lines[lineIndex], `${path}.lines[${lineIndex}]`, raster, issues, state);
+    if (value.operations.length > OCR_CONTRACT_LIMITS.maxPreprocessingOperations) {
+      issues.push(`preprocessing.operations exceeds ${OCR_CONTRACT_LIMITS.maxPreprocessingOperations} items`);
     }
+    value.operations.slice(0, OCR_CONTRACT_LIMITS.maxPreprocessingOperations).forEach((operation, index) => {
+      const path = `preprocessing.operations[${index}]`;
+      if (!isObject(operation)) {
+        issues.push(`${path} must be an object`);
+        return;
+      }
+      requireExactKeys(operation, new Set(['kind', 'applied', 'value', 'unit']), path, issues);
+      if (!['orientation', 'deskew', 'denoise', 'contrast', 'binarize', 'resize', 'crop'].includes(operation.kind)) {
+        issues.push(`${path}.kind is unsupported`);
+      }
+      if (typeof operation.applied !== 'boolean') issues.push(`${path}.applied must be boolean`);
+      if (operation.value !== null && typeof operation.value !== 'string' &&
+          !(typeof operation.value === 'number' && Number.isFinite(operation.value))) {
+        issues.push(`${path}.value must be null, a finite number, or a string`);
+      }
+      if (typeof operation.value === 'string') validateString(operation.value, `${path}.value`, issues, { maxCodeUnits: 256 });
+      if (operation.unit !== null) validateString(operation.unit, `${path}.unit`, issues, { nonEmpty: true, maxCodeUnits: 64 });
+    });
   }
-  if (typeof value.id === 'string' && state.blockIds.has(value.id)) issues.push(`${path}.id must be unique`);
-  state.blockIds.add(value.id);
+  const rasters = { [OCR_SOURCE_RASTER_SPACE]: sourceRaster };
+  if (value.outputRaster !== null) {
+    validateRasterIdentity(value.outputRaster, 'preprocessing.outputRaster', issues, {
+      coordinateSpace: OCR_PREPROCESSED_RASTER_SPACE,
+    });
+    rasters[OCR_PREPROCESSED_RASTER_SPACE] = value.outputRaster;
+  }
+  if (value.transform !== null) {
+    validateAffineTransform(value.transform, 'preprocessing.transform', issues, {
+      fromSpace: OCR_SOURCE_RASTER_SPACE,
+      toSpace: OCR_PREPROCESSED_RASTER_SPACE,
+    });
+  }
+  if (value.status === 'applied') {
+    if (value.outputRaster === null || value.transform === null) {
+      issues.push('applied preprocessing requires outputRaster and transform');
+    }
+    if (!value.operations?.some((operation) => operation?.applied === true)) {
+      issues.push('applied preprocessing requires at least one applied operation');
+    }
+    if (capabilities?.preprocessingMetadata !== true) {
+      issues.push('engine capabilities do not permit preprocessing metadata');
+    }
+  } else if (value.operations?.length > 0 || value.outputRaster !== null || value.transform !== null) {
+    issues.push('unknown or absent preprocessing must not contain operations, outputRaster, or transform');
+  }
+  return rasters;
 }
 
-function validateWarnings(value, issues) {
+function validateWarnings(value, issues, entityIds) {
   if (!Array.isArray(value)) {
     issues.push('warnings must be an array');
     return;
@@ -320,29 +391,31 @@ function validateWarnings(value, issues) {
   if (value.length > OCR_CONTRACT_LIMITS.maxWarningsPerPage) {
     issues.push(`warnings exceeds ${OCR_CONTRACT_LIMITS.maxWarningsPerPage} items`);
   }
-  const count = Math.min(value.length, OCR_CONTRACT_LIMITS.maxWarningsPerPage);
-  for (let index = 0; index < count; index += 1) {
-    const warning = value[index];
+  value.slice(0, OCR_CONTRACT_LIMITS.maxWarningsPerPage).forEach((warning, index) => {
     const path = `warnings[${index}]`;
     if (!isObject(warning)) {
       issues.push(`${path} must be an object`);
-      continue;
+      return;
     }
     requireExactKeys(warning, new Set(['code', 'message', 'severity', 'entityIds']), path, issues);
     validateIdentifier(warning.code, `${path}.code`, issues);
     validateString(warning.message, `${path}.message`, issues, { nonEmpty: true });
     if (!['info', 'warning', 'error'].includes(warning.severity)) issues.push(`${path}.severity is unsupported`);
-    if (warning.entityIds !== undefined) {
-      if (!Array.isArray(warning.entityIds)) {
-        issues.push(`${path}.entityIds must be an array`);
-      } else {
-        warning.entityIds.forEach((id, entityIndex) => validateIdentifier(id, `${path}.entityIds[${entityIndex}]`, issues));
-      }
+    if (!Array.isArray(warning.entityIds)) {
+      issues.push(`${path}.entityIds must be an array`);
+    } else {
+      const seen = new Set();
+      warning.entityIds.forEach((id, entityIndex) => {
+        validateIdentifier(id, `${path}.entityIds[${entityIndex}]`, issues);
+        if (seen.has(id)) issues.push(`${path}.entityIds[${entityIndex}] must be unique`);
+        if (!entityIds.has(id)) issues.push(`${path}.entityIds[${entityIndex}] is unknown`);
+        seen.add(id);
+      });
     }
-  }
+  });
 }
 
-function validateUnsupportedReasons(value, raster, issues) {
+function validateUnsupportedReasons(value, rasters, issues) {
   if (!Array.isArray(value)) {
     issues.push('unsupportedContentReasons must be an array');
     return;
@@ -350,121 +423,21 @@ function validateUnsupportedReasons(value, raster, issues) {
   if (value.length > OCR_CONTRACT_LIMITS.maxUnsupportedReasonsPerPage) {
     issues.push(`unsupportedContentReasons exceeds ${OCR_CONTRACT_LIMITS.maxUnsupportedReasonsPerPage} items`);
   }
-  const count = Math.min(value.length, OCR_CONTRACT_LIMITS.maxUnsupportedReasonsPerPage);
-  for (let index = 0; index < count; index += 1) {
-    const reason = value[index];
+  const ids = new Set();
+  value.slice(0, OCR_CONTRACT_LIMITS.maxUnsupportedReasonsPerPage).forEach((reason, index) => {
     const path = `unsupportedContentReasons[${index}]`;
     if (!isObject(reason)) {
       issues.push(`${path} must be an object`);
-      continue;
-    }
-    requireExactKeys(reason, new Set(['code', 'message', 'polygon']), path, issues);
-    if (!OCR_UNSUPPORTED_CONTENT_CODES.includes(reason.code)) issues.push(`${path}.code is unsupported`);
-    validateString(reason.message, `${path}.message`, issues, { nonEmpty: true });
-    if (reason.polygon !== undefined) {
-      validatePolygon(reason.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
-    }
-  }
-}
-
-function validatePreprocessing(value, issues) {
-  if (!isObject(value)) {
-    issues.push('preprocessing must be an object');
-    return;
-  }
-  requireExactKeys(value, new Set(['status', 'operations']), 'preprocessing', issues);
-  if (!['unknown', 'none', 'applied'].includes(value.status)) issues.push('preprocessing.status is unsupported');
-  if (!Array.isArray(value.operations)) {
-    issues.push('preprocessing.operations must be an array');
-    return;
-  }
-  if (value.operations.length > 32) issues.push('preprocessing.operations exceeds 32 items');
-  const supported = new Set(['orientation', 'deskew', 'denoise', 'contrast', 'binarize', 'resize', 'crop']);
-  value.operations.slice(0, 32).forEach((operation, index) => {
-    const path = `preprocessing.operations[${index}]`;
-    if (!isObject(operation)) {
-      issues.push(`${path} must be an object`);
       return;
     }
-    requireExactKeys(operation, new Set(['kind', 'applied', 'value', 'unit']), path, issues);
-    if (!supported.has(operation.kind)) issues.push(`${path}.kind is unsupported`);
-    if (typeof operation.applied !== 'boolean') issues.push(`${path}.applied must be boolean`);
-    if (operation.value !== undefined && typeof operation.value !== 'string' && !isFiniteNumber(operation.value)) {
-      issues.push(`${path}.value must be a finite number or string`);
-    }
-    if (typeof operation.value === 'string') validateString(operation.value, `${path}.value`, issues, { maxCodeUnits: 256 });
-    if (operation.unit !== undefined) validateString(operation.unit, `${path}.unit`, issues, { nonEmpty: true, maxCodeUnits: 64 });
+    requireExactKeys(reason, new Set(['id', 'code', 'message', 'polygon']), path, issues);
+    validateIdentifier(reason.id, `${path}.id`, issues);
+    if (ids.has(reason.id)) issues.push(`${path}.id must be unique`);
+    ids.add(reason.id);
+    if (!OCR_UNSUPPORTED_CONTENT_CODES.includes(reason.code)) issues.push(`${path}.code is unsupported`);
+    validateString(reason.message, `${path}.message`, issues, { nonEmpty: true });
+    if (reason.polygon !== undefined) validateCoordinatePolygon(reason.polygon, `${path}.polygon`, issues, { rasters });
   });
-  if (value.status !== 'applied' && value.operations.length > 0) issues.push('preprocessing.operations must be empty unless status is applied');
-  if (value.status === 'applied' && !value.operations.some((operation) => operation?.applied === true)) {
-    issues.push('preprocessing.status applied requires an applied operation');
-  }
-}
-
-function validateSize(value, path, issues) {
-  if (!isObject(value)) {
-    issues.push(`${path} must be an object`);
-    return;
-  }
-  requireExactKeys(value, new Set(['width', 'height']), path, issues);
-  validatePositiveNumber(value.width, `${path}.width`, issues);
-  validatePositiveNumber(value.height, `${path}.height`, issues);
-}
-
-function validateMatrix(value, path, issues) {
-  if (!Array.isArray(value) || value.length !== 6 || !value.every(isFiniteNumber)) {
-    issues.push(`${path} must contain six finite numbers`);
-    return false;
-  }
-  const determinant = value[0] * value[3] - value[1] * value[2];
-  if (!Number.isFinite(determinant) || Math.abs(determinant) <= 1e-12) {
-    issues.push(`${path} must be invertible`);
-    return false;
-  }
-  return true;
-}
-
-function affineProduct(left, right) {
-  return [
-    left[0] * right[0] + left[2] * right[1],
-    left[1] * right[0] + left[3] * right[1],
-    left[0] * right[2] + left[2] * right[3],
-    left[1] * right[2] + left[3] * right[3],
-    left[0] * right[4] + left[2] * right[5] + left[4],
-    left[1] * right[4] + left[3] * right[5] + left[5],
-  ];
-}
-
-function validatePageTransform(value, raster, issues) {
-  if (value === null) return;
-  if (!isObject(value)) {
-    issues.push('pageTransform must be null or an object');
-    return;
-  }
-  requireExactKeys(value, new Set([
-    'sourceSpace', 'targetSpace', 'matrix', 'inverseMatrix', 'sourceSize',
-    'targetSize', 'rotationDegrees',
-  ]), 'pageTransform', issues);
-  if (value.sourceSpace !== 'ocr-image-pixels') issues.push('pageTransform.sourceSpace must be ocr-image-pixels');
-  if (value.targetSpace !== 'pdf-page-points') issues.push('pageTransform.targetSpace must be pdf-page-points');
-  const matrixValid = validateMatrix(value.matrix, 'pageTransform.matrix', issues);
-  const inverseValid = validateMatrix(value.inverseMatrix, 'pageTransform.inverseMatrix', issues);
-  validateSize(value.sourceSize, 'pageTransform.sourceSize', issues);
-  validateSize(value.targetSize, 'pageTransform.targetSize', issues);
-  if (isFiniteNumber(value.sourceSize?.width) && value.sourceSize.width !== raster?.widthPx) {
-    issues.push('pageTransform.sourceSize.width must match page.raster.widthPx');
-  }
-  if (isFiniteNumber(value.sourceSize?.height) && value.sourceSize.height !== raster?.heightPx) {
-    issues.push('pageTransform.sourceSize.height must match page.raster.heightPx');
-  }
-  if (![0, 90, 180, 270].includes(value.rotationDegrees)) issues.push('pageTransform.rotationDegrees is unsupported');
-  if (matrixValid && inverseValid) {
-    const product = affineProduct(value.matrix, value.inverseMatrix);
-    const identity = [1, 0, 0, 1, 0, 0];
-    if (product.some((entry, index) => Math.abs(entry - identity[index]) > 1e-6)) {
-      issues.push('pageTransform.inverseMatrix must invert pageTransform.matrix');
-    }
-  }
 }
 
 function validateMetrics(value, issues) {
@@ -476,170 +449,92 @@ function validateMetrics(value, issues) {
   for (const key of METRIC_KEYS) validateNonNegativeNumber(value[key], `metrics.${key}`, issues);
 }
 
-function validateCorrections(value, issues, state) {
-  if (!Array.isArray(value)) {
-    issues.push('reviewCorrections must be an array');
-    return;
-  }
-  if (value.length > OCR_CONTRACT_LIMITS.maxCorrectionsPerPage) {
-    issues.push(`reviewCorrections exceeds ${OCR_CONTRACT_LIMITS.maxCorrectionsPerPage} items`);
-  }
-  const ids = new Set();
-  const count = Math.min(value.length, OCR_CONTRACT_LIMITS.maxCorrectionsPerPage);
-  for (let index = 0; index < count; index += 1) {
-    const correction = value[index];
-    const path = `reviewCorrections[${index}]`;
-    if (!isObject(correction)) {
-      issues.push(`${path} must be an object`);
-      continue;
-    }
-    requireExactKeys(correction, new Set([
-      'id', 'target', 'originalText', 'correctedText', 'status', 'createdAt',
-    ]), path, issues);
-    validateIdentifier(correction.id, `${path}.id`, issues);
-    if (typeof correction.id === 'string' && ids.has(correction.id)) issues.push(`${path}.id must be unique`);
-    ids.add(correction.id);
-    if (!isObject(correction.target)) {
-      issues.push(`${path}.target must be an object`);
-    } else {
-      requireExactKeys(correction.target, new Set(['kind', 'id']), `${path}.target`, issues);
-      if (!['line', 'word'].includes(correction.target.kind)) issues.push(`${path}.target.kind is unsupported`);
-      validateIdentifier(correction.target.id, `${path}.target.id`, issues);
-      const targets = correction.target.kind === 'line' ? state.lineIds : state.wordIds;
-      if (typeof correction.target.id === 'string' && !targets.has(correction.target.id)) {
-        issues.push(`${path}.target.id does not identify a result entity`);
-      }
-    }
-    validateString(correction.originalText, `${path}.originalText`, issues);
-    validateString(correction.correctedText, `${path}.correctedText`, issues);
-    if (!['pending', 'accepted', 'rejected'].includes(correction.status)) issues.push(`${path}.status is unsupported`);
-    validateIsoTimestamp(correction.createdAt, `${path}.createdAt`, issues);
-  }
-}
-
-function validateEditRegions(value, raster, issues, state) {
-  if (!Array.isArray(value)) {
-    issues.push('visibleEditRegions must be an array');
-    return;
-  }
-  if (value.length > OCR_CONTRACT_LIMITS.maxEditRegionsPerPage) {
-    issues.push(`visibleEditRegions exceeds ${OCR_CONTRACT_LIMITS.maxEditRegionsPerPage} items`);
-  }
-  const ids = new Set();
-  const count = Math.min(value.length, OCR_CONTRACT_LIMITS.maxEditRegionsPerPage);
-  for (let index = 0; index < count; index += 1) {
-    const region = value[index];
-    const path = `visibleEditRegions[${index}]`;
-    if (!isObject(region)) {
-      issues.push(`${path} must be an object`);
-      continue;
-    }
-    requireExactKeys(region, new Set([
-      'id', 'lineIds', 'polygon', 'eligibility', 'background', 'status',
-      'unsupportedReasons',
-    ]), path, issues);
-    validateIdentifier(region.id, `${path}.id`, issues);
-    if (typeof region.id === 'string' && ids.has(region.id)) issues.push(`${path}.id must be unique`);
-    ids.add(region.id);
-    if (!Array.isArray(region.lineIds) || region.lineIds.length === 0) {
-      issues.push(`${path}.lineIds must be a non-empty array`);
-    } else {
-      const lineIds = new Set();
-      region.lineIds.forEach((lineId, lineIndex) => {
-        validateIdentifier(lineId, `${path}.lineIds[${lineIndex}]`, issues);
-        if (lineIds.has(lineId)) issues.push(`${path}.lineIds[${lineIndex}] must be unique`);
-        if (typeof lineId === 'string' && !state.lineIds.has(lineId)) issues.push(`${path}.lineIds[${lineIndex}] is unknown`);
-        lineIds.add(lineId);
-      });
-    }
-    validatePolygon(region.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
-    if (!['unknown', 'eligible', 'ineligible'].includes(region.eligibility)) issues.push(`${path}.eligibility is unsupported`);
-    if (!['unknown', 'flat', 'complex'].includes(region.background)) issues.push(`${path}.background is unsupported`);
-    if (!['candidate', 'approved', 'rejected'].includes(region.status)) issues.push(`${path}.status is unsupported`);
-    if (!Array.isArray(region.unsupportedReasons)) {
-      issues.push(`${path}.unsupportedReasons must be an array`);
-    } else {
-      region.unsupportedReasons.forEach((code, reasonIndex) => {
-        if (!OCR_UNSUPPORTED_CONTENT_CODES.includes(code)) issues.push(`${path}.unsupportedReasons[${reasonIndex}] is unsupported`);
-      });
-    }
-  }
-}
-
 export function validateOcrResultV2(value, {
   maxSerializedBytes = OCR_CONTRACT_LIMITS.maxResultBytes,
 } = {}) {
   const issues = [];
   if (!isObject(value)) return { ok: false, issues: ['result must be an object'] };
-  if (!validateSerializedSize(value, 'result', issues, maxSerializedBytes)) {
-    return { ok: false, issues };
-  }
+  validateJsonValue(value, 'result', issues);
+  if (!validateSerializedSize(value, 'result', issues, maxSerializedBytes)) return { ok: false, issues };
   requireExactKeys(value, new Set([
-    'contract', 'schemaVersion', 'jobId', 'engine', 'document', 'page', 'text',
-    'blocks', 'languages', 'warnings', 'unsupportedContentReasons', 'preprocessing',
-    'pageTransform', 'metrics', 'reviewCorrections', 'visibleEditRegions',
+    'contract', 'schemaVersion', 'jobId', 'requestId', 'engine', 'document',
+    'page', 'recognitionConfigurationHash', 'sourceRaster', 'text', 'lines',
+    'detectedLanguages', 'warnings', 'unsupportedContentReasons', 'preprocessing', 'metrics',
   ]), 'result', issues);
   if (value.contract !== OCR_RESULT_CONTRACT) issues.push(`contract must be ${OCR_RESULT_CONTRACT}`);
   if (value.schemaVersion !== OCR_CURRENT_SCHEMA_VERSION) issues.push('schemaVersion must be 2');
   validateIdentifier(value.jobId, 'jobId', issues);
+  validateIdentifier(value.requestId, 'requestId', issues);
   validateEngineV2(value.engine, issues);
   validateDocument(value.document, issues);
-  validatePage(value.page, issues);
+  validatePage(value.page, value.document?.pageCount, issues);
+  validateFingerprint(value.recognitionConfigurationHash, 'recognitionConfigurationHash', issues);
+  validateRasterIdentity(value.sourceRaster, 'sourceRaster', issues, {
+    coordinateSpace: OCR_SOURCE_RASTER_SPACE,
+  });
   validateString(value.text, 'text', issues);
-
+  const rasters = validatePreprocessing(value.preprocessing, value.sourceRaster, issues, value.engine?.capabilities);
   const state = {
-    blockIds: new Set(),
-    lineIds: new Set(),
-    wordIds: new Set(),
-    totalLines: 0,
+    entityIds: new Set(),
     totalWords: 0,
     hasWordPolygons: false,
     hasAlternatives: false,
-    hasEngineLanguage: false,
+    hasDetectedLanguage: false,
     hasWritingDirection: false,
+    hasEngineBaselines: false,
+    geometrySpaces: new Set(),
   };
-  if (!Array.isArray(value.blocks)) {
-    issues.push('blocks must be an array');
+  if (!Array.isArray(value.lines)) {
+    issues.push('lines must be an array');
   } else {
-    if (value.blocks.length > OCR_CONTRACT_LIMITS.maxBlocksPerPage) {
-      issues.push(`blocks exceeds ${OCR_CONTRACT_LIMITS.maxBlocksPerPage} items`);
+    if (value.lines.length > OCR_CONTRACT_LIMITS.maxLinesPerPage) {
+      issues.push(`lines exceeds ${OCR_CONTRACT_LIMITS.maxLinesPerPage} items`);
     }
-    const count = Math.min(value.blocks.length, OCR_CONTRACT_LIMITS.maxBlocksPerPage);
-    for (let index = 0; index < count; index += 1) {
-      validateBlock(value.blocks[index], index, value.page?.raster, issues, state);
+    value.lines.slice(0, OCR_CONTRACT_LIMITS.maxLinesPerPage)
+      .forEach((line, index) => validateLine(line, index, rasters, issues, state));
+    const combinedLineText = value.lines.map((line) => line?.text).filter(Boolean).join('\n');
+    if (value.text !== combinedLineText) {
+      issues.push('text must equal the non-empty line text joined with newlines');
     }
   }
-  if (state.totalLines > OCR_CONTRACT_LIMITS.maxLinesPerPage) {
-    issues.push(`result exceeds ${OCR_CONTRACT_LIMITS.maxLinesPerPage} lines`);
-  }
-  if (state.totalWords > OCR_CONTRACT_LIMITS.maxWordsPerPage) {
+  const declaredWordCount = Array.isArray(value.lines)
+    ? value.lines.reduce((count, line) => count + (Array.isArray(line?.words) ? line.words.length : 0), 0)
+    : 0;
+  if (declaredWordCount > OCR_CONTRACT_LIMITS.maxWordsPerPage) {
     issues.push(`result exceeds ${OCR_CONTRACT_LIMITS.maxWordsPerPage} words`);
   }
-
-  if (!Array.isArray(value.languages)) {
-    issues.push('languages must be an array');
+  if (!Array.isArray(value.detectedLanguages)) {
+    issues.push('detectedLanguages must be an array');
   } else {
-    value.languages.forEach((language, index) => validateLanguage(language, `languages[${index}]`, issues, state));
+    const tags = new Set();
+    value.detectedLanguages.forEach((language, index) => {
+      validateDetectedLanguage(language, `detectedLanguages[${index}]`, issues, state);
+      if (tags.has(language?.tag)) issues.push(`detectedLanguages[${index}].tag must be unique`);
+      tags.add(language?.tag);
+    });
   }
-  validateWarnings(value.warnings, issues);
-  validateUnsupportedReasons(value.unsupportedContentReasons, value.page?.raster, issues);
+  validateWarnings(value.warnings, issues, state.entityIds);
+  validateUnsupportedReasons(value.unsupportedContentReasons, rasters, issues);
+  validateMetrics(value.metrics, issues);
   if (value.page?.status === 'unsupported' && value.unsupportedContentReasons?.length === 0) {
     issues.push('unsupported pages require at least one unsupportedContentReason');
   }
-  validatePreprocessing(value.preprocessing, issues);
-  validatePageTransform(value.pageTransform, value.page?.raster, issues);
-  validateMetrics(value.metrics, issues);
-  validateCorrections(value.reviewCorrections, issues, state);
-  validateEditRegions(value.visibleEditRegions, value.page?.raster, issues, state);
-
+  if (['failed', 'cancelled'].includes(value.page?.status) && (value.lines?.length > 0 || value.text !== '')) {
+    issues.push(`${value.page.status} results must not contain recognized text or lines`);
+  }
+  if (state.geometrySpaces.has(OCR_PREPROCESSED_RASTER_SPACE) && value.preprocessing?.status !== 'applied') {
+    issues.push('preprocessed-raster geometry requires applied preprocessing metadata');
+  }
   const capabilities = value.engine?.capabilities;
+  if (value.lines?.length > 0 && capabilities?.lineResults !== true) issues.push('engine capabilities do not permit line results');
   if (state.totalWords > 0 && capabilities?.wordResults !== true) issues.push('engine capabilities do not permit word results');
   if (state.hasWordPolygons && capabilities?.wordPolygons !== true) issues.push('engine capabilities do not permit word polygons');
   if (state.hasAlternatives && capabilities?.alternatives !== true) issues.push('engine capabilities do not permit alternatives');
-  if (state.hasEngineLanguage && capabilities?.languageMetadata !== true) issues.push('engine capabilities do not permit engine language metadata');
-  if (state.hasWritingDirection && capabilities?.writingDirectionMetadata !== true) {
-    issues.push('engine capabilities do not permit writing-direction metadata');
+  if (state.hasDetectedLanguage && capabilities?.languageDetection !== true) issues.push('engine capabilities do not permit language detection');
+  if (state.hasWritingDirection && capabilities?.writingDirectionDetection !== true) {
+    issues.push('engine capabilities do not permit writing-direction detection');
   }
+  if (state.hasEngineBaselines && capabilities?.lineBaselines !== true) issues.push('engine capabilities do not permit engine baselines');
   return { ok: issues.length === 0, issues };
 }
 
@@ -656,17 +551,118 @@ export function toValidatedOcrResultV2Json(value, options) {
   return parsed;
 }
 
+function currentCapabilitiesFromV1(value) {
+  const isCurrentPaddle = value.engineId === PADDLE_ENGINE_ID;
+  return {
+    textDetection: value.capabilities.textDetection,
+    textRecognition: value.capabilities.textRecognition,
+    lineResults: true,
+    linePolygons: true,
+    lineBaselines: false,
+    wordResults: isCurrentPaddle ? false : value.capabilities.wordBoxes,
+    wordPolygons: isCurrentPaddle ? false : value.capabilities.wordBoxes,
+    alternatives: false,
+    languageDetection: false,
+    writingDirectionDetection: false,
+    preprocessingMetadata: false,
+    nativePdfWriting: false,
+  };
+}
+
+function isLegacyUnpublishedEngineV2(value) {
+  return isObject(value) && value.contract === OCR_ENGINE_CONTRACT && value.schemaVersion === 2 &&
+    isObject(value.capabilities) && Object.hasOwn(value.capabilities, 'languageMetadata');
+}
+
+function validateLegacyUnpublishedEngineV2(value, path = 'engine') {
+  const issues = [];
+  if (!isObject(value)) return [`${path} must be an object`];
+  validateJsonValue(value, path, issues);
+  validateSerializedSize(value, path, issues, 256 * 1024);
+  requireExactKeys(value, new Set([
+    'contract', 'schemaVersion', 'engineId', 'adapterVersion', 'provider',
+    'model', 'modelPack', 'runtime', 'capabilities',
+  ]), path, issues);
+  if (value.contract !== OCR_ENGINE_CONTRACT) issues.push(`${path}.contract must be ${OCR_ENGINE_CONTRACT}`);
+  if (value.schemaVersion !== 2) issues.push(`${path}.schemaVersion must be 2`);
+  validateIdentifier(value.engineId, `${path}.engineId`, issues);
+  validateSemver(value.adapterVersion, `${path}.adapterVersion`, issues);
+  validateString(value.provider, `${path}.provider`, issues, { nonEmpty: true, maxCodeUnits: 128 });
+  if (!isObject(value.model)) {
+    issues.push(`${path}.model must be an object`);
+  } else {
+    requireExactKeys(value.model, new Set(['family', 'tier', 'detection', 'recognition']), `${path}.model`, issues);
+    for (const key of ['family', 'tier', 'detection', 'recognition']) {
+      validateString(value.model[key], `${path}.model.${key}`, issues, { nonEmpty: true, maxCodeUnits: 256 });
+    }
+  }
+  if (!isObject(value.modelPack)) {
+    issues.push(`${path}.modelPack must be an object`);
+  } else {
+    requireExactKeys(value.modelPack, new Set(['contract', 'schemaVersion', 'packId', 'packVersion']), `${path}.modelPack`, issues);
+    if (value.modelPack.contract !== OCR_MODEL_PACK_CONTRACT) {
+      issues.push(`${path}.modelPack.contract is unsupported`);
+    }
+    if (value.modelPack.schemaVersion !== 1) issues.push(`${path}.modelPack.schemaVersion must be 1`);
+    validateIdentifier(value.modelPack.packId, `${path}.modelPack.packId`, issues);
+    validateSemver(value.modelPack.packVersion, `${path}.modelPack.packVersion`, issues);
+  }
+  if (!isObject(value.runtime)) {
+    issues.push(`${path}.runtime must be an object`);
+  } else {
+    requireExactKeys(value.runtime, new Set(['name', 'version', 'executionProvider', 'offline']), `${path}.runtime`, issues);
+    for (const key of ['name', 'version', 'executionProvider']) {
+      validateString(value.runtime[key], `${path}.runtime.${key}`, issues, { nonEmpty: true, maxCodeUnits: 128 });
+    }
+    if (value.runtime.offline !== true) issues.push(`${path}.runtime.offline must be true`);
+  }
+  const capabilityNames = [
+    'textDetection', 'textRecognition', 'blockResults', 'lineResults', 'wordResults',
+    'linePolygons', 'wordPolygons', 'alternatives', 'languageMetadata',
+    'writingDirectionMetadata', 'preprocessingMetadata', 'pdfWriting',
+  ];
+  if (!isObject(value.capabilities)) {
+    issues.push(`${path}.capabilities must be an object`);
+  } else {
+    requireExactKeys(value.capabilities, new Set(capabilityNames), `${path}.capabilities`, issues);
+    for (const capability of capabilityNames) {
+      if (typeof value.capabilities[capability] !== 'boolean') {
+        issues.push(`${path}.capabilities.${capability} must be boolean`);
+      }
+    }
+    if (value.capabilities.lineResults !== true) issues.push(`${path}.capabilities.lineResults must be true`);
+    if (value.capabilities.linePolygons !== true) issues.push(`${path}.capabilities.linePolygons must be true`);
+    if (value.capabilities.wordPolygons === true && value.capabilities.wordResults !== true) {
+      issues.push(`${path}.capabilities.wordPolygons requires wordResults`);
+    }
+    if (value.capabilities.pdfWriting !== false) issues.push(`${path}.capabilities.pdfWriting must be false`);
+  }
+  if (value.engineId !== PADDLE_ENGINE_ID) {
+    issues.push(`${path}.engineId has no defined unpublished-v2 migration`);
+  }
+  return issues;
+}
+
 export function migrateOcrEngineToCurrent(value, { modelPack } = {}) {
   if (!isObject(value) || value.contract !== OCR_ENGINE_CONTRACT) {
     throw new OcrContractError(OCR_ENGINE_CONTRACT, [`contract must be ${OCR_ENGINE_CONTRACT}`]);
   }
-  if (value.schemaVersion === OCR_CURRENT_SCHEMA_VERSION) return assertOcrEngineV2(value);
-  if (value.schemaVersion !== 1) {
+  if (value.schemaVersion === OCR_CURRENT_SCHEMA_VERSION && !isLegacyUnpublishedEngineV2(value)) {
+    return assertOcrEngineV2(value);
+  }
+  if (value.schemaVersion !== 1 && !isLegacyUnpublishedEngineV2(value)) {
     throw new OcrContractError(OCR_ENGINE_CONTRACT, [`unsupported schemaVersion ${String(value.schemaVersion)}`]);
   }
-  assertOcrEngineV1(value);
   if (modelPack === undefined) {
-    throw new OcrContractError(OCR_ENGINE_CONTRACT, ['modelPack metadata is required to migrate engine v1']);
+    throw new OcrContractError(OCR_ENGINE_CONTRACT, ['modelPack metadata is required to migrate the engine']);
+  }
+  if (value.schemaVersion === 1) assertOcrEngineV1(value);
+  if (isLegacyUnpublishedEngineV2(value)) {
+    const legacyIssues = validateLegacyUnpublishedEngineV2(value);
+    if (value.modelPack?.packId !== modelPack.packId || value.modelPack?.packVersion !== modelPack.packVersion) {
+      legacyIssues.push('engine.modelPack identity does not match the supplied model pack');
+    }
+    if (legacyIssues.length > 0) throw new OcrContractError(OCR_ENGINE_CONTRACT, legacyIssues);
   }
   assertCompatibleOcrModelPack(modelPack, value, { platform: 'macos' });
   return assertOcrEngineV2({
@@ -678,98 +674,726 @@ export function migrateOcrEngineToCurrent(value, { modelPack } = {}) {
     model: { ...value.model },
     modelPack: modelPackIdentity(modelPack),
     runtime: { ...value.runtime },
-    capabilities: {
-      textDetection: value.capabilities.textDetection,
-      textRecognition: value.capabilities.textRecognition,
-      blockResults: true,
-      lineResults: true,
-      wordResults: value.capabilities.wordBoxes,
-      linePolygons: true,
-      wordPolygons: value.capabilities.wordBoxes,
-      alternatives: false,
-      languageMetadata: false,
-      writingDirectionMetadata: false,
-      preprocessingMetadata: false,
-      pdfWriting: value.capabilities.pdfWriting,
-    },
+    capabilities: currentCapabilitiesFromV1({
+      ...value,
+      capabilities: value.schemaVersion === 1
+        ? value.capabilities
+        : {
+            textDetection: value.capabilities.textDetection,
+            textRecognition: value.capabilities.textRecognition,
+            wordBoxes: value.capabilities.wordPolygons === true,
+          },
+    }),
   });
 }
 
-function migratedUnknownLanguage() {
-  return { tag: 'und', source: 'unknown' };
+function validateMigrationIdentity(options, pageIndex) {
+  const issues = [];
+  for (const key of ['documentId', 'documentGeneration', 'pageId', 'sourceRasterId']) {
+    validateIdentifier(options[key], `migration.${key}`, issues);
+  }
+  validateFingerprint(options.documentFingerprint, 'migration.documentFingerprint', issues);
+  validateNonNegativeInteger(options.documentRevision, 'migration.documentRevision', issues);
+  validatePositiveInteger(options.documentPageCount, 'migration.documentPageCount', issues, {
+    maximum: OCR_CONTRACT_LIMITS.maxPagesPerJob,
+  });
+  validateNonNegativeInteger(options.pageRevision, 'migration.pageRevision', issues);
+  validateFingerprint(options.sourceRasterFingerprint, 'migration.sourceRasterFingerprint', issues);
+  validatePositiveNumber(options.rasterDpi, 'migration.rasterDpi', issues);
+  validateFingerprint(options.recognitionConfigurationHash, 'migration.recognitionConfigurationHash', issues);
+  if (Number.isSafeInteger(options.documentPageCount) && pageIndex >= options.documentPageCount) {
+    issues.push('migration.documentPageCount must include the migrated page index');
+  }
+  if (issues.length > 0) throw new OcrContractError(OCR_RESULT_CONTRACT, issues);
 }
 
-export function migrateOcrResultToCurrent(value, {
-  modelPack,
-  documentId,
-  pageId,
-  jobId = value?.requestId,
-  documentFingerprint,
-  pageTransform = null,
-} = {}) {
+function migratedResultRef(result) {
+  return {
+    jobId: result.jobId,
+    requestId: result.requestId,
+    engineId: result.engine.engineId,
+    modelPack: structuredClone(result.engine.modelPack),
+    documentRevision: result.document.revision,
+    documentGeneration: result.document.generation,
+    pageRevision: result.page.revision,
+    sourceRasterId: result.sourceRaster.id,
+    sourceRasterFingerprint: structuredClone(result.sourceRaster.fingerprint),
+    recognitionConfigurationHash: structuredClone(result.recognitionConfigurationHash),
+  };
+}
+
+function migratedLineFromV1(line) {
+  return {
+    id: line.id,
+    text: line.text,
+    confidence: line.confidence,
+    polygon: {
+      coordinateSpace: OCR_SOURCE_RASTER_SPACE,
+      points: line.polygon.map((point) => [...point]),
+    },
+    boundingBox: {
+      coordinateSpace: OCR_SOURCE_RASTER_SPACE,
+      ...line.boundingBox,
+    },
+    baseline: {
+      status: 'unavailable',
+      coordinateSpace: OCR_SOURCE_RASTER_SPACE,
+      reason: 'engine-did-not-provide',
+    },
+  };
+}
+
+export function migrateOcrResultToCurrent(value, options = {}) {
   if (!isObject(value) || value.contract !== OCR_RESULT_CONTRACT) {
     throw new OcrContractError(OCR_RESULT_CONTRACT, [`contract must be ${OCR_RESULT_CONTRACT}`]);
   }
-  if (value.schemaVersion === OCR_CURRENT_SCHEMA_VERSION) return toValidatedOcrResultV2Json(value);
+  if (value.schemaVersion === OCR_CURRENT_SCHEMA_VERSION) {
+    const current = validateOcrResultV2(value);
+    if (current.ok) return toValidatedOcrResultV2Json(value);
+    if (Object.hasOwn(value, 'reviewCorrections') || Object.hasOwn(value, 'pageTransform')) {
+      throw new OcrContractError(OCR_RESULT_CONTRACT, [
+        'unpublished result v2 must be migrated with migrateUnpublishedOcrResultV2ToCurrent so mutable state is not lost',
+      ]);
+    }
+    throw new OcrContractError(OCR_RESULT_CONTRACT, current.issues);
+  }
   if (value.schemaVersion !== 1) {
     throw new OcrContractError(OCR_RESULT_CONTRACT, [`unsupported schemaVersion ${String(value.schemaVersion)}`]);
   }
   assertOcrResultV1(value);
-  const identityIssues = [];
-  validateIdentifier(documentId, 'migration.documentId', identityIssues);
-  validateIdentifier(pageId, 'migration.pageId', identityIssues);
-  validateIdentifier(jobId, 'migration.jobId', identityIssues);
-  if (documentFingerprint !== undefined) validateFingerprint(documentFingerprint, 'migration.documentFingerprint', identityIssues);
-  if (identityIssues.length > 0) throw new OcrContractError(OCR_RESULT_CONTRACT, identityIssues);
-  const engine = migrateOcrEngineToCurrent(value.engine, { modelPack });
-  const blocks = value.lines.map((line) => ({
-    id: `block:${line.id}`,
-    kind: 'text',
-    text: line.text,
-    confidence: line.confidence,
-    polygon: line.polygon.map((point) => [...point]),
-    lines: [{
-      id: line.id,
-      text: line.text,
-      confidence: line.confidence,
-      polygon: line.polygon.map((point) => [...point]),
-      boundingBox: { ...line.boundingBox },
-      alternatives: [],
-      language: migratedUnknownLanguage(),
-      writingDirection: 'unknown',
-    }],
-  }));
-  const document = { id: documentId };
-  if (documentFingerprint !== undefined) document.fingerprint = { ...documentFingerprint };
+  validateMigrationIdentity(options, value.source.pageIndex);
+  const engine = migrateOcrEngineToCurrent(value.engine, { modelPack: options.modelPack });
+  const requestId = options.requestId ?? value.requestId;
+  const jobId = options.jobId ?? requestId;
+  const idIssues = [];
+  validateIdentifier(requestId, 'migration.requestId', idIssues);
+  validateIdentifier(jobId, 'migration.jobId', idIssues);
+  if (idIssues.length > 0) throw new OcrContractError(OCR_RESULT_CONTRACT, idIssues);
   return toValidatedOcrResultV2Json({
     contract: OCR_RESULT_CONTRACT,
     schemaVersion: OCR_CURRENT_SCHEMA_VERSION,
     jobId,
+    requestId,
     engine,
-    document,
+    document: {
+      id: options.documentId,
+      fingerprint: structuredClone(options.documentFingerprint),
+      revision: options.documentRevision,
+      generation: options.documentGeneration,
+      pageCount: options.documentPageCount,
+    },
     page: {
-      id: pageId,
+      id: options.pageId,
       index: value.source.pageIndex,
+      revision: options.pageRevision,
       status: 'completed',
-      raster: {
-        widthPx: value.source.widthPx,
-        heightPx: value.source.heightPx,
-        scale: value.source.scale,
-      },
+    },
+    recognitionConfigurationHash: structuredClone(options.recognitionConfigurationHash),
+    sourceRaster: {
+      id: options.sourceRasterId,
+      fingerprint: structuredClone(options.sourceRasterFingerprint),
+      coordinateSpace: OCR_SOURCE_RASTER_SPACE,
+      widthPx: value.source.widthPx,
+      heightPx: value.source.heightPx,
+      dpi: options.rasterDpi,
     },
     text: value.text,
-    blocks,
-    languages: [],
+    lines: value.lines.map(migratedLineFromV1),
+    detectedLanguages: [],
     warnings: value.warnings.map((message) => ({
       code: 'phase-a-warning',
       message,
       severity: 'warning',
+      entityIds: [],
     })),
     unsupportedContentReasons: [],
-    preprocessing: { status: 'unknown', operations: [] },
-    pageTransform,
+    preprocessing: {
+      status: 'unknown',
+      operations: [],
+      outputRaster: null,
+      transform: null,
+    },
     metrics: { ...value.metrics },
-    reviewCorrections: [],
-    visibleEditRegions: [],
   });
+}
+
+function legacyLines(value) {
+  const lines = [];
+  for (const block of value.blocks ?? []) {
+    for (const line of block?.lines ?? []) lines.push(line);
+  }
+  return lines;
+}
+
+function validateLegacyPaddleClaims(value) {
+  const issues = [];
+  if (value.engine?.engineId !== PADDLE_ENGINE_ID) return issues;
+  for (const [index, line] of legacyLines(value).entries()) {
+    if (line.words?.length > 0) issues.push(`legacy lines[${index}] contains word data the current Paddle adapter does not emit`);
+    if (line.alternatives?.length > 0) issues.push(`legacy lines[${index}] contains alternatives the current Paddle adapter does not emit`);
+    if (line.language?.source === 'engine') issues.push(`legacy lines[${index}] claims language detection the current Paddle adapter does not emit`);
+    if (line.writingDirection && line.writingDirection !== 'unknown') {
+      issues.push(`legacy lines[${index}] claims writing-direction detection the current Paddle adapter does not emit`);
+    }
+  }
+  if (value.languages?.some((language) => language?.source === 'engine')) {
+    issues.push('legacy result claims language detection the current Paddle adapter does not emit');
+  }
+  return issues;
+}
+
+function validateLegacyLanguage(value, path, issues) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set(['tag', 'source', 'confidence']), path, issues);
+  validateLanguageTag(value.tag, `${path}.tag`, issues);
+  if (!['engine', 'requested', 'review', 'unknown'].includes(value.source)) issues.push(`${path}.source is unsupported`);
+  if (value.confidence !== undefined) validateConfidence(value.confidence, `${path}.confidence`, issues);
+}
+
+function validateLegacyAlternatives(value, path, issues) {
+  if (!Array.isArray(value)) {
+    issues.push(`${path} must be an array`);
+    return;
+  }
+  if (value.length > OCR_CONTRACT_LIMITS.maxAlternativesPerItem) {
+    issues.push(`${path} exceeds ${OCR_CONTRACT_LIMITS.maxAlternativesPerItem} items`);
+  }
+  value.slice(0, OCR_CONTRACT_LIMITS.maxAlternativesPerItem).forEach((alternative, index) => {
+    const itemPath = `${path}[${index}]`;
+    if (!isObject(alternative)) {
+      issues.push(`${itemPath} must be an object`);
+      return;
+    }
+    requireExactKeys(alternative, new Set(['text', 'confidence']), itemPath, issues);
+    validateString(alternative.text, `${itemPath}.text`, issues);
+    validateConfidence(alternative.confidence, `${itemPath}.confidence`, issues);
+  });
+}
+
+function addLegacyEntityId(id, path, issues, state, kind) {
+  validateIdentifier(id, path, issues);
+  if (typeof id !== 'string') return;
+  if (state.entityIds.has(id)) issues.push(`${path} must be unique across lines and words`);
+  state.entityIds.add(id);
+  state[`${kind}Ids`].add(id);
+}
+
+function validateLegacyWord(value, path, raster, issues, state) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'id', 'text', 'confidence', 'polygon', 'boundingBox', 'alternatives', 'language',
+  ]), path, issues);
+  addLegacyEntityId(value.id, `${path}.id`, issues, state, 'word');
+  validateString(value.text, `${path}.text`, issues);
+  validateConfidence(value.confidence, `${path}.confidence`, issues);
+  if (value.polygon !== undefined) {
+    validatePolygon(value.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+  }
+  if (value.boundingBox !== undefined) {
+    validateBoundingBox(value.boundingBox, `${path}.boundingBox`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+  }
+  validateLegacyAlternatives(value.alternatives, `${path}.alternatives`, issues);
+  if (value.language !== undefined) validateLegacyLanguage(value.language, `${path}.language`, issues);
+  state.totalWords += 1;
+}
+
+function validateLegacyLine(value, path, raster, issues, state) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'id', 'text', 'confidence', 'polygon', 'boundingBox', 'words', 'alternatives',
+    'language', 'writingDirection',
+  ]), path, issues);
+  addLegacyEntityId(value.id, `${path}.id`, issues, state, 'line');
+  validateString(value.text, `${path}.text`, issues);
+  validateConfidence(value.confidence, `${path}.confidence`, issues);
+  validatePolygon(value.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+  if (value.boundingBox !== undefined) {
+    validateBoundingBox(value.boundingBox, `${path}.boundingBox`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+  }
+  validateLegacyAlternatives(value.alternatives, `${path}.alternatives`, issues);
+  validateLegacyLanguage(value.language, `${path}.language`, issues);
+  if (!['ltr', 'rtl', 'ttb', 'btt', 'unknown'].includes(value.writingDirection)) {
+    issues.push(`${path}.writingDirection is unsupported`);
+  }
+  if (value.words !== undefined) {
+    if (!Array.isArray(value.words)) {
+      issues.push(`${path}.words must be an array`);
+    } else {
+      value.words.forEach((word, index) => {
+        if (state.totalWords < OCR_CONTRACT_LIMITS.maxWordsPerPage) {
+          validateLegacyWord(word, `${path}.words[${index}]`, raster, issues, state);
+        }
+      });
+    }
+  }
+  state.totalLines += 1;
+}
+
+function validateLegacyBlock(value, index, raster, issues, state) {
+  const path = `legacyResult.blocks[${index}]`;
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set(['id', 'kind', 'text', 'confidence', 'polygon', 'lines']), path, issues);
+  validateIdentifier(value.id, `${path}.id`, issues);
+  if (typeof value.id === 'string' && state.blockIds.has(value.id)) issues.push(`${path}.id must be unique`);
+  if (typeof value.id === 'string') {
+    state.blockIds.add(value.id);
+    state.warningEntityIds.add(value.id);
+  }
+  if (!['text', 'unknown'].includes(value.kind)) issues.push(`${path}.kind is unsupported`);
+  validateString(value.text, `${path}.text`, issues);
+  validateConfidence(value.confidence, `${path}.confidence`, issues);
+  validatePolygon(value.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+  if (!Array.isArray(value.lines) || value.lines.length === 0) {
+    issues.push(`${path}.lines must be a non-empty array`);
+  } else {
+    value.lines.forEach((line, lineIndex) => {
+      if (state.totalLines < OCR_CONTRACT_LIMITS.maxLinesPerPage) {
+        validateLegacyLine(line, `${path}.lines[${lineIndex}]`, raster, issues, state);
+      }
+    });
+  }
+}
+
+function validateLegacyPageTransform(value, raster, issues) {
+  if (value === null) return;
+  if (!isObject(value)) {
+    issues.push('legacyResult.pageTransform must be null or an object');
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'sourceSpace', 'targetSpace', 'matrix', 'inverseMatrix', 'sourceSize', 'targetSize', 'rotationDegrees',
+  ]), 'legacyResult.pageTransform', issues);
+  if (value.sourceSpace !== 'ocr-image-pixels') issues.push('legacyResult.pageTransform.sourceSpace is unsupported');
+  if (value.targetSpace !== 'pdf-page-points') issues.push('legacyResult.pageTransform.targetSpace is unsupported');
+  validateAffineInverse(value.matrix, value.inverseMatrix, 'legacyResult.pageTransform', issues);
+  for (const [name, size] of [['sourceSize', value.sourceSize], ['targetSize', value.targetSize]]) {
+    if (!isObject(size)) {
+      issues.push(`legacyResult.pageTransform.${name} must be an object`);
+    } else {
+      requireExactKeys(size, new Set(['width', 'height']), `legacyResult.pageTransform.${name}`, issues);
+      validatePositiveNumber(size.width, `legacyResult.pageTransform.${name}.width`, issues);
+      validatePositiveNumber(size.height, `legacyResult.pageTransform.${name}.height`, issues);
+    }
+  }
+  if (isFiniteNumber(value.sourceSize?.width) && value.sourceSize.width !== raster?.widthPx) {
+    issues.push('legacyResult.pageTransform.sourceSize.width must match page.raster.widthPx');
+  }
+  if (isFiniteNumber(value.sourceSize?.height) && value.sourceSize.height !== raster?.heightPx) {
+    issues.push('legacyResult.pageTransform.sourceSize.height must match page.raster.heightPx');
+  }
+  if (![0, 90, 180, 270].includes(value.rotationDegrees)) {
+    issues.push('legacyResult.pageTransform.rotationDegrees is unsupported');
+  }
+}
+
+function validateLegacyMetrics(value, issues) {
+  if (!isObject(value)) {
+    issues.push('legacyResult.metrics must be an object');
+    return;
+  }
+  requireExactKeys(value, new Set(METRIC_KEYS), 'legacyResult.metrics', issues);
+  for (const key of METRIC_KEYS) validateNonNegativeNumber(value[key], `legacyResult.metrics.${key}`, issues);
+}
+
+function validateLegacyUnpublishedResult(value) {
+  const issues = [];
+  validateJsonValue(value, 'legacyResult', issues);
+  if (!validateSerializedSize(value, 'legacyResult', issues, OCR_CONTRACT_LIMITS.maxResultBytes)) return issues;
+  requireExactKeys(value, new Set([
+    'contract', 'schemaVersion', 'jobId', 'engine', 'document', 'page', 'text',
+    'blocks', 'languages', 'warnings', 'unsupportedContentReasons', 'preprocessing',
+    'pageTransform', 'metrics', 'reviewCorrections', 'visibleEditRegions',
+  ]), 'legacyResult', issues);
+  if (value.contract !== OCR_RESULT_CONTRACT) issues.push(`legacyResult.contract must be ${OCR_RESULT_CONTRACT}`);
+  if (value.schemaVersion !== 2) issues.push('legacyResult.schemaVersion must be 2');
+  validateIdentifier(value.jobId, 'legacyResult.jobId', issues);
+  issues.push(...validateLegacyUnpublishedEngineV2(value.engine, 'legacyResult.engine'));
+  if (!isObject(value.document)) {
+    issues.push('legacyResult.document must be an object');
+  } else {
+    requireExactKeys(value.document, new Set(['id', 'fingerprint']), 'legacyResult.document', issues);
+    validateIdentifier(value.document.id, 'legacyResult.document.id', issues);
+    if (value.document.fingerprint !== undefined) {
+      validateFingerprint(value.document.fingerprint, 'legacyResult.document.fingerprint', issues);
+    }
+  }
+  let raster = null;
+  if (!isObject(value.page)) {
+    issues.push('legacyResult.page must be an object');
+  } else {
+    requireExactKeys(value.page, new Set(['id', 'index', 'status', 'raster']), 'legacyResult.page', issues);
+    validateIdentifier(value.page.id, 'legacyResult.page.id', issues);
+    validateNonNegativeInteger(value.page.index, 'legacyResult.page.index', issues);
+    if (!OCR_RESULT_PAGE_STATUSES.includes(value.page.status)) issues.push('legacyResult.page.status is unsupported');
+    raster = value.page.raster;
+    if (!isObject(raster)) {
+      issues.push('legacyResult.page.raster must be an object');
+    } else {
+      requireExactKeys(raster, new Set(['widthPx', 'heightPx', 'scale']), 'legacyResult.page.raster', issues);
+      validatePositiveInteger(raster.widthPx, 'legacyResult.page.raster.widthPx', issues);
+      validatePositiveInteger(raster.heightPx, 'legacyResult.page.raster.heightPx', issues);
+      validatePositiveNumber(raster.scale, 'legacyResult.page.raster.scale', issues);
+    }
+  }
+  validateString(value.text, 'legacyResult.text', issues);
+  const state = {
+    blockIds: new Set(),
+    lineIds: new Set(),
+    wordIds: new Set(),
+    entityIds: new Set(),
+    warningEntityIds: new Set(),
+    totalLines: 0,
+    totalWords: 0,
+  };
+  if (!Array.isArray(value.blocks)) {
+    issues.push('legacyResult.blocks must be an array');
+  } else {
+    if (value.blocks.length > OCR_CONTRACT_LIMITS.maxBlocksPerPage) {
+      issues.push(`legacyResult.blocks exceeds ${OCR_CONTRACT_LIMITS.maxBlocksPerPage} items`);
+    }
+    value.blocks.slice(0, OCR_CONTRACT_LIMITS.maxBlocksPerPage)
+      .forEach((block, index) => validateLegacyBlock(block, index, raster, issues, state));
+  }
+  for (const id of state.entityIds) state.warningEntityIds.add(id);
+  const legacyLineCount = legacyLines(value).length;
+  const legacyWordCount = legacyLines(value)
+    .reduce((count, line) => count + (Array.isArray(line?.words) ? line.words.length : 0), 0);
+  if (legacyLineCount > OCR_CONTRACT_LIMITS.maxLinesPerPage) {
+    issues.push(`legacyResult exceeds ${OCR_CONTRACT_LIMITS.maxLinesPerPage} lines`);
+  }
+  if (legacyWordCount > OCR_CONTRACT_LIMITS.maxWordsPerPage) {
+    issues.push(`legacyResult exceeds ${OCR_CONTRACT_LIMITS.maxWordsPerPage} words`);
+  }
+  if (!Array.isArray(value.languages)) {
+    issues.push('legacyResult.languages must be an array');
+  } else {
+    const tags = new Set();
+    value.languages.forEach((language, index) => {
+      validateLegacyLanguage(language, `legacyResult.languages[${index}]`, issues);
+      if (tags.has(language?.tag)) issues.push(`legacyResult.languages[${index}].tag must be unique`);
+      tags.add(language?.tag);
+    });
+  }
+  if (!Array.isArray(value.warnings)) {
+    issues.push('legacyResult.warnings must be an array');
+  } else {
+    if (value.warnings.length > OCR_CONTRACT_LIMITS.maxWarningsPerPage) {
+      issues.push(`legacyResult.warnings exceeds ${OCR_CONTRACT_LIMITS.maxWarningsPerPage} items`);
+    }
+    value.warnings.slice(0, OCR_CONTRACT_LIMITS.maxWarningsPerPage).forEach((warning, index) => {
+      const path = `legacyResult.warnings[${index}]`;
+      if (!isObject(warning)) {
+        issues.push(`${path} must be an object`);
+        return;
+      }
+      requireExactKeys(warning, new Set(['code', 'message', 'severity', 'entityIds']), path, issues);
+      validateIdentifier(warning.code, `${path}.code`, issues);
+      validateString(warning.message, `${path}.message`, issues, { nonEmpty: true });
+      if (!['info', 'warning', 'error'].includes(warning.severity)) issues.push(`${path}.severity is unsupported`);
+      if (warning.entityIds !== undefined) {
+        if (!Array.isArray(warning.entityIds)) {
+          issues.push(`${path}.entityIds must be an array`);
+        } else {
+          const seen = new Set();
+          warning.entityIds.forEach((id, entityIndex) => {
+            validateIdentifier(id, `${path}.entityIds[${entityIndex}]`, issues);
+            if (seen.has(id)) issues.push(`${path}.entityIds[${entityIndex}] must be unique`);
+            if (!state.warningEntityIds.has(id)) issues.push(`${path}.entityIds[${entityIndex}] is unknown`);
+            seen.add(id);
+          });
+        }
+      }
+    });
+  }
+  if (!Array.isArray(value.unsupportedContentReasons)) {
+    issues.push('legacyResult.unsupportedContentReasons must be an array');
+  } else {
+    if (value.unsupportedContentReasons.length > OCR_CONTRACT_LIMITS.maxUnsupportedReasonsPerPage) {
+      issues.push(`legacyResult.unsupportedContentReasons exceeds ${OCR_CONTRACT_LIMITS.maxUnsupportedReasonsPerPage} items`);
+    }
+    value.unsupportedContentReasons.slice(0, OCR_CONTRACT_LIMITS.maxUnsupportedReasonsPerPage).forEach((reason, index) => {
+      const path = `legacyResult.unsupportedContentReasons[${index}]`;
+      if (!isObject(reason)) {
+        issues.push(`${path} must be an object`);
+        return;
+      }
+      requireExactKeys(reason, new Set(['code', 'message', 'polygon']), path, issues);
+      if (!OCR_UNSUPPORTED_CONTENT_CODES.includes(reason.code)) issues.push(`${path}.code is unsupported`);
+      validateString(reason.message, `${path}.message`, issues, { nonEmpty: true });
+      if (reason.polygon !== undefined) {
+        validatePolygon(reason.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+      }
+    });
+  }
+  if (!isObject(value.preprocessing)) {
+    issues.push('legacyResult.preprocessing must be an object');
+  } else {
+    requireExactKeys(value.preprocessing, new Set(['status', 'operations']), 'legacyResult.preprocessing', issues);
+    if (!['unknown', 'none', 'applied'].includes(value.preprocessing.status)) {
+      issues.push('legacyResult.preprocessing.status is unsupported');
+    }
+    if (!Array.isArray(value.preprocessing.operations)) {
+      issues.push('legacyResult.preprocessing.operations must be an array');
+    } else {
+      if (value.preprocessing.operations.length > OCR_CONTRACT_LIMITS.maxPreprocessingOperations) {
+        issues.push(`legacyResult.preprocessing.operations exceeds ${OCR_CONTRACT_LIMITS.maxPreprocessingOperations} items`);
+      }
+      value.preprocessing.operations.slice(0, OCR_CONTRACT_LIMITS.maxPreprocessingOperations).forEach((operation, index) => {
+        const path = `legacyResult.preprocessing.operations[${index}]`;
+        if (!isObject(operation)) {
+          issues.push(`${path} must be an object`);
+          return;
+        }
+        requireExactKeys(operation, new Set(['kind', 'applied', 'value', 'unit']), path, issues);
+        if (!['orientation', 'deskew', 'denoise', 'contrast', 'binarize', 'resize', 'crop'].includes(operation.kind)) {
+          issues.push(`${path}.kind is unsupported`);
+        }
+        if (typeof operation.applied !== 'boolean') issues.push(`${path}.applied must be boolean`);
+        if (operation.value !== undefined && typeof operation.value !== 'string' && !isFiniteNumber(operation.value)) {
+          issues.push(`${path}.value must be a finite number or string`);
+        }
+        if (operation.unit !== undefined) validateString(operation.unit, `${path}.unit`, issues, { nonEmpty: true, maxCodeUnits: 64 });
+      });
+      if (value.preprocessing.status !== 'applied' && value.preprocessing.operations.length > 0) {
+        issues.push('legacyResult.preprocessing.operations requires applied status');
+      }
+      if (value.preprocessing.status === 'applied' &&
+          !value.preprocessing.operations.some((operation) => operation?.applied === true)) {
+        issues.push('legacyResult.preprocessing applied status requires an applied operation');
+      }
+    }
+  }
+  validateLegacyPageTransform(value.pageTransform, raster, issues);
+  validateLegacyMetrics(value.metrics, issues);
+  if (!Array.isArray(value.reviewCorrections)) {
+    issues.push('legacyResult.reviewCorrections must be an array');
+  } else {
+    const ids = new Set();
+    value.reviewCorrections.forEach((correction, index) => {
+      const path = `legacyResult.reviewCorrections[${index}]`;
+      if (!isObject(correction)) {
+        issues.push(`${path} must be an object`);
+        return;
+      }
+      requireExactKeys(correction, new Set([
+        'id', 'target', 'originalText', 'correctedText', 'status', 'createdAt',
+      ]), path, issues);
+      validateIdentifier(correction.id, `${path}.id`, issues);
+      if (ids.has(correction.id)) issues.push(`${path}.id must be unique`);
+      ids.add(correction.id);
+      if (!isObject(correction.target)) {
+        issues.push(`${path}.target must be an object`);
+      } else {
+        requireExactKeys(correction.target, new Set(['kind', 'id']), `${path}.target`, issues);
+        if (!['line', 'word'].includes(correction.target.kind)) issues.push(`${path}.target.kind is unsupported`);
+        validateIdentifier(correction.target.id, `${path}.target.id`, issues);
+        const targetIds = correction.target.kind === 'word' ? state.wordIds : state.lineIds;
+        if (!targetIds.has(correction.target.id)) issues.push(`${path}.target.id does not identify a result entity`);
+      }
+      validateString(correction.originalText, `${path}.originalText`, issues);
+      validateString(correction.correctedText, `${path}.correctedText`, issues);
+      if (!['pending', 'accepted', 'rejected'].includes(correction.status)) issues.push(`${path}.status is unsupported`);
+      validateIsoTimestamp(correction.createdAt, `${path}.createdAt`, issues);
+    });
+  }
+  if (!Array.isArray(value.visibleEditRegions)) {
+    issues.push('legacyResult.visibleEditRegions must be an array');
+  } else {
+    const ids = new Set();
+    value.visibleEditRegions.forEach((region, index) => {
+      const path = `legacyResult.visibleEditRegions[${index}]`;
+      if (!isObject(region)) {
+        issues.push(`${path} must be an object`);
+        return;
+      }
+      requireExactKeys(region, new Set([
+        'id', 'lineIds', 'polygon', 'eligibility', 'background', 'status', 'unsupportedReasons',
+      ]), path, issues);
+      validateIdentifier(region.id, `${path}.id`, issues);
+      if (ids.has(region.id)) issues.push(`${path}.id must be unique`);
+      ids.add(region.id);
+      if (!Array.isArray(region.lineIds) || region.lineIds.length === 0) {
+        issues.push(`${path}.lineIds must be a non-empty array`);
+      } else {
+        const lineIds = new Set();
+        region.lineIds.forEach((id, lineIndex) => {
+          validateIdentifier(id, `${path}.lineIds[${lineIndex}]`, issues);
+          if (lineIds.has(id)) issues.push(`${path}.lineIds[${lineIndex}] must be unique`);
+          if (!state.lineIds.has(id)) issues.push(`${path}.lineIds[${lineIndex}] is unknown`);
+          lineIds.add(id);
+        });
+      }
+      validatePolygon(region.polygon, `${path}.polygon`, issues, { width: raster?.widthPx, height: raster?.heightPx });
+      if (!['unknown', 'eligible', 'ineligible'].includes(region.eligibility)) issues.push(`${path}.eligibility is unsupported`);
+      if (!['unknown', 'flat', 'complex'].includes(region.background)) issues.push(`${path}.background is unsupported`);
+      if (!['candidate', 'approved', 'rejected'].includes(region.status)) issues.push(`${path}.status is unsupported`);
+      if (!Array.isArray(region.unsupportedReasons)) {
+        issues.push(`${path}.unsupportedReasons must be an array`);
+      } else {
+        const reasons = new Set();
+        region.unsupportedReasons.forEach((reason, reasonIndex) => {
+          if (!OCR_UNSUPPORTED_CONTENT_CODES.includes(reason)) issues.push(`${path}.unsupportedReasons[${reasonIndex}] is unsupported`);
+          if (reasons.has(reason)) issues.push(`${path}.unsupportedReasons[${reasonIndex}] must be unique`);
+          reasons.add(reason);
+        });
+      }
+    });
+  }
+  if (['failed', 'cancelled'].includes(value.page?.status) && ((value.blocks?.length ?? 0) > 0 || value.text !== '')) {
+    issues.push(`legacyResult ${value.page.status} state must not contain recognition data`);
+  }
+  issues.push(...validateLegacyPaddleClaims(value));
+  return issues;
+}
+
+export function migrateUnpublishedOcrResultV2ToCurrent(value, options = {}) {
+  if (!isObject(value) || value.contract !== OCR_RESULT_CONTRACT || value.schemaVersion !== 2 ||
+      !Object.hasOwn(value, 'reviewCorrections')) {
+    throw new OcrContractError(OCR_RESULT_CONTRACT, ['value is not the unpublished mixed-state result v2 shape']);
+  }
+  const legacyIssues = validateLegacyUnpublishedResult(value);
+  if (legacyIssues.length > 0) throw new OcrContractError(OCR_RESULT_CONTRACT, legacyIssues);
+  validateMigrationIdentity({
+    ...options,
+    documentId: options.documentId ?? value.document?.id,
+  }, value.page?.index);
+  const requestId = options.requestId ?? value.jobId;
+  const jobId = options.jobId ?? value.jobId;
+  const engine = migrateOcrEngineToCurrent(value.engine, { modelPack: options.modelPack });
+  const sourceLines = legacyLines(value);
+  const result = toValidatedOcrResultV2Json({
+    contract: OCR_RESULT_CONTRACT,
+    schemaVersion: OCR_CURRENT_SCHEMA_VERSION,
+    jobId,
+    requestId,
+    engine,
+    document: {
+      id: options.documentId ?? value.document.id,
+      fingerprint: structuredClone(options.documentFingerprint),
+      revision: options.documentRevision,
+      generation: options.documentGeneration,
+      pageCount: options.documentPageCount,
+    },
+    page: {
+      id: options.pageId,
+      index: value.page.index,
+      revision: options.pageRevision,
+      status: value.page.status,
+    },
+    recognitionConfigurationHash: structuredClone(options.recognitionConfigurationHash),
+    sourceRaster: {
+      id: options.sourceRasterId,
+      fingerprint: structuredClone(options.sourceRasterFingerprint),
+      coordinateSpace: OCR_SOURCE_RASTER_SPACE,
+      widthPx: value.page.raster.widthPx,
+      heightPx: value.page.raster.heightPx,
+      dpi: options.rasterDpi,
+    },
+    text: value.text,
+    lines: sourceLines.map((line) => migratedLineFromV1({
+      id: line.id,
+      text: line.text,
+      confidence: line.confidence,
+      boundingBox: line.boundingBox ?? polygonBounds(line.polygon),
+      polygon: line.polygon,
+    })),
+    detectedLanguages: [],
+    warnings: value.warnings.map((warning) => ({
+      code: warning.code,
+      message: warning.message,
+      severity: warning.severity,
+      entityIds: structuredClone(warning.entityIds ?? []),
+    })),
+    unsupportedContentReasons: value.unsupportedContentReasons.map((reason, index) => ({
+      id: `legacy-reason-${index + 1}`,
+      code: reason.code,
+      message: reason.message,
+      ...(reason.polygon === undefined ? {} : {
+        polygon: {
+          coordinateSpace: OCR_SOURCE_RASTER_SPACE,
+          points: reason.polygon.map((point) => [...point]),
+        },
+      }),
+    })),
+    preprocessing: {
+      status: 'unknown',
+      operations: [],
+      outputRaster: null,
+      transform: null,
+    },
+    metrics: structuredClone(value.metrics),
+  });
+  const stateIssues = [];
+  validateIdentifier(options.stateId, 'migration.stateId', stateIssues);
+  validateNonNegativeInteger(options.stateRevision, 'migration.stateRevision', stateIssues);
+  validateString(options.stateUpdatedAt, 'migration.stateUpdatedAt', stateIssues, { nonEmpty: true, maxCodeUnits: 64 });
+  if (stateIssues.length > 0) throw new OcrContractError(OCR_DOCUMENT_STATE_CONTRACT, stateIssues);
+  const documentState = toValidatedOcrDocumentStateV1Json({
+    contract: OCR_DOCUMENT_STATE_CONTRACT,
+    schemaVersion: OCR_DOCUMENT_STATE_SCHEMA_VERSION,
+    stateId: options.stateId,
+    document: structuredClone(result.document),
+    stateRevision: options.stateRevision,
+    pages: [{
+      id: result.page.id,
+      index: result.page.index,
+      revision: result.page.revision,
+      resultRef: migratedResultRef(result),
+      applicationStatus: 'idle',
+      reviewStatus: 'unreviewed',
+      corrections: value.reviewCorrections.map((correction) => ({
+        ...structuredClone(correction),
+        updatedAt: correction.createdAt,
+      })),
+      estimatedBaselines: [],
+      visibleEditRegions: value.visibleEditRegions.map((region) => ({
+        ...structuredClone(region),
+        polygon: {
+          coordinateSpace: OCR_SOURCE_RASTER_SPACE,
+          points: region.polygon.map((point) => [...point]),
+        },
+      })),
+    }],
+    undo: {
+      generation: 0,
+      undoDepth: 0,
+      redoDepth: 0,
+      lastOperationId: null,
+    },
+    updatedAt: options.stateUpdatedAt,
+  });
+  let pageGeometry = null;
+  if (value.pageTransform !== null && options.pageGeometry === undefined) {
+    throw new OcrContractError(OCR_RESULT_CONTRACT, [
+      'legacy pageTransform is incomplete; a full pageGeometry contract with page boxes, UserUnit, rotations, and raster identity is required',
+    ]);
+  }
+  if (options.pageGeometry !== undefined && options.pageGeometry !== null) {
+    pageGeometry = toValidatedOcrPageGeometryV1Json(options.pageGeometry);
+    if (pageGeometry.document.id !== result.document.id || pageGeometry.page.id !== result.page.id ||
+        pageGeometry.sourceRaster.id !== result.sourceRaster.id) {
+      throw new OcrContractError(OCR_RESULT_CONTRACT, ['pageGeometry identity must match the migrated result']);
+    }
+  }
+  return { result: toValidatedOcrResultV2Json(result), documentState, pageGeometry };
+}
+
+function polygonBounds(points) {
+  const xs = points.map((point) => point[0]);
+  const ys = points.map((point) => point[1]);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }

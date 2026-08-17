@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/common.schema.json",
+  "title": "Open PDF Studio OCR shared schema definitions",
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
+    },
+    "semver": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "timestamp": {
+      "type": "string",
+      "maxLength": 64,
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "languageTag": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^(?:[A-Za-z]{2,8}|und)(?:-[A-Za-z0-9]{1,8})*$"
+    },
+    "script": {
+      "type": "string",
+      "pattern": "^[A-Z][a-z]{3}$"
+    },
+    "point": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "type": "number", "minimum": 0 }
+    },
+    "polygonPoints": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/point" },
+      "x-ocrPolygon": true
+    },
+    "polylinePoints": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/point" },
+      "x-ocrPolyline": true
+    },
+    "coordinatePolygon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinateSpace", "points"],
+      "properties": {
+        "coordinateSpace": { "enum": ["source-raster-pixels", "preprocessed-raster-pixels"] },
+        "points": { "$ref": "#/$defs/polygonPoints" }
+      }
+    },
+    "coordinateBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinateSpace", "x", "y", "width", "height"],
+      "properties": {
+        "coordinateSpace": { "enum": ["source-raster-pixels", "preprocessed-raster-pixels"] },
+        "x": { "type": "number", "minimum": 0 },
+        "y": { "type": "number", "minimum": 0 },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "engineBaseline": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "coordinateSpace", "provenance", "points"],
+          "properties": {
+            "status": { "const": "provided" },
+            "coordinateSpace": { "enum": ["source-raster-pixels", "preprocessed-raster-pixels"] },
+            "provenance": { "const": "engine" },
+            "points": { "$ref": "#/$defs/polylinePoints" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "coordinateSpace", "reason"],
+          "properties": {
+            "status": { "const": "unavailable" },
+            "coordinateSpace": { "enum": ["source-raster-pixels", "preprocessed-raster-pixels"] },
+            "reason": { "enum": ["engine-did-not-provide", "not-applicable"] }
+          }
+        }
+      ]
+    },
+    "estimatedBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "coordinateSpace", "provenance", "points"],
+      "properties": {
+        "status": { "const": "provided" },
+        "coordinateSpace": { "enum": ["source-raster-pixels", "preprocessed-raster-pixels"] },
+        "provenance": { "const": "estimated" },
+        "points": { "$ref": "#/$defs/polylinePoints" }
+      }
+    },
+    "affine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fromSpace", "toSpace", "matrix", "inverseMatrix"],
+      "properties": {
+        "fromSpace": { "enum": ["pdf-default-user-space", "source-raster-pixels", "preprocessed-raster-pixels"] },
+        "toSpace": { "enum": ["pdf-default-user-space", "source-raster-pixels", "preprocessed-raster-pixels"] },
+        "matrix": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": { "type": "number" }
+        },
+        "inverseMatrix": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": { "type": "number" }
+        }
+      },
+      "x-ocrAffine": true
+    },
+    "rasterIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fingerprint", "coordinateSpace", "widthPx", "heightPx", "dpi"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "coordinateSpace": { "enum": ["source-raster-pixels", "preprocessed-raster-pixels"] },
+        "widthPx": { "type": "integer", "minimum": 1 },
+        "heightPx": { "type": "integer", "minimum": 1 },
+        "dpi": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "modelPackIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "packId", "packVersion", "assets"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.model-pack" },
+        "schemaVersion": { "const": 1 },
+        "packId": { "$ref": "#/$defs/id" },
+        "packVersion": { "$ref": "#/$defs/semver" },
+        "assets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["detection", "recognition", "dictionary"],
+          "properties": {
+            "detection": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "recognition": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "dictionary": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      }
+    },
+    "documentIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fingerprint", "revision", "generation", "pageCount"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "generation": { "$ref": "#/$defs/id" },
+        "pageCount": { "type": "integer", "minimum": 1, "maximum": 100000 }
+      }
+    }
+  }
+}

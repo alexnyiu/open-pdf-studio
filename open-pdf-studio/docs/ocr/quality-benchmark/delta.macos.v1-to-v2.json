@@ -1,0 +1,1061 @@
+{
+  "contract": "open-pdf-studio.ocr.quality-delta",
+  "schemaVersion": 1,
+  "deltaId": "macos-ocr-quality-delta-6a584262e226e2b542abd17f",
+  "fromBaselineId": "macos-ocr-quality-357c6d6c514b5a54b91baa60",
+  "toBaselineId": "macos-ocr-quality-3a87f3480239ee8e6dba1b3f",
+  "aggregate": {
+    "characterErrorRate": {
+      "previous": 0.08312958435207823,
+      "current": 0.0004889975550122249,
+      "delta": -0.08264058679706601
+    },
+    "wordErrorRate": {
+      "previous": 0.1056701030927835,
+      "current": 0.005154639175257732,
+      "delta": -0.10051546391752578
+    },
+    "readingOrderError": {
+      "previous": 0,
+      "current": 0,
+      "delta": 0
+    },
+    "lineDetectionPrecision": {
+      "previous": 0.979381443298969,
+      "current": 1,
+      "delta": 0.020618556701030966
+    },
+    "lineDetectionRecall": {
+      "previous": 0.9134615384615384,
+      "current": 1,
+      "delta": 0.08653846153846156
+    },
+    "meanPolygonIntersectionOverUnion": {
+      "previous": 0.39683232954692443,
+      "current": 0.5116643322178491,
+      "delta": 0.1148320026709247
+    },
+    "meanPolygonCoverage": {
+      "previous": 0.4161471864455243,
+      "current": 0.6122941721439225,
+      "delta": 0.19614698569839817
+    },
+    "missedLineCount": {
+      "previous": 9,
+      "current": 0,
+      "delta": -9
+    },
+    "duplicateLineCount": {
+      "previous": 2,
+      "current": 0,
+      "delta": -2
+    },
+    "unsupportedPageAccuracy": {
+      "previous": 0,
+      "current": 1,
+      "delta": 1
+    },
+    "rejectedInputAccuracy": {
+      "previous": 1,
+      "current": 1,
+      "delta": 0
+    },
+    "peakResultBytes": {
+      "previous": 30168,
+      "current": 32650,
+      "delta": 2482
+    }
+  },
+  "categories": [
+    {
+      "category": "clean-300-dpi-latin",
+      "classification": "supported",
+      "previousStatus": "FAIL",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.5754549850262694,
+          "current": 0.6964114830518977,
+          "delta": 0.12095649802562836
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.5754549850262694,
+          "current": 0.845817039155408,
+          "delta": 0.2703620541291386
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "lower-resolution-text",
+      "classification": "supported",
+      "previousStatus": "PASS",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.5178473694061183,
+          "current": 0.7301628994710503,
+          "delta": 0.21231553006493198
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.5187786387480332,
+          "current": 0.8410295644133737,
+          "delta": 0.3222509256653405
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "low-contrast",
+      "classification": "supported",
+      "previousStatus": "PASS",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.606823743167881,
+          "current": 0.6304764212763112,
+          "delta": 0.023652678108430192
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.6130282679675025,
+          "current": 0.8350198685202783,
+          "delta": 0.22199160055277578
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "mild-skew",
+      "classification": "supported",
+      "previousStatus": "PASS",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.632094136285189,
+          "current": 0.7449379007166894,
+          "delta": 0.11284376443150046
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.8221320138191315,
+          "current": 0.9062779247283542,
+          "delta": 0.08414591090922274
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "page-rotation-90",
+      "classification": "unsupported",
+      "previousStatus": "UNSUPPORTED",
+      "currentStatus": "UNSUPPORTED",
+      "previousDisposition": "completed",
+      "currentDisposition": "unsupported",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 1,
+          "current": 0.5555555555555556,
+          "delta": -0.4444444444444444
+        },
+        "wordErrorRate": {
+          "previous": 1,
+          "current": 0.6,
+          "delta": -0.4
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0.6666666666666666,
+          "delta": 0.6666666666666666
+        },
+        "lineDetectionPrecision": {
+          "previous": 0,
+          "current": 1,
+          "delta": 1
+        },
+        "lineDetectionRecall": {
+          "previous": 0,
+          "current": 1,
+          "delta": 1
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0,
+          "current": 0.6465341640284582,
+          "delta": 0.6465341640284582
+        },
+        "meanPolygonCoverage": {
+          "previous": 0,
+          "current": 0.8876502837268664,
+          "delta": 0.8876502837268664
+        },
+        "missedLineCount": {
+          "previous": 3,
+          "current": 0,
+          "delta": -3
+        },
+        "duplicateLineCount": {
+          "previous": 1,
+          "current": 0,
+          "delta": -1
+        }
+      }
+    },
+    {
+      "category": "page-rotation-180",
+      "classification": "unsupported",
+      "previousStatus": "UNSUPPORTED",
+      "currentStatus": "UNSUPPORTED",
+      "previousDisposition": "completed",
+      "currentDisposition": "unsupported",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0.7534246575342466,
+          "current": 0.7534246575342466,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.7063564001912379,
+          "current": 0.6231898815619252,
+          "delta": -0.08316651862931268
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.7180290115743535,
+          "current": 0.8594077501907735,
+          "delta": 0.14137873861642003
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "page-rotation-270",
+      "classification": "unsupported",
+      "previousStatus": "UNSUPPORTED",
+      "currentStatus": "UNSUPPORTED",
+      "previousDisposition": "completed",
+      "currentDisposition": "unsupported",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 1,
+          "current": 0.7397260273972602,
+          "delta": -0.26027397260273977
+        },
+        "wordErrorRate": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0.3333333333333333,
+          "delta": 0.3333333333333333
+        },
+        "lineDetectionPrecision": {
+          "previous": 0,
+          "current": 1,
+          "delta": 1
+        },
+        "lineDetectionRecall": {
+          "previous": 0,
+          "current": 1,
+          "delta": 1
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0,
+          "current": 0.6609133714926779,
+          "delta": 0.6609133714926779
+        },
+        "meanPolygonCoverage": {
+          "previous": 0,
+          "current": 0.9084179156915347,
+          "delta": 0.9084179156915347
+        },
+        "missedLineCount": {
+          "previous": 3,
+          "current": 0,
+          "delta": -3
+        },
+        "duplicateLineCount": {
+          "previous": 1,
+          "current": 0,
+          "delta": -1
+        }
+      }
+    },
+    {
+      "category": "mixed-image-native-text",
+      "classification": "supported",
+      "previousStatus": "PASS",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.5513543778679653,
+          "current": 0.7094424394269749,
+          "delta": 0.15808806155900967
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.5513543778679653,
+          "current": 0.8370637287936186,
+          "delta": 0.2857093509256533
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "multiple-columns",
+      "classification": "supported",
+      "previousStatus": "FAIL",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0.40625,
+          "current": 0,
+          "delta": -0.40625
+        },
+        "wordErrorRate": {
+          "previous": 0.6666666666666666,
+          "current": 0,
+          "delta": -0.6666666666666666
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 0.5,
+          "current": 1,
+          "delta": 0.5
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.40355846658602385,
+          "current": 0.7256245463581612,
+          "delta": 0.32206607977213736
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.7965558090810031,
+          "current": 0.8829948540283764,
+          "delta": 0.08643904494737331
+        },
+        "missedLineCount": {
+          "previous": 3,
+          "current": 0,
+          "delta": -3
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "forms-and-numeric-content",
+      "classification": "supported",
+      "previousStatus": "FAIL",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.48326992087218806,
+          "current": 0.6611526493681887,
+          "delta": 0.17788272849600067
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.48326992087218806,
+          "current": 0.7507362747524196,
+          "delta": 0.2674663538802315
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "punctuation-and-supported-unicode",
+      "classification": "supported",
+      "previousStatus": "FAIL",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0.03333333333333333,
+          "current": 0.011111111111111112,
+          "delta": -0.02222222222222222
+        },
+        "wordErrorRate": {
+          "previous": 0.23529411764705882,
+          "current": 0.11764705882352941,
+          "delta": -0.11764705882352941
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.5260284868727598,
+          "current": 0.7251303200554126,
+          "delta": 0.19910183318265273
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.5260284868727598,
+          "current": 0.8247639112743967,
+          "delta": 0.2987354244016369
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "dense-more-than-64-lines",
+      "classification": "supported",
+      "previousStatus": "FAIL",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0.08577878103837472,
+          "current": 0,
+          "delta": -0.08577878103837472
+        },
+        "wordErrorRate": {
+          "previous": 0.08571428571428572,
+          "current": 0,
+          "delta": -0.08571428571428572
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 0.9142857142857143,
+          "current": 1,
+          "delta": 0.08571428571428574
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.329152000697176,
+          "current": 0.41931817243413905,
+          "delta": 0.09016617173696306
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.33004672833333343,
+          "current": 0.5024761883174601,
+          "delta": 0.17242945998412668
+        },
+        "missedLineCount": {
+          "previous": 6,
+          "current": 0,
+          "delta": -6
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "blank-page",
+      "classification": "supported",
+      "previousStatus": "PASS",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonCoverage": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "no-text-image",
+      "classification": "supported",
+      "previousStatus": "FAIL",
+      "currentStatus": "PASS",
+      "previousDisposition": "completed",
+      "currentDisposition": "completed",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 1,
+          "current": 0,
+          "delta": -1
+        },
+        "wordErrorRate": {
+          "previous": 1,
+          "current": 0,
+          "delta": -1
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 0,
+          "current": 1,
+          "delta": 1
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0,
+          "current": 1,
+          "delta": 1
+        },
+        "meanPolygonCoverage": {
+          "previous": 0,
+          "current": 1,
+          "delta": 1
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 2,
+          "current": 0,
+          "delta": -2
+        }
+      }
+    },
+    {
+      "category": "table-layout",
+      "classification": "unsupported",
+      "previousStatus": "UNSUPPORTED",
+      "currentStatus": "UNSUPPORTED",
+      "previousDisposition": "completed",
+      "currentDisposition": "unsupported",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0.12903225806451613,
+          "current": 0.5483870967741935,
+          "delta": 0.4193548387096774
+        },
+        "wordErrorRate": {
+          "previous": 1,
+          "current": 0.6666666666666666,
+          "delta": -0.33333333333333337
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0.2,
+          "delta": 0.2
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 0.3333333333333333,
+          "current": 1,
+          "delta": 0.6666666666666667
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.19737543649836026,
+          "current": 0.4527125026927279,
+          "delta": 0.25533706619436763
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.9436491228070177,
+          "current": 0.9428304867519444,
+          "delta": -0.000818636055073374
+        },
+        "missedLineCount": {
+          "previous": 4,
+          "current": 0,
+          "delta": -4
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "unsupported-script",
+      "classification": "unsupported",
+      "previousStatus": "UNSUPPORTED",
+      "currentStatus": "UNSUPPORTED",
+      "previousDisposition": "completed",
+      "currentDisposition": "unsupported",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0.9259259259259259,
+          "current": 0.9259259259259259,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0.8333333333333334,
+          "current": 0.8333333333333334,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 0.3333333333333333,
+          "delta": -0.6666666666666667
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 0.6153301185811716,
+          "current": 0.6329799637252205,
+          "delta": 0.01764984514404888
+        },
+        "meanPolygonCoverage": {
+          "previous": 0.6153301185811716,
+          "current": 0.8851987577535262,
+          "delta": 0.2698686391723546
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 2,
+          "delta": 2
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "malformed-input",
+      "classification": "rejected",
+      "previousStatus": "PASS",
+      "currentStatus": "PASS",
+      "previousDisposition": "rejected",
+      "currentDisposition": "rejected",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonCoverage": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    },
+    {
+      "category": "resource-limit-enforcement",
+      "classification": "rejected",
+      "previousStatus": "PASS",
+      "currentStatus": "PASS",
+      "previousDisposition": "rejected",
+      "currentDisposition": "rejected",
+      "metrics": {
+        "characterErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "wordErrorRate": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "readingOrderError": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "lineDetectionPrecision": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "lineDetectionRecall": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonIntersectionOverUnion": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "meanPolygonCoverage": {
+          "previous": 1,
+          "current": 1,
+          "delta": 0
+        },
+        "missedLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        },
+        "duplicateLineCount": {
+          "previous": 0,
+          "current": 0,
+          "delta": 0
+        }
+      }
+    }
+  ]
+}

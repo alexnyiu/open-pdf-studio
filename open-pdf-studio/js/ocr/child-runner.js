@@ -1,7 +1,14 @@
-import { OcrCancelledError } from './engine.js';
-import { runOcrWorkerJob } from './spike.js';
+import {
+  OCR_NATIVE_JOB_CONTRACT,
+  OCR_NATIVE_LIMITS,
+  OCR_NATIVE_RESULT_CONTRACT,
+  OCR_NATIVE_SCHEMA_VERSION,
+  assertNativeOcrJobEnvelopeV1,
+  assertNativeOcrResultEnvelopeV1,
+} from './contracts/native-job.v1.js';
+import { runOcrJob } from './run-job.js';
 
-const JOB_MAGIC = new Uint8Array([79, 80, 83, 79, 67, 82, 49, 0]); // OPSOCR1\0
+const JOB_MAGIC = new Uint8Array([79, 80, 83, 79, 67, 82, 50, 0]); // OPSOCR2\0
 
 function asBytes(value) {
   if (value instanceof Uint8Array) return value;
@@ -12,7 +19,7 @@ function asBytes(value) {
   return new Uint8Array(value ?? []);
 }
 
-export function decodeOcrChildJob(value) {
+export function decodeNativeOcrChildJob(value) {
   let bytes = asBytes(value);
   if (bytes.byteLength < 12) throw new Error('OCR child job header is truncated');
   for (let index = 0; index < JOB_MAGIC.length; index += 1) {
@@ -20,22 +27,33 @@ export function decodeOcrChildJob(value) {
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const metadataLength = view.getUint32(8, true);
+  if (metadataLength === 0 || metadataLength > OCR_NATIVE_LIMITS.maxMetadataBytes) {
+    throw new Error('OCR child metadata exceeds its byte limit');
+  }
   const rgbaOffset = 12 + metadataLength;
   if (rgbaOffset > bytes.byteLength) throw new Error('OCR child metadata length is invalid');
   const metadata = JSON.parse(new TextDecoder().decode(bytes.subarray(12, rgbaOffset)));
-  if (metadata.schemaVersion !== 1 || !Number.isInteger(metadata.width) ||
-      !Number.isInteger(metadata.height) || metadata.width <= 0 || metadata.height <= 0) {
-    throw new Error('OCR child metadata v1 is invalid');
-  }
-  const expected = metadata.width * metadata.height * 4;
-  if (!Number.isSafeInteger(expected) || bytes.byteLength - rgbaOffset !== expected) {
+  assertNativeOcrJobEnvelopeV1(metadata, {
+    serializedMetadataBytes: metadataLength,
+    totalEnvelopeBytes: bytes.byteLength,
+  });
+  const expected = metadata.raster.byteLength;
+  if (bytes.byteLength - rgbaOffset !== expected) {
     throw new Error('OCR child RGBA byte length is invalid');
   }
   // Copy just the RGBA tail so the metadata envelope can be collected before
   // inference. OcrEngine transfers this exact full buffer into the Worker.
   const rgba = bytes.slice(rgbaOffset);
   bytes = null;
-  return { metadata, image: { width: metadata.width, height: metadata.height, rgba } };
+  return {
+    metadata,
+    job: metadata.job,
+    image: {
+      width: metadata.raster.widthPx,
+      height: metadata.raster.heightPx,
+      rgba,
+    },
+  };
 }
 
 function resourceSummary(lifecycle) {
@@ -82,64 +100,100 @@ function resourceSummary(lifecycle) {
 }
 
 /**
- * Run one isolated Phase A job when this app instance was launched with the
+ * Run one production job when this app instance was launched with the
  * internal child flag. Normal app starts receive an empty payload and return
  * immediately without importing models or creating an OCR Worker.
  */
-export async function runOcrPhaseAChildIfRequested() {
+export async function runOcrChildIfRequested() {
   const invoke = globalThis.__TAURI__?.core?.invoke;
   if (typeof invoke !== 'function') return false;
-  let raw = await invoke('ocr_phase_a_child_take_job');
+  let raw;
+  try {
+    raw = await invoke('ocr_child_take_job');
+  } catch (error) {
+    await invoke('ocr_child_abort', {
+      code: 'OCR_CHILD_JOB_PROTOCOL',
+      message: `OCR child job validation failed: ${error?.message ?? error}`,
+    });
+    return true;
+  }
   if (asBytes(raw).byteLength === 0) return false;
 
   const lifecycle = [{ stage: 'ocr-child-frontend-started', atEpochMs: Date.now() }];
-  let response;
+  let metadata = null;
+  let nativeResult;
   try {
-    const { metadata, image } = decodeOcrChildJob(raw);
+    const decoded = decodeNativeOcrChildJob(raw);
+    metadata = decoded.metadata;
+    const { image, job } = decoded;
     raw = null;
     lifecycle.push({
       stage: 'ocr-child-job-decoded',
       atEpochMs: Date.now(),
       rgbaBytes: image.rgba.byteLength,
-      jobId: metadata.jobId,
+      jobId: job.jobId,
     });
     lifecycle.push({
       stage: 'ocr-child-job-envelope-dropped',
       atEpochMs: Date.now(),
       liveJobEnvelopeReferences: 0,
     });
+    let result = null;
+    let failure = null;
     try {
-      const result = await runOcrWorkerJob({
+      result = await runOcrJob({
         image,
-        source: {
-          kind: 'pdf-page',
-          path: metadata.path,
-          pageIndex: metadata.pageIndex,
-          scale: metadata.scale,
-        },
-        rasterMs: metadata.rasterMs,
-        cancelAfterMs: metadata.cancelAfterMs,
+        job,
+        rasterMs: metadata.rasterMs ?? 0,
         onLifecycle: (checkpoint) => lifecycle.push(checkpoint),
       });
-      response = { ok: true, cancelled: false, result, lifecycle };
     } catch (error) {
-      if (error instanceof OcrCancelledError || error?.code === 'OCR_CANCELLED') {
-        response = {
-          ok: true,
-          cancelled: true,
-          cancellation: { method: 'worker.terminate', message: error.message },
-          lifecycle,
-        };
-      } else {
-        response = { ok: false, error: error?.message ?? String(error), lifecycle };
-      }
+      failure = {
+        code: typeof error?.code === 'string' ? error.code : 'OCR_CHILD_INFERENCE_FAILED',
+        stage: 'recognizing',
+        message: typeof error?.message === 'string' && error.message.length <= 4096
+          ? error.message
+          : 'OCR child inference failed',
+        retryable: false,
+      };
     }
+    const resources = resourceSummary(lifecycle);
+    nativeResult = {
+      contract: OCR_NATIVE_RESULT_CONTRACT,
+      schemaVersion: OCR_NATIVE_SCHEMA_VERSION,
+      status: failure ? 'failed' : 'completed',
+      jobId: job.jobId,
+      requestId: job.requestId,
+      documentId: job.document.id,
+      documentRevision: job.document.revision,
+      documentGeneration: job.document.generation,
+      pageId: job.page.id,
+      pageIndex: job.page.index,
+      pageRevision: job.page.revision,
+      engineId: job.engineId,
+      modelPack: structuredClone(job.modelPack),
+      recognitionConfigurationHash: structuredClone(job.recognitionConfigurationHash),
+      sourceRaster: structuredClone(job.page.sourceRaster),
+      resultFileId: metadata.resultFile.id,
+      result,
+      failure,
+      lifecycle,
+      resources,
+    };
+    assertNativeOcrResultEnvelopeV1(nativeResult, {
+      job,
+      resultFileId: metadata.resultFile.id,
+    });
   } catch (error) {
-    response = { ok: false, error: `OCR child decode: ${error?.message ?? error}`, lifecycle };
+    raw = null;
+    await invoke('ocr_child_abort', {
+      code: metadata ? 'OCR_CHILD_RESULT_PROTOCOL' : 'OCR_CHILD_JOB_PROTOCOL',
+      message: `OCR child protocol validation failed: ${error?.message ?? error}`,
+    });
+    return true;
   }
   raw = null;
-  response.resources = resourceSummary(lifecycle);
   lifecycle.push({ stage: 'ocr-child-result-written', atEpochMs: Date.now() });
-  await invoke('ocr_phase_a_child_complete', { payload: JSON.stringify(response) });
+  await invoke('ocr_child_complete', { payload: JSON.stringify(nativeResult) });
   return true;
 }

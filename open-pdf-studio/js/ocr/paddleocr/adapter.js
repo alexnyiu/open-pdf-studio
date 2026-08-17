@@ -1,22 +1,32 @@
 import {
+  OCR_CURRENT_SCHEMA_VERSION,
   OCR_ENGINE_CONTRACT,
   OCR_RESULT_CONTRACT,
-  OCR_SCHEMA_VERSION,
-  assertOcrEngineV1,
-  toValidatedOcrResultJson,
-} from '../contracts/v1.js';
-import { assertCompatibleOcrModelPack } from '../contracts/model-pack.v1.js';
+  assertOcrEngineV2,
+  toValidatedOcrResultV2Json,
+} from '../contracts/v2.js';
+import { assertOcrJobV1 } from '../contracts/job.v1.js';
+import {
+  assertCompatibleOcrModelPack,
+  modelPackIdentity,
+} from '../contracts/model-pack.v1.js';
+import { assertOcrResultMatchesJob } from '../contracts/worker-message.v1.js';
+import {
+  PADDLE_DB_POSTPROCESS,
+  classifyUnsupportedLayout,
+  derivePostprocessBudget,
+  detectionMapToQuadrilaterals,
+  orderRecognizedLines,
+} from './postprocess.js';
 
 export const PADDLE_OCR_ADAPTER_VERSION = '0.1.0';
 export const PADDLE_OCR_RUNTIME_VERSION = '1.27.0';
 
-const DETECTION_THRESHOLD = 0.2;
-const DETECTION_BOX_THRESHOLD = 0.45;
 const DETECTION_MAX_SIDE = 960;
 const RECOGNITION_HEIGHT = 48;
 const RECOGNITION_BASE_WIDTH = 320;
 const RECOGNITION_MAX_WIDTH = 1280;
-const MIN_COMPONENT_PIXELS = 6;
+const RECOGNITION_BATCH_LINES = 32;
 
 function now() {
   return globalThis.performance?.now?.() ?? Date.now();
@@ -28,6 +38,15 @@ function roundMs(value) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function sameModelPackIdentity(left, right) {
+  return left?.contract === right?.contract &&
+    left?.schemaVersion === right?.schemaVersion &&
+    left?.packId === right?.packId &&
+    left?.packVersion === right?.packVersion &&
+    ['detection', 'recognition', 'dictionary']
+      .every((name) => left?.assets?.[name] === right?.assets?.[name]);
 }
 
 function assertImage(image) {
@@ -102,133 +121,12 @@ export function prepareDetectionTensor(ort, image, maxSide = DETECTION_MAX_SIDE)
   };
 }
 
-function connectedComponents(scores, width, height, threshold) {
-  const visited = new Uint8Array(width * height);
-  const queue = new Int32Array(width * height);
-  const components = [];
-
-  for (let start = 0; start < scores.length; start += 1) {
-    if (visited[start] || scores[start] <= threshold) continue;
-    let head = 0;
-    let tail = 0;
-    queue[tail++] = start;
-    visited[start] = 1;
-    let count = 0;
-    let scoreSum = 0;
-    let minX = width;
-    let minY = height;
-    let maxX = 0;
-    let maxY = 0;
-
-    while (head < tail) {
-      const index = queue[head++];
-      const y = Math.floor(index / width);
-      const x = index - y * width;
-      count += 1;
-      scoreSum += scores[index];
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-
-      const y0 = Math.max(0, y - 1);
-      const y1 = Math.min(height - 1, y + 1);
-      const x0 = Math.max(0, x - 1);
-      const x1 = Math.min(width - 1, x + 1);
-      for (let ny = y0; ny <= y1; ny += 1) {
-        for (let nx = x0; nx <= x1; nx += 1) {
-          const neighbour = ny * width + nx;
-          if (!visited[neighbour] && scores[neighbour] > threshold) {
-            visited[neighbour] = 1;
-            queue[tail++] = neighbour;
-          }
-        }
-      }
-    }
-
-    if (count >= MIN_COMPONENT_PIXELS) {
-      components.push({ minX, minY, maxX, maxY, count, score: scoreSum / count });
-    }
-  }
-  return components;
-}
-
-function verticalOverlap(a, b) {
-  return Math.max(0, Math.min(a.maxY, b.maxY) - Math.max(a.minY, b.minY) + 1);
-}
-
-function mergeComponentsIntoLines(components) {
-  const sorted = [...components].sort((a, b) => {
-    const ay = (a.minY + a.maxY) / 2;
-    const by = (b.minY + b.maxY) / 2;
-    return ay - by || a.minX - b.minX;
-  });
-  const lines = [];
-
-  for (const component of sorted) {
-    const componentHeight = component.maxY - component.minY + 1;
-    const componentCenter = (component.minY + component.maxY) / 2;
-    let best = null;
-    let bestDistance = Number.POSITIVE_INFINITY;
-    for (const line of lines) {
-      const lineHeight = line.maxY - line.minY + 1;
-      const overlap = verticalOverlap(line, component);
-      const overlapRatio = overlap / Math.min(lineHeight, componentHeight);
-      const centerDistance = Math.abs((line.minY + line.maxY) / 2 - componentCenter);
-      if ((overlapRatio >= 0.25 || centerDistance <= Math.max(lineHeight, componentHeight) * 0.55) &&
-          centerDistance < bestDistance) {
-        best = line;
-        bestDistance = centerDistance;
-      }
-    }
-    if (!best) {
-      lines.push({ ...component, weightedScore: component.score * component.count });
-      continue;
-    }
-    best.minX = Math.min(best.minX, component.minX);
-    best.minY = Math.min(best.minY, component.minY);
-    best.maxX = Math.max(best.maxX, component.maxX);
-    best.maxY = Math.max(best.maxY, component.maxY);
-    best.count += component.count;
-    best.weightedScore += component.score * component.count;
-    best.score = best.weightedScore / best.count;
-  }
-
-  return lines.sort((a, b) => a.minY - b.minY || a.minX - b.minX);
+export function detectionMapToLinePolygons(output, sourceWidth, sourceHeight, options = {}) {
+  return detectionMapToQuadrilaterals(output, sourceWidth, sourceHeight, options);
 }
 
 export function detectionMapToLineBoxes(output, sourceWidth, sourceHeight, options = {}) {
-  const dims = output?.dims;
-  const scores = output?.data;
-  if (!Array.isArray(dims) || dims.length !== 4 || !(scores instanceof Float32Array)) {
-    throw new TypeError('PaddleOCR detector returned an unexpected tensor');
-  }
-  const mapHeight = Number(dims[2]);
-  const mapWidth = Number(dims[3]);
-  if (mapWidth <= 0 || mapHeight <= 0 || scores.length !== mapWidth * mapHeight) {
-    throw new RangeError('PaddleOCR detector tensor dimensions are invalid');
-  }
-
-  const threshold = options.threshold ?? DETECTION_THRESHOLD;
-  const boxThreshold = options.boxThreshold ?? DETECTION_BOX_THRESHOLD;
-  const components = connectedComponents(scores, mapWidth, mapHeight, threshold)
-    .filter((component) => component.score >= boxThreshold);
-  const merged = mergeComponentsIntoLines(components);
-  const maxLines = options.maxLines ?? 64;
-
-  return merged.slice(0, maxLines).map((line) => {
-    let x = line.minX / mapWidth * sourceWidth;
-    let y = line.minY / mapHeight * sourceHeight;
-    let width = (line.maxX - line.minX + 1) / mapWidth * sourceWidth;
-    let height = (line.maxY - line.minY + 1) / mapHeight * sourceHeight;
-    const padX = Math.max(2, height * 0.35);
-    const padY = Math.max(2, height * 0.45);
-    x = clamp(x - padX, 0, sourceWidth - 1);
-    y = clamp(y - padY, 0, sourceHeight - 1);
-    width = clamp(width + padX * 2, 1, sourceWidth - x);
-    height = clamp(height + padY * 2, 1, sourceHeight - y);
-    return { x, y, width, height, detectionConfidence: clamp(line.score, 0, 1) };
-  });
+  return detectionMapToLinePolygons(output, sourceWidth, sourceHeight, options);
 }
 
 export function prepareRecognitionTensor(ort, image, boxes) {
@@ -249,11 +147,20 @@ export function prepareRecognitionTensor(ort, image, boxes) {
   const rgbaChannelsForBgr = [2, 1, 0];
 
   boxes.forEach((box, batchIndex) => {
+    const recognitionPolygon = box.recognitionPolygon ?? box.polygon;
+    if (!Array.isArray(recognitionPolygon) || recognitionPolygon.length !== 4) {
+      throw new TypeError('Recognition input requires a detector quadrilateral');
+    }
+    const [topLeft, topRight, bottomRight, bottomLeft] = recognitionPolygon;
     const targetWidth = widths[batchIndex];
     for (let y = 0; y < RECOGNITION_HEIGHT; y += 1) {
-      const sourceY = box.y + (y + 0.5) * box.height / RECOGNITION_HEIGHT - 0.5;
+      const vertical = (y + 0.5) / RECOGNITION_HEIGHT;
       for (let x = 0; x < targetWidth; x += 1) {
-        const sourceX = box.x + (x + 0.5) * box.width / targetWidth - 0.5;
+        const horizontal = (x + 0.5) / targetWidth;
+        const sourceX = (1 - vertical) * ((1 - horizontal) * topLeft[0] + horizontal * topRight[0]) +
+          vertical * ((1 - horizontal) * bottomLeft[0] + horizontal * bottomRight[0]);
+        const sourceY = (1 - vertical) * ((1 - horizontal) * topLeft[1] + horizontal * topRight[1]) +
+          vertical * ((1 - horizontal) * bottomLeft[1] + horizontal * bottomRight[1]);
         const pixel = y * batchWidth + x;
         for (let channel = 0; channel < 3; channel += 1) {
           const value = sampleBilinear(
@@ -400,10 +307,10 @@ async function loadAndVerifyAsset(baseUrl, record, loadBinary) {
   return buffer;
 }
 
-export function createPaddleOcrEngineDescriptor() {
-  return assertOcrEngineV1({
+export function createPaddleOcrEngineDescriptor(manifest) {
+  return assertOcrEngineV2({
     contract: OCR_ENGINE_CONTRACT,
-    schemaVersion: OCR_SCHEMA_VERSION,
+    schemaVersion: OCR_CURRENT_SCHEMA_VERSION,
     engineId: 'paddleocr-pp-ocrv6-small-onnx-wasm',
     adapterVersion: PADDLE_OCR_ADAPTER_VERSION,
     provider: 'PaddleOCR',
@@ -413,6 +320,7 @@ export function createPaddleOcrEngineDescriptor() {
       detection: 'PP-OCRv6_small_det_onnx',
       recognition: 'PP-OCRv6_small_rec_onnx',
     },
+    modelPack: modelPackIdentity(manifest),
     runtime: {
       name: 'onnxruntime-web',
       version: PADDLE_OCR_RUNTIME_VERSION,
@@ -422,8 +330,16 @@ export function createPaddleOcrEngineDescriptor() {
     capabilities: {
       textDetection: true,
       textRecognition: true,
-      wordBoxes: false,
-      pdfWriting: false,
+      lineResults: true,
+      linePolygons: true,
+      lineBaselines: false,
+      wordResults: false,
+      wordPolygons: false,
+      alternatives: false,
+      languageDetection: false,
+      writingDirectionDetection: false,
+      preprocessingMetadata: false,
+      nativePdfWriting: false,
     },
   });
 }
@@ -431,7 +347,7 @@ export function createPaddleOcrEngineDescriptor() {
 export class PaddleOcrV6SmallAdapter {
   constructor({ ort, manifest, assetBaseUrl, loadBinary = defaultLoadBinary, onLifecycle = null }) {
     if (!ort?.InferenceSession || !ort?.Tensor) throw new TypeError('ONNX Runtime Web is required');
-    const engine = createPaddleOcrEngineDescriptor();
+    const engine = createPaddleOcrEngineDescriptor(manifest);
     assertCompatibleOcrModelPack(manifest, engine, { platform: 'macos' });
     this.ort = ort;
     this.manifest = manifest;
@@ -509,93 +425,164 @@ export class PaddleOcrV6SmallAdapter {
     return this.modelStartupMs;
   }
 
-  async recognize({ requestId, image, source, workerStartupMs = 0, rasterMs = 0 }) {
+  async recognize({ job, image, workerStartupMs = 0, rasterMs = 0 }) {
+    assertOcrJobV1(job);
     assertImage(image);
-    const modelStartupMs = await this.initialize();
+    if (job.engineId !== this.engine.engineId) {
+      throw new TypeError('OCR job engineId does not match the Paddle adapter');
+    }
+    if (!sameModelPackIdentity(job.modelPack, this.engine.modelPack)) {
+      throw new TypeError('OCR job model-pack identity does not match the Paddle adapter');
+    }
+    if (job.page.sourceRaster.widthPx !== image.width ||
+        job.page.sourceRaster.heightPx !== image.height) {
+      throw new RangeError('OCR image dimensions do not match the job source raster');
+    }
+    const options = job.recognitionOptions;
+    if (options.languagePolicy.mode !== 'automatic' ||
+        options.languagePolicy.languages.length > 0 || options.languagePolicy.scripts.length > 0) {
+      throw new TypeError('The current Paddle model pack does not accept language or script selectors');
+    }
+    if (options.includeWords) throw new TypeError('The current Paddle adapter does not provide word results');
+    if (options.orientation.mode !== 'none' || options.orientation.degrees !== null) {
+      throw new TypeError('The current Paddle adapter does not provide orientation handling');
+    }
+    if (options.deskew) throw new TypeError('The current Paddle adapter does not provide deskewing');
+    if (options.preprocessing.mode !== 'none' || options.preprocessing.operations.length > 0) {
+      throw new TypeError('The current Paddle adapter does not provide preprocessing');
+    }
     const totalStarted = now();
+    const modelStartupMs = await this.initialize();
 
     let detectionInput = null;
     let detectionOutputs = null;
-    let recognitionInput = null;
-    let recognitionOutputs = null;
     let result;
     try {
       const detectionStarted = now();
       detectionInput = prepareDetectionTensor(this.ort, image);
       detectionOutputs = await this.detector.run({ x: detectionInput.tensor });
       const detectionOutput = detectionOutputs[this.detector.outputNames[0]];
-      const boxes = detectionMapToLineBoxes(detectionOutput, image.width, image.height);
+      const postprocessBudget = derivePostprocessBudget({
+        sourceWidth: image.width,
+        sourceHeight: image.height,
+      });
+      const boxes = detectionMapToLinePolygons(
+        detectionOutput,
+        image.width,
+        image.height,
+        { budget: postprocessBudget },
+      );
       const detectionMs = roundMs(now() - detectionStarted);
 
       const recognitionStarted = now();
-      recognitionInput = prepareRecognitionTensor(this.ort, image, boxes);
-      let decoded = [];
-      if (recognitionInput) {
-        recognitionOutputs = await this.recognizer.run({ x: recognitionInput.tensor });
-        decoded = decodeCtc(recognitionOutputs[this.recognizer.outputNames[0]], this.characters);
+      const decoded = [];
+      for (let offset = 0; offset < boxes.length; offset += RECOGNITION_BATCH_LINES) {
+        const batchBoxes = boxes.slice(offset, offset + RECOGNITION_BATCH_LINES);
+        let recognitionInput = null;
+        let recognitionOutputs = null;
+        try {
+          recognitionInput = prepareRecognitionTensor(this.ort, image, batchBoxes);
+          recognitionOutputs = await this.recognizer.run({ x: recognitionInput.tensor });
+          decoded.push(...decodeCtc(
+            recognitionOutputs[this.recognizer.outputNames[0]],
+            this.characters,
+          ));
+        } finally {
+          recognitionInput?.tensor?.dispose?.();
+          for (const output of Object.values(recognitionOutputs ?? {})) output?.dispose?.();
+        }
       }
       const recognitionMs = roundMs(now() - recognitionStarted);
 
-      const lines = boxes.map((box, index) => {
+      const recognizedLines = boxes.map((box, index) => {
         const recognition = decoded[index] ?? { text: '', confidence: 0 };
         const confidence = Math.sqrt(box.detectionConfidence * recognition.confidence);
-        const x2 = box.x + box.width;
-        const y2 = box.y + box.height;
+        return {
+          ...box,
+          text: recognition.text.trim(),
+          confidence: Math.round(clamp(confidence, 0, 1) * 1_000_000) / 1_000_000,
+        };
+      });
+      const usableLines = recognizedLines.filter((line) =>
+        line.text.length > 0 && line.confidence >= PADDLE_DB_POSTPROCESS.recognitionConfidenceThreshold);
+      const layout = orderRecognizedLines(usableLines, postprocessBudget);
+      const unsupportedContentReasons = classifyUnsupportedLayout({
+        candidates: boxes,
+        recognizedLines,
+        blocks: layout.blocks,
+      });
+      const lines = layout.lines.map((line, index) => {
         return {
           id: `line-${index + 1}`,
-          text: recognition.text,
-          confidence: Math.round(clamp(confidence, 0, 1) * 1_000_000) / 1_000_000,
+          text: line.text,
+          confidence: line.confidence,
           boundingBox: {
-            x: roundMs(box.x),
-            y: roundMs(box.y),
-            width: roundMs(box.width),
-            height: roundMs(box.height),
+            coordinateSpace: 'source-raster-pixels',
+            x: roundMs(line.boundingBox.x),
+            y: roundMs(line.boundingBox.y),
+            width: roundMs(line.boundingBox.width),
+            height: roundMs(line.boundingBox.height),
           },
-          polygon: [
-            [roundMs(box.x), roundMs(box.y)],
-            [roundMs(x2), roundMs(box.y)],
-            [roundMs(x2), roundMs(y2)],
-            [roundMs(box.x), roundMs(y2)],
-          ],
+          polygon: {
+            coordinateSpace: 'source-raster-pixels',
+            points: line.polygon.map((point) => point.map(roundMs)),
+          },
+          baseline: {
+            status: 'unavailable',
+            coordinateSpace: 'source-raster-pixels',
+            reason: 'engine-did-not-provide',
+          },
         };
       });
 
-      result = toValidatedOcrResultJson({
-      contract: OCR_RESULT_CONTRACT,
-      schemaVersion: OCR_SCHEMA_VERSION,
-      requestId,
-      engine: this.engine,
-      source: {
-        kind: 'pdf-page',
-        path: source.path,
-        pageIndex: source.pageIndex,
-        widthPx: image.width,
-        heightPx: image.height,
-        scale: source.scale,
-      },
-      text: lines.map((line) => line.text).filter(Boolean).join('\n'),
-      lines,
-      metrics: {
-        workerStartupMs: roundMs(workerStartupMs),
-        modelStartupMs: roundMs(modelStartupMs),
-        rasterMs: roundMs(rasterMs),
-        detectionMs,
-        recognitionMs,
-        totalOcrMs: roundMs(now() - totalStarted),
-      },
+      result = toValidatedOcrResultV2Json({
+        contract: OCR_RESULT_CONTRACT,
+        schemaVersion: OCR_CURRENT_SCHEMA_VERSION,
+        jobId: job.jobId,
+        requestId: job.requestId,
+        engine: this.engine,
+        document: structuredClone(job.document),
+        page: {
+          id: job.page.id,
+          index: job.page.index,
+          revision: job.page.revision,
+          status: unsupportedContentReasons.length > 0 ? 'unsupported' : 'completed',
+        },
+        recognitionConfigurationHash: structuredClone(job.recognitionConfigurationHash),
+        sourceRaster: structuredClone(job.page.sourceRaster),
+        text: lines.map((line) => line.text).filter(Boolean).join('\n'),
+        lines,
+        detectedLanguages: [],
         warnings: [
-          'Phase A uses axis-aligned connected-component DB postprocessing; rotated and curved text remain unqualified.',
+          {
+            code: 'db-quadrilateral-postprocessing',
+            message: 'Detection uses bounded DB-style quadrilateral extraction and deterministic layout ordering.',
+            severity: 'info',
+            entityIds: [],
+          },
         ],
+        unsupportedContentReasons,
+        preprocessing: {
+          status: 'none',
+          operations: [],
+          outputRaster: null,
+          transform: null,
+        },
+        metrics: {
+          workerStartupMs: roundMs(workerStartupMs),
+          modelStartupMs: roundMs(modelStartupMs),
+          rasterMs: roundMs(rasterMs),
+          detectionMs,
+          recognitionMs,
+          totalOcrMs: roundMs(now() - totalStarted),
+        },
       });
+      assertOcrResultMatchesJob(result, job);
     } finally {
       detectionInput?.tensor?.dispose?.();
-      recognitionInput?.tensor?.dispose?.();
       for (const output of Object.values(detectionOutputs ?? {})) output?.dispose?.();
-      for (const output of Object.values(recognitionOutputs ?? {})) output?.dispose?.();
       detectionInput = null;
       detectionOutputs = null;
-      recognitionInput = null;
-      recognitionOutputs = null;
     }
     this.emitLifecycle('after-one-page-inference', {
       detectorSession: true,

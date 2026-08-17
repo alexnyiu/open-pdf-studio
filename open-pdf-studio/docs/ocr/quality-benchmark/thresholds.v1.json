@@ -1,0 +1,181 @@
+{
+  "contract": "open-pdf-studio.ocr.quality-thresholds",
+  "schemaVersion": 1,
+  "policyVersion": "1.0.0",
+  "milestone": "searchable-ocr-first-release",
+  "platformScope": [
+    "macos"
+  ],
+  "approvalStatus": "approved",
+  "approvedBy": "project-owner",
+  "approvedAt": "2026-08-17T04:26:15Z",
+  "basis": {
+    "thresholdSelection": "product-targets-fixed-before-baseline-measurement",
+    "measuredBaselineId": "macos-ocr-quality-357c6d6c514b5a54b91baa60",
+    "statement": "Targets express the desired first-release machine-printed searchable-OCR scope. They are intentionally not relaxed to make the first measured baseline pass.",
+    "baselineReview": "The recorded baseline does not meet the proposed aggregate or all supported-category targets. The targets remain unchanged after measurement so the failures stay visible.",
+    "observedAggregate": {
+      "characterErrorRate": 0.08312958435207823,
+      "wordErrorRate": 0.1056701030927835,
+      "readingOrderError": 0,
+      "lineDetectionPrecision": 0.979381443298969,
+      "lineDetectionRecall": 0.9134615384615384,
+      "meanPolygonIntersectionOverUnion": 0.39683232954692443,
+      "meanPolygonCoverage": 0.4161471864455243,
+      "missedLineCount": 9,
+      "duplicateLineCount": 2,
+      "unsupportedPageAccuracy": 0,
+      "rejectedInputAccuracy": 1,
+      "peakResultBytes": 30168
+    },
+    "timingPolicy": "Machine-dependent timing is recorded but is not a release threshold in policy version 1.",
+    "unsupportedPolicy": "Unsupported cases must remain classified UNSUPPORTED. Unsupported-page classifier accuracy is recorded but is not gating until the engine advertises that capability.",
+    "approvalPolicy": "Changing approvalStatus to approved requires explicit user approval and recorded approver and timestamp values."
+  },
+  "thresholds": {
+    "aggregate": {
+      "maximumCharacterErrorRate": 0.08,
+      "maximumWordErrorRate": 0.18,
+      "maximumReadingOrderError": 0.08,
+      "minimumLineDetectionPrecision": 0.9,
+      "minimumLineDetectionRecall": 0.9,
+      "minimumMeanPolygonIntersectionOverUnion": 0.35,
+      "minimumMeanPolygonCoverage": 0.6,
+      "maximumMissedLineCount": 8,
+      "maximumDuplicateLineCount": 8,
+      "minimumUnsupportedPageAccuracy": null,
+      "minimumRejectedInputAccuracy": 1,
+      "maximumPeakResultBytes": 4194304
+    },
+    "categories": {
+      "clean-300-dpi-latin": {
+        "maximumCharacterErrorRate": 0.02,
+        "maximumWordErrorRate": 0.05,
+        "maximumReadingOrderError": 0,
+        "minimumLineDetectionPrecision": 0.95,
+        "minimumLineDetectionRecall": 0.95,
+        "minimumMeanPolygonIntersectionOverUnion": 0.45,
+        "minimumMeanPolygonCoverage": 0.7,
+        "maximumMissedLineCount": 0,
+        "maximumDuplicateLineCount": 0,
+        "maximumPeakResultBytes": 1048576
+      },
+      "lower-resolution-text": {
+        "maximumCharacterErrorRate": 0.12,
+        "maximumWordErrorRate": 0.25,
+        "maximumReadingOrderError": 0.1,
+        "minimumLineDetectionPrecision": 0.8,
+        "minimumLineDetectionRecall": 0.8,
+        "minimumMeanPolygonIntersectionOverUnion": 0.25,
+        "minimumMeanPolygonCoverage": 0.5,
+        "maximumMissedLineCount": 1,
+        "maximumDuplicateLineCount": 1,
+        "maximumPeakResultBytes": 1048576
+      },
+      "low-contrast": {
+        "maximumCharacterErrorRate": 0.15,
+        "maximumWordErrorRate": 0.3,
+        "maximumReadingOrderError": 0.1,
+        "minimumLineDetectionPrecision": 0.8,
+        "minimumLineDetectionRecall": 0.8,
+        "minimumMeanPolygonIntersectionOverUnion": 0.25,
+        "minimumMeanPolygonCoverage": 0.5,
+        "maximumMissedLineCount": 1,
+        "maximumDuplicateLineCount": 1,
+        "maximumPeakResultBytes": 1048576
+      },
+      "mild-skew": {
+        "maximumCharacterErrorRate": 0.15,
+        "maximumWordErrorRate": 0.3,
+        "maximumReadingOrderError": 0.12,
+        "minimumLineDetectionPrecision": 0.75,
+        "minimumLineDetectionRecall": 0.75,
+        "minimumMeanPolygonIntersectionOverUnion": 0.2,
+        "minimumMeanPolygonCoverage": 0.45,
+        "maximumMissedLineCount": 1,
+        "maximumDuplicateLineCount": 1,
+        "maximumPeakResultBytes": 1048576
+      },
+      "mixed-image-native-text": {
+        "maximumCharacterErrorRate": 0.1,
+        "maximumWordErrorRate": 0.2,
+        "maximumReadingOrderError": 0.1,
+        "minimumLineDetectionPrecision": 0.85,
+        "minimumLineDetectionRecall": 0.85,
+        "minimumMeanPolygonIntersectionOverUnion": 0.3,
+        "minimumMeanPolygonCoverage": 0.55,
+        "maximumMissedLineCount": 1,
+        "maximumDuplicateLineCount": 1,
+        "maximumPeakResultBytes": 1048576
+      },
+      "multiple-columns": {
+        "maximumCharacterErrorRate": 0.1,
+        "maximumWordErrorRate": 0.2,
+        "maximumReadingOrderError": 0.05,
+        "minimumLineDetectionPrecision": 0.9,
+        "minimumLineDetectionRecall": 0.9,
+        "minimumMeanPolygonIntersectionOverUnion": 0.3,
+        "minimumMeanPolygonCoverage": 0.55,
+        "maximumMissedLineCount": 0,
+        "maximumDuplicateLineCount": 0,
+        "maximumPeakResultBytes": 1048576
+      },
+      "forms-and-numeric-content": {
+        "maximumCharacterErrorRate": 0.08,
+        "maximumWordErrorRate": 0.15,
+        "maximumReadingOrderError": 0.05,
+        "minimumLineDetectionPrecision": 0.9,
+        "minimumLineDetectionRecall": 0.9,
+        "minimumMeanPolygonIntersectionOverUnion": 0.35,
+        "minimumMeanPolygonCoverage": 0.6,
+        "maximumMissedLineCount": 0,
+        "maximumDuplicateLineCount": 0,
+        "maximumPeakResultBytes": 1048576
+      },
+      "punctuation-and-supported-unicode": {
+        "maximumCharacterErrorRate": 0.12,
+        "maximumWordErrorRate": 0.25,
+        "maximumReadingOrderError": 0.1,
+        "minimumLineDetectionPrecision": 0.85,
+        "minimumLineDetectionRecall": 0.85,
+        "minimumMeanPolygonIntersectionOverUnion": 0.3,
+        "minimumMeanPolygonCoverage": 0.55,
+        "maximumMissedLineCount": 1,
+        "maximumDuplicateLineCount": 1,
+        "maximumPeakResultBytes": 1048576
+      },
+      "dense-more-than-64-lines": {
+        "maximumCharacterErrorRate": 0.1,
+        "maximumWordErrorRate": 0.2,
+        "maximumReadingOrderError": 0.08,
+        "minimumLineDetectionPrecision": 0.9,
+        "minimumLineDetectionRecall": 0.9,
+        "minimumMeanPolygonIntersectionOverUnion": 0.25,
+        "minimumMeanPolygonCoverage": 0.5,
+        "maximumMissedLineCount": 3,
+        "maximumDuplicateLineCount": 2,
+        "maximumPeakResultBytes": 4194304
+      },
+      "blank-page": {
+        "maximumCharacterErrorRate": 0,
+        "maximumWordErrorRate": 0,
+        "maximumReadingOrderError": 0,
+        "minimumLineDetectionPrecision": 1,
+        "minimumLineDetectionRecall": 1,
+        "maximumMissedLineCount": 0,
+        "maximumDuplicateLineCount": 0,
+        "maximumPeakResultBytes": 1048576
+      },
+      "no-text-image": {
+        "maximumCharacterErrorRate": 0,
+        "maximumWordErrorRate": 0,
+        "maximumReadingOrderError": 0,
+        "minimumLineDetectionPrecision": 1,
+        "minimumLineDetectionRecall": 1,
+        "maximumMissedLineCount": 0,
+        "maximumDuplicateLineCount": 0,
+        "maximumPeakResultBytes": 1048576
+      }
+    }
+  }
+}

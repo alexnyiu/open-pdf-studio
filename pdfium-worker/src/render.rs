@@ -1,11 +1,207 @@
 use anyhow::{anyhow, Context, Result};
+use crate::protocol::{
+    DisplayedPageGeometry, PageBoxGeometry, PdfiumPageGeometry, PdfiumRasterGeometry,
+    PDFIUM_PAGE_GEOMETRY_CONTRACT, PDFIUM_PAGE_GEOMETRY_SCHEMA_VERSION,
+};
 use pdfium_render::prelude::*;
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 pub struct RenderResult {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    pub page_geometry: Option<PdfiumPageGeometry>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RasterLimits {
+    pub max_width: u32,
+    pub max_height: u32,
+    pub max_pixels: u64,
+    pub max_raster_bytes: u64,
+}
+
+fn bounded_raster_size(
+    target_width: f64,
+    target_height: f64,
+    limits: Option<RasterLimits>,
+) -> Result<(i32, i32)> {
+    if !target_width.is_finite() || !target_height.is_finite() ||
+        target_width < 1.0 || target_height < 1.0 ||
+        target_width > f64::from(i32::MAX) || target_height > f64::from(i32::MAX) {
+        return Err(anyhow!("render dimensions are invalid"));
+    }
+    let width = target_width as u64;
+    let height = target_height as u64;
+    let pixels = width.checked_mul(height)
+        .ok_or_else(|| anyhow!("render pixel count overflow"))?;
+    let bytes = pixels.checked_mul(4)
+        .ok_or_else(|| anyhow!("render byte count overflow"))?;
+    if let Some(limits) = limits {
+        if width > u64::from(limits.max_width) ||
+            height > u64::from(limits.max_height) ||
+            pixels > limits.max_pixels || bytes > limits.max_raster_bytes {
+            return Err(anyhow!("OCR raster exceeds the requested allocation limits"));
+        }
+    }
+    Ok((width as i32, height as i32))
+}
+
+fn inherited_user_unit(
+    document: &lopdf::Document,
+    mut object_id: lopdf::ObjectId,
+) -> Result<(f64, String)> {
+    let mut visited = HashSet::new();
+    while visited.insert(object_id) {
+        let dictionary = document
+            .get_dictionary(object_id)
+            .map_err(|error| anyhow!("read PDF page dictionary: {error}"))?;
+        if let Ok(value) = dictionary.get(b"UserUnit") {
+            let (_, direct) = document
+                .dereference(value)
+                .map_err(|error| anyhow!("dereference PDF UserUnit: {error}"))?;
+            let user_unit = f64::from(
+                direct
+                    .as_float()
+                    .map_err(|error| anyhow!("PDF UserUnit is not numeric: {error}"))?,
+            );
+            if !user_unit.is_finite() || user_unit <= 0.0 || user_unit > 75_000.0 {
+                return Err(anyhow!("PDF UserUnit is outside the supported range"));
+            }
+            return Ok((user_unit, "pdf-page-dictionary".to_string()));
+        }
+        object_id = match dictionary.get(b"Parent").and_then(lopdf::Object::as_reference) {
+            Ok(parent) => parent,
+            Err(_) => return Ok((1.0, "pdf-default".to_string())),
+        };
+    }
+    Err(anyhow!("PDF page tree contains a cycle"))
+}
+
+fn read_page_user_units(bytes: &[u8]) -> Result<Vec<(f64, String)>> {
+    let document = lopdf::Document::load_mem(bytes)
+        .map_err(|error| anyhow!("parse PDF page dictionaries: {error}"))?;
+    document
+        .page_iter()
+        .map(|object_id| inherited_user_unit(&document, object_id))
+        .collect()
+}
+
+fn page_box_geometry(rect: PdfRect) -> PageBoxGeometry {
+    PageBoxGeometry {
+        coordinate_space: "pdf-default-user-space".to_string(),
+        unit: "pdf-user-unit".to_string(),
+        origin: "pdf-user-space-zero".to_string(),
+        x: f64::from(rect.left().value),
+        y: f64::from(rect.bottom().value),
+        width: f64::from(rect.width().value),
+        height: f64::from(rect.height().value),
+    }
+}
+
+fn normalized_right_angle(rotation: i32) -> Result<u16> {
+    match rotation.rem_euclid(360) {
+        0 => Ok(0),
+        90 => Ok(90),
+        180 => Ok(180),
+        270 => Ok(270),
+        other => Err(anyhow!("unsupported rotation {other}")),
+    }
+}
+
+fn build_page_geometry(
+    page: &PdfPage<'_>,
+    page_index: u32,
+    user_unit: f64,
+    user_unit_provenance: &str,
+    scale: f32,
+    application_rotation: i32,
+    actual_width: u32,
+    actual_height: u32,
+) -> Result<PdfiumPageGeometry> {
+    let media = page
+        .boundaries()
+        .media()
+        .map_err(|error| anyhow!("read PDF MediaBox: {error}"))?
+        .bounds;
+    let crop = page
+        .boundaries()
+        .crop()
+        .map(|boundary| boundary.bounds)
+        .unwrap_or(media);
+    let bleed_box = page.boundaries().bleed().ok().map(|boundary| page_box_geometry(boundary.bounds));
+    let trim_box = page.boundaries().trim().ok().map(|boundary| page_box_geometry(boundary.bounds));
+    let art_box = page.boundaries().art().ok().map(|boundary| page_box_geometry(boundary.bounds));
+    let media_box = page_box_geometry(media);
+    let crop_box = page_box_geometry(crop);
+    let intrinsic_rotation = page
+        .rotation()
+        .map_err(|error| anyhow!("read intrinsic page rotation: {error}"))?
+        .as_degrees() as u16;
+    let application_rotation = normalized_right_angle(application_rotation)?;
+    let total_rotation = (intrinsic_rotation + application_rotation) % 360;
+    let unrotated_width = crop_box.width * user_unit;
+    let unrotated_height = crop_box.height * user_unit;
+    let (displayed_width, displayed_height) = if total_rotation == 90 || total_rotation == 270 {
+        (unrotated_height, unrotated_width)
+    } else {
+        (unrotated_width, unrotated_height)
+    };
+    let requested_scale = f64::from(scale);
+    let requested_dpi = requested_scale * 72.0;
+    let ideal_width = displayed_width * requested_scale;
+    let ideal_height = displayed_height * requested_scale;
+    let requested_width = ideal_width.ceil();
+    let requested_height = ideal_height.ceil();
+    if !ideal_width.is_finite() || !ideal_height.is_finite() ||
+        requested_width < 1.0 || requested_height < 1.0 ||
+        requested_width > f64::from(u32::MAX) || requested_height > f64::from(u32::MAX) {
+        return Err(anyhow!("page geometry raster dimensions are invalid"));
+    }
+    let requested_width = requested_width as u32;
+    let requested_height = requested_height as u32;
+    Ok(PdfiumPageGeometry {
+        contract: PDFIUM_PAGE_GEOMETRY_CONTRACT.to_string(),
+        schema_version: PDFIUM_PAGE_GEOMETRY_SCHEMA_VERSION,
+        page_index,
+        media_box,
+        crop_box,
+        bleed_box,
+        trim_box,
+        art_box,
+        user_unit,
+        user_unit_provenance: user_unit_provenance.to_string(),
+        intrinsic_rotation_degrees_clockwise: intrinsic_rotation,
+        application_rotation_degrees_clockwise: application_rotation,
+        total_rotation_degrees_clockwise: total_rotation,
+        displayed_page: DisplayedPageGeometry {
+            coordinate_space: "cropped-display-pdf-points".to_string(),
+            unit: "pdf-point".to_string(),
+            origin: "displayed-crop-top-left".to_string(),
+            width: displayed_width,
+            height: displayed_height,
+        },
+        raster: PdfiumRasterGeometry {
+            coordinate_space: "source-raster-pixels".to_string(),
+            unit: "pixel".to_string(),
+            origin: "top-left-pixel-edge".to_string(),
+            requested_dpi,
+            requested_scale,
+            ideal_width_px: ideal_width,
+            ideal_height_px: ideal_height,
+            requested_width_px: requested_width,
+            requested_height_px: requested_height,
+            actual_width_px: actual_width,
+            actual_height_px: actual_height,
+            width_delta_px: f64::from(actual_width) - ideal_width,
+            height_delta_px: f64::from(actual_height) - ideal_height,
+            pdfium_adjusted: actual_width != requested_width || actual_height != requested_height,
+            rounding_method: "ceil-target-then-pdfium".to_string(),
+            annotations_excluded: true,
+            forms_excluded: false,
+        },
+    })
 }
 
 // Eén Pdfium-instantie voor de levensduur van de worker. Nodig om geladen
@@ -77,6 +273,7 @@ struct CachedDoc {
     /// de handle na de render blijft leven (zie release_page_if_cheap).
     page: Option<(u32, u32, PdfPage<'static>)>,
     document: PdfDocument<'static>,
+    page_user_units: Option<std::result::Result<Vec<(f64, String)>, String>>,
     _bytes: Vec<u8>,
 }
 
@@ -130,6 +327,7 @@ impl Renderer {
             len,
             page: None,
             document,
+            page_user_units: None,
             _bytes: bytes,
         }));
         Ok(self.cache.len() - 1)
@@ -191,14 +389,64 @@ impl Renderer {
         scale: f32,
         rotation: i32,
     ) -> Result<RenderResult> {
+        self.render_with_limits(path, page_index, scale, rotation, None)
+    }
+
+    pub fn render_ocr(
+        &mut self,
+        path: &str,
+        page_index: u32,
+        scale: f32,
+        rotation: i32,
+        limits: RasterLimits,
+    ) -> Result<RenderResult> {
+        self.render_with_limits(path, page_index, scale, rotation, Some(limits))
+    }
+
+    fn render_with_limits(
+        &mut self,
+        path: &str,
+        page_index: u32,
+        scale: f32,
+        rotation: i32,
+        limits: Option<RasterLimits>,
+    ) -> Result<RenderResult> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(anyhow!("render scale must be a positive finite number"));
+        }
         let idx = self.get_or_load(path)?;
+        let (user_unit, user_unit_provenance) = if limits.is_some() {
+            if self.cache[idx].page_user_units.is_none() {
+                self.cache[idx].page_user_units = Some(
+                    read_page_user_units(&self.cache[idx]._bytes)
+                        .map_err(|error| error.to_string()),
+                );
+            }
+            self.cache[idx]
+                .page_user_units
+                .as_ref()
+                .expect("UserUnit metadata initialized above")
+                .as_ref()
+                .map_err(|error| anyhow!("read PDF UserUnit metadata: {error}"))?
+                .get(page_index as usize)
+                .cloned()
+                .ok_or_else(|| anyhow!("page {page_index} has no PDF UserUnit metadata"))?
+        } else {
+            (1.0, "pdf-default".to_string())
+        };
+        let geometry_user_unit = user_unit;
         let result = {
             let page = self.get_or_load_page(idx, page_index)?;
 
             let w_pt = page.width().value;
             let h_pt = page.height().value;
-            let target_w = (w_pt * scale).ceil() as i32;
-            let target_h = (h_pt * scale).ceil() as i32;
+            let target_w_value = (f64::from(w_pt) * geometry_user_unit * f64::from(scale)).ceil();
+            let target_h_value = (f64::from(h_pt) * geometry_user_unit * f64::from(scale)).ceil();
+            let (target_w, target_h) = bounded_raster_size(
+                target_w_value,
+                target_h_value,
+                limits,
+            )?;
 
             let rot = match rotation.rem_euclid(360) {
                 0 => PdfPageRenderRotation::None,
@@ -220,10 +468,28 @@ impl Renderer {
             let bitmap = page.render_with_config(&config)
                 .map_err(|e| anyhow!("PDFium render: {}", e))?;
 
+            let width = bitmap.width() as u32;
+            let height = bitmap.height() as u32;
+            let page_geometry = if limits.is_some() {
+                Some(build_page_geometry(
+                    page,
+                    page_index,
+                    user_unit,
+                    &user_unit_provenance,
+                    scale,
+                    rotation,
+                    width,
+                    height,
+                )?)
+            } else {
+                None
+            };
+
             RenderResult {
-                width: bitmap.width() as u32,
-                height: bitmap.height() as u32,
+                width,
+                height,
                 rgba: bitmap.as_rgba_bytes(),
+                page_geometry,
             }
         };
         // Goedkope pagina's houden geen open handle vast (geheugen-garantie
@@ -288,6 +554,7 @@ impl Renderer {
                 width: bitmap.width() as u32,
                 height: bitmap.height() as u32,
                 rgba: bitmap.as_rgba_bytes(),
+                page_geometry: None,
             }
         };
         // Goedkope pagina's houden geen open handle vast (geheugen-garantie
@@ -300,7 +567,29 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::{dictionary, Object};
     use std::path::{Path, PathBuf};
+
+    fn user_unit_document(user_unit: Option<f64>) -> (lopdf::Document, lopdf::ObjectId) {
+        let mut document = lopdf::Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let page_id = document.new_object_id();
+        let mut pages = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1,
+        };
+        if let Some(value) = user_unit {
+            pages.set("UserUnit", value as f32);
+        }
+        document.objects.insert(pages_id, Object::Dictionary(pages));
+        document.objects.insert(page_id, Object::Dictionary(dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        }));
+        (document, page_id)
+    }
 
     #[test]
     fn bundled_platform_resource_directories_are_searched() {
@@ -312,6 +601,42 @@ mod tests {
         assert!(directories.contains(&PathBuf::from(
             "/bundle/usr/bin/../lib/open-pdf-studio",
         )));
+    }
+
+    #[test]
+    fn ocr_raster_limits_reject_before_bitmap_allocation() {
+        let limits = RasterLimits {
+            max_width: 8192,
+            max_height: 8192,
+            max_pixels: 16_000_000,
+            max_raster_bytes: 64_000_000,
+        };
+        assert!(bounded_raster_size(2000.0, 3000.0, Some(limits)).is_ok());
+        assert!(bounded_raster_size(9000.0, 100.0, Some(limits)).is_err());
+        assert!(bounded_raster_size(8000.0, 8000.0, Some(limits)).is_err());
+        assert!(bounded_raster_size(f64::INFINITY, 1.0, Some(limits)).is_err());
+    }
+
+    #[test]
+    fn inherited_user_unit_is_read_from_the_page_tree() {
+        let (document, page_id) = user_unit_document(Some(2.5));
+        let (value, provenance) = inherited_user_unit(&document, page_id).unwrap();
+        assert_eq!(value, 2.5);
+        assert_eq!(provenance, "pdf-page-dictionary");
+    }
+
+    #[test]
+    fn missing_user_unit_uses_the_pdf_default() {
+        let (document, page_id) = user_unit_document(None);
+        let (value, provenance) = inherited_user_unit(&document, page_id).unwrap();
+        assert_eq!(value, 1.0);
+        assert_eq!(provenance, "pdf-default");
+    }
+
+    #[test]
+    fn invalid_user_unit_is_rejected() {
+        let (document, page_id) = user_unit_document(Some(0.0));
+        assert!(inherited_user_unit(&document, page_id).is_err());
     }
 
     #[test]

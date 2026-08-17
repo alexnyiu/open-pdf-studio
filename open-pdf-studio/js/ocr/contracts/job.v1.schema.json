@@ -1,132 +1,137 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://openpdfstudio.org/contracts/ocr/job.v1.schema.json",
-  "title": "Open PDF Studio OCR job contract v1",
+  "title": "Open PDF Studio immutable one-page OCR job contract v1",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "contract",
-    "schemaVersion",
-    "jobId",
-    "engineId",
-    "modelPack",
-    "document",
-    "pages",
-    "options",
-    "createdAt",
-    "updatedAt"
+    "contract", "schemaVersion", "jobId", "requestId", "engineId", "modelPack",
+    "document", "page", "recognitionConfigurationHash", "recognitionOptions",
+    "documentPolicy", "scheduler", "createdAt"
   ],
   "properties": {
     "contract": { "const": "open-pdf-studio.ocr.job" },
     "schemaVersion": { "const": 1 },
-    "jobId": { "$ref": "#/$defs/id" },
-    "engineId": { "$ref": "#/$defs/id" },
-    "modelPack": { "$ref": "#/$defs/modelPackIdentity" },
-    "document": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "pageCount"],
-      "properties": {
-        "id": { "$ref": "#/$defs/id" },
-        "fingerprint": { "$ref": "#/$defs/fingerprint" },
-        "pageCount": { "type": "integer", "minimum": 1, "maximum": 100000 }
-      }
-    },
-    "pages": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 100000,
-      "items": { "$ref": "#/$defs/page" }
-    },
-    "options": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["languages", "includeWords"],
-      "properties": {
-        "languages": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": { "$ref": "#/$defs/languageTag" }
-        },
-        "includeWords": { "type": "boolean" }
-      }
-    },
-    "createdAt": { "$ref": "#/$defs/timestamp" },
-    "updatedAt": { "$ref": "#/$defs/timestamp" }
-  },
-  "$defs": {
-    "id": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 256,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"
-    },
-    "semver": {
-      "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
-    },
-    "timestamp": {
-      "type": "string",
-      "format": "date-time",
-      "pattern": "Z$"
-    },
-    "languageTag": {
-      "type": "string",
-      "pattern": "^(?:[A-Za-z]{2,8}|und)(?:-[A-Za-z0-9]{1,8})*$"
-    },
-    "fingerprint": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["algorithm", "value"],
-      "properties": {
-        "algorithm": { "const": "sha256" },
-        "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
-      }
-    },
-    "modelPackIdentity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["contract", "schemaVersion", "packId", "packVersion"],
-      "properties": {
-        "contract": { "const": "open-pdf-studio.ocr.model-pack" },
-        "schemaVersion": { "const": 1 },
-        "packId": { "$ref": "#/$defs/id" },
-        "packVersion": { "$ref": "#/$defs/semver" }
-      }
-    },
-    "pageError": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["code", "message", "retryable"],
-      "properties": {
-        "code": { "$ref": "#/$defs/id" },
-        "message": { "type": "string", "minLength": 1 },
-        "retryable": { "type": "boolean" }
-      }
-    },
+    "jobId": { "$ref": "common.schema.json#/$defs/id" },
+    "requestId": { "$ref": "common.schema.json#/$defs/id" },
+    "engineId": { "$ref": "common.schema.json#/$defs/id" },
+    "modelPack": { "$ref": "common.schema.json#/$defs/modelPackIdentity" },
+    "document": { "$ref": "common.schema.json#/$defs/documentIdentity" },
     "page": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "index", "status", "attempts"],
+      "required": ["id", "index", "revision", "sourceRaster"],
       "properties": {
-        "id": { "$ref": "#/$defs/id" },
+        "id": { "$ref": "common.schema.json#/$defs/id" },
         "index": { "type": "integer", "minimum": 0 },
-        "status": {
-          "enum": [
-            "queued",
-            "rasterizing",
-            "preprocessing",
-            "recognizing",
-            "completed",
-            "partial",
-            "unsupported",
-            "failed",
-            "cancelled"
-          ]
+        "revision": { "type": "integer", "minimum": 0 },
+        "sourceRaster": { "$ref": "#/$defs/sourceRaster" }
+      }
+    },
+    "recognitionConfigurationHash": { "$ref": "common.schema.json#/$defs/fingerprint" },
+    "recognitionOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "languagePolicy", "includeWords", "orientation", "deskew", "preprocessing",
+        "rasterDpi", "maximumPixels", "maximumSide", "timeoutMs"
+      ],
+      "properties": {
+        "languagePolicy": { "$ref": "#/$defs/languagePolicy" },
+        "includeWords": { "type": "boolean" },
+        "orientation": { "$ref": "#/$defs/orientation" },
+        "deskew": { "type": "boolean" },
+        "preprocessing": { "$ref": "#/$defs/preprocessing" },
+        "rasterDpi": { "type": "number", "exclusiveMinimum": 0 },
+        "maximumPixels": { "type": "integer", "minimum": 1 },
+        "maximumSide": { "type": "integer", "minimum": 1 },
+        "timeoutMs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "documentPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "skipMeaningfulExistingText", "forceRerun", "replaceApplicationOwnedOcrOnly", "keepCompletedPages"
+      ],
+      "properties": {
+        "skipMeaningfulExistingText": { "type": "boolean" },
+        "forceRerun": { "type": "boolean" },
+        "replaceApplicationOwnedOcrOnly": { "type": "boolean" },
+        "keepCompletedPages": { "type": "boolean" }
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["priority", "execution"],
+      "properties": {
+        "priority": { "enum": ["background", "normal", "interactive"] },
+        "execution": { "const": "one-page-child" }
+      }
+    },
+    "createdAt": { "$ref": "common.schema.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "sourceRaster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fingerprint", "coordinateSpace", "widthPx", "heightPx", "dpi"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "fingerprint": { "$ref": "common.schema.json#/$defs/fingerprint" },
+        "coordinateSpace": { "const": "source-raster-pixels" },
+        "widthPx": { "type": "integer", "minimum": 1 },
+        "heightPx": { "type": "integer", "minimum": 1 },
+        "dpi": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "languagePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "languages", "scripts"],
+      "properties": {
+        "mode": { "enum": ["automatic", "prefer", "restrict"] },
+        "languages": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^(?!und$)(?:[A-Za-z]{2,8})(?:-[A-Za-z0-9]{1,8})*$"
+          }
         },
-        "attempts": { "type": "integer", "minimum": 0 },
-        "lastError": { "$ref": "#/$defs/pageError" }
+        "scripts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/script" }
+        }
+      }
+    },
+    "orientation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "degrees"],
+      "properties": {
+        "mode": { "enum": ["none", "detect", "fixed"] },
+        "degrees": { "enum": [0, 90, 180, 270, null] }
+      }
+    },
+    "preprocessing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "operations"],
+      "properties": {
+        "mode": { "enum": ["none", "standard", "custom"] },
+        "operations": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "enum": ["denoise", "contrast", "binarize", "grayscale"] }
+        }
       }
     }
-  }
+  },
+  "x-maxUtf8Bytes": 4194304,
+  "x-ocrSemantic": "job-v1"
 }

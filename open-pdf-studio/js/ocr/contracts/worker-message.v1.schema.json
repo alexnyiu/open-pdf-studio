@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/worker-message.v1.schema.json",
+  "title": "Open PDF Studio OCR Worker structured-clone message contract v1",
+  "oneOf": [
+    { "$ref": "#/$defs/recognize" },
+    { "$ref": "#/$defs/dispose" },
+    { "$ref": "#/$defs/ready" },
+    { "$ref": "#/$defs/lifecycle" },
+    { "$ref": "#/$defs/result" },
+    { "$ref": "#/$defs/error" },
+    { "$ref": "#/$defs/disposed" }
+  ],
+  "$defs": {
+    "recognize": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract", "schemaVersion", "type", "requestId", "job", "image",
+        "rasterMs", "workerStartupMs"
+      ],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.worker-message" },
+        "schemaVersion": { "const": 1 },
+        "type": { "const": "recognize" },
+        "requestId": { "$ref": "common.schema.json#/$defs/id" },
+        "job": { "$ref": "job.v1.schema.json" },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height", "rgba"],
+          "properties": {
+            "width": { "type": "integer", "minimum": 1, "maximum": 32768 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 32768 },
+            "rgba": { "x-ocrArrayBuffer": true }
+          }
+        },
+        "rasterMs": { "type": "number", "minimum": 0 },
+        "workerStartupMs": { "type": "number", "minimum": 0 }
+      }
+    },
+    "dispose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "type"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.worker-message" },
+        "schemaVersion": { "const": 1 },
+        "type": { "const": "dispose" }
+      }
+    },
+    "ready": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "type"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.worker-message" },
+        "schemaVersion": { "const": 1 },
+        "type": { "const": "ready" }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "type", "stage", "atEpochMs", "detail"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.worker-message" },
+        "schemaVersion": { "const": 1 },
+        "type": { "const": "lifecycle" },
+        "stage": { "$ref": "common.schema.json#/$defs/id" },
+        "atEpochMs": { "type": "number", "minimum": 0 },
+        "detail": { "type": "object", "x-ocrJsonValue": true }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "type", "requestId", "result"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.worker-message" },
+        "schemaVersion": { "const": 1 },
+        "type": { "const": "result" },
+        "requestId": { "$ref": "common.schema.json#/$defs/id" },
+        "result": { "$ref": "result.v2.schema.json" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "type", "requestId", "error"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.worker-message" },
+        "schemaVersion": { "const": 1 },
+        "type": { "const": "error" },
+        "requestId": { "$ref": "common.schema.json#/$defs/id" },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "code", "message", "retryable"],
+          "properties": {
+            "name": { "$ref": "common.schema.json#/$defs/id" },
+            "code": { "$ref": "common.schema.json#/$defs/id" },
+            "message": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "retryable": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "disposed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "type", "detail"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.worker-message" },
+        "schemaVersion": { "const": 1 },
+        "type": { "const": "disposed" },
+        "detail": { "type": "object", "x-ocrJsonValue": true }
+      }
+    }
+  },
+  "x-maxUtf8Bytes": 17825792,
+  "x-ocrStructuredClone": true,
+  "x-ocrSemantic": "worker-message-v1"
+}

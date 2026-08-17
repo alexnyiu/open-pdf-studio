@@ -199,13 +199,18 @@ async function handleOcrPhaseASpike(params) {
       return {
         ok: true,
         cancelled: true,
-        cancellation: { method: 'worker.terminate', message: error.message },
+        cancellation: {
+          method: error.cancellationMethod ?? 'native-child-process-terminate',
+          message: error.message,
+          latencyMs: error.cancellationLatencyMs ?? runSummary?.cancellation?.latencyMs ?? null,
+        },
         lifecycle,
         ...runSummary,
       };
     }
     return {
       ok: false,
+      code: error?.code ?? runSummary?.failure?.code ?? 'OCR_NATIVE_CHILD_FAILED',
       error: `OCR Phase A spike: ${error?.message ?? error}`,
       lifecycle,
       ...runSummary,

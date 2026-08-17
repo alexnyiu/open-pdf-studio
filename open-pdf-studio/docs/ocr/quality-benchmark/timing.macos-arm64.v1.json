@@ -1,0 +1,276 @@
+{
+  "contract": "open-pdf-studio.ocr.quality-timing",
+  "schemaVersion": 1,
+  "observationId": "macos-ocr-timing-f18ffc24c271248b2432f274",
+  "accuracyBaselineId": "macos-ocr-quality-357c6d6c514b5a54b91baa60",
+  "measuredAt": "2026-08-17T03:51:02.946Z",
+  "environment": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "kernelVersion": "25.5.0",
+    "nodeVersion": "v25.6.1",
+    "logicalCpuCount": 18,
+    "wasmThreads": 1
+  },
+  "method": {
+    "adapterLifecycle": "one-disposable-adapter-per-page",
+    "includesModelInitialization": true,
+    "includesPngDecodeInRecognitionWallTime": false,
+    "informationalOnly": true
+  },
+  "cases": [
+    {
+      "fixtureId": "clean-300dpi",
+      "imageDecodeMs": 4.01,
+      "pageRecognitionWallMs": 942.12,
+      "serializedProductionResultBytes": 4148,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 177.47,
+        "rasterMs": 0,
+        "detectionMs": 339.54,
+        "recognitionMs": 420.03,
+        "totalOcrMs": 937.32
+      }
+    },
+    {
+      "fixtureId": "lower-resolution",
+      "imageDecodeMs": 2.79,
+      "pageRecognitionWallMs": 612.09,
+      "serializedProductionResultBytes": 4168,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 49.58,
+        "rasterMs": 0,
+        "detectionMs": 136.08,
+        "recognitionMs": 424.19,
+        "totalOcrMs": 609.97
+      }
+    },
+    {
+      "fixtureId": "low-contrast",
+      "imageDecodeMs": 3.26,
+      "pageRecognitionWallMs": 709.67,
+      "serializedProductionResultBytes": 4186,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 46.92,
+        "rasterMs": 0,
+        "detectionMs": 309.2,
+        "recognitionMs": 350.72,
+        "totalOcrMs": 706.96
+      }
+    },
+    {
+      "fixtureId": "mild-skew",
+      "imageDecodeMs": 3.31,
+      "pageRecognitionWallMs": 487.81,
+      "serializedProductionResultBytes": 3739,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 44.79,
+        "rasterMs": 0,
+        "detectionMs": 307.52,
+        "recognitionMs": 132.73,
+        "totalOcrMs": 485.14
+      }
+    },
+    {
+      "fixtureId": "rotation-90",
+      "imageDecodeMs": 3.03,
+      "pageRecognitionWallMs": 498,
+      "serializedProductionResultBytes": 2835,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 44.03,
+        "rasterMs": 0,
+        "detectionMs": 402.66,
+        "recognitionMs": 49.65,
+        "totalOcrMs": 496.41
+      }
+    },
+    {
+      "fixtureId": "rotation-180",
+      "imageDecodeMs": 3.08,
+      "pageRecognitionWallMs": 699.07,
+      "serializedProductionResultBytes": 3680,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 44.33,
+        "rasterMs": 0,
+        "detectionMs": 399.83,
+        "recognitionMs": 252.57,
+        "totalOcrMs": 696.83
+      }
+    },
+    {
+      "fixtureId": "rotation-270",
+      "imageDecodeMs": 3.36,
+      "pageRecognitionWallMs": 493.5,
+      "serializedProductionResultBytes": 2825,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 45.18,
+        "rasterMs": 0,
+        "detectionMs": 401.38,
+        "recognitionMs": 45.35,
+        "totalOcrMs": 492
+      }
+    },
+    {
+      "fixtureId": "mixed-image-native-text",
+      "imageDecodeMs": 3.36,
+      "pageRecognitionWallMs": 845.85,
+      "serializedProductionResultBytes": 4229,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 43.95,
+        "rasterMs": 0,
+        "detectionMs": 370.32,
+        "recognitionMs": 429.51,
+        "totalOcrMs": 843.89
+      }
+    },
+    {
+      "fixtureId": "multiple-columns",
+      "imageDecodeMs": 3.46,
+      "pageRecognitionWallMs": 892.24,
+      "serializedProductionResultBytes": 3889,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 42.52,
+        "rasterMs": 0,
+        "detectionMs": 323.09,
+        "recognitionMs": 524.02,
+        "totalOcrMs": 889.72
+      }
+    },
+    {
+      "fixtureId": "forms-numeric",
+      "imageDecodeMs": 3.55,
+      "pageRecognitionWallMs": 927.73,
+      "serializedProductionResultBytes": 4643,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 43.3,
+        "rasterMs": 0,
+        "detectionMs": 367.71,
+        "recognitionMs": 514.92,
+        "totalOcrMs": 926.02
+      }
+    },
+    {
+      "fixtureId": "punctuation-unicode",
+      "imageDecodeMs": 3.51,
+      "pageRecognitionWallMs": 734.26,
+      "serializedProductionResultBytes": 4241,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 43.28,
+        "rasterMs": 0,
+        "detectionMs": 308.72,
+        "recognitionMs": 379.74,
+        "totalOcrMs": 731.81
+      }
+    },
+    {
+      "fixtureId": "dense-70-lines",
+      "imageDecodeMs": 4.67,
+      "pageRecognitionWallMs": 4033.61,
+      "serializedProductionResultBytes": 30188,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 43.86,
+        "rasterMs": 0,
+        "detectionMs": 281.4,
+        "recognitionMs": 3690.59,
+        "totalOcrMs": 4015.97
+      }
+    },
+    {
+      "fixtureId": "blank-page",
+      "imageDecodeMs": 3.41,
+      "pageRecognitionWallMs": 354.72,
+      "serializedProductionResultBytes": 2433,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 42.84,
+        "rasterMs": 0,
+        "detectionMs": 310.37,
+        "recognitionMs": 0,
+        "totalOcrMs": 353.27
+      }
+    },
+    {
+      "fixtureId": "no-text-image",
+      "imageDecodeMs": 3.13,
+      "pageRecognitionWallMs": 454.85,
+      "serializedProductionResultBytes": 3230,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 44.42,
+        "rasterMs": 0,
+        "detectionMs": 318.72,
+        "recognitionMs": 89.22,
+        "totalOcrMs": 452.45
+      }
+    },
+    {
+      "fixtureId": "unsupported-table",
+      "imageDecodeMs": 3.36,
+      "pageRecognitionWallMs": 615.79,
+      "serializedProductionResultBytes": 3303,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 42.07,
+        "rasterMs": 0,
+        "detectionMs": 322.7,
+        "recognitionMs": 249.32,
+        "totalOcrMs": 614.17
+      }
+    },
+    {
+      "fixtureId": "unsupported-cyrillic",
+      "imageDecodeMs": 3.04,
+      "pageRecognitionWallMs": 573.65,
+      "serializedProductionResultBytes": 3672,
+      "engine": {
+        "workerStartupMs": 0,
+        "modelStartupMs": 43.51,
+        "rasterMs": 0,
+        "detectionMs": 274.29,
+        "recognitionMs": 253.42,
+        "totalOcrMs": 571.3
+      }
+    },
+    {
+      "fixtureId": "malformed-rgba",
+      "imageDecodeMs": 0,
+      "pageRecognitionWallMs": 0.16,
+      "serializedProductionResultBytes": 0,
+      "engine": null
+    },
+    {
+      "fixtureId": "resource-heavy",
+      "imageDecodeMs": 0,
+      "pageRecognitionWallMs": 0.07,
+      "serializedProductionResultBytes": 0,
+      "engine": null
+    }
+  ],
+  "summary": {
+    "measuredRecognitionPages": 16,
+    "recognitionWallMs": {
+      "median": 615.79,
+      "p95": 4033.61,
+      "maximum": 4033.61,
+      "total": 13874.96
+    },
+    "engineTotalOcrMs": {
+      "median": 614.17,
+      "p95": 4015.97,
+      "maximum": 4015.97
+    },
+    "peakSerializedProductionResultBytes": 30188
+  }
+}

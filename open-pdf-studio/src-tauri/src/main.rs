@@ -19,9 +19,9 @@ struct Cli {
     #[arg(long, default_value_t = 9223)]
     mcp_port: u16,
 
-    /// Internal Phase A one-job process boundary. Never shown as end-user UI.
+    /// Internal production one-job process boundary. Never shown as end-user UI.
     #[arg(long, hide = true)]
-    ocr_phase_a_child: Option<std::path::PathBuf>,
+    ocr_child_job: Option<String>,
 }
 
 fn main() {
@@ -33,12 +33,12 @@ fn main() {
     let cli = Cli::try_parse_from(&args).unwrap_or(Cli {
         mcp_server: false,
         mcp_port: 9223,
-        ocr_phase_a_child: None,
+        ocr_child_job: None,
     });
 
     app_lib::run(app_lib::StartupOpts {
         mcp_server: cli.mcp_server,
         mcp_port: cli.mcp_port,
-        ocr_phase_a_child: cli.ocr_phase_a_child,
+        ocr_child_job: cli.ocr_child_job,
     });
 }

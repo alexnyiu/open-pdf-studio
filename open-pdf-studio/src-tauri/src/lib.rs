@@ -8,7 +8,7 @@ mod email;
 pub mod linux_runtime;
 pub mod mcp_app_bridge;
 pub mod mcp_server;
-pub mod ocr_phase_a;
+pub mod ocr_controller;
 pub mod pdfium_renderer;
 pub mod render_to_png;
 pub mod window_mgmt;
@@ -18,7 +18,7 @@ pub mod worker_pool;
 pub struct StartupOpts {
     pub mcp_server: bool,
     pub mcp_port: u16,
-    pub ocr_phase_a_child: Option<std::path::PathBuf>,
+    pub ocr_child_job: Option<String>,
 }
 
 impl Default for StartupOpts {
@@ -26,7 +26,7 @@ impl Default for StartupOpts {
         Self {
             mcp_server: false,
             mcp_port: 9223,
-            ocr_phase_a_child: None,
+            ocr_child_job: None,
         }
     }
 }
@@ -1686,7 +1686,7 @@ async fn render_pdf_page(
     Ok(tauri::ipc::Response::new(data))
 }
 
-/// Phase A OCR-only PDFium raster lane. It uses an idle sidecar worker and
+/// OCR-only PDFium raster lane. It uses an idle sidecar worker and
 /// intentionally has no in-process fallback, cache insertion, UI state, or
 /// PDF mutation. A busy app therefore defers/fails this background request
 /// instead of allowing OCR to compete with visible rendering.
@@ -1709,15 +1709,69 @@ async fn rasterize_page_for_ocr(
             "PDFium worker pool is not ready; low-priority OCR will not use in-process fallback"
                 .to_string()
         })?;
-    let (width, height, rgba) = pool
-        .render_low_priority(&path, page_index, scale, 0)
+    let raster = pool
+        .render_ocr_low_priority(
+            &path,
+            page_index,
+            scale,
+            0,
+            worker_pool::OcrRasterLimits {
+                max_width: ocr_controller::MAX_WIDTH_PX,
+                max_height: ocr_controller::MAX_HEIGHT_PX,
+                max_pixels: ocr_controller::MAX_PIXELS,
+                max_raster_bytes: ocr_controller::MAX_RASTER_BYTES as u64,
+            },
+        )
         .await
         .map_err(|error| error.to_string())?;
+    let width = raster.width;
+    let height = raster.height;
+    let rgba = raster.rgba;
     let mut out = Vec::with_capacity(8 + rgba.len());
     out.extend_from_slice(&width.to_le_bytes());
     out.extend_from_slice(&height.to_le_bytes());
     out.extend_from_slice(&rgba);
     Ok(tauri::ipc::Response::new(out))
+}
+
+/// Query immutable page/raster geometry without exposing PDF bytes or a
+/// raster buffer to JavaScript. PDFium still performs the bounded render so
+/// the returned actual dimensions and rounding metadata are authoritative.
+#[tauri::command]
+async fn query_pdf_page_geometry(
+    path: String,
+    page_index: u32,
+    scale: f32,
+    application_rotation: Option<i32>,
+    pool: tauri::State<'_, std::sync::Arc<tokio::sync::OnceCell<worker_pool::WorkerPool>>>,
+) -> Result<worker_pool::PdfiumPageGeometry, String> {
+    if path.is_empty() {
+        return Err("PDF page geometry path must not be empty".to_string());
+    }
+    if !scale.is_finite() || !(0.5..=4.0).contains(&scale) {
+        return Err("PDF page geometry scale must be between 0.5 and 4.0".to_string());
+    }
+    let application_rotation = application_rotation.unwrap_or(0);
+    if !matches!(application_rotation.rem_euclid(360), 0 | 90 | 180 | 270) {
+        return Err("application rotation must be 0, 90, 180, or 270 degrees".to_string());
+    }
+    let pool = pool.get().ok_or_else(|| {
+        "PDFium worker pool is not ready; page geometry will not use in-process fallback".to_string()
+    })?;
+    pool.query_page_geometry_low_priority(
+        &path,
+        page_index,
+        scale,
+        application_rotation,
+        worker_pool::OcrRasterLimits {
+            max_width: ocr_controller::MAX_WIDTH_PX,
+            max_height: ocr_controller::MAX_HEIGHT_PX,
+            max_pixels: ocr_controller::MAX_PIXELS,
+            max_raster_bytes: ocr_controller::MAX_RASTER_BYTES as u64,
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -2269,7 +2323,7 @@ pub fn run(opts: StartupOpts) {
         "[startup] mcp_server={}, mcp_port={}, ocr_child={}",
         opts.mcp_server,
         opts.mcp_port,
-        opts.ocr_phase_a_child.is_some()
+        opts.ocr_child_job.is_some()
     );
 
     // Capture the MCP options for `setup()` — we now spawn the MCP server
@@ -2278,10 +2332,17 @@ pub fn run(opts: StartupOpts) {
     // started here (before the builder ran) and never had a handle.
     let mcp_enabled = opts.mcp_server;
     let mcp_port = opts.mcp_port;
-    let ocr_child_state = ocr_phase_a::OcrChildJobState::from_request_path(
-        opts.ocr_phase_a_child.clone(),
+    let ocr_child_state = ocr_controller::OcrChildJobState::from_descriptor(
+        opts.ocr_child_job.clone(),
     );
     let is_ocr_child = ocr_child_state.is_child();
+    let ocr_job_registry = if is_ocr_child {
+        ocr_controller::OcrJobRegistry::child_scaffold()
+    } else if cfg!(target_os = "macos") {
+        ocr_controller::OcrJobRegistry::new()
+    } else {
+        ocr_controller::OcrJobRegistry::unsupported_platform_scaffold()
+    };
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -2379,6 +2440,7 @@ pub fn run(opts: StartupOpts) {
         .manage(pdfium_renderer::PixmapCacheState::default())
         .manage(pool.clone())
         .manage(ocr_child_state)
+        .manage(ocr_job_registry)
         .manage(mcp_app_bridge::McpAppBridge::new())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
@@ -2463,7 +2525,7 @@ pub fn run(opts: StartupOpts) {
             diagnostics.record("native-created", None);
             app.manage(diagnostics);
 
-            // This internal Phase A process owns no end-user surface. It
+            // This internal production process owns no end-user surface. It
             // exists only long enough to host one OCR Worker, then exits.
             if is_ocr_child {
                 if let Some(window) = app.get_webview_window("main") {
@@ -2640,9 +2702,15 @@ pub fn run(opts: StartupOpts) {
             read_plugin_file,
             render_pdf_page,
             rasterize_page_for_ocr,
-            ocr_phase_a::run_ocr_phase_a_isolated,
-            ocr_phase_a::ocr_phase_a_child_take_job,
-            ocr_phase_a::ocr_phase_a_child_complete,
+            query_pdf_page_geometry,
+            ocr_controller::run_ocr_page_job,
+            ocr_controller::get_ocr_job_status,
+            ocr_controller::cancel_ocr_job,
+            ocr_controller::cancel_ocr_document_jobs,
+            ocr_controller::cancel_all_ocr_jobs,
+            ocr_controller::ocr_child_take_job,
+            ocr_controller::ocr_child_complete,
+            ocr_controller::ocr_child_abort,
             worker_pool_ready,
             render_pdf_page_region,
             render_tile_scene_region,
@@ -2681,6 +2749,12 @@ pub fn run(opts: StartupOpts) {
             read_clipboard_image_png,
             set_prtscn_hotkey,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
+                let registry = app_handle.state::<ocr_controller::OcrJobRegistry>();
+                let _ = registry.cancel_all();
+            }
+        });
 }

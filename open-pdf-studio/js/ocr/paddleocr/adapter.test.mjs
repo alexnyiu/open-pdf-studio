@@ -12,6 +12,11 @@ import {
   prepareDetectionTensor,
 } from './adapter.js';
 
+const manifest = JSON.parse(await readFile(
+  new URL('../../../public/ocr/pp-ocrv6-small/manifest.json', import.meta.url),
+  'utf8',
+));
+
 class Tensor {
   constructor(type, data, dims) {
     this.type = type;
@@ -28,7 +33,7 @@ test('PP-OCRv6 detection preprocessing produces BGR NCHW float data', () => {
   assert.ok(prepared.tensor.data.every(Number.isFinite));
 });
 
-test('Phase A DB postprocessor groups horizontally separated components into one line', () => {
+test('DB postprocessor groups horizontally separated components into one line', () => {
   const width = 16;
   const height = 8;
   const data = new Float32Array(width * height);
@@ -54,9 +59,18 @@ test('CTC decoder removes blank and repeated classes', () => {
 });
 
 test('PaddleOCR engine descriptor is offline and cannot write PDFs', () => {
-  const engine = createPaddleOcrEngineDescriptor();
+  const engine = createPaddleOcrEngineDescriptor(manifest);
   assert.equal(engine.runtime.offline, true);
-  assert.equal(engine.capabilities.pdfWriting, false);
+  assert.deepEqual(engine.modelPack.assets, {
+    detection: manifest.assets.detection.sha256,
+    recognition: manifest.assets.recognition.sha256,
+    dictionary: manifest.assets.dictionary.sha256,
+  });
+  assert.equal(engine.capabilities.nativePdfWriting, false);
+  assert.equal(engine.capabilities.wordResults, false);
+  assert.equal(engine.capabilities.alternatives, false);
+  assert.equal(engine.capabilities.languageDetection, false);
+  assert.equal(engine.capabilities.writingDirectionDetection, false);
 });
 
 test('offline asset loader permits local assets and rejects external origins', async () => {
@@ -106,10 +120,6 @@ test('offline fetch guard covers every request and handles Tauri opaque origins 
 test('adapter disposal releases both ONNX sessions and drops model references', async () => {
   const released = [];
   const lifecycle = [];
-  const manifest = JSON.parse(await readFile(
-    new URL('../../../public/ocr/pp-ocrv6-small/manifest.json', import.meta.url),
-    'utf8',
-  ));
   const adapter = new PaddleOcrV6SmallAdapter({
     ort: { InferenceSession: {}, Tensor },
     manifest,
