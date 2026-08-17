@@ -17,7 +17,7 @@ function syncModifiedState() {
   if (!doc) return;
   const isClean = doc.savedUndoStackLength >= 0 &&
                   (doc.undoStack || []).length === doc.savedUndoStackLength;
-  doc.modified = !isClean;
+  doc.modified = !isClean || doc.ocr?.dirty === true;
 }
 
 // Per-document undo stack stored on the document object
@@ -841,7 +841,7 @@ export function flushPropertyChange() {
     // Sync modified state
     const isClean = targetDoc.savedUndoStackLength >= 0 &&
                     targetDoc.undoStack.length === targetDoc.savedUndoStackLength;
-    targetDoc.modified = !isClean;
+    targetDoc.modified = !isClean || targetDoc.ocr?.dirty === true;
   }
 
   pendingPropertyChange = null;

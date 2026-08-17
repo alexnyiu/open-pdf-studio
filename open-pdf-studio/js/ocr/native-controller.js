@@ -6,6 +6,17 @@ import {
 } from './contracts/native-job.v1.js';
 import { assertOcrJobV1 } from './contracts/job.v1.js';
 import { assertOcrResultMatchesJob } from './contracts/worker-message.v1.js';
+import {
+  assertOcrPageGeometryV1,
+  assertPdfiumPageGeometryV1,
+  createOcrPageGeometryFromPdfiumV1,
+} from './contracts/page-geometry.v1.js';
+import {
+  applyOcrPageResult,
+  finishOcrPageAttempt,
+  isCurrentOcrPageToken,
+  markOcrPageRecognizing,
+} from './document-state.js';
 
 export const OCR_NATIVE_CONTROLLER_OUTCOME_CONTRACT =
   'open-pdf-studio.ocr.native-controller-outcome';
@@ -74,6 +85,92 @@ export async function runNativeOcrPage({ sourcePdfPath, request }) {
     request: validatedRequest,
   });
   return assertNativeOcrControllerOutcome(outcome, validatedRequest);
+}
+
+/**
+ * Runs the shipped macOS parent controller and publishes a completed
+ * production result into unsaved document OCR state. Page geometry is a
+ * separately validated production contract from the same parent-side raster;
+ * the PDF path remains parent-only and is never added to the child request.
+ */
+export async function runNativeOcrPageIntoDocument({
+  document,
+  sourcePdfPath,
+  request,
+  pageGeometry = null,
+  pageGeometryBoundary = null,
+  token,
+}) {
+  if (typeof sourcePdfPath !== 'string' || sourcePdfPath.length === 0) {
+    throw new TypeError('native OCR requires a parent-side PDF path');
+  }
+  const validatedRequest = assertNativeOcrPageRequestV1(request);
+  if (!isCurrentOcrPageToken(document, token) ||
+      validatedRequest.document.id !== token.documentId ||
+      validatedRequest.document.generation !== token.documentGeneration ||
+      validatedRequest.page.id !== token.pageId ||
+      validatedRequest.page.index !== token.pageNumber - 1 ||
+      validatedRequest.page.revision !== token.pageRevision) {
+    return { outcome: null, stateUpdate: { applied: false, reason: 'stale-before-run' } };
+  }
+  let boundary = pageGeometryBoundary;
+  if (pageGeometry) {
+    assertOcrPageGeometryV1(pageGeometry);
+    if (pageGeometry.rotations.applicationDegreesClockwise !== 0) {
+      throw new TypeError('native OCR page geometry must use zero application rotation');
+    }
+  } else {
+    if (!boundary) {
+      boundary = await invoke('query_pdf_page_geometry', {
+        path: sourcePdfPath,
+        pageIndex: validatedRequest.page.index,
+        scale: validatedRequest.recognitionOptions.rasterDpi / 72,
+        // The shipped native OCR raster path is canonical and intentionally
+        // independent of the viewer's mutable application rotation.
+        applicationRotation: 0,
+      });
+    }
+    assertPdfiumPageGeometryV1(boundary);
+    if (boundary.applicationRotationDegreesClockwise !== 0) {
+      throw new TypeError('native OCR page geometry must use zero application rotation');
+    }
+  }
+  if (!markOcrPageRecognizing(document, token)) {
+    return { outcome: null, stateUpdate: { applied: false, reason: 'stale-before-run' } };
+  }
+  const outcome = await runNativeOcrPage({ sourcePdfPath, request: validatedRequest });
+  if (outcome.status === 'completed') {
+    const resultGeometry = pageGeometry || createOcrPageGeometryFromPdfiumV1(boundary, {
+      geometryId: outcome.jobId,
+      document: outcome.result.document,
+      page: {
+        id: outcome.result.page.id,
+        index: outcome.result.page.index,
+        revision: outcome.result.page.revision,
+      },
+      sourceRasterId: outcome.result.sourceRaster.id,
+      sourceRasterFingerprint: outcome.result.sourceRaster.fingerprint,
+    });
+    return {
+      outcome,
+      stateUpdate: applyOcrPageResult(document, {
+        result: outcome.result,
+        pageGeometry: resultGeometry,
+        token,
+      }),
+    };
+  }
+  if (outcome.status === 'cancelled') {
+    finishOcrPageAttempt(document, token, 'cancelled');
+  } else if (outcome.status === 'failed' || outcome.status === 'stale') {
+    finishOcrPageAttempt(document, token, outcome.status, [{
+      code: outcome.failure.code,
+      message: outcome.failure.message,
+      severity: outcome.status === 'stale' ? 'warning' : 'error',
+      entityIds: [],
+    }]);
+  }
+  return { outcome, stateUpdate: { applied: false, reason: outcome.status } };
 }
 
 export async function cancelNativeOcrJob(jobId) {

@@ -94,6 +94,21 @@
   background: transparent !important;
 }
 
+/* Unsaved OCR participates in normal browser selection/copy but remains a
+   non-painting accessibility/search layer. Ownership attributes let rerenders
+   replace these nodes without touching native or third-party text spans. */
+.textLayer span[data-ocr-owner="open-pdf-studio"] {
+  color: transparent !important;
+  background: transparent !important;
+  text-shadow: none !important;
+  -webkit-text-fill-color: transparent;
+  user-select: text;
+}
+
+.textLayer br[data-ocr-owner="open-pdf-studio"] {
+  user-select: text;
+}
+
 /* Spook-selectie tegengaan: lege en witruimte-only spans (PDF.js zendt die uit
    voor grote positiesprongen — trailing spaties aan regeleindes, inspring- en
    kolomgaten) mogen GEEN selectie-achtergrond krijgen. Anders verschijnen bij

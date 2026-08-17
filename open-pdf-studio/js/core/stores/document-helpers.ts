@@ -1,11 +1,13 @@
 import type { DocumentState } from '../../types/document.js';
+import { createDocumentOcrState } from '../../ocr/document-state.js';
 
 /**
  * Creates a new document state object
  */
 export function createDocument(filePath: string | null = null): DocumentState {
+  const id = Date.now() + Math.random().toString(36).substr(2, 9);
   return {
-    id: Date.now() + Math.random().toString(36).substr(2, 9),
+    id,
     filePath: filePath,
     fileName: filePath ? filePath.split(/[\\/]/).pop()! : 'Untitled',
     pdfDoc: null,
@@ -14,6 +16,7 @@ export function createDocument(filePath: string | null = null): DocumentState {
     viewMode: 'single',
     annotations: [],
     textEdits: [],
+    ocr: createDocumentOcrState(id),
     watermarks: [],
     bookmarks: [],
     undoStack: [],

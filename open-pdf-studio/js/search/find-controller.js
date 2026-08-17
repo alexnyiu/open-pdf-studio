@@ -5,97 +5,23 @@
  */
 
 import { state, getActiveDocument } from '../core/state.js';
+import { invalidateTextCache } from './text-cache.js';
+import { extractPageText } from './text-extraction.js';
 
-// Cache for extracted text content per document
-const textCache = new Map();
+export { extractPageText } from './text-extraction.js';
 
 // Cancellation token for progressive search
 let _searchGeneration = 0;
-
-/**
- * Extract text content from a single page.
- *
- * IMPORTANT: itemIndex here uses the same filtering as text-layer.js
- * (textContent.items.filter(item => item.str !== undefined)), so it
- * matches span.dataset.itemIndex in the rendered text layer.
- */
-async function extractPageText(pdfDoc, pageNum, doc) {
-  const page = await pdfDoc.getPage(pageNum);
-  const textContent = await page.getTextContent();
-
-  let pageText = '';
-  const items = [];
-
-  // text-layer.js filters: items with str !== undefined, and assigns
-  // span.dataset.itemIndex = i (position in the filtered array).
-  // We must use the SAME index so our itemIndex matches the DOM.
-  const textItems = textContent.items.filter(item => item.str !== undefined);
-
-  textItems.forEach((item, i) => {
-    if (item.str) {
-      items.push({
-        str: item.str,
-        startPos: pageText.length,
-        endPos: pageText.length + item.str.length,
-        transform: item.transform,
-        width: item.width,
-        height: item.height,
-        fontName: item.fontName || '',
-        // This matches span.dataset.itemIndex in text-layer.js line 212
-        itemIndex: i
-      });
-      pageText += item.str;
-    }
-  });
-
-  // Include text from in-memory "Add Text" edits
-  if (doc?.textEdits) {
-    const pageEdits = doc.textEdits.filter(e => e.page === pageNum && e.originalText === '');
-    for (const edit of pageEdits) {
-      if (!edit.newText) continue;
-      const lines = edit.newText.split('\n');
-      for (const line of lines) {
-        if (!line) continue;
-        if (pageText.length > 0 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) {
-          pageText += ' ';
-        }
-        items.push({
-          str: line,
-          startPos: pageText.length,
-          endPos: pageText.length + line.length,
-          transform: null,
-          width: 0,
-          height: 0,
-          fontName: '',
-          itemIndex: -1 // synthetic — no DOM span
-        });
-        pageText += line;
-      }
-    }
-  }
-
-  return { pageNum, text: pageText, items };
-}
 
 /**
  * Extract text content from all pages (cached)
  */
 async function extractAllText(pdfDoc) {
   const doc = getActiveDocument();
-  const docId = doc?.id;
-  const hasTextEdits = doc?.textEdits?.length > 0;
-
-  if (docId && !hasTextEdits && textCache.has(docId)) {
-    return textCache.get(docId);
-  }
 
   const pagesText = [];
   for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
     pagesText.push(await extractPageText(pdfDoc, pageNum, doc));
-  }
-
-  if (docId && !hasTextEdits) {
-    textCache.set(docId, pagesText);
   }
 
   return pagesText;
@@ -104,10 +30,8 @@ async function extractAllText(pdfDoc) {
 /**
  * Clear text cache for a document
  */
-export function clearTextCache(docId) {
-  if (docId) {
-    textCache.delete(docId);
-  }
+export function clearTextCache(docId, pageNum) {
+  invalidateTextCache(docId, pageNum);
 }
 
 /**
@@ -131,15 +55,16 @@ function searchPage(pageData, pattern, query) {
       // Visual anchor (PDF space, Y-up) of the first geometric item, used
       // to order results top-to-bottom on the page rather than in
       // content-stream order.
-      const anchor = matchItems.find(item => item.transform);
+      const anchorItem = matchItems.find(item => item.geometry?.anchor || item.transform);
+      const anchor = anchorItem?.geometry?.anchor;
       results.push({
         pageNum,
         startPos,
         endPos,
         matchText: text.substring(startPos, endPos),
         items: matchItems,
-        anchorX: anchor ? anchor.transform[4] : null,
-        anchorY: anchor ? anchor.transform[5] : null,
+        anchorX: anchor ? anchor.x : anchorItem?.transform?.[4] ?? null,
+        anchorY: anchor ? anchor.y : anchorItem?.transform?.[5] ?? null,
         index: 0 // will be re-indexed later
       });
     }
@@ -225,11 +150,6 @@ export function executeProgressiveSearch(onProgress) {
   const totalPages = pdfDoc.numPages;
   const currentPage = doc.currentPage || 1;
   const pattern = buildPattern(query, matchCase, wholeWord);
-  const docId = doc.id;
-  const hasTextEdits = doc.textEdits?.length > 0;
-
-  const cachedText = (docId && !hasTextEdits && textCache.has(docId))
-    ? textCache.get(docId) : null;
 
   const allResults = [];
   let searchedCount = 0;
@@ -242,18 +162,10 @@ export function executeProgressiveSearch(onProgress) {
   let cancelled = false;
 
   (async () => {
-    const pagesText = cachedText ? null : [];
-
     for (const pageNum of pageOrder) {
       if (cancelled || generation !== _searchGeneration) return;
 
-      let pageData;
-      if (cachedText) {
-        pageData = cachedText[pageNum - 1];
-      } else {
-        pageData = await extractPageText(pdfDoc, pageNum, doc);
-        if (pagesText) pagesText.push(pageData);
-      }
+      const pageData = await extractPageText(pdfDoc, pageNum, doc);
 
       if (cancelled || generation !== _searchGeneration) return;
 
@@ -272,11 +184,6 @@ export function executeProgressiveSearch(onProgress) {
     }
 
     if (cancelled || generation !== _searchGeneration) return;
-
-    if (!cachedText && pagesText && docId && !hasTextEdits) {
-      pagesText.sort((a, b) => a.pageNum - b.pageNum);
-      textCache.set(docId, pagesText);
-    }
 
     allResults.sort(compareResultsVisually);
     allResults.forEach((r, i) => r.index = i);
@@ -531,6 +438,10 @@ function replaceAllInTextEditText(doc, edit, matches, replaceText) {
 export async function replaceCurrentMatch(replaceText) {
   const result = getCurrentResult();
   if (!result) return null;
+  // Pending OCR review corrections have their own immutable-result state.
+  // The legacy Find/Replace path writes PDF content and must not be used for
+  // this unsaved searchable-layer phase.
+  if (result.items?.some((item) => item.source === 'ocr')) return null;
 
   const doc = getActiveDocument();
   if (!doc) return null;
@@ -565,6 +476,7 @@ export async function replaceAllMatches(replaceText) {
   const pdfContentResults = [];
 
   for (const result of results) {
+    if (result.items?.some((item) => item.source === 'ocr')) continue;
     const ann = findAnnotationForMatch(doc, result);
     if (ann) {
       if (!annReplacements.has(ann.id)) annReplacements.set(ann.id, []);

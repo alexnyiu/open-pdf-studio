@@ -2,6 +2,16 @@ import { state, getActiveDocument, getPageRotation } from '../core/state.js';
 import { isTauri, invoke } from '../core/platform.js';
 import * as pdfjsLib from 'pdfjs-dist';
 import { resolveTextEditPageGeometry } from './text-edit-appearance.js';
+import { assessPdfJsTextContent } from '../ocr/existing-text.js';
+import {
+  getPendingOcrTextItems,
+  OPEN_PDF_STUDIO_OCR_OWNER,
+  recordOcrExistingTextAssessment,
+} from '../ocr/document-state.js';
+import {
+  OCR_CROPPED_DISPLAY_PDF_SPACE,
+  mapPolygonBetweenSpaces,
+} from '../ocr/contracts/geometry.js';
 
 /**
  * Text Layer Management Module
@@ -11,6 +21,138 @@ import { resolveTextEditPageGeometry } from './text-edit-appearance.js';
 // Store references to text layers for cleanup
 const textLayers = new Map();
 const pageFontResolutionPromises = new WeakMap();
+
+/** @param {HTMLElement} textLayerDiv @param {any} context */
+export function setOcrTextLayerProjection(textLayerDiv, context) {
+  if (!textLayerDiv) return;
+  textLayerDiv._opdsOcrProjection = context;
+}
+
+/**
+ * Project canonical raw-PDF OCR geometry into a text layer's local frame.
+ * PDF.js viewports own zoom/rotation in raster and continuous modes. The Rust
+ * layer is laid out in cropped display points and receives application zoom
+ * and rotation from its parent CSS matrix.
+ * @param {HTMLElement} textLayerDiv
+ * @param {any} item
+ */
+export function projectOcrItemToTextLayer(textLayerDiv, item) {
+  const context = textLayerDiv?._opdsOcrProjection;
+  if (!context || !item?.polygon?.points?.length) return null;
+  let points;
+  if (context.kind === 'pdfjs') {
+    if (typeof context.viewport?.convertToViewportPoint !== 'function') return null;
+    points = item.polygon.points.map(([x, y]) => context.viewport.convertToViewportPoint(x, y));
+  } else if (context.kind === 'cropped-display') {
+    points = mapPolygonBetweenSpaces(
+      item.pageGeometry.transformChain,
+      item.polygon,
+      OCR_CROPPED_DISPLAY_PDF_SPACE,
+    ).points;
+  } else {
+    return null;
+  }
+  const xs = points.map((point) => point[0]);
+  const ys = points.map((point) => point[1]);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  const right = Math.max(...xs);
+  const bottom = Math.max(...ys);
+  const origin = points[0];
+  const edge = points[1] || [right, top];
+  const opposite = points[points.length - 1] || [left, bottom];
+  return {
+    points,
+    bounds: { left, top, width: right - left, height: bottom - top },
+    origin,
+    width: Math.max(Math.hypot(edge[0] - origin[0], edge[1] - origin[1]), 1),
+    height: Math.max(Math.hypot(opposite[0] - origin[0], opposite[1] - origin[1]), 1),
+    angleDegrees: Math.atan2(edge[1] - origin[1], edge[0] - origin[0]) * 180 / Math.PI,
+  };
+}
+
+/**
+ * Replace only Open PDF Studio's pending OCR nodes. Native PDF.js spans,
+ * third-party spans, and Add Text spans are never selected by this cleanup.
+ * @param {HTMLElement} textLayerDiv
+ * @param {number} pageNum
+ */
+export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
+  if (!textLayerDiv) return;
+  textLayerDiv.querySelectorAll(`[data-ocr-owner="${OPEN_PDF_STUDIO_OCR_OWNER}"]`)
+    .forEach((node) => node.remove());
+
+  const doc = getActiveDocument();
+  if (!doc || textLayerDiv._opdsOcrProjection?.documentId !== doc.id) return;
+  const items = getPendingOcrTextItems(doc, pageNum);
+  if (items.length === 0) return;
+
+  const measureCanvas = document.createElement('canvas');
+  const measureContext = measureCanvas.getContext('2d');
+  let inserted = 0;
+  for (const item of items) {
+    const projected = projectOcrItemToTextLayer(textLayerDiv, item);
+    if (!projected || !item.text) continue;
+    if (inserted > 0) {
+      const separator = document.createElement('br');
+      separator.dataset.ocrOwner = OPEN_PDF_STUDIO_OCR_OWNER;
+      separator.dataset.ocrStream = item.ownership.stream;
+      textLayerDiv.appendChild(separator);
+    }
+
+    const span = document.createElement('span');
+    span.id = item.id;
+    span.textContent = item.text;
+    span.setAttribute('aria-label', item.text);
+    if (item.language) span.setAttribute('lang', item.language);
+    if (item.direction === 'ltr' || item.direction === 'rtl') span.setAttribute('dir', item.direction);
+    if (item.direction === 'ttb' || item.direction === 'btt') {
+      span.style.writingMode = 'vertical-rl';
+    }
+    span.style.position = 'absolute';
+    span.style.left = `${projected.origin[0].toFixed(4)}px`;
+    span.style.top = `${projected.origin[1].toFixed(4)}px`;
+    span.style.fontFamily = 'sans-serif';
+    span.style.fontSize = `${projected.height.toFixed(4)}px`;
+    span.style.lineHeight = '1';
+    span.style.whiteSpace = 'pre';
+    span.style.color = 'transparent';
+    span.style.background = 'transparent';
+    span.style.textShadow = 'none';
+    span.style.caretColor = 'transparent';
+    span.style.transformOrigin = '0 0';
+    let scaleX = 1;
+    if (measureContext) {
+      measureContext.font = `${projected.height}px sans-serif`;
+      const measured = measureContext.measureText(item.text).width;
+      if (measured > 0) scaleX = projected.width / measured;
+    }
+    span.style.transform = `rotate(${projected.angleDegrees.toFixed(6)}deg) scaleX(${scaleX.toFixed(6)})`;
+    span.dataset.ocrOwner = OPEN_PDF_STUDIO_OCR_OWNER;
+    span.dataset.ocrStream = item.ownership.stream;
+    span.dataset.ocrLineId = item.lineId;
+    span.dataset.ocrConfidence = String(item.confidence);
+    span.dataset.ocrReadingOrder = String(item.readingOrder);
+    span.dataset.ocrResultRevision = String(item.resultRevision);
+    span.dataset.ocrCorrectionRevision = String(item.correctionRevision);
+    if (item.language) span.dataset.ocrLanguage = item.language;
+    if (item.direction) span.dataset.ocrDirection = item.direction;
+    const needsTextAccess = state.currentTool === 'select' || state.currentTool === 'editText';
+    span.style.pointerEvents = needsTextAccess ? 'auto' : 'none';
+    span.style.cursor = needsTextAccess ? 'text' : 'default';
+    textLayerDiv.appendChild(span);
+    inserted += 1;
+  }
+}
+
+/** @param {number} pageNum */
+export function refreshPendingOcrTextLayer(pageNum) {
+  const entry = textLayers.get(pageNum);
+  if (!entry?.element) return false;
+  injectPendingOcrTextSpans(entry.element, pageNum);
+  ensureEndOfContent(entry.element);
+  return true;
+}
 
 /**
  * Strip subset prefix from PDF font name (e.g., "NDPKKA+TimesNewRomanPSMT" → "TimesNewRomanPSMT")
@@ -265,6 +407,14 @@ export function ensureEndOfContent(textLayerDiv) {
  */
 export async function createTextLayer(page, viewport, container, pageNum) {
   const textContent = await page.getTextContent();
+  const activeDocument = getActiveDocument();
+  if (activeDocument) {
+    recordOcrExistingTextAssessment(
+      activeDocument,
+      pageNum,
+      assessPdfJsTextContent(textContent),
+    );
+  }
 
   const textLayerDiv = document.createElement('div');
   textLayerDiv.className = 'textLayer';
@@ -287,7 +437,16 @@ export async function createTextLayer(page, viewport, container, pageNum) {
     });
     await textLayer.render();
   } catch (err) {
-    // Fallback: don't create text layer if TextLayer fails
+    // A damaged native text stream must not make an already validated pending
+    // OCR result disappear. Keep the empty layer and publish only owned OCR.
+    textLayers.set(pageNum, { element: textLayerDiv, textLayer: null });
+    setOcrTextLayerProjection(textLayerDiv, {
+      kind: 'pdfjs',
+      viewport,
+      documentId: activeDocument?.id,
+    });
+    injectPendingOcrTextSpans(textLayerDiv, pageNum);
+    ensureEndOfContent(textLayerDiv);
     return textLayerDiv;
   }
 
@@ -335,6 +494,11 @@ export async function createTextLayer(page, viewport, container, pageNum) {
   tagWhitespaceSpans(textLayerDiv);
 
   textLayers.set(pageNum, { element: textLayerDiv, textLayer });
+  setOcrTextLayerProjection(textLayerDiv, {
+    kind: 'pdfjs',
+    viewport,
+    documentId: activeDocument?.id,
+  });
 
   // Enable text selection when select or editText tool is active
   const needsTextAccess = state.currentTool === 'select' || state.currentTool === 'editText';
@@ -351,6 +515,7 @@ export async function createTextLayer(page, viewport, container, pageNum) {
   const unscaledWidth = viewport.width / viewport.scale;
   const unscaledHeight = viewport.height / viewport.scale;
   injectSyntheticTextSpans(textLayerDiv, pageNum, unscaledWidth, unscaledHeight);
+  injectPendingOcrTextSpans(textLayerDiv, pageNum);
 
   // endOfContent-marker als laatste kind (mitigatie omgekeerde sleep)
   ensureEndOfContent(textLayerDiv);
@@ -589,6 +754,10 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
     textLayerDiv.style.setProperty('--total-scale-factor', '1');
     textLayerDiv.style.width = `${pageWidth}px`;
     textLayerDiv.style.height = `${pageHeight}px`;
+    setOcrTextLayerProjection(textLayerDiv, {
+      kind: 'cropped-display',
+      documentId: doc.id,
+    });
 
     // Hidden text-width measurement canvas for --scale-x
     const measureCanvas = document.createElement('canvas');
@@ -655,6 +824,21 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
       s.style.cursor = needsTextAccess ? 'text' : 'default';
     });
 
+    // Existing-text policy is intentionally based on PDF.js rather than the
+    // renderer-specific Rust extraction so native and third-party streams have
+    // one definition across all view modes.
+    try {
+      const pdfPage = await doc.pdfDoc?.getPage(pageNum);
+      const pdfTextContent = await pdfPage?.getTextContent();
+      if (pdfTextContent) {
+        recordOcrExistingTextAssessment(doc, pageNum, assessPdfJsTextContent(pdfTextContent));
+      }
+    } catch (_) {
+      // Rendering remains available; search extraction will retry assessment.
+    }
+
+    injectPendingOcrTextSpans(textLayerDiv, pageNum);
+
     // endOfContent-marker als laatste kind (mitigatie omgekeerde sleep)
     ensureEndOfContent(textLayerDiv);
 
@@ -664,4 +848,19 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
     console.warn('[text-layer] Rust text extraction failed:', e);
     return false;
   }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('open-pdf-studio:ocr-page-state-changed', (event) => {
+    const detail = event.detail;
+    if (detail?.documentId !== getActiveDocument()?.id) return;
+    refreshPendingOcrTextLayer(detail.pageNum);
+  });
+  window.addEventListener('open-pdf-studio:ocr-document-state-changed', (event) => {
+    if (event.detail?.documentId !== getActiveDocument()?.id) return;
+    for (const entry of textLayers.values()) {
+      entry.element.querySelectorAll(`[data-ocr-owner="${OPEN_PDF_STUDIO_OCR_OWNER}"]`)
+        .forEach((node) => node.remove());
+    }
+  });
 }

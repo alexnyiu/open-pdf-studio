@@ -10,6 +10,7 @@ import { unlockFile, lockFile, renameFile, fileExists } from '../../core/platfor
 import { cancelPendingZoom } from '../setup/navigation-events.js';
 import { closeAllPopups } from '../../bridge.js';
 import { cancelNativeOcrDocument } from '../../ocr/native-controller.js';
+import { invalidateTextCache } from '../../search/text-cache.js';
 
 /**
  * Create a new tab for a document
@@ -203,6 +204,10 @@ export async function closeTab(index, force = false) {
     if (action === 'save') {
       const saved = await savePDF();
       if (!saved) return false; // Save failed or was cancelled
+      // This phase does not persist OCR into the PDF. Saving other document
+      // changes therefore cannot authorize closing over dirty pending OCR;
+      // the user may still explicitly choose Don't Save.
+      if (doc.ocr?.dirty) return false;
     }
     // action === 'dontsave' → proceed to close without saving
   }
@@ -236,6 +241,7 @@ export async function closeTab(index, force = false) {
 
   // Clear thumbnail cache for this document
   clearThumbnailCache(doc.id);
+  invalidateTextCache(doc.id);
 
   // Remove the document
   state.documents.splice(index, 1);
@@ -444,7 +450,8 @@ export function markDocumentModified() {
 export function markDocumentSaved() {
   const doc = getActiveDocument();
   if (doc) {
-    doc.modified = false;
+    // Pending searchable OCR is deliberately not part of PDF output yet.
+    doc.modified = doc.ocr?.dirty === true;
     doc.savedUndoStackLength = (doc.undoStack || []).length;
     updateTabBar();
     updateWindowTitle();

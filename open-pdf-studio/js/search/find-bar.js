@@ -5,6 +5,7 @@
 import { state, getActiveDocument } from '../core/state.js';
 import { executeSearch, executeProgressiveSearch, findNext, findPrevious, getCurrentResult, clearSearch, getResultsForPage } from './find-controller.js';
 import { renderPage, renderContinuous } from '../pdf/renderer.js';
+import { projectOcrItemToTextLayer } from '../text/text-layer.js';
 import {
   setFindBarVisible as setVisible, setFindBarResultsText as setResultsText,
   setFindBarMessageText as setMessageText, setFindBarNotFound as setNotFound,
@@ -434,6 +435,31 @@ function highlightMatch(result, isCurrent) {
   const pageHeightPt = textLayer.offsetHeight / scale;
 
   for (const item of result.items) {
+    if (item.source === 'ocr' && item.geometry?.polygon) {
+      const projected = projectOcrItemToTextLayer(textLayer, {
+        polygon: item.geometry.polygon,
+        pageGeometry: item.geometry.pageGeometry,
+      });
+      if (!projected || projected.bounds.width <= 0 || projected.bounds.height <= 0) continue;
+      const { left, top, width, height } = projected.bounds;
+      const clipPoints = projected.points.map(([x, y]) => {
+        const localX = 100 * (x - left) / width;
+        const localY = 100 * (y - top) / height;
+        return `${localX.toFixed(4)}% ${localY.toFixed(4)}%`;
+      });
+      const highlight = document.createElement('div');
+      highlight.className = 'search-highlight' + (isCurrent ? ' current' : '');
+      highlight.dataset.resultIndex = result.index;
+      highlight.dataset.ocrLineId = item.ocrLineId;
+      highlight.style.left = `${left}px`;
+      highlight.style.top = `${top}px`;
+      highlight.style.width = `${width}px`;
+      highlight.style.height = `${height}px`;
+      highlight.style.clipPath = `polygon(${clipPoints.join(', ')})`;
+      textLayer.appendChild(highlight);
+      continue;
+    }
+
     const t = item.transform;
     if (!t) continue; // synthetic (Add Text) items carry no geometry
 

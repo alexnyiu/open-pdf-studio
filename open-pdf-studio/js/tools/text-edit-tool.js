@@ -429,7 +429,9 @@ function enableTextLayerHover() {
     getBlockGroups(layer);
 
     const pageNum = parseInt(layer.dataset.page) || (getActiveDocument()?.currentPage || 1);
-    const spans = layer.querySelectorAll('span');
+    // Pending OCR uses immutable engine results plus separate review
+    // corrections. It must not enter the legacy PDF-content edit path.
+    const spans = layer.querySelectorAll('span:not([data-ocr-owner])');
     spans.forEach(span => {
       if (alreadyAttached.has(span)) return;
       span.style.pointerEvents = 'auto';

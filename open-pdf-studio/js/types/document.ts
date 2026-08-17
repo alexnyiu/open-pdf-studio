@@ -1,4 +1,5 @@
 import type { Annotation } from './annotation.js';
+import type { DocumentOcrState } from './ocr.js';
 
 export interface MeasureScale {
   pixelsPerUnit: number;
@@ -59,6 +60,8 @@ export interface DocumentState {
   bookSpread?: boolean;
   annotations: Annotation[];
   textEdits: TextEdit[];
+  /** Unsaved searchable OCR and review state; never serialized as textEdits. */
+  ocr: DocumentOcrState;
   watermarks: Watermark[];
   bookmarks: Bookmark[];
   undoStack: UndoCommand[];
