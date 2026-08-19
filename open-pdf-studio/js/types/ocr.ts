@@ -273,9 +273,13 @@ export interface OcrWorkflowFailureDetail {
 export interface OcrWorkflowJobState {
   jobId: string;
   documentId: string;
-  status: OcrDocumentJobSummary['status'];
+  documentName: string;
+  status: OcrDocumentJobSummary['status'] | 'cancelling';
   progress: number;
   pages: OcrPageJobSummary[];
+  counts: Record<OcrApplicationPageState, number>;
+  currentPageNumber: number | null;
+  currentPageState: OcrApplicationPageState;
   terminalSummary: OcrDocumentJobSummary | null;
   failureDetails: OcrWorkflowFailureDetail[];
   cancellationAvailable: boolean;

@@ -162,6 +162,7 @@ function startInput(document, overrides = {}) {
 
 test('the normal macOS application action owns a production controller and calls startDocumentJob', async () => {
   const document = makeDocument('production-action-document');
+  document.fileName = '/private/customer/source.pdf';
   const fake = fakeHandle(document.id, 'production-action-job');
   const originalStart = ocrWorkflowService.controller.startDocumentJob;
   const originalRequireInstalled = ocrWorkflowService.modelState.requireInstalled;
@@ -187,12 +188,19 @@ test('the normal macOS application action owns a production controller and calls
     assert.equal(received.keepCompletedPages, true);
     assert.equal(ocrWorkflowService.activeJobs.get(document.id).handle, fake.handle);
     assert.doesNotThrow(() => structuredClone(ocrWorkflowService.status(document.id)));
+    assert.equal(ocrWorkflowService.status(document.id).documentName, 'source.pdf');
+    assert.equal(ocrWorkflowService.status(document.id).currentPageNumber, 2);
+    assert.equal(ocrWorkflowService.status(document.id).currentPageState, 'queued');
+    assert.equal(ocrWorkflowService.status(document.id).counts.completed, 0);
+    assert.doesNotMatch(JSON.stringify(ocrWorkflowService.snapshot()), /\/private\/customer/);
 
     fake.completion.resolve(terminalSummary({ jobId: fake.handle.jobId, documentId: document.id }));
     await fake.handle.completion;
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(ocrWorkflowService.activeJobs.has(document.id), false);
     assert.equal(ocrWorkflowService.status(document.id).terminalSummary.status, 'completed');
+    assert.equal(ocrWorkflowService.status(document.id).currentPageState, 'completed');
+    assert.equal(ocrWorkflowService.status(document.id).counts.completed, 1);
   } finally {
     ocrWorkflowService.controller.startDocumentJob = originalStart;
     ocrWorkflowService.modelState.requireInstalled = originalRequireInstalled;
@@ -240,9 +248,12 @@ test('workflow state publishes progress, failure details, and handle-backed user
   assert.ok(snapshots.length >= 3);
 
   const cancellation = service.cancel(document.id);
+  const duplicateCancellation = service.cancel(document.id);
   assert.deepEqual(fake.cancellations, ['user-cancelled']);
   assert.equal(service.status(document.id).cancellationAvailable, false);
   assert.equal(service.status(document.id).cancellationRequested, true);
+  assert.equal(service.status(document.id).status, 'cancelling');
+  assert.equal(service.status(document.id).finishedAt, null);
 
   const failure = { code: 'OCR_ENGINE_FAILURE', stage: 'recognizing', retryable: false };
   fake.completion.resolve(terminalSummary({
@@ -252,6 +263,7 @@ test('workflow state publishes progress, failure details, and handle-backed user
     pages: [pageSummary(2, 'failed', failure)],
   }));
   await cancellation;
+  await duplicateCancellation;
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(service.status(document.id).failureDetails, [{ pageNumber: 2, ...failure }]);
   assert.equal(service.status(document.id).terminalSummary.status, 'failed');
@@ -264,11 +276,13 @@ test('document and application close use controller cancellation and suppress la
   const document = makeDocument('closing-document');
   const fake = fakeHandle(document.id, 'closing-job');
   const calls = [];
+  let childReaped = false;
   const controller = {
     startDocumentJob: () => fake.handle,
     async cancelDocument(documentId, reason) {
       calls.push(['document', documentId, reason]);
       await fake.handle.cancel(reason);
+      childReaped = true;
       return [];
     },
     async cancelAll(reason) {
@@ -279,6 +293,11 @@ test('document and application close use controller cancellation and suppress la
   const service = new OcrWorkflowService({ controller, modelState: { requireInstalled: async () => modelState() } });
   service.start(startInput(document));
   const closing = service.closeDocument(document.id);
+  let closingSettled = false;
+  void closing.then(() => { closingSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closingSettled, false);
+  assert.equal(childReaped, false);
   fake.completion.resolve(terminalSummary({
     jobId: fake.handle.jobId,
     documentId: document.id,
@@ -286,6 +305,7 @@ test('document and application close use controller cancellation and suppress la
     pages: [pageSummary(2, 'cancelled')],
   }));
   await closing;
+  assert.equal(childReaped, true);
   assert.deepEqual(calls[0], ['document', document.id, 'document-close']);
   assert.equal(service.status(document.id), null);
   assert.equal(service.activeJobs.has(document.id), false);
@@ -296,6 +316,55 @@ test('document and application close use controller cancellation and suppress la
 
   await service.closeApplication();
   assert.deepEqual(calls[1], ['application', 'application-close']);
+});
+
+test('application close waits for every retained production handle to become terminal', async () => {
+  const firstDocument = makeDocument('application-close-first');
+  const secondDocument = makeDocument('application-close-second');
+  const first = fakeHandle(firstDocument.id);
+  const second = fakeHandle(secondDocument.id);
+  const handles = new Map([
+    [firstDocument.id, first],
+    [secondDocument.id, second],
+  ]);
+  let childrenReaped = false;
+  const controller = {
+    startDocumentJob: ({ document }) => handles.get(document.id).handle,
+    cancelDocument: async () => [],
+    async cancelAll(reason) {
+      await Promise.all([...handles.values()].map(({ handle }) => handle.cancel(reason)));
+      childrenReaped = true;
+      return [];
+    },
+  };
+  const service = new OcrWorkflowService({ controller, modelState: { requireInstalled: async () => modelState() } });
+  service.start(startInput(firstDocument));
+  service.start(startInput(secondDocument));
+
+  const closing = service.closeApplication();
+  let closingSettled = false;
+  void closing.then(() => { closingSettled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closingSettled, false);
+  assert.equal(childrenReaped, false);
+  assert.deepEqual(first.cancellations, ['application-close']);
+  assert.deepEqual(second.cancellations, ['application-close']);
+
+  first.completion.resolve(terminalSummary({
+    jobId: first.handle.jobId,
+    documentId: firstDocument.id,
+    status: 'cancelled',
+    pages: [pageSummary(2, 'cancelled')],
+  }));
+  second.completion.resolve(terminalSummary({
+    jobId: second.handle.jobId,
+    documentId: secondDocument.id,
+    status: 'cancelled',
+    pages: [pageSummary(2, 'cancelled')],
+  }));
+  await closing;
+  assert.equal(childrenReaped, true);
+  assert.deepEqual(service.snapshot().jobsByDocumentId, {});
 });
 
 test('the application action resolves page scopes and stays disabled off macOS', async () => {

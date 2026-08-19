@@ -1525,3 +1525,306 @@
 .sched-wizard-steps { flex-wrap: wrap; }
 .sched-wizard-footer { display: flex; gap: 6px; justify-content: flex-end; }
 .sched-wizard-done { font-weight: 600; }
+
+/* macOS searchable-OCR review panel */
+.ocr-review-panel {
+  color: var(--theme-text, #1f2328);
+  font-size: 11px;
+  user-select: none;
+}
+
+.ocr-review-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 7px;
+}
+
+.ocr-review-ownership {
+  max-width: 58%;
+  overflow: hidden;
+  padding: 2px 5px;
+  border: 1px solid var(--theme-panel-border, #c8c8c8);
+  border-radius: 999px;
+  color: var(--theme-text-secondary, #606770);
+  font-size: 9px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ocr-review-page-navigation {
+  display: grid;
+  grid-template-columns: 28px minmax(42px, auto) 1fr 28px;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.ocr-review-page-navigation button,
+.ocr-review-page-navigation select,
+.ocr-review-panel button,
+.ocr-review-panel input[type="text"] {
+  min-height: 26px;
+  border: 1px solid var(--theme-input-border, var(--theme-border, #b8b8b8));
+  border-radius: 3px;
+  background: var(--theme-input-bg, var(--theme-surface, #fff));
+  color: var(--theme-text, #1f2328);
+  font: inherit;
+}
+
+.ocr-review-page-navigation button,
+.ocr-review-panel button {
+  cursor: pointer;
+}
+
+.ocr-review-page-navigation button:disabled,
+.ocr-review-panel button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.ocr-review-page-navigation select {
+  width: 100%;
+}
+
+.ocr-review-filter-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: var(--theme-text-secondary, #606770);
+}
+
+.ocr-review-filter-row label {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+}
+
+.ocr-review-jump-actions,
+.ocr-review-editor-actions,
+.ocr-review-undo-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.ocr-review-jump-actions {
+  margin-bottom: 8px;
+}
+
+.ocr-review-jump-actions > button,
+.ocr-review-undo-actions > button {
+  flex: 1;
+}
+
+.ocr-review-unsupported-summary,
+.ocr-review-error {
+  margin: 7px 0;
+  padding: 6px;
+  border: 1px solid var(--theme-error-border, #c64040);
+  border-radius: 3px;
+  background: var(--theme-error-bg, #fff0f0);
+  color: var(--theme-error-text, var(--theme-error, #9b1c1c));
+  user-select: text;
+}
+
+.ocr-review-issues,
+.ocr-review-recognized {
+  margin: 9px 0;
+}
+
+.ocr-review-issues h3,
+.ocr-review-recognized > h3,
+.ocr-review-alternatives h4 {
+  margin: 0 0 5px;
+  color: var(--theme-text, #1f2328);
+  font-size: 11px;
+}
+
+.ocr-review-issues ul {
+  margin: 0;
+  padding-left: 17px;
+  color: var(--theme-text-secondary, #606770);
+  user-select: text;
+}
+
+.ocr-review-issues li + li {
+  margin-top: 4px;
+}
+
+.ocr-review-line-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ocr-review-line {
+  padding: 7px;
+  border: 1px solid var(--theme-panel-border, #d0d0d0);
+  border-radius: 4px;
+  background: var(--theme-panel-bg, #fff);
+}
+
+.ocr-review-line:hover {
+  background: var(--theme-hover, #f2f5f8);
+}
+
+.ocr-review-line.selected {
+  border-color: var(--theme-accent, #2563eb);
+  box-shadow: inset 3px 0 0 var(--theme-accent, #2563eb);
+}
+
+.ocr-review-line-meta {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+  justify-content: space-between;
+  color: var(--theme-text-secondary, #606770);
+  font-size: 9px;
+}
+
+.ocr-review-confidence {
+  font-weight: 600;
+  text-align: right;
+}
+
+.ocr-review-confidence.confidence-low {
+  color: var(--theme-error-text, #9b1c1c);
+}
+
+.ocr-review-confidence.confidence-medium {
+  color: var(--theme-text, #704800);
+}
+
+.ocr-review-confidence.confidence-high {
+  color: var(--theme-success-text, #166534);
+}
+
+.ocr-review-effective-text {
+  margin: 7px 0;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.ocr-review-correction-state,
+.ocr-review-line-warning {
+  margin: 4px 0;
+  color: var(--theme-text-secondary, #606770);
+  font-size: 9px;
+}
+
+.ocr-review-correction-state::before {
+  content: "✓ ";
+  font-weight: 700;
+}
+
+.ocr-review-line-warning::before {
+  content: "! ";
+  font-weight: 700;
+}
+
+.ocr-review-alternatives {
+  margin: 7px 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--theme-panel-border, #d0d0d0);
+}
+
+.ocr-review-alternatives p {
+  margin: 0;
+  color: var(--theme-text-secondary, #606770);
+}
+
+.ocr-review-alternative-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ocr-review-alternative {
+  width: 100%;
+  padding: 4px 6px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ocr-review-correction-editor {
+  margin-top: 7px;
+}
+
+.ocr-review-correction-editor label {
+  display: block;
+  margin-bottom: 3px;
+  font-weight: 600;
+}
+
+.ocr-review-correction-editor input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  user-select: text;
+}
+
+.ocr-review-editor-actions {
+  margin-top: 5px;
+}
+
+.ocr-review-panel .ocr-review-primary-button,
+.ocr-review-panel .ocr-review-secondary-button,
+.ocr-review-panel .ocr-review-danger-button {
+  padding: 4px 7px;
+}
+
+.ocr-review-panel .ocr-review-primary-button {
+  border-color: var(--theme-accent, #2563eb);
+  background: var(--theme-accent, #2563eb);
+  color: #fff;
+}
+
+.ocr-review-panel .ocr-review-primary-button:hover:not(:disabled) {
+  background: var(--theme-accent-hover, #1d4ed8);
+}
+
+.ocr-review-panel .ocr-review-danger-button {
+  border-color: var(--theme-error-border, #c64040);
+  color: var(--theme-error-text, var(--theme-error, #9b1c1c));
+}
+
+.ocr-review-document-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 0 2px;
+  border-top: 1px solid var(--theme-panel-border, #d0d0d0);
+}
+
+.ocr-review-empty {
+  color: var(--theme-text-secondary, #606770);
+  user-select: text;
+}
+
+.ocr-review-panel :is(button, input, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--theme-accent, #2563eb);
+  outline-offset: 2px;
+}
+
+.ocr-review-visually-hidden,
+.ocr-review-live-region {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}

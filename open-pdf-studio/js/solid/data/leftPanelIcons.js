@@ -64,6 +64,13 @@ export const schedulesIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="curre
   <line x1="9" y1="3" x2="9" y2="21"/>
 </svg>`;
 
+export const ocrReviewIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+  <path d="M4 3h10l6 6v12H4z"/>
+  <path d="M14 3v6h6"/>
+  <path d="M8 13h8M8 17h5"/>
+  <path d="m15 18 1.5 1.5L20 16"/>
+</svg>`;
+
 export const toggleIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
   <polyline points="15 18 9 12 15 6"/>
 </svg>`;

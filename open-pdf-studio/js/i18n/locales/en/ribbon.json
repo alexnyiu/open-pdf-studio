@@ -267,7 +267,38 @@
     "ocrRunning": "Recognizing page {{page}} of {{total}}",
     "cancelOcr": "Cancel OCR",
     "ocrFailed": "OCR failed ({{code}})",
-    "dismissOcr": "Dismiss"
+    "dismissOcr": "Dismiss",
+    "ocrProgressTitle": "Text recognition",
+    "ocrPage": "Page {{page}} of {{total}}",
+    "ocrOverallProgress": "Overall text recognition progress for {{document}}",
+    "ocrCounts": "Page outcome counts",
+    "ocrCancelling": "Cancelling…",
+    "hideOcr": "Hide",
+    "showOcr": "Show details",
+    "retryOcr": "Retry",
+    "ocrActionFailed": "Text recognition failed ({{code}}).",
+    "ocrRetryGuidance": "This failure may be temporary. Retry the same pages and settings.",
+    "ocrFailureDetail": "Page {{page}}: {{code}}",
+    "ocrLiveUpdate": "{{document}}. {{state}}. Page {{page}} of {{total}}. {{percent}} percent. {{completed}} completed, {{failed}} failed, {{cancelled}} cancelled.",
+    "ocrStates": {
+      "queued": "Queued",
+      "rasterizing": "Rasterizing",
+      "preprocessing": "Preprocessing",
+      "recognizing": "Recognizing",
+      "validating": "Validating",
+      "applying": "Applying",
+      "completed": "Completed",
+      "skipped": "Skipped",
+      "unsupported": "Unsupported",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "cancelling": "Cancelling"
+    },
+    "ocrTerminal": {
+      "completed": "Finished: {{completed}} completed, {{skipped}} skipped, and {{unsupported}} unsupported.",
+      "failed": "Finished with failures: {{completed}} completed, {{skipped}} skipped, {{unsupported}} unsupported, and {{failed}} failed.",
+      "cancelled": "Cancelled: {{completed}} completed and {{cancelled}} cancelled."
+    }
   },
   "help": {
     "settings": "Settings",

@@ -1,10 +1,10 @@
-import { For } from 'solid-js';
+import { For, Show } from 'solid-js';
 import { activeTab, collapsed, toggleLeftPanelCollapsed } from '../../stores/leftPanelStore.js';
 import LeftPanelTab from './LeftPanelTab.jsx';
 import {
   thumbnailsIcon, bookmarksIcon, annotationsIcon, attachmentsIcon,
   signaturesIcon, layersIcon, formFieldsIcon, destinationsIcon,
-  tagsIcon, linksIcon, measurementsIcon, schedulesIcon, toggleIcon
+  tagsIcon, linksIcon, measurementsIcon, schedulesIcon, ocrReviewIcon, toggleIcon
 } from '../../data/leftPanelIcons.js';
 import ThumbnailsPanel from './panels/ThumbnailsPanel.jsx';
 import BookmarksPanel from './panels/BookmarksPanel.jsx';
@@ -18,12 +18,14 @@ import TagsPanel from './panels/TagsPanel.jsx';
 import LinksPanel from './panels/LinksPanel.jsx';
 import MeasurementsPanel from './panels/MeasurementsPanel.jsx';
 import SchedulesPanel from './panels/SchedulesPanel.jsx';
+import OcrReviewPanel from './panels/OcrReviewPanel.jsx';
+import { ocrWorkflowAvailable } from '../../stores/ocrWorkflowStore.js';
 import { useTranslation } from '../../../i18n/useTranslation.js';
 
 export default function LeftPanel() {
   const { t } = useTranslation('properties');
 
-  const TABS = [
+  const TABS = () => [
     { panelId: 'thumbnails', title: () => t('leftPanel.thumbnails'), label: () => t('docInfo.pages'), icon: thumbnailsIcon },
     { panelId: 'bookmarks', title: () => t('leftPanel.bookmarks'), label: () => t('leftPanel.bookmarks'), icon: bookmarksIcon },
     { panelId: 'annotations', title: () => t('leftPanel.annotations'), label: () => t('leftPanel.annotations'), icon: annotationsIcon },
@@ -36,13 +38,19 @@ export default function LeftPanel() {
     { panelId: 'links', title: () => t('leftPanel.links'), label: () => t('leftPanel.links'), icon: linksIcon },
     { panelId: 'measurements', title: () => t('leftPanel.measurements') || 'Measurements', label: () => t('leftPanel.measurements') || 'Measurements', icon: measurementsIcon },
     { panelId: 'schedules', title: () => t('leftPanel.schedules') || 'Schedules', label: () => t('leftPanel.schedules') || 'Schedules', icon: schedulesIcon },
+    ...(ocrWorkflowAvailable() ? [{
+      panelId: 'ocr-review',
+      title: () => t('leftPanel.ocrReview'),
+      label: () => t('leftPanel.ocrReview'),
+      icon: ocrReviewIcon,
+    }] : []),
   ];
 
   return (
     <>
     <div class={`left-panel${collapsed() ? ' collapsed' : ''}`} id="left-panel">
       <div class="left-panel-tabs">
-        <For each={TABS}>
+        <For each={TABS()}>
           {(tab) => (
             <LeftPanelTab
               panelId={tab.panelId}
@@ -68,6 +76,9 @@ export default function LeftPanel() {
         <LinksPanel />
         <MeasurementsPanel />
         <SchedulesPanel />
+        <Show when={ocrWorkflowAvailable()}>
+          <OcrReviewPanel />
+        </Show>
       </div>
 
       <button class="left-panel-toggle" id="left-panel-toggle" title={t('leftPanel.togglePanel')} onClick={toggleLeftPanelCollapsed}>

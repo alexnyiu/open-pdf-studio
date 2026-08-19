@@ -1,6 +1,9 @@
 // @ts-check
 
-import { OcrApplicationController } from './application-controller.js';
+import {
+  OCR_APPLICATION_PAGE_STATES,
+  OcrApplicationController,
+} from './application-controller.js';
 import { getDefaultOcrModelPackState } from './model-state.js';
 
 /** @typedef {import('../types/ocr.js').OcrDocumentJobSummary} OcrDocumentJobSummary */
@@ -9,6 +12,35 @@ import { getDefaultOcrModelPackState } from './model-state.js';
 
 function clone(value) {
   return structuredClone(value);
+}
+
+function documentDisplayName(document, sourcePdfPath) {
+  const candidate = typeof document?.fileName === 'string' && document.fileName.trim()
+    ? document.fileName
+    : sourcePdfPath;
+  const name = typeof candidate === 'string'
+    ? candidate.split(/[\\/]/).filter(Boolean).at(-1)
+    : null;
+  return name || 'Untitled.pdf';
+}
+
+/** @returns {Record<import('../types/ocr.js').OcrApplicationPageState, number>} */
+function pageCounts(pages) {
+  const counts = /** @type {Record<import('../types/ocr.js').OcrApplicationPageState, number>} */ (
+    Object.fromEntries(OCR_APPLICATION_PAGE_STATES.map((state) => [state, 0]))
+  );
+  for (const page of pages) {
+    if (Object.hasOwn(counts, page.state)) counts[page.state] += 1;
+  }
+  return counts;
+}
+
+function terminalFocusPage(pages, status) {
+  const preferredState = status === 'cancelled' ? 'cancelled' : status === 'failed' ? 'failed' : null;
+  return pages.find((page) => page.state === preferredState)
+    ?? pages.find((page) => page.state === 'failed' || page.state === 'cancelled')
+    ?? pages.at(-1)
+    ?? null;
 }
 
 function publicFailure(error, fallbackCode = 'OCR_WORKFLOW_FAILED', fallbackStage = 'application') {
@@ -34,7 +66,7 @@ export class OcrWorkflowService {
   constructor({ controller = null, modelState = getDefaultOcrModelPackState() } = {}) {
     this.modelState = modelState;
     this.controller = controller ?? new OcrApplicationController({ modelState });
-    /** @type {Map<string, {handle: any, token: symbol, suppressPublications: boolean}>} */
+    /** @type {Map<string, {handle: any, token: symbol, suppressPublications: boolean, cancellationPromise: Promise<any> | null}>} */
     this.activeJobs = new Map();
     /** @type {Map<string, OcrWorkflowJobState>} */
     this.states = new Map();
@@ -150,27 +182,37 @@ export class OcrWorkflowService {
       throw new TypeError('OCR controller returned an invalid application job handle');
     }
 
-    this.activeJobs.set(document.id, { handle, token, suppressPublications: false });
+    this.activeJobs.set(document.id, {
+      handle,
+      token,
+      suppressPublications: false,
+      cancellationPromise: null,
+    });
     const started = typeof handle.summary === 'function' ? handle.summary() : null;
+    const pages = started?.pages ?? input.pageNumbers.map((pageNumber) => ({
+      pageNumber,
+      state: 'queued',
+      fraction: 0,
+      attempts: 0,
+      retries: 0,
+      retryableFailureSeen: false,
+      failure: null,
+      staleRejected: false,
+      cache: 'not-checked',
+      retained: false,
+      measuredStageCosts: null,
+    }));
     /** @type {OcrWorkflowJobState} */
     const state = {
       jobId: handle.jobId,
       documentId: document.id,
+      documentName: documentDisplayName(document, input.sourcePdfPath),
       status: started?.status === 'queued' ? 'queued' : 'running',
       progress: started?.progress ?? 0,
-      pages: started?.pages ?? input.pageNumbers.map((pageNumber) => ({
-        pageNumber,
-        state: 'queued',
-        fraction: 0,
-        attempts: 0,
-        retries: 0,
-        retryableFailureSeen: false,
-        failure: null,
-        staleRejected: false,
-        cache: 'not-checked',
-        retained: false,
-        measuredStageCosts: null,
-      })),
+      pages,
+      counts: pageCounts(pages),
+      currentPageNumber: pages[0]?.pageNumber ?? null,
+      currentPageState: pages[0]?.state ?? 'queued',
       terminalSummary: null,
       failureDetails: [],
       cancellationAvailable: true,
@@ -198,7 +240,7 @@ export class OcrWorkflowService {
     const active = this.activeJobs.get(documentId);
     const state = this.states.get(documentId);
     if (!active || active.token !== token || active.suppressPublications || !state || state.jobId !== event.jobId) return;
-    state.status = 'running';
+    state.status = state.cancellationRequested ? 'cancelling' : 'running';
     state.progress = Math.max(state.progress, Number(event.documentFraction) || 0);
     const page = state.pages.find((entry) => entry.pageNumber === event.pageNumber);
     if (page) {
@@ -213,6 +255,9 @@ export class OcrWorkflowService {
           { pageNumber: event.pageNumber, ...clone(event.failure) },
         ];
       }
+      state.currentPageNumber = page.pageNumber;
+      state.currentPageState = page.state;
+      state.counts = pageCounts(state.pages);
     }
     this.publish();
   }
@@ -228,6 +273,10 @@ export class OcrWorkflowService {
     state.status = summary.status;
     state.progress = summary.progress;
     state.pages = clone(summary.pages);
+    state.counts = pageCounts(state.pages);
+    const focusPage = terminalFocusPage(state.pages, summary.status);
+    state.currentPageNumber = focusPage?.pageNumber ?? state.currentPageNumber;
+    state.currentPageState = focusPage?.state ?? state.currentPageState;
     state.terminalSummary = clone(summary);
     state.failureDetails = summaryFailures(summary);
     state.cancellationAvailable = false;
@@ -243,7 +292,17 @@ export class OcrWorkflowService {
     const state = this.states.get(documentId);
     if (!state) return;
     state.status = 'failed';
-    state.failureDetails = [publicFailure(error)];
+    const failure = publicFailure(error);
+    state.failureDetails = [failure];
+    const currentPage = state.pages.find((page) => page.pageNumber === state.currentPageNumber)
+      ?? state.pages.find((page) => !['completed', 'skipped', 'unsupported', 'failed', 'cancelled'].includes(page.state));
+    if (currentPage) {
+      currentPage.state = 'failed';
+      currentPage.failure = clone(failure);
+      state.currentPageNumber = currentPage.pageNumber;
+      state.currentPageState = 'failed';
+    }
+    state.counts = pageCounts(state.pages);
     state.cancellationAvailable = false;
     state.finishedAt = new Date().toISOString();
     this.publish();
@@ -253,27 +312,55 @@ export class OcrWorkflowService {
   async cancel(documentId, reason = 'user-cancelled') {
     const active = this.activeJobs.get(documentId);
     if (!active) return null;
+    if (active.cancellationPromise) return active.cancellationPromise;
     const state = this.states.get(documentId);
     if (state) {
+      state.status = 'cancelling';
       state.cancellationAvailable = false;
       state.cancellationRequested = true;
       this.publish();
     }
-    return active.handle.cancel(reason);
+    try {
+      active.cancellationPromise = Promise.resolve(active.handle.cancel(reason));
+    } catch (error) {
+      active.cancellationPromise = Promise.reject(error);
+    }
+    return active.cancellationPromise;
   }
 
   /** Preserve the established document-close controller/native boundary. */
   async closeDocument(documentId, reason = 'document-close') {
     this.closedDocuments.add(documentId);
     const active = this.activeJobs.get(documentId);
-    if (active) active.suppressPublications = true;
+    const state = this.states.get(documentId);
+    if (active) {
+      active.suppressPublications = true;
+      if (state) {
+        state.status = 'cancelling';
+        state.cancellationAvailable = false;
+        state.cancellationRequested = true;
+        this.publish();
+      }
+    }
     try {
-      return await this.controller.cancelDocument(documentId, reason);
-    } finally {
+      const summaries = await this.controller.cancelDocument(documentId, reason);
       const current = this.activeJobs.get(documentId);
       if (!active || current === active) this.activeJobs.delete(documentId);
       this.states.delete(documentId);
       this.publish();
+      return summaries;
+    } catch (error) {
+      this.closedDocuments.delete(documentId);
+      if (this.activeJobs.get(documentId) === active) active.suppressPublications = false;
+      if (state) {
+        const failure = publicFailure(error, 'OCR_DOCUMENT_CLOSE_CANCELLATION_FAILED', 'cancelling');
+        state.status = 'failed';
+        state.failureDetails = [failure];
+        state.cancellationAvailable = false;
+        state.finishedAt = new Date().toISOString();
+      }
+      this.publish();
+      throw error;
     }
   }
 
@@ -282,11 +369,15 @@ export class OcrWorkflowService {
     this.applicationClosing = true;
     for (const active of this.activeJobs.values()) active.suppressPublications = true;
     try {
-      return await this.controller.cancelAll(reason);
-    } finally {
+      const summaries = await this.controller.cancelAll(reason);
       this.activeJobs.clear();
       this.states.clear();
       this.publish();
+      return summaries;
+    } catch (error) {
+      for (const active of this.activeJobs.values()) active.suppressPublications = false;
+      this.publish();
+      throw error;
     }
   }
 }

@@ -267,7 +267,38 @@
     "ocrRunning": "Pagina {{page}} van {{total}} herkennen",
     "cancelOcr": "OCR annuleren",
     "ocrFailed": "OCR mislukt ({{code}})",
-    "dismissOcr": "Sluiten"
+    "dismissOcr": "Sluiten",
+    "ocrProgressTitle": "Tekstherkenning",
+    "ocrPage": "Pagina {{page}} van {{total}}",
+    "ocrOverallProgress": "Totale voortgang van tekstherkenning voor {{document}}",
+    "ocrCounts": "Aantallen paginaresultaten",
+    "ocrCancelling": "Bezig met annuleren…",
+    "hideOcr": "Verbergen",
+    "showOcr": "Details tonen",
+    "retryOcr": "Opnieuw proberen",
+    "ocrActionFailed": "Tekstherkenning is mislukt ({{code}}).",
+    "ocrRetryGuidance": "Deze fout kan tijdelijk zijn. Probeer dezelfde pagina's en instellingen opnieuw.",
+    "ocrFailureDetail": "Pagina {{page}}: {{code}}",
+    "ocrLiveUpdate": "{{document}}. {{state}}. Pagina {{page}} van {{total}}. {{percent}} procent. {{completed}} voltooid, {{failed}} mislukt, {{cancelled}} geannuleerd.",
+    "ocrStates": {
+      "queued": "In wachtrij",
+      "rasterizing": "Rasteriseren",
+      "preprocessing": "Voorbewerken",
+      "recognizing": "Herkennen",
+      "validating": "Valideren",
+      "applying": "Toepassen",
+      "completed": "Voltooid",
+      "skipped": "Overgeslagen",
+      "unsupported": "Niet ondersteund",
+      "failed": "Mislukt",
+      "cancelled": "Geannuleerd",
+      "cancelling": "Bezig met annuleren"
+    },
+    "ocrTerminal": {
+      "completed": "Afgerond: {{completed}} voltooid, {{skipped}} overgeslagen en {{unsupported}} niet ondersteund.",
+      "failed": "Afgerond met fouten: {{completed}} voltooid, {{skipped}} overgeslagen, {{unsupported}} niet ondersteund en {{failed}} mislukt.",
+      "cancelled": "Geannuleerd: {{completed}} voltooid en {{cancelled}} geannuleerd."
+    }
   },
   "help": {
     "information": "Informatie",

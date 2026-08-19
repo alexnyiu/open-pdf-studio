@@ -46,6 +46,7 @@ const TERMINAL_PAGE_STATES = new Set(['completed', 'skipped', 'unsupported', 'fa
 const WEIGHTED_STAGES = ['queued', 'rasterizing', 'preprocessing', 'recognizing', 'validating', 'applying'];
 const activeApplicationControllers = new Set();
 const activeDocumentApplicationJobs = new Map();
+const CANCELLED_ASYNC_WAIT = Symbol('ocr-cancelled-async-wait');
 let applicationJobSequence = 0;
 
 function nowMs() {
@@ -54,6 +55,10 @@ function nowMs() {
 
 function clone(value) {
   return structuredClone(value);
+}
+
+function yieldToEventLoop(_context = null) {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 /** A cancellable FIFO gate shared by default across application controllers. */
@@ -178,6 +183,10 @@ export class ApplicationOcrJob {
     this.progressSequence = 0;
     this.cancelRequested = false;
     this.cancellationReason = null;
+    this.resolveCancellation = null;
+    this.cancellationSignal = new Promise((resolve) => {
+      this.resolveCancellation = resolve;
+    });
     this.currentNativeJobId = null;
     this.appliedPageNumbers = [];
     this.rolledBackPageNumbers = [];
@@ -204,6 +213,15 @@ export class ApplicationOcrJob {
 
   cancel(reason = 'parent-cancelled') {
     return this.controller.cancelJob(this.jobId, reason);
+  }
+
+  requestCancellation(reason) {
+    if (this.cancelRequested) return false;
+    this.cancelRequested = true;
+    this.cancellationReason = reason;
+    this.resolveCancellation?.();
+    this.resolveCancellation = null;
+    return true;
   }
 
   pageSummaries() {
@@ -257,6 +275,7 @@ export class OcrApplicationController {
     stageCosts = new OcrStageCostModel(),
     inferenceGate = defaultInferenceGate,
     clock = nowMs,
+    yieldControl = yieldToEventLoop,
   } = {}) {
     this.runPage = runPage;
     this.cancelPage = cancelPage;
@@ -268,6 +287,7 @@ export class OcrApplicationController {
     this.stageCosts = stageCosts;
     this.inferenceGate = inferenceGate;
     this.clock = clock;
+    this.yieldControl = yieldControl;
     this.jobs = new Map();
     activeApplicationControllers.add(this);
   }
@@ -370,14 +390,50 @@ export class OcrApplicationController {
     }
   }
 
+  async waitForCancellable(job, promise) {
+    const settled = await Promise.race([
+      Promise.resolve(promise).then(
+        (value) => ({ status: 'fulfilled', value }),
+        (error) => ({ status: 'rejected', error }),
+      ),
+      job.cancellationSignal.then(() => ({ status: 'cancelled' })),
+    ]);
+    if (settled.status === 'cancelled') return CANCELLED_ASYNC_WAIT;
+    if (settled.status === 'rejected') throw settled.error;
+    return settled.value;
+  }
+
+  async cancellationWindow(job, page, stage) {
+    const result = await this.waitForCancellable(job, this.yieldControl({
+      jobId: job.jobId,
+      documentId: job.documentId,
+      pageNumber: page?.pageNumber ?? null,
+      stage,
+    }));
+    return result === CANCELLED_ASYNC_WAIT || job.cancelRequested;
+  }
+
+  cancelCurrentAttempt(job, page, pageBefore = null) {
+    if (!job.cancelRequested) return false;
+    this.restoreCurrentAttempt(job, page, pageBefore);
+    if (!TERMINAL_PAGE_STATES.has(page.state)) this.transition(job, page, 'cancelled');
+    return true;
+  }
+
   async prepareDefaults(job) {
     const options = job.options;
-    if (options.createPageRequest) return;
+    if (options.createPageRequest) return !job.cancelRequested;
     if (!options.documentFingerprint) {
-      options.documentFingerprint = await this.fingerprintDocument(options.sourcePdfPath);
+      const fingerprint = await this.waitForCancellable(
+        job,
+        this.fingerprintDocument(options.sourcePdfPath),
+      );
+      if (fingerprint === CANCELLED_ASYNC_WAIT) return false;
+      options.documentFingerprint = fingerprint;
     }
     if (!options.modelPack) {
-      const model = await this.modelState.requireInstalled();
+      const model = await this.waitForCancellable(job, this.modelState.requireInstalled());
+      if (model === CANCELLED_ASYNC_WAIT) return false;
       options.modelPack = model.manifest;
     }
     options.createPageRequest = (input) => createApplicationOcrPageRequest({
@@ -389,12 +445,22 @@ export class OcrApplicationController {
       force: options.force,
       keepCompletedPages: options.keepCompletedPages,
     });
+    return !job.cancelRequested;
   }
 
   async runJob(job) {
     job.status = 'running';
     try {
-      await this.prepareDefaults(job);
+      const prepared = await this.prepareDefaults(job);
+      if (!prepared) {
+        for (const page of job.pages.values()) {
+          if (!TERMINAL_PAGE_STATES.has(page.state)) this.transition(job, page, 'cancelled');
+        }
+        job.status = 'cancelled';
+        job.progress = 1;
+        job.finishedAt = new Date().toISOString();
+        return job.summary();
+      }
     } catch (error) {
       const failure = failureMetadata(error, 'OCR_MODEL_OR_FINGERPRINT_UNAVAILABLE', 'preparing');
       for (const page of job.pages.values()) {
@@ -490,12 +556,19 @@ export class OcrApplicationController {
       this.transition(job, page, 'queued');
       let request;
       try {
-        request = await job.options.createPageRequest({
-          document,
-          token: page.token,
-          pageNumber: page.pageNumber,
-          attempt: attemptIndex,
-        });
+        request = await this.waitForCancellable(
+          job,
+          job.options.createPageRequest({
+            document,
+            token: page.token,
+            pageNumber: page.pageNumber,
+            attempt: attemptIndex,
+          }),
+        );
+        if (request === CANCELLED_ASYNC_WAIT || job.cancelRequested) {
+          this.cancelCurrentAttempt(job, page, pageBefore);
+          return;
+        }
         page.request = request;
       } catch (error) {
         this.restoreCurrentAttempt(job, page, pageBefore);
@@ -517,27 +590,56 @@ export class OcrApplicationController {
       }
       if (job.options.useCache && !job.options.force && attemptIndex === 0) {
         try {
-          const cached = await this.cache.get(cacheKey, { documentId: document.id });
+          const cached = await this.waitForCancellable(
+            job,
+            this.cache.get(cacheKey, { documentId: document.id }),
+          );
+          if (cached === CANCELLED_ASYNC_WAIT || job.cancelRequested) {
+            this.cancelCurrentAttempt(job, page, pageBefore);
+            return;
+          }
           page.cache = cached.status;
           if (cached.status === 'hit') {
             this.transition(job, page, 'validating');
+            if (await this.cancellationWindow(job, page, 'validating')) {
+              this.cancelCurrentAttempt(job, page, pageBefore);
+              return;
+            }
             const validatingStarted = this.clock();
             const rebound = rebindCachedOcrEnvelope(cached.envelope, request, page.token);
             const validatingMs = this.clock() - validatingStarted;
-            this.applyValidatedPage(job, page, rebound.result, rebound.pageGeometry, validatingMs, pageBefore);
+            if (await this.cancellationWindow(job, page, 'validated')) {
+              this.cancelCurrentAttempt(job, page, pageBefore);
+              return;
+            }
+            await this.applyValidatedPage(
+              job,
+              page,
+              rebound.result,
+              rebound.pageGeometry,
+              validatingMs,
+              pageBefore,
+            );
             return;
           }
         } catch {
           page.cache = 'error';
         }
+        if (this.cancelCurrentAttempt(job, page, pageBefore)) return;
       } else {
         page.cache = job.options.useCache ? 'bypassed' : 'disabled';
       }
 
       this.transition(job, page, 'rasterizing');
-      await Promise.resolve();
+      if (await this.cancellationWindow(job, page, 'rasterizing')) {
+        this.cancelCurrentAttempt(job, page, pageBefore);
+        return;
+      }
       this.transition(job, page, 'preprocessing');
-      await Promise.resolve();
+      if (await this.cancellationWindow(job, page, 'preprocessing')) {
+        this.cancelCurrentAttempt(job, page, pageBefore);
+        return;
+      }
       const releaseInference = await this.inferenceGate.acquire(job.jobId);
       if (!releaseInference || job.cancelRequested) {
         releaseInference?.();
@@ -603,6 +705,10 @@ export class OcrApplicationController {
       }
 
       this.transition(job, page, 'validating');
+      if (await this.cancellationWindow(job, page, 'validating')) {
+        this.cancelCurrentAttempt(job, page, pageBefore);
+        return;
+      }
       const validatingStarted = this.clock();
       let result;
       let pageGeometry;
@@ -619,7 +725,11 @@ export class OcrApplicationController {
         return;
       }
       const validatingMs = this.clock() - validatingStarted;
-      if (!this.applyValidatedPage(job, page, result, pageGeometry, validatingMs, pageBefore)) return;
+      if (await this.cancellationWindow(job, page, 'validated')) {
+        this.cancelCurrentAttempt(job, page, pageBefore);
+        return;
+      }
+      if (!await this.applyValidatedPage(job, page, result, pageGeometry, validatingMs, pageBefore)) return;
       if (job.options.useCache) {
         try {
           await this.cache.put(cacheKey, result, pageGeometry, { documentId: document.id });
@@ -638,7 +748,8 @@ export class OcrApplicationController {
     return restoreOcrCommandState(job.options.document, snapshot, { restoreDocumentState: false });
   }
 
-  applyValidatedPage(job, page, result, pageGeometry, validatingMs, pageBefore) {
+  async applyValidatedPage(job, page, result, pageGeometry, validatingMs, pageBefore) {
+    if (this.cancelCurrentAttempt(job, page, pageBefore)) return false;
     if (!isCurrentOcrPageToken(job.options.document, page.token) ||
         ensureDocumentOcrState(job.options.document).generation !== job.documentGeneration) {
       page.staleRejected = true;
@@ -648,6 +759,10 @@ export class OcrApplicationController {
       return false;
     }
     this.transition(job, page, 'applying');
+    if (await this.cancellationWindow(job, page, 'applying')) {
+      this.cancelCurrentAttempt(job, page, pageBefore);
+      return false;
+    }
     const applyingStarted = this.clock();
     let stateUpdate;
     try {
@@ -678,8 +793,7 @@ export class OcrApplicationController {
   async cancelJob(jobId, reason = 'parent-cancelled') {
     const job = this.jobs.get(jobId);
     if (!job) return null;
-    job.cancelRequested = true;
-    job.cancellationReason = reason;
+    if (!job.requestCancellation(reason)) return job.completion;
     this.inferenceGate.cancel(job.jobId);
     for (const page of job.pages.values()) {
       if (page.state === 'queued' && !page.token) this.transition(job, page, 'cancelled');

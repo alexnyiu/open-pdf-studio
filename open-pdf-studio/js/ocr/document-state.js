@@ -13,10 +13,12 @@ import {
 } from './contracts/geometry.js';
 import { invalidateTextCache } from '../search/text-cache.js';
 import { assessPdfJsTextContent } from './existing-text.js';
+import { isValidUnicode } from './contracts/validation.js';
 
 export const OPEN_PDF_STUDIO_OCR_OWNER = 'open-pdf-studio';
 export const PENDING_OCR_STREAM = 'pending-searchable-text';
 export const PERSISTED_OCR_STREAM = 'pdf-owned-invisible-text';
+export const MAX_OCR_CORRECTION_CODE_UNITS = 16_384;
 const assessmentPdfDocuments = new WeakMap();
 const ESTIMATED_BASELINE_FRACTION = 0.8;
 const MIN_SUPPORTED_LINE_ASPECT_RATIO = 1.5;
@@ -324,7 +326,10 @@ export function restoreOcrCommandState(doc, snapshot, { restoreDocumentState = t
     const pageNum = pageSnapshot.pageNumber;
     if (!Number.isSafeInteger(pageNum) || pageNum < 1) return false;
     if (pageSnapshot.exists) {
-      ocr.pages[pageNum] = clone(pageSnapshot.state);
+      // Commands live inside Solid's reactive undo arrays in the browser, so
+      // their nested page snapshots may be proxies. structuredClone rejects
+      // Proxy values; unwrap at the same boundary used when capturing state.
+      ocr.pages[pageNum] = clone(unwrap(pageSnapshot.state));
     } else {
       delete ocr.pages[pageNum];
     }
@@ -533,6 +538,29 @@ export function finishOcrPageAttempt(doc, token, status, warnings = []) {
 }
 
 /**
+ * Corrections are future PDF text operands, so validate them at the review
+ * boundary instead of deferring unsafe input until save. Format characters
+ * such as bidi marks and joiners remain valid Unicode; C0/C1 controls and
+ * explicit Unicode line separators are not valid inside one recognized line.
+ * @param {unknown} value
+ */
+export function validateOcrCorrectionText(value) {
+  const issues = [];
+  if (typeof value !== 'string') {
+    issues.push('OCR correction text must be a string');
+  } else {
+    if (!isValidUnicode(value)) issues.push('OCR correction text must contain valid Unicode');
+    if (value.length > MAX_OCR_CORRECTION_CODE_UNITS) {
+      issues.push(`OCR correction text exceeds ${MAX_OCR_CORRECTION_CODE_UNITS} UTF-16 code units`);
+    }
+    if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)) {
+      issues.push('OCR correction text contains unsupported control or line-separator characters');
+    }
+  }
+  return { ok: issues.length === 0, issues };
+}
+
+/**
  * Accepts review text separately from the immutable recognized result.
  * @param {any} doc
  * @param {number} pageNum
@@ -543,7 +571,13 @@ export function acceptOcrLineCorrection(doc, pageNum, lineId, correctedText) {
   const page = ensureOcrPageState(doc, pageNum);
   const line = page.recognition.result?.lines?.find((entry) => entry.id === lineId);
   if (!line) throw new RangeError(`OCR line ${lineId} is not present on page ${pageNum}`);
-  if (typeof correctedText !== 'string') throw new TypeError('OCR correction text must be a string');
+  const validation = validateOcrCorrectionText(correctedText);
+  if (!validation.ok) {
+    throw Object.assign(new TypeError(validation.issues.join('; ')), {
+      code: 'OCR_CORRECTION_INVALID',
+      issues: validation.issues,
+    });
+  }
   const existing = page.review.corrections[lineId];
   if (existing?.correctedText === correctedText) return existing;
   const revision = page.review.revision + 1;
@@ -586,6 +620,9 @@ function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) 
   const page = doc?.ocr?.pages?.[pageNum];
   if (!page?.recognition.result || !page.recognition.geometry ||
       page.recognition.ownership?.owner !== OPEN_PDF_STUDIO_OCR_OWNER) return [];
+  // Unsupported engine results stay reviewable, but must never enter search,
+  // synthetic text layers, or the later PDF writer projection.
+  if (!['completed', 'partial'].includes(page.recognition.result.page?.status)) return [];
   const ownership = page.recognition.ownership;
   if (pendingOnly && ownership.stream !== PENDING_OCR_STREAM) return [];
   // A forced OCR result over meaningful PDF text is intentionally hidden from

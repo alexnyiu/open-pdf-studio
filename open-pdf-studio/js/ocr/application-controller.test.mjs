@@ -22,6 +22,7 @@ const vite = await createServer({
 const {
   OCR_APPLICATION_PAGE_STATES,
   OcrApplicationController,
+  OcrInferenceGate,
   cancelAllApplicationOcrJobs,
   cancelApplicationOcrDocument,
 } = await vite.ssrLoadModule('/js/ocr/application-controller.js');
@@ -68,6 +69,39 @@ function makeDocument(id, pageTextItems) {
     modified: false,
     ocr: createDocumentOcrState(id),
   };
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitUntil(predicate, message) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(message);
+}
+
+async function withTimeout(promise, milliseconds, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function requestFactory(fixtures) {
@@ -272,7 +306,7 @@ test('only explicitly retryable page failures are retried', async () => {
   controller.dispose();
 });
 
-test('document-close cancellation keeps completed pages and cancels queued work', async () => {
+test('document-close cancellation keeps completed pages when keep-completed-pages is true', async () => {
   const document = makeDocument('document-close-cancel', [[], [], []]);
   const fixtures = new Map();
   let releaseSecondPage;
@@ -301,6 +335,7 @@ test('document-close cancellation keeps completed pages and cancels queued work'
   const [[summary]] = await cancelApplicationOcrDocument(document.id, 'document-close');
 
   assert.equal(summary.status, 'cancelled');
+  assert.equal(summary.keepCompletedPages, true);
   assert.equal(summary.cancellationReason, 'document-close');
   assert.deepEqual(summary.pages.map((page) => page.state), ['completed', 'cancelled', 'cancelled']);
   assert.deepEqual(summary.appliedPageNumbers, [1]);
@@ -309,6 +344,179 @@ test('document-close cancellation keeps completed pages and cancels queued work'
   assert.equal(pageCancels.length, 1);
   assert.deepEqual(nativeDocumentCancels, [document.id]);
   assert.equal(await job.completion, summary);
+  controller.dispose();
+});
+
+test('cancel before inference removes a queued gate ticket without running the native page', async () => {
+  const document = makeDocument('cancel-before-inference', [[]]);
+  const fixtures = new Map();
+  const inferenceGate = new OcrInferenceGate();
+  const releaseBlocker = await inferenceGate.acquire('blocking-document-job');
+  let inferenceCalls = 0;
+  const controller = new OcrApplicationController({
+    inferenceGate,
+    runPage: async () => {
+      inferenceCalls += 1;
+      throw new Error('cancelled queue entry must not reach inference');
+    },
+  });
+  const job = startJob(controller, document, fixtures);
+  await waitUntil(() => inferenceGate.queue.some((ticket) => ticket.applicationJobId === job.jobId),
+    'OCR job did not enter the inference queue');
+
+  const summary = await job.cancel('user-cancelled');
+
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(summary.counts.cancelled, 1);
+  assert.equal(inferenceCalls, 0);
+  assert.equal(inferenceGate.queue.some((ticket) => ticket.applicationJobId === job.jobId), false);
+  assert.equal(getPendingOcrTextItems(document, 1).length, 0);
+  releaseBlocker();
+  controller.dispose();
+});
+
+test('cancel during a delayed cache read settles without applying a late cache hit', async () => {
+  const document = makeDocument('cancel-delayed-cache', [[]]);
+  const fixtures = new Map();
+  const cacheRead = deferred();
+  const cacheStarted = deferred();
+  let inferenceCalls = 0;
+  const controller = new OcrApplicationController({
+    cache: {
+      get: async () => {
+        cacheStarted.resolve();
+        return cacheRead.promise;
+      },
+      put: async () => {},
+    },
+    runPage: async () => {
+      inferenceCalls += 1;
+      throw new Error('late cache cancellation must not fall through to inference');
+    },
+  });
+  const job = startJob(controller, document, fixtures, { useCache: true });
+  await cacheStarted.promise;
+
+  const summary = await withTimeout(
+    job.cancel('user-cancelled'),
+    1_000,
+    'cache cancellation did not settle',
+  );
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(inferenceCalls, 0);
+  assert.equal(getPendingOcrTextItems(document, 1).length, 0);
+
+  cacheRead.resolve({ status: 'hit', envelope: { deliberately: 'late-and-invalid' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(getPendingOcrTextItems(document, 1).length, 0);
+  assert.equal(document.undoStack.length, 0);
+  controller.dispose();
+});
+
+test('native inference cancellation stays pending until the child is reaped and rejects a late result', async () => {
+  const document = makeDocument('cancel-native-inference', [[]]);
+  const fixtures = new Map();
+  const nativeRun = deferred();
+  const nativeStarted = deferred();
+  const cancelCalled = deferred();
+  let childReaped = false;
+  const controller = new OcrApplicationController({
+    runPage: async () => {
+      nativeStarted.resolve();
+      return nativeRun.promise;
+    },
+    cancelPage: async () => {
+      childReaped = true;
+      cancelCalled.resolve();
+      return { cleanup: { noChildSurvived: true } };
+    },
+  });
+  const job = startJob(controller, document, fixtures);
+  await nativeStarted.promise;
+
+  let cancellationSettled = false;
+  const cancellation = job.cancel('user-cancelled').then((summary) => {
+    cancellationSettled = true;
+    return summary;
+  });
+  await cancelCalled.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(childReaped, true);
+  assert.equal(cancellationSettled, false);
+
+  const fixture = [...fixtures.values()][0];
+  nativeRun.resolve({
+    outcome: { status: 'completed', result: fixture.result },
+    pageGeometry: fixture.pageGeometry,
+  });
+  const summary = await cancellation;
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(summary.pages[0].state, 'cancelled');
+  assert.equal(getPendingOcrTextItems(document, 1).length, 0);
+  assert.equal(document.undoStack.length, 0);
+  controller.dispose();
+});
+
+test('cancellation rejects a result between validation and application and while applying', async () => {
+  for (const cancellationStage of ['validated', 'applying']) {
+    const document = makeDocument(`cancel-${cancellationStage}`, [[]]);
+    const fixtures = new Map();
+    const stageReached = deferred();
+    const releaseStage = deferred();
+    const controller = new OcrApplicationController({
+      runPage: completedRunPage(fixtures),
+      yieldControl: ({ stage }) => {
+        if (stage === cancellationStage) {
+          stageReached.resolve();
+          return releaseStage.promise;
+        }
+        return Promise.resolve();
+      },
+    });
+    const job = startJob(controller, document, fixtures);
+    await stageReached.promise;
+
+    const summary = await job.cancel('user-cancelled');
+    releaseStage.resolve();
+
+    assert.equal(summary.status, 'cancelled', cancellationStage);
+    assert.equal(summary.pages[0].state, 'cancelled', cancellationStage);
+    assert.equal(getPendingOcrTextItems(document, 1).length, 0, cancellationStage);
+    assert.equal(document.undoStack.length, 0, cancellationStage);
+    controller.dispose();
+  }
+});
+
+test('keep-completed-pages false rolls back completed text when a later page is cancelled', async () => {
+  const document = makeDocument('cancel-rollback-completed-pages', [[], []]);
+  const fixtures = new Map();
+  const secondPageStarted = deferred();
+  const secondPageRun = deferred();
+  const controller = new OcrApplicationController({
+    runPage: async ({ request }) => {
+      if (request.page.index === 1) {
+        secondPageStarted.resolve();
+        return secondPageRun.promise;
+      }
+      const fixture = fixtures.get(request.jobId);
+      return { outcome: { status: 'completed', result: fixture.result }, pageGeometry: fixture.pageGeometry };
+    },
+    cancelPage: async () => {
+      secondPageRun.resolve({ outcome: { status: 'cancelled' }, pageGeometry: null });
+    },
+  });
+  const job = startJob(controller, document, fixtures, { keepCompletedPages: false });
+  await secondPageStarted.promise;
+
+  const summary = await job.cancel('user-cancelled');
+
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(summary.keepCompletedPages, false);
+  assert.deepEqual(summary.appliedPageNumbers, []);
+  assert.deepEqual(summary.rolledBackPageNumbers, [1]);
+  assert.equal(getPendingOcrTextItems(document, 1).length, 0);
+  assert.equal(getPendingOcrTextItems(document, 2).length, 0);
+  assert.equal(document.undoStack.length, 0);
   controller.dispose();
 });
 

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR progress and cancellation integration harness</title>
+    <link rel="stylesheet" href="/styles/themes.css">
+    <link rel="stylesheet" href="/styles/dialogs.css">
+    <style>body { margin: 0; min-height: 100vh; }</style>
+    <script>
+      window.__TAURI__ = { os: { type: () => 'macos' } };
+    </script>
+  </head>
+  <body>
+    <main id="test-root"></main>
+    <script type="module" src="/tests/ui/ocr-progress-harness.jsx"></script>
+  </body>
+</html>

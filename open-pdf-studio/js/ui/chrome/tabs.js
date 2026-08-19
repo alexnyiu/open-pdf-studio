@@ -218,7 +218,8 @@ export async function closeTab(index, force = false) {
   try {
     await cancelOcrWorkflowDocument(doc.id, 'document-close');
   } catch (error) {
-    console.warn('Failed to cancel document OCR jobs:', error);
+    console.error('Failed to cancel and reap document OCR jobs:', error);
+    return false;
   }
 
   // Close all open sticky note popups
