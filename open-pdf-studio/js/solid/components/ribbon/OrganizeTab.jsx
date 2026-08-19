@@ -1,3 +1,4 @@
+import { Show } from 'solid-js';
 import RibbonGroup from './RibbonGroup.jsx';
 import AdaptiveGroups from './AdaptiveGroups.jsx';
 import RibbonButton from './RibbonButton.jsx';
@@ -13,9 +14,14 @@ import { setLeftPanelActiveTab, setLeftPanelCollapsed } from '../../../bridge.js
 import { useTranslation } from '../../../i18n/useTranslation.js';
 import { openDialog } from '../../stores/dialogStore.js';
 import { compareActive, exitCompare } from '../../../compare/compare-store.js';
+import {
+  activeDocumentOcrWorkflow,
+  ocrWorkflowAvailable,
+} from '../../stores/ocrWorkflowStore.js';
 
 const reorderIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="6" height="4"/><rect x="3" y="10" width="6" height="4"/><rect x="3" y="17" width="6" height="4"/><path d="M14 5l4 4-4 4M14 13l4 4-4 4M18 9H10M18 17H10" stroke-linecap="round"/></svg>`;
 const compressIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="M9.5 14.5L12 12l2.5 2.5"/></svg>`;
+const recognizeTextIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3"/><path d="M7 9h10M12 9v8M9 17h6"/></svg>`;
 
 export default function OrganizeTab() {
   const { t } = useTranslation('ribbon');
@@ -55,6 +61,12 @@ export default function OrganizeTab() {
             disabled={ro()} active={state.currentTool === 'editText'} onClick={() => setTool('editText')} />
           <RibbonButton id="ep-add-text" title={t('home.addText')} icon={addTextIcon} label={t('home.addText')}
             disabled={ro()} onClick={() => setTool('text')} />
+          <Show when={ocrWorkflowAvailable()}>
+            <RibbonButton id="ep-recognize-text" title={t('organize.recognizeCurrentPage')}
+              icon={recognizeTextIcon} label={t('organize.recognizeText')}
+              disabled={ro() || activeDocumentOcrWorkflow()?.finishedAt === null}
+              onClick={() => openDialog('recognize-text')} />
+          </Show>
           <RibbonButton id="ep-crop-margins" title={t('home.cropMargins')} icon={cropMarginsIcon} label={t('home.crop')}
             disabled={ro()} onClick={() => {
               const doc = getActiveDocument();

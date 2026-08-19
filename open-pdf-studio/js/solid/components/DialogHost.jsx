@@ -45,7 +45,9 @@ import StickyNotePopupHost from './StickyNotePopup.jsx';
 import ParametricSymbolPicker from './dialogs/ParametricSymbolPicker.jsx';
 import StyleTypeEditorDialog from './dialogs/StyleTypeEditorDialog.jsx';
 import TekeninstellingenDialog from './dialogs/TekeninstellingenDialog.jsx';
+import RecognizeTextDialog from './dialogs/RecognizeTextDialog.jsx';
 import PrintProgressToast from './PrintProgressToast.jsx';
+import OcrProgressToast from './OcrProgressToast.jsx';
 
 const DIALOG_MAP = {
   'doc-properties': DocPropertiesDialog,
@@ -87,6 +89,7 @@ const DIALOG_MAP = {
   'scale-region': ScaleRegionDialog,
   'measured-length': MeasuredLengthDialog,
   'compare': CompareDialog,
+  'recognize-text': RecognizeTextDialog,
 };
 
 export default function DialogHost() {
@@ -106,6 +109,7 @@ export default function DialogHost() {
       <StickyNotePopupHost />
       <ParametricSymbolPicker />
       <PrintProgressToast />
+      <OcrProgressToast />
     </>
   );
 }

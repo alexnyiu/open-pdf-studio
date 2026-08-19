@@ -261,7 +261,13 @@
     "manageWatermarks": "Watermerken beheren",
     "manage": "Beheren",
     "compressPdf": "PDF comprimeren (bestandsgrootte verkleinen)",
-    "compressLabel": "Comprimeren"
+    "compressLabel": "Comprimeren",
+    "recognizeText": "Tekst herkennen",
+    "recognizeCurrentPage": "Pagina's kiezen en tekst herkennen",
+    "ocrRunning": "Pagina {{page}} van {{total}} herkennen",
+    "cancelOcr": "OCR annuleren",
+    "ocrFailed": "OCR mislukt ({{code}})",
+    "dismissOcr": "Sluiten"
   },
   "help": {
     "information": "Informatie",

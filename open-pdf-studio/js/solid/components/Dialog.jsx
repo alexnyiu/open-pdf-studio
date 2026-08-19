@@ -11,6 +11,14 @@ export default function Dialog(props) {
   let isDragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
+  let previouslyFocused;
+
+  function focusableElements() {
+    if (!dialogRef) return [];
+    return [...dialogRef.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => element.getAttribute('aria-hidden') !== 'true');
+  }
 
   function onHeaderMouseDown(e) {
     if (e.target.closest('.modal-close-btn')) return;
@@ -60,7 +68,26 @@ export default function Dialog(props) {
 
   function onKeyDown(e) {
     if (e.key === 'Escape') {
+      e.preventDefault();
       props.onClose?.();
+      return;
+    }
+    if (e.key === 'Tab' && props.trapFocus) {
+      const focusable = focusableElements();
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialogRef?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && (document.activeElement === first || !dialogRef.contains(document.activeElement))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
   }
 
@@ -101,12 +128,19 @@ export default function Dialog(props) {
   }
 
   onMount(() => {
+    previouslyFocused = document.activeElement;
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
     document.addEventListener('keydown', onKeyDown);
     window.addEventListener('resize', clampToViewport);
     // Clamp after first layout (content height is only known then)
-    requestAnimationFrame(clampToViewport);
+    requestAnimationFrame(() => {
+      clampToViewport();
+      const initial = props.initialFocusSelector
+        ? dialogRef?.querySelector(props.initialFocusSelector)
+        : null;
+      (initial || focusableElements()[0] || dialogRef)?.focus?.();
+    });
   });
 
   onCleanup(() => {
@@ -114,6 +148,7 @@ export default function Dialog(props) {
     document.removeEventListener('mouseup', onMouseUp);
     document.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('resize', clampToViewport);
+    if (previouslyFocused?.isConnected) previouslyFocused.focus?.();
   });
 
   return (
@@ -130,6 +165,7 @@ export default function Dialog(props) {
         role="dialog"
         aria-modal="true"
         aria-label={props.title}
+        tabindex="-1"
         onAnimationEnd={() => dialogRef?.classList.remove('bump')}
       >
         <div
@@ -137,7 +173,7 @@ export default function Dialog(props) {
           onMouseDown={onHeaderMouseDown}
         >
           <h2>{props.title}</h2>
-          <button class="modal-close-btn" onClick={() => props.onClose?.()}>
+          <button type="button" class="modal-close-btn" aria-label={props.closeLabel || 'Close'} onClick={() => props.onClose?.()}>
             <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2"/></svg>
           </button>
         </div>

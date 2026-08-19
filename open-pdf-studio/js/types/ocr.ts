@@ -239,3 +239,57 @@ export interface OcrDocumentJobSummary {
   appliedPageNumbers: number[];
   rolledBackPageNumbers: number[];
 }
+
+export type OcrPageScope =
+  | { kind: 'current-page' }
+  | { kind: 'range'; startPage: number; endPage: number }
+  | { kind: 'entire-document' };
+
+export interface OcrWorkflowRecognitionPolicy {
+  existingText: 'skip' | 'force-rerun';
+  keepCompletedPages: boolean;
+  useCache: boolean;
+  maximumRetries: number;
+  recognitionOptions: {
+    languagePolicy: { mode: 'automatic'; languages: readonly string[]; scripts: readonly string[] };
+    includeWords: false;
+    orientation: { mode: 'none'; degrees: null };
+    deskew: false;
+    preprocessing: { mode: 'none'; operations: readonly string[] };
+    rasterDpi: number;
+    maximumPixels: number;
+    maximumSide: number;
+    timeoutMs: number;
+  };
+}
+
+export interface OcrWorkflowFailureDetail {
+  pageNumber: number | null;
+  code: string;
+  stage: string;
+  retryable: boolean;
+}
+
+export interface OcrWorkflowJobState {
+  jobId: string;
+  documentId: string;
+  status: OcrDocumentJobSummary['status'];
+  progress: number;
+  pages: OcrPageJobSummary[];
+  terminalSummary: OcrDocumentJobSummary | null;
+  failureDetails: OcrWorkflowFailureDetail[];
+  cancellationAvailable: boolean;
+  cancellationRequested: boolean;
+  pageScope: OcrPageScope;
+  recognitionPolicy: OcrWorkflowRecognitionPolicy;
+  model: {
+    status: OcrModelPackStateName;
+    identity: Record<string, unknown> | null;
+  };
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface OcrWorkflowSnapshot {
+  jobsByDocumentId: Record<string, OcrWorkflowJobState>;
+}

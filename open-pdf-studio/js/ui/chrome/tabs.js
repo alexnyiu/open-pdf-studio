@@ -9,7 +9,7 @@ import { savePDF } from '../../pdf/saver.js';
 import { unlockFile, lockFile, renameFile, fileExists } from '../../core/platform.js';
 import { cancelPendingZoom } from '../setup/navigation-events.js';
 import { closeAllPopups } from '../../bridge.js';
-import { cancelApplicationOcrDocument } from '../../ocr/application-controller.js';
+import { cancelOcrWorkflowDocument } from '../../ocr/workflow-service.js';
 import { forgetRegisteredDocumentOcrCache } from '../../ocr/cache.js';
 import { invalidateTextCache } from '../../search/text-cache.js';
 
@@ -216,7 +216,7 @@ export async function closeTab(index, force = false) {
   // Document identity is the cancellation boundary for background OCR. Wait
   // for the disposable child to be reaped before removing application state.
   try {
-    await cancelApplicationOcrDocument(doc.id, 'document-close');
+    await cancelOcrWorkflowDocument(doc.id, 'document-close');
   } catch (error) {
     console.warn('Failed to cancel document OCR jobs:', error);
   }

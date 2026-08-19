@@ -261,7 +261,13 @@
     "manageWatermarks": "Manage Watermarks",
     "manage": "Manage",
     "compressPdf": "Compress PDF (reduce file size)",
-    "compressLabel": "Compress"
+    "compressLabel": "Compress",
+    "recognizeText": "Recognize Text",
+    "recognizeCurrentPage": "Choose pages and recognize text",
+    "ocrRunning": "Recognizing page {{page}} of {{total}}",
+    "cancelOcr": "Cancel OCR",
+    "ocrFailed": "OCR failed ({{code}})",
+    "dismissOcr": "Dismiss"
   },
   "help": {
     "settings": "Settings",
