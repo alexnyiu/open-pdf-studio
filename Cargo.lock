@@ -3349,6 +3349,7 @@ dependencies = [
  "flate2",
  "image",
  "keyring",
+ "libc",
  "log",
  "lopdf",
  "memmap2",

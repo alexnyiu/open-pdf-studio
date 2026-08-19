@@ -5,13 +5,28 @@ import { hasFill } from '../annotations/fill-utils.js';
 import { layoutTextboxForExport } from '../annotations/rendering/shapes.js';
 import { markDocumentSaved, updateWindowTitle } from '../ui/chrome/tabs.js';
 import { isTauri, invoke, readBinaryFile, writeBinaryFile, saveFileDialog, unlockFile, lockFile } from '../core/platform.js';
-import { getCachedPdfBytes, setCachedPdfBytes, hidePdfABar } from './loader.js';
+import { getCachedPdfBytes, hidePdfABar, installValidatedSavedPdfDocument } from './loader.js';
 import { PDFDocument, PDFString, PDFHexString, PDFName, PDFArray, PDFStream, degrees,
   PDFTextField, PDFCheckBox, PDFDropdown, PDFRadioGroup, PDFOptionList } from 'pdf-lib';
 import { getAnnotationStorage, getAnnotIdToFieldName } from './form-layer.js';
 import { getAnnotationType } from '../plugins/annotation-type-registry.js';
 import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
+import {
+  buildAndValidateOcrPdfCandidate,
+  destroyPreparedPdfJsDocument,
+  preparePdfJsSaveCandidate,
+  validateOcrPdfiumCandidateResult,
+} from '../ocr/pdf-persistence.js';
+import { inspectPdfModificationPolicy } from '../ocr/pdf-writer-proof.js';
+import { markOwnedOcrPersisted } from '../ocr/document-state.js';
+import {
+  abortMacosSafePdfSave,
+  finalizeMacosSafePdfSave,
+  stageMacosSafePdfSave,
+  validateStagedOcrPdfWithPdfium,
+} from './macos-safe-save.js';
+import { evaluatePdfModificationSavePolicy } from './modification-save-policy.js';
 
 // Sub-modules
 import { hexToRgb, buildBorderStyle, computeAnnotFlags, mapFontToPdfName,
@@ -139,10 +154,19 @@ function remapAnnotationForRotatedPage(annRaw, rot, cw, ch) {
   return ann;
 }
 
+function isMacosTauri() {
+  if (!isTauri()) return false;
+  try { return window.__TAURI__?.os?.type?.() === 'macos'; } catch (_) { return false; }
+}
+
 // Save PDF with annotations
 export async function savePDF(saveAsPath = null) {
   const activeDoc = getActiveDocument();
   const currentPath = activeDoc?.filePath;
+  const outputPath = saveAsPath || activeDoc?.saveTargetPath || currentPath;
+  let preparedPdfJsDocument = null;
+  let stagedToken = null;
+  let replacementSucceeded = false;
   // Redirect to "Save As" for untitled docs. These now have a temp-file
   // `filePath` (so they render via the real pipeline), so we ALSO check the
   // `isUntitled` flag — otherwise "Save" would silently overwrite the temp
@@ -174,14 +198,35 @@ export async function savePDF(saveAsPath = null) {
     if (!existingPdfBytes) {
       existingPdfBytes = await readBinaryFile(currentPath);
     }
+    if (!existingPdfBytes?.length) throw new Error('The source PDF bytes are unavailable or empty');
 
-    const pdfDocLib = await PDFDocument.load(existingPdfBytes);
+    const modificationPolicy = await inspectPdfModificationPolicy(existingPdfBytes);
+    const convertsPdfA = Boolean(activeDoc?.pdfaCompliance);
+    const savePolicy = evaluatePdfModificationSavePolicy({
+      signed: modificationPolicy.signed,
+      pdfa: convertsPdfA,
+      currentPath,
+      outputPath,
+      saveAsPath,
+    });
+    if (savePolicy.forceSaveAs) {
+      showMessage(savePolicy.warning);
+      hideLoading();
+      return await savePDFAs();
+    }
+    if (savePolicy.rejectOriginalPath) {
+      throw new Error('Signed and PDF/A documents must be saved to a different path so the original remains unchanged.');
+    }
+    if (savePolicy.protectedOriginal) {
+      showMessage(savePolicy.warning);
+    }
 
-    // Strip PDF/A metadata — saved file no longer conforms to PDF/A
-    if (activeDoc && activeDoc.pdfaCompliance) {
+    const pdfDocLib = await PDFDocument.load(existingPdfBytes, { updateMetadata: false });
+
+    // Explicit policy: edited PDF/A output is a standard PDF copy. Application
+    // compliance state changes only after the native replacement succeeds.
+    if (convertsPdfA) {
       stripPdfAMetadata(pdfDocLib);
-      activeDoc.pdfaCompliance = null;
-      hidePdfABar();
     }
 
     // Get the PDF pages
@@ -2586,43 +2631,107 @@ export async function savePDF(saveAsPath = null) {
     // Save named line-style presets into the catalog (travel with the PDF)
     saveStylePresetsToCatalog(pdfDocLib);
 
-    // Save the PDF
-    const pdfBytes = await pdfDocLib.save();
-    const outputPath = saveAsPath || activeDoc?.saveTargetPath || currentPath;
-    const savedBytes = new Uint8Array(pdfBytes);
+    // First serialize every ordinary application mutation. OCR is then added
+    // as one separately owned invisible stream per eligible page, so its pixel
+    // comparison baseline includes legitimate annotation/form changes.
+    const preOcrBytes = new Uint8Array(await pdfDocLib.save());
+    let savedBytes = preOcrBytes;
+    let ocrPersistence = null;
+    const persistOcr = isMacosTauri() && activeDoc?.ocr?.dirty === true;
+    if (persistOcr) {
+      const date = new Date().toISOString().replace(/[-:T]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
+      ocrPersistence = await buildAndValidateOcrPdfCandidate({
+        document: activeDoc,
+        baseBytes: preOcrBytes,
+        expectedPageCount: pages.length,
+        modifiedAt: `D:${date}`,
+      });
+      savedBytes = ocrPersistence.candidateBytes;
+      preparedPdfJsDocument = ocrPersistence.candidatePdfJsDocument;
+    } else {
+      preparedPdfJsDocument = await preparePdfJsSaveCandidate(savedBytes, pages.length);
+    }
 
-    // Temporarily release lock so we can write, then re-lock
+    // macOS production writes only private same-volume files until PDF.js,
+    // PDFium, extraction, ownership, idempotence, removal, and exact-pixel
+    // gates all pass. Other platforms retain their existing save behavior and
+    // do not gain a production OCR claim in this phase.
     await unlockFile(outputPath);
     try {
-      await writeBinaryFile(outputPath, savedBytes);
+      if (isMacosTauri()) {
+        const staged = await stageMacosSafePdfSave({
+          destinationPath: outputPath,
+          protectedOriginalPath: savePolicy.protectedOriginal ? currentPath : null,
+          candidateBytes: savedBytes,
+          validationBaselineBytes: ocrPersistence?.validationBaselineBytes || null,
+        });
+        stagedToken = staged.token;
+        if (ocrPersistence) {
+          const pdfiumResult = await validateStagedOcrPdfWithPdfium(
+            stagedToken,
+            ocrPersistence.pdfiumPlan.selectedPageIndexes,
+          );
+          validateOcrPdfiumCandidateResult(ocrPersistence.pdfiumPlan, pdfiumResult);
+        }
+        const finalized = await finalizeMacosSafePdfSave(stagedToken);
+        stagedToken = null;
+        if (finalized.status !== 'pass') throw new Error('Native atomic replacement did not report success');
+        if (!finalized.candidateFilesCleaned) {
+          console.warn('[safe-save] Native replacement succeeded but reported a candidate cleanup warning');
+        }
+        for (const warning of finalized.warnings || []) console.warn(`[safe-save] ${warning}`);
+      } else {
+        await writeBinaryFile(outputPath, savedBytes);
+      }
+      replacementSucceeded = true;
     } catch (writeErr) {
-      // Re-lock before reporting error
+      await abortMacosSafePdfSave(stagedToken);
+      stagedToken = null;
       await lockFile(outputPath);
       const msg = writeErr?.message || String(writeErr);
-      if (msg.includes('denied') || msg.includes('locked') || msg.includes('sharing') || msg.includes('used by another')) {
+      if (/denied|locked|sharing|used by another/iu.test(msg)) {
         throw new Error(i18next.t('fileLocked', { defaultValue: 'The file is being used by another application. Please close it and try again.' }));
       }
       throw writeErr;
     }
     await lockFile(outputPath);
 
-    // Invalidate the Rust-side PDF bytes cache so next render reads the updated file
-    if (isTauri()) {
-      try { await invoke('invalidate_pdf_cache', { path: outputPath }); } catch {}
+    // Every mutable cache/state transition is deliberately after the atomic
+    // destination replacement. A failed validation/save leaves the active
+    // PDF.js/PDFium handles, cached bytes, and typed OCR state untouched.
+    if (activeDoc && outputPath !== currentPath) {
+      activeDoc.filePath = outputPath;
+      activeDoc.fileName = outputPath.split(/[\\/]/u).pop() || activeDoc.fileName;
+      activeDoc.isUntitled = false;
+      activeDoc.saveTargetPath = null;
+      activeDoc._renderTemp = false;
     }
-
-    // Update cache so subsequent saves use the latest PDF as base
-    setCachedPdfBytes(outputPath, savedBytes.slice());
-
-    // Mark document as saved
+    if (isTauri()) {
+      await invoke('invalidate_pdf_cache', { path: outputPath });
+    }
+    if (ocrPersistence && activeDoc) markOwnedOcrPersisted(activeDoc, ocrPersistence.inspection);
+    if (activeDoc) {
+      await installValidatedSavedPdfDocument(activeDoc, outputPath, savedBytes, preparedPdfJsDocument);
+      preparedPdfJsDocument = null;
+    }
+    if (convertsPdfA && activeDoc) {
+      activeDoc.pdfaCompliance = null;
+      hidePdfABar();
+    }
     markDocumentSaved();
 
     return true;
   } catch (error) {
     console.error('Error saving PDF:', error);
+    if (replacementSucceeded) {
+      showMessage(`The PDF was saved, but the in-app document refresh failed: ${error?.message || String(error)}. Reopen the file to refresh the view.`);
+      return true;
+    }
     showMessage(i18next.t('failedToSavePdf', { error: error?.message || String(error) }));
     return false;
   } finally {
+    await abortMacosSafePdfSave(stagedToken);
+    await destroyPreparedPdfJsDocument(preparedPdfJsDocument);
     hideLoading();
   }
 }

@@ -101,6 +101,42 @@ export async function reloadDocumentFromBytes(doc, bytes) {
   doc.modified = true;
 }
 
+/**
+ * Installs a PDF.js document that was fully opened and validated before the
+ * native atomic replacement. Call only after replacement succeeds.
+ * @param {any} doc
+ * @param {string} filePath
+ * @param {Uint8Array} bytes
+ * @param {any} preparedPdfJsDocument
+ */
+export async function installValidatedSavedPdfDocument(doc, filePath, bytes, preparedPdfJsDocument) {
+  if (!doc || !preparedPdfJsDocument) throw new TypeError('Validated saved PDF state is required');
+  const previousPdfJsDocument = doc.pdfDoc;
+  doc._sharedPdfLibDoc = null;
+  doc._sharedPdfLibDocPromise = null;
+  doc.pdfDoc = preparedPdfJsDocument;
+  originalBytesCache.set(filePath, bytes.slice());
+  _attachPdfDocGetPageRecovery(doc, filePath);
+  try {
+    const { invalidateTextCache } = await import('../search/text-cache.js');
+    invalidateTextCache(doc.id);
+  } catch (_) {}
+  try { await previousPdfJsDocument?.destroy?.(); } catch (_) {}
+
+  if (state.documents[state.activeDocumentIndex] === doc) {
+    try {
+      const renderer = await import('./renderer.js');
+      if (doc.viewMode === 'continuous' || doc.viewMode === 'book') {
+        await renderer.renderContinuous(true);
+      } else {
+        await renderer.renderPage(doc.currentPage || 1);
+      }
+    } catch (error) {
+      console.warn('[safe-save] Saved PDF state installed; visible-page refresh will retry on navigation:', error);
+    }
+  }
+}
+
 export function clearCachedPdfBytes(filePath) {
   if (filePath) {
     originalBytesCache.delete(filePath);

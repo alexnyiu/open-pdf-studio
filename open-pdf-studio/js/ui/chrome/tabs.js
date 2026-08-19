@@ -452,7 +452,8 @@ export function markDocumentModified() {
 export function markDocumentSaved() {
   const doc = getActiveDocument();
   if (doc) {
-    // Pending searchable OCR is deliberately not part of PDF output yet.
+    // A failed or non-macOS save leaves OCR dirty; validated macOS persistence
+    // clears it only after native atomic replacement succeeds.
     doc.modified = doc.ocr?.dirty === true;
     doc.savedUndoStackLength = (doc.undoStack || []).length;
     updateTabBar();

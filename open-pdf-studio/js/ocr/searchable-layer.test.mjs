@@ -6,10 +6,14 @@ import {
   acceptOcrLineCorrection,
   applyOcrPageResult,
   beginOcrPageAttempt,
+  clearOpenPdfStudioOcrPage,
   createDocumentOcrState,
   ensureOcrPageState,
+  estimateOcrLineBaseline,
   finishOcrPageAttempt,
+  getOwnedOcrTextItems,
   getPendingOcrTextItems,
+  markOwnedOcrPersisted,
   recordOcrExistingTextAssessment,
 } from './document-state.js';
 import { extractPageText } from '../search/text-extraction.js';
@@ -78,6 +82,57 @@ test('recognized data is immutable and accepted corrections stay separate', asyn
   assert.equal(doc.textEdits.length, 0);
   assert.equal(doc.ocr.dirty, true);
   assert.equal(doc.modified, true);
+  assert.equal(stored.lines[0].baseline.status, 'unavailable');
+  assert.equal(getOwnedOcrTextItems(doc, 1)[0].baseline.status, 'provided');
+  assert.equal(getOwnedOcrTextItems(doc, 1)[0].baseline.provenance, 'estimated');
+});
+
+test('baseline estimation is deterministic for supported skewed lines and rejects vertical or ambiguous geometry', () => {
+  const supported = {
+    polygon: {
+      coordinateSpace: 'source-raster-pixels',
+      points: [[10, 10], [210, 20], [208, 44], [8, 34]],
+    },
+    baseline: { status: 'unavailable', coordinateSpace: 'source-raster-pixels' },
+  };
+  const first = estimateOcrLineBaseline(supported);
+  assert.deepEqual(estimateOcrLineBaseline(supported), first);
+  assert.equal(first.status, 'provided');
+  assert.equal(first.provenance, 'estimated');
+  assert.equal(first.points.length, 2);
+
+  assert.equal(estimateOcrLineBaseline({
+    ...supported,
+    polygon: { ...supported.polygon, points: [[10, 10], [30, 10], [30, 30], [10, 30]] },
+  }), null);
+  assert.equal(estimateOcrLineBaseline({
+    ...supported,
+    polygon: { ...supported.polygon, points: [[10, 10], [30, 10], [30, 210], [10, 210]] },
+  }), null);
+});
+
+test('successful persistence moves typed OCR out of the pending projection and explicit clear remains dirty', async () => {
+  const doc = makeDocument('document-persisted', fakePdfDocument([]));
+  await applyFixture(doc);
+  assert.equal(getPendingOcrTextItems(doc, 1).length, 2);
+  markOwnedOcrPersisted(doc, [{
+    pageIndex: 0,
+    owned: true,
+    schemaVersion: 1,
+    writerVersion: 'invisible-unicode-v1',
+    ownedStreamRef: '20 0 R',
+    fontRef: '21 0 R',
+    contentDigest: 'a'.repeat(64),
+  }]);
+  assert.equal(getPendingOcrTextItems(doc, 1).length, 0);
+  assert.equal(getOwnedOcrTextItems(doc, 1).length, 2);
+  assert.equal(doc.ocr.pages[1].recognition.ownership.persisted, true);
+  assert.equal(doc.ocr.dirty, false);
+
+  assert.equal(clearOpenPdfStudioOcrPage(doc, 1), true);
+  assert.equal(getOwnedOcrTextItems(doc, 1).length, 0);
+  assert.equal(doc.ocr.pages[1].review.dirty, true);
+  assert.equal(doc.ocr.dirty, true);
 });
 
 test('page revision and document generation tokens reject stale results', async () => {
@@ -161,7 +216,7 @@ test('force rerun replaces only Open PDF Studio-owned state', async () => {
   assert.equal(first.result.lines[0].text, 'Old owned OCR');
 });
 
-test('search extraction works before save and anchors OCR with canonical polygon geometry', async () => {
+test('search extraction works before save and anchors OCR with canonical estimated baseline geometry', async () => {
   const doc = makeDocument('document-search-before-save', fakePdfDocument([]));
   await applyFixture(doc, 1, [
     { id: 'search-line', text: 'Unsaved searchable phrase', x: 40, y: 60, width: 220, height: 18 },
@@ -169,7 +224,8 @@ test('search extraction works before save and anchors OCR with canonical polygon
   const pageText = await extractPageText(doc.pdfDoc, 1, doc);
   assert.ok(pageText.text.includes('searchable phrase'));
   assert.equal(pageText.items[0].source, 'ocr');
-  assert.equal(pageText.items[0].geometry.anchor.source, 'polygon');
+  assert.equal(pageText.items[0].geometry.anchor.source, 'baseline');
+  assert.equal(getOwnedOcrTextItems(doc, 1)[0].baseline.provenance, 'estimated');
   assert.equal(doc.textEdits.length, 0);
   invalidateTextCache(doc.id);
 });

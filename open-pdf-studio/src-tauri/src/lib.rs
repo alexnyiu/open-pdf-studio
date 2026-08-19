@@ -6,6 +6,7 @@
 mod accounts;
 mod email;
 pub mod linux_runtime;
+pub mod macos_safe_save;
 pub mod mcp_app_bridge;
 pub mod mcp_server;
 pub mod ocr_controller;
@@ -2205,6 +2206,8 @@ fn invalidate_pdf_cache(
     handle_cache: tauri::State<DocHandleCache>,
     thumb_cache: tauri::State<ThumbnailCache>,
     page_type_cache: tauri::State<PageTypeCache>,
+    pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
+    pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
 ) -> Result<bool, String> {
     bytes_cache.0.lock().map_err(|e| format!("Bytes cache lock: {}", e))?.remove(&path);
     handle_cache.0.lock().map_err(|e| format!("Handle cache lock: {}", e))?.remove(&path);
@@ -2213,6 +2216,16 @@ fn invalidate_pdf_cache(
     }
     if let Ok(mut pc) = page_type_cache.0.lock() {
         pc.retain(|(p, _), _| p != &path);
+    }
+    if let Ok(mut cache) = pdfium_cache.0.lock() {
+        cache.remove(&path);
+    }
+    if let Ok(mut cache) = pixmap_cache.0.lock() {
+        if let Some(cache) = cache.as_mut() {
+            // Pixmap keys are path-scoped, but the bounded cache intentionally
+            // exposes only a full clear. A save is rare and correctness wins.
+            cache.clear();
+        }
     }
     Ok(true)
 }
@@ -2437,6 +2450,7 @@ pub fn run(opts: StartupOpts) {
         .manage(TileSceneCache(Mutex::new(Vec::new())))
         .manage(ThumbnailCache(Mutex::new(HashMap::new())))
         .manage(PageTypeCache(Mutex::new(HashMap::new())))
+        .manage(macos_safe_save::MacosSafeSaveState::default())
         .manage(pdfium_renderer::PdfiumDocCache::default())
         .manage(pdfium_renderer::PixmapCacheState::default())
         .manage(pool.clone())
@@ -2717,6 +2731,10 @@ pub fn run(opts: StartupOpts) {
             ocr_cache::ocr_cache_invalidate_page,
             ocr_cache::ocr_cache_clear,
             ocr_cache::ocr_document_fingerprint,
+            macos_safe_save::begin_macos_safe_pdf_save,
+            macos_safe_save::validate_macos_ocr_pdf_candidate,
+            macos_safe_save::finalize_macos_safe_pdf_save,
+            macos_safe_save::abort_macos_safe_pdf_save,
             worker_pool_ready,
             render_pdf_page_region,
             render_tile_scene_region,

@@ -116,10 +116,17 @@ export interface OcrExistingTextAssessment {
 
 export interface OcrOwnershipMetadata {
   owner: 'open-pdf-studio';
-  stream: 'pending-searchable-text';
+  stream: 'pending-searchable-text' | 'pdf-owned-invisible-text';
   jobId: string;
   requestId: string;
   createdAt: string;
+  persisted?: boolean;
+  schemaVersion?: number;
+  writerVersion?: string;
+  streamRef?: string;
+  fontRef?: string;
+  contentDigest?: string;
+  persistedAt?: string;
 }
 
 export interface OcrUserCorrection {
@@ -156,6 +163,7 @@ export interface OcrPageState {
   review: {
     revision: number;
     corrections: Record<string, OcrUserCorrection>;
+    estimatedBaselines: Record<string, OcrCoordinateBaseline>;
     dirty: boolean;
   };
   existingText: OcrExistingTextAssessment | null;

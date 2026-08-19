@@ -16,7 +16,11 @@ import { assessPdfJsTextContent } from './existing-text.js';
 
 export const OPEN_PDF_STUDIO_OCR_OWNER = 'open-pdf-studio';
 export const PENDING_OCR_STREAM = 'pending-searchable-text';
+export const PERSISTED_OCR_STREAM = 'pdf-owned-invisible-text';
 const assessmentPdfDocuments = new WeakMap();
+const ESTIMATED_BASELINE_FRACTION = 0.8;
+const MIN_SUPPORTED_LINE_ASPECT_RATIO = 1.5;
+const MIN_SUPPORTED_HORIZONTAL_COMPONENT = 0.5;
 
 /** @returns {string} */
 function generationId() {
@@ -50,6 +54,90 @@ function immutableContractSnapshot(value) {
 /** @param {unknown} left @param {unknown} right */
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * Derives a canonical application-state baseline only for an elongated,
+ * predominantly horizontal quadrilateral. The immutable engine result keeps
+ * its explicit unavailable baseline; provenance never masquerades as engine
+ * output. Coordinates stay in the line polygon's raster space until the
+ * authoritative page transform maps them for writing.
+ * @param {any} line
+ */
+export function estimateOcrLineBaseline(line) {
+  if (line?.baseline?.status === 'provided') return clone(line.baseline);
+  const points = line?.polygon?.points;
+  if (!Array.isArray(points) || points.length !== 4
+    || points.some((point) => !Array.isArray(point) || point.length !== 2
+      || !point.every(Number.isFinite))) return null;
+
+  const center = points.reduce(
+    (sum, point) => [sum[0] + point[0] / points.length, sum[1] + point[1] / points.length],
+    [0, 0],
+  );
+  let xx = 0;
+  let xy = 0;
+  let yy = 0;
+  for (const point of points) {
+    const x = point[0] - center[0];
+    const y = point[1] - center[1];
+    xx += x * x;
+    xy += x * y;
+    yy += y * y;
+  }
+  const discriminant = Math.hypot(xx - yy, 2 * xy);
+  const majorVariance = (xx + yy + discriminant) / 2;
+  const minorVariance = (xx + yy - discriminant) / 2;
+  if (!Number.isFinite(majorVariance) || !Number.isFinite(minorVariance)
+    || minorVariance <= 0
+    || Math.sqrt(majorVariance / minorVariance) < MIN_SUPPORTED_LINE_ASPECT_RATIO) return null;
+
+  const angle = Math.atan2(2 * xy, xx - yy) / 2;
+  let axis = [Math.cos(angle), Math.sin(angle)];
+  if (axis[0] < 0) axis = [-axis[0], -axis[1]];
+  if (Math.abs(axis[0]) < MIN_SUPPORTED_HORIZONTAL_COMPONENT) return null;
+  let normal = [-axis[1], axis[0]];
+  // Raster coordinates increase downward. Keep the baseline's normal pointed
+  // toward the visual bottom so the estimate is stable across skew signs.
+  if (normal[1] < 0) normal = [-normal[0], -normal[1]];
+
+  const normalOffsets = points.map((point) => point[0] * normal[0] + point[1] * normal[1]);
+  const baselineOffset = Math.min(...normalOffsets)
+    + (Math.max(...normalOffsets) - Math.min(...normalOffsets)) * ESTIMATED_BASELINE_FRACTION;
+  const intersections = [];
+  const epsilon = 1e-7;
+  for (let index = 0; index < points.length; index += 1) {
+    const start = points[index];
+    const end = points[(index + 1) % points.length];
+    const startNormal = start[0] * normal[0] + start[1] * normal[1];
+    const endNormal = end[0] * normal[0] + end[1] * normal[1];
+    if (Math.abs(endNormal - startNormal) <= epsilon) {
+      if (Math.abs(startNormal - baselineOffset) <= epsilon) {
+        intersections.push(start[0] * axis[0] + start[1] * axis[1]);
+        intersections.push(end[0] * axis[0] + end[1] * axis[1]);
+      }
+      continue;
+    }
+    const ratio = (baselineOffset - startNormal) / (endNormal - startNormal);
+    if (ratio < -epsilon || ratio > 1 + epsilon) continue;
+    const x = start[0] + (end[0] - start[0]) * ratio;
+    const y = start[1] + (end[1] - start[1]) * ratio;
+    intersections.push(x * axis[0] + y * axis[1]);
+  }
+  intersections.sort((left, right) => left - right);
+  const unique = intersections.filter((value, index) => index === 0
+    || Math.abs(value - intersections[index - 1]) > 1e-5);
+  if (unique.length < 2 || unique.at(-1) - unique[0] <= 1e-4) return null;
+  const pointAt = (axisOffset) => [
+    axis[0] * axisOffset + normal[0] * baselineOffset,
+    axis[1] * axisOffset + normal[1] * baselineOffset,
+  ];
+  return {
+    status: 'provided',
+    coordinateSpace: line.polygon.coordinateSpace,
+    provenance: 'estimated',
+    points: [pointAt(unique[0]), pointAt(unique.at(-1))],
+  };
 }
 
 /** @param {any} doc @param {number} pageNum */
@@ -113,6 +201,7 @@ export function ensureOcrPageState(doc, pageNum) {
       review: {
         revision: 0,
         corrections: {},
+        estimatedBaselines: {},
         dirty: false,
       },
       existingText: null,
@@ -161,6 +250,7 @@ export function clearOpenPdfStudioOcrPage(doc, pageNum) {
   page.recognition.warnings = [];
   page.recognition.revision += 1;
   page.review.corrections = {};
+  page.review.estimatedBaselines = {};
   page.review.revision += 1;
   page.status = page.existingText?.meaningful ? 'skipped-existing-text' : 'idle';
   page.review.dirty = true;
@@ -403,6 +493,12 @@ export function applyOcrPageResult(doc, { result, pageGeometry, token }) {
   };
   page.recognition.warnings = clone(validatedResult.warnings || []);
   page.review.corrections = {};
+  page.review.estimatedBaselines = Object.fromEntries(
+    validatedResult.lines
+      .filter((line) => line.baseline.status !== 'provided')
+      .map((line) => [line.id, estimateOcrLineBaseline(line)])
+      .filter(([, baseline]) => baseline !== null),
+  );
   page.review.revision += 1;
   page.status = validatedResult.page.status === 'unsupported'
     ? 'unsupported'
@@ -486,11 +582,18 @@ export function stableOcrTextId(documentId, pageNum, lineId) {
  * @param {any} doc
  * @param {number} pageNum
  */
-export function getPendingOcrTextItems(doc, pageNum) {
+function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) {
   const page = doc?.ocr?.pages?.[pageNum];
   if (!page?.recognition.result || !page.recognition.geometry ||
-      page.recognition.ownership?.owner !== OPEN_PDF_STUDIO_OCR_OWNER ||
-      page.existingText?.meaningful) return [];
+      page.recognition.ownership?.owner !== OPEN_PDF_STUDIO_OCR_OWNER) return [];
+  const ownership = page.recognition.ownership;
+  if (pendingOnly && ownership.stream !== PENDING_OCR_STREAM) return [];
+  // A forced OCR result over meaningful PDF text is intentionally hidden from
+  // the live synthetic layer/search projection to avoid duplicate UI text,
+  // but it remains application-owned data for the production writer. Keeping
+  // this condition pending-only also lets an owned PDF stream be replaced
+  // idempotently after reopen.
+  if (pendingOnly && page.existingText?.meaningful && ownership.persisted !== true) return [];
 
   return page.recognition.result.lines
     .filter((line) => typeof line.text === 'string' && line.text.length > 0)
@@ -501,23 +604,41 @@ export function getPendingOcrTextItems(doc, pageNum) {
         line.polygon,
         OCR_PDF_USER_SPACE,
       );
-      const baseline = line.baseline.status === 'provided'
+      const sourceBaseline = line.baseline.status === 'provided'
+        ? line.baseline
+        : page.review.estimatedBaselines?.[line.id] || line.baseline;
+      const baseline = sourceBaseline.status === 'provided'
         ? {
-            ...line.baseline,
+            ...sourceBaseline,
             coordinateSpace: OCR_PDF_USER_SPACE,
-            points: line.baseline.points.map((point) => mapPointBetweenSpaces(
+            points: sourceBaseline.points.map((point) => mapPointBetweenSpaces(
               page.recognition.geometry.transformChain,
               point,
-              line.baseline.coordinateSpace,
+              sourceBaseline.coordinateSpace,
               OCR_PDF_USER_SPACE,
             )),
           }
-        : { ...line.baseline, coordinateSpace: OCR_PDF_USER_SPACE };
+        : { ...sourceBaseline, coordinateSpace: OCR_PDF_USER_SPACE };
       const xs = polygon.points.map((point) => point[0]);
       const ys = polygon.points.map((point) => point[1]);
       const anchor = baseline.status === 'provided' && baseline.points?.length
         ? { x: baseline.points[0][0], y: baseline.points[0][1], source: 'baseline' }
         : { x: Math.min(...xs), y: Math.max(...ys), source: 'polygon' };
+      const words = correction || !Array.isArray(line.words) || line.words.length === 0
+        || line.words.some((word) => !word?.polygon)
+        ? undefined
+        : line.words.map((word) => ({
+            id: word.id,
+            text: word.text,
+            confidence: word.confidence,
+            polygon: mapPolygonBetweenSpaces(
+              page.recognition.geometry.transformChain,
+              word.polygon,
+              OCR_PDF_USER_SPACE,
+            ),
+            language: word.detectedLanguage?.tag || null,
+            direction: word.detectedWritingDirection || line.detectedWritingDirection || null,
+          }));
       return {
         id: stableOcrTextId(doc.id, pageNum, line.id),
         lineId: line.id,
@@ -533,9 +654,66 @@ export function getPendingOcrTextItems(doc, pageNum) {
         correctionRevision: page.review.revision,
         language: line.detectedLanguage?.tag || null,
         direction: line.detectedWritingDirection || null,
+        words,
         ownership: page.recognition.ownership,
       };
     });
+}
+
+/**
+ * Returns every effective application-owned OCR line that should exist in the
+ * PDF, including already-persisted pages when a later correction is saved.
+ * @param {any} doc
+ * @param {number} pageNum
+ */
+export function getOwnedOcrTextItems(doc, pageNum) {
+  return effectiveOwnedOcrTextItems(doc, pageNum);
+}
+
+/**
+ * Returns only unsaved OCR for synthetic text-layer/search projection.
+ * @param {any} doc
+ * @param {number} pageNum
+ */
+export function getPendingOcrTextItems(doc, pageNum) {
+  return effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly: true });
+}
+
+/**
+ * Publishes PDF ownership only after validated bytes have replaced the file.
+ * @param {any} doc
+ * @param {Array<any>} inspection
+ */
+export function markOwnedOcrPersisted(doc, inspection) {
+  const ocr = ensureDocumentOcrState(doc);
+  const byPage = new Map((inspection || []).map((entry) => [entry.pageIndex + 1, entry]));
+  const changedPages = [];
+  for (const [key, page] of Object.entries(ocr.pages)) {
+    const pageNum = Number(key);
+    const owned = byPage.get(pageNum);
+    const shouldPersist = effectiveOwnedOcrTextItems(doc, pageNum).length > 0;
+    if (page?.recognition?.ownership?.owner === OPEN_PDF_STUDIO_OCR_OWNER
+      && page.recognition.result && shouldPersist) {
+      if (!owned?.owned) throw new TypeError(`Validated PDF is missing owned OCR metadata for page ${pageNum}`);
+      page.recognition.ownership = {
+        ...page.recognition.ownership,
+        stream: PERSISTED_OCR_STREAM,
+        persisted: true,
+        schemaVersion: owned.schemaVersion,
+        writerVersion: owned.writerVersion,
+        streamRef: owned.ownedStreamRef,
+        fontRef: owned.fontRef,
+        contentDigest: owned.contentDigest,
+        persistedAt: new Date().toISOString(),
+      };
+    }
+    if (page?.review) page.review.dirty = false;
+    changedPages.push(pageNum);
+  }
+  ocr.revision += 1;
+  ocr.dirty = false;
+  changedPages.forEach((pageNum) => notifyPageChanged(doc, pageNum));
+  return changedPages;
 }
 
 /**

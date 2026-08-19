@@ -1,4 +1,4 @@
-import { PDFName } from 'pdf-lib';
+import { PDFName, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 
 // Convert hex color to RGB values (0-1 range)
 export function hexToRgb(hex) {
@@ -153,32 +153,53 @@ export function ensureAcroFormFonts(pdfDoc, context, usedFonts) {
   }
 }
 
-// Strip PDF/A conformance from XMP metadata so the saved file
-// is not falsely reported as PDF/A after modifications.
+// Strip PDF/A conformance from XMP metadata so the saved file is not falsely
+// reported as PDF/A after modifications. Failure is fatal: the caller has
+// already warned that this is an explicit conversion to standard PDF, so it
+// must not silently emit a modified file that still claims conformance.
 export function stripPdfAMetadata(pdfDocLib) {
-  try {
-    const catalog = pdfDocLib.catalog;
-    const metadataRef = catalog.get(PDFName.of('Metadata'));
-    if (!metadataRef) return;
-
-    const metadataObj = pdfDocLib.context.lookup(metadataRef);
-    if (!metadataObj || typeof metadataObj.getContents !== 'function') return;
-
-    const xmlBytes = metadataObj.getContents();
-    let xml = new TextDecoder().decode(xmlBytes);
-
-    // Remove pdfaid:part and pdfaid:conformance elements
-    xml = xml.replace(/<pdfaid:part>[^<]*<\/pdfaid:part>/g, '');
-    xml = xml.replace(/<pdfaid:conformance>[^<]*<\/pdfaid:conformance>/g, '');
-
-    // Remove empty pdfaid Description blocks left behind
-    xml = xml.replace(/<rdf:Description[^>]*xmlns:pdfaid[^>]*>\s*<\/rdf:Description>/g, '');
-
-    const newBytes = new TextEncoder().encode(xml);
-    metadataObj.setContents(newBytes);
-  } catch (e) {
-    console.warn('Failed to strip PDF/A metadata:', e);
+  const catalog = pdfDocLib.catalog;
+  const metadataRef = catalog.get(PDFName.of('Metadata'));
+  if (!metadataRef) {
+    throw new Error('PDF/A conversion failed because its XMP metadata stream is missing');
   }
+
+  const metadataObj = pdfDocLib.context.lookup(metadataRef);
+  if (!(metadataObj instanceof PDFRawStream)) {
+    throw new Error('PDF/A conversion failed because its XMP metadata stream is unsupported');
+  }
+
+  let xmlBytes;
+  try {
+    xmlBytes = decodePDFRawStream(metadataObj).decode();
+  } catch (error) {
+    throw new Error('PDF/A conversion failed because its XMP metadata could not be decoded', { cause: error });
+  }
+  const originalXml = new TextDecoder().decode(xmlBytes);
+  let xml = originalXml
+    .replace(/<pdfaid:part(?:\s[^>]*)?>[\s\S]*?<\/pdfaid:part\s*>/giu, '')
+    .replace(/<pdfaid:conformance(?:\s[^>]*)?>[\s\S]*?<\/pdfaid:conformance\s*>/giu, '')
+    .replace(/\s+pdfaid:part\s*=\s*(["']).*?\1/giu, '')
+    .replace(/\s+pdfaid:conformance\s*=\s*(["']).*?\1/giu, '');
+
+  // Remove now-empty descriptions dedicated to the PDF/A identification
+  // namespace. Other XMP metadata and output intents remain untouched.
+  xml = xml.replace(
+    /<rdf:Description\b(?=[^>]*\bxmlns:pdfaid\s*=)[^>]*>\s*<\/rdf:Description\s*>/giu,
+    '',
+  );
+  if (/pdfaid:(?:part|conformance)\b/iu.test(xml)) {
+    throw new Error('PDF/A conversion failed because conformance markers remain in XMP metadata');
+  }
+  if (xml === originalXml) {
+    throw new Error('PDF/A conversion failed because no conformance markers were found in XMP metadata');
+  }
+  const replacement = pdfDocLib.context.stream(new TextEncoder().encode(xml), {
+    Type: 'Metadata',
+    Subtype: 'XML',
+  });
+  catalog.set(PDFName.of('Metadata'), pdfDocLib.context.register(replacement));
+  return true;
 }
 
 // Generate a PDF appearance stream (Form XObject) for an annotation
