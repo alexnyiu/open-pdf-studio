@@ -149,6 +149,20 @@ mod macos {
     }
 
     fn ensure_cache_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+        if std::env::var("OPS_ENABLE_MCP").as_deref() == Ok("1") {
+            if let Some(test_root) = std::env::var_os("OPS_TEST_OCR_CACHE_DIR") {
+                let cache_directory = PathBuf::from(test_root);
+                if !cache_directory.is_absolute() {
+                    return Err("OCR test cache directory must be absolute".to_string());
+                }
+                fs::create_dir_all(&cache_directory)
+                    .map_err(|_| "OCR test cache directory could not be created".to_string())?;
+                ensure_private_directory(&cache_directory)?;
+                let root = cache_directory.join(CACHE_VERSION_DIR);
+                ensure_private_directory(&root)?;
+                return Ok(root);
+            }
+        }
         let app_data = app
             .path()
             .app_data_dir()

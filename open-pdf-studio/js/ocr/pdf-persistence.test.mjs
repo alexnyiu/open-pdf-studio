@@ -64,8 +64,10 @@ test('production candidate validates PDF.js extraction, ownership, repeat write,
     modifiedAt: fixture.modifiedAt,
   });
   try {
-    assert.deepEqual(result.inspection.map((page) => page.owned), [true, true]);
-    assert.deepEqual(result.pdfiumPlan.selectedPageIndexes, [0, 1]);
+    assert.deepEqual(result.inspection.map((page) => page.owned),
+      fixture.pages.map(() => true));
+    assert.deepEqual(result.pdfiumPlan.selectedPageIndexes,
+      fixture.pages.map((page) => page.pageIndex));
     assert.equal(validateOcrPdfiumCandidateResult(
       result.pdfiumPlan,
       passingPdfiumResult(fixture, result.pdfiumPlan),
@@ -115,7 +117,7 @@ test('candidate update preserves an owned page absent from current typed state a
   });
   try {
     assert.deepEqual((await inspectOwnedInvisibleOcrLayer(preserved.candidateBytes))
-      .map((page) => page.owned), [true, true]);
+      .map((page) => page.owned), fixture.pages.map(() => true));
   } finally {
     await destroyPreparedPdfJsDocument(preserved.candidatePdfJsDocument);
   }
@@ -130,7 +132,7 @@ test('candidate update preserves an owned page absent from current typed state a
   });
   try {
     assert.deepEqual((await inspectOwnedInvisibleOcrLayer(removed.candidateBytes))
-      .map((page) => page.owned), [true, false]);
+      .map((page) => page.owned), fixture.pages.map((_, pageIndex) => pageIndex !== 1));
   } finally {
     await destroyPreparedPdfJsDocument(removed.candidatePdfJsDocument);
   }

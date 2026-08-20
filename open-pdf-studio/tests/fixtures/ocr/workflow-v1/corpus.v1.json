@@ -1,0 +1,83 @@
+{
+  "contract": "open-pdf-studio.ocr.production-workflow-corpus",
+  "schemaVersion": 1,
+  "platformScope": [
+    "macos"
+  ],
+  "generatedBy": "scripts/generate-ocr-workflow-fixtures.mjs",
+  "sourceCorpus": "../quality-v1/corpus.v1.json",
+  "outputs": {
+    "imageOnly": {
+      "file": "image-only.pdf",
+      "description": "One image-only page with a non-zero CropBox origin and UserUnit 1.25.",
+      "pages": [
+        {
+          "fixtureId": "clean-300dpi",
+          "expectedDisposition": "completed",
+          "cropBox": [20, 20, 360, 240],
+          "userUnit": 1.25
+        }
+      ]
+    },
+    "representative": {
+      "file": "representative.pdf",
+      "description": "Production-policy corpus covering geometry, layout, Unicode, native text, mixed text, and unsupported content.",
+      "expectedDefaultCounts": {
+        "completed": 5,
+        "skipped": 2,
+        "unsupported": 1,
+        "failed": 0
+      },
+      "pages": [
+        {
+          "fixtureId": "clean-300dpi",
+          "expectedDisposition": "completed",
+          "features": ["cropbox-origin", "user-unit"]
+        },
+        {
+          "fixtureId": "mild-skew",
+          "expectedDisposition": "completed",
+          "features": ["skew"]
+        },
+        {
+          "fixtureId": "multiple-columns",
+          "expectedDisposition": "completed",
+          "features": ["multi-column"]
+        },
+        {
+          "fixtureId": "punctuation-unicode",
+          "expectedDisposition": "completed",
+          "features": ["supported-unicode"]
+        },
+        {
+          "fixtureId": "dense-70-lines",
+          "expectedDisposition": "completed",
+          "features": ["dense-page"]
+        },
+        {
+          "fixtureId": null,
+          "kind": "native-text",
+          "expectedDisposition": "skipped",
+          "expectedText": "NATIVE TEXT PAGE SHOULD SKIP"
+        },
+        {
+          "fixtureId": "clean-300dpi",
+          "kind": "mixed-image-native-text",
+          "expectedDisposition": "skipped",
+          "expectedText": "MIXED NATIVE POLICY TEXT"
+        },
+        {
+          "fixtureId": "unsupported-table",
+          "expectedDisposition": "unsupported",
+          "features": ["unsupported-layout"]
+        }
+      ]
+    },
+    "cancellation": {
+      "file": "cancellation.pdf",
+      "description": "Sixteen dense image-only pages keep a real disposable OCR child observable long enough to cancel or close.",
+      "pageCount": 16,
+      "fixtureId": "dense-70-lines"
+    }
+  }
+}

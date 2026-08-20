@@ -16,7 +16,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri_plugin_fs::FsExt;
 
-use crate::pdfium_renderer::{render_page_to_rgba, PdfiumDocumentHandle};
+use crate::pdfium_renderer::{extract_all_page_text, render_page_to_rgba, PdfiumDocumentHandle};
 
 const ERROR_PREFIX: &str = "OPDS_SAFE_SAVE";
 const PDFIUM_RENDER_SCALE: f32 = 2.0;
@@ -634,20 +634,10 @@ pub async fn validate_macos_ocr_pdf_candidate(
             if page_index as usize >= candidate_page_count {
                 return Err(error("INVALID_SELECTED_PAGES", format!("Page {} is outside the candidate", page_index + 1)));
             }
-            let baseline_page = baseline_pages
-                .get(page_index as i32)
-                .map_err(|value| error("PDFIUM_REOPEN_FAILED", value.to_string()))?;
-            let candidate_page = candidate_pages
-                .get(page_index as i32)
-                .map_err(|value| error("PDFIUM_REOPEN_FAILED", value.to_string()))?;
-            let baseline_text = baseline_page
-                .text()
-                .map(|text| text.all())
-                .map_err(|value| error("PDFIUM_EXTRACTION_FAILED", value.to_string()))?;
-            let candidate_text = candidate_page
-                .text()
-                .map(|text| text.all())
-                .map_err(|value| error("PDFIUM_EXTRACTION_FAILED", value.to_string()))?;
+            let baseline_text = extract_all_page_text(baseline.document(), page_index)
+                .map_err(|value| error("PDFIUM_EXTRACTION_FAILED", value))?;
+            let candidate_text = extract_all_page_text(candidate.document(), page_index)
+                .map_err(|value| error("PDFIUM_EXTRACTION_FAILED", value))?;
             let (baseline_width, baseline_height, baseline_rgba) = render_page_to_rgba(
                 baseline.document(),
                 page_index,
@@ -691,8 +681,8 @@ pub async fn validate_macos_ocr_pdf_candidate(
                 height,
                 changed_pixels,
                 max_channel_delta,
-                baseline_text: baseline_text.replace("\r\n", "\n").replace('\r', "\n"),
-                candidate_text: candidate_text.replace("\r\n", "\n").replace('\r', "\n"),
+                baseline_text,
+                candidate_text,
             });
         }
         Ok(PdfiumCandidateValidation {

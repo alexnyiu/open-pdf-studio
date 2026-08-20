@@ -15,6 +15,7 @@ import { clearPdfVectorCache, prefetchPdfVectorGeometry } from '../tools/pdf-sna
 import { clearDetectionCache } from '../tools/pdf-element-detector.js';
 import { onPageRendered, clearHighlights } from '../search/find-bar.js';
 import { showPagePlaceholder, hidePagePlaceholderWhenReady } from './page-transition.js';
+import { rawPdfTextLayerViewportOptions } from '../text/text-edit-appearance.js';
 // Hi-DPI support: render canvases at device pixel ratio for sharp text
 export function getCanvasDPR() { return window.devicePixelRatio || 1; }
 
@@ -336,7 +337,9 @@ async function _renderPageImpl(pageNum) {
             if (!rustTextOk) {
               const page = await pdfDoc.getPage(pageNum);
               if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
-              const textViewport = page.getViewport({ scale: 1.0 });
+              const textViewport = page.getViewport(
+                rawPdfTextLayerViewportOptions(page.userUnit),
+              );
               await createSinglePageTextLayer(page, textViewport);
               if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
             }
@@ -488,9 +491,19 @@ async function _renderPageImpl(pageNum) {
 
   // Text/link/form layers: skip during vector zoom (expensive PDF.js operations)
   // Only create on first load or page change, not on every zoom
-  if (!_skipBitmapRender || !document.querySelector('.textLayer')) {
+  // A hidden continuous-page layer may still exist after switching back to
+  // single-page mode, and a layer for the previous page may still be in the
+  // single-page container during navigation. Only this page's layer can make
+  // the rebuild unnecessary.
+  const currentSinglePageTextLayer = container?.querySelector(
+    `.textLayer[data-page="${pageNum}"]`,
+  );
+  if (!_skipBitmapRender || !currentSinglePageTextLayer) {
     try {
-      await createSinglePageTextLayer(page, viewport);
+      const textViewport = _skipBitmapRender
+        ? page.getViewport(rawPdfTextLayerViewportOptions(page.userUnit))
+        : viewport;
+      await createSinglePageTextLayer(page, textViewport);
       if (_isStaleDoc(doc)) return;
     } catch (e) {
       console.warn('Failed to create text layer:', e);

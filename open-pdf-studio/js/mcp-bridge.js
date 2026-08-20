@@ -670,6 +670,7 @@ async function handleGetViewportState() {
       offsetY: vp.offsetY ?? null,
       pageW: vp.pageW ?? null,
       pageH: vp.pageH ?? null,
+      rotation: vp.rotation ?? null,
       filePath: vp.filePath ?? null,
       pageNum: vp.pageNum ?? null,
     } : null,
@@ -2045,10 +2046,20 @@ async function handleUiState(params) {
   if (!el) return { ok: true, found: false };
   const r = el.getBoundingClientRect();
   let visible = r.width > 0 && r.height > 0;
+  let computedStyle = null;
   if (visible) {
     try {
       const cs = getComputedStyle(el);
       visible = cs.display !== 'none' && cs.visibility !== 'hidden';
+      computedStyle = {
+        display: cs.display,
+        visibility: cs.visibility,
+        fontSize: cs.fontSize,
+        lineHeight: cs.lineHeight,
+        left: cs.left,
+        top: cs.top,
+        transform: cs.transform,
+      };
     } catch { /* keep rect-based answer */ }
   }
   return {
@@ -2056,10 +2067,35 @@ async function handleUiState(params) {
     found: true,
     visible,
     disabled: _isElementDisabled(el),
+    focused: document.activeElement === el,
     active: el.classList?.contains('active') === true ||
             el.getAttribute?.('aria-pressed') === 'true',
     text: (el.textContent || '').trim().slice(0, 300),
     tag: el.tagName ? el.tagName.toLowerCase() : null,
+    value: typeof el.value === 'string' ? el.value.slice(0, 300) : null,
+    dataset: el.dataset ? { ...el.dataset } : {},
+    inlineStyle: el.getAttribute?.('style') ?? null,
+    computedStyle,
+    rect: {
+      x: r.x,
+      y: r.y,
+      top: r.top,
+      right: r.right,
+      bottom: r.bottom,
+      left: r.left,
+      width: r.width,
+      height: r.height,
+    },
+    accessibility: {
+      role: el.getAttribute?.('role') ?? null,
+      label: el.getAttribute?.('aria-label') ?? null,
+      live: el.getAttribute?.('aria-live') ?? null,
+      atomic: el.getAttribute?.('aria-atomic') ?? null,
+      valueMin: el.getAttribute?.('aria-valuemin') ?? null,
+      valueMax: el.getAttribute?.('aria-valuemax') ?? null,
+      valueNow: el.getAttribute?.('aria-valuenow') ?? null,
+      valueText: el.getAttribute?.('aria-valuetext') ?? null,
+    },
     activatedTab: found.activatedTab,
   };
 }

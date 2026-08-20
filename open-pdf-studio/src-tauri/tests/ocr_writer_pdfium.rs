@@ -6,7 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use app_lib::pdfium_renderer::{init_pdfium, render_page_to_rgba, PdfiumDocumentHandle};
+use app_lib::pdfium_renderer::{
+    extract_all_page_text, init_pdfium, render_page_to_rgba, PdfiumDocumentHandle,
+};
 use serde_json::json;
 
 const PAGE_LINES: [&[&str]; 2] = [
@@ -34,18 +36,9 @@ fn load(path: &Path) -> PdfiumDocumentHandle {
 }
 
 fn extracted_pages(handle: &PdfiumDocumentHandle) -> Vec<String> {
-    let pages = handle.document().pages();
-    (0..pages.len())
-        .map(|index| {
-            pages
-                .get(index as i32)
-                .unwrap_or_else(|error| panic!("load page {index}: {error}"))
-                .text()
-                .unwrap_or_else(|error| panic!("load page {index} text: {error}"))
-                .all()
-                .replace("\r\n", "\n")
-                .replace('\r', "\n")
-        })
+    (0..handle.document().pages().len())
+        .map(|index| extract_all_page_text(handle.document(), index as u32)
+            .unwrap_or_else(|error| panic!("load page {index} text: {error}")))
         .collect()
 }
 
@@ -136,6 +129,23 @@ fn invisible_unicode_writer_preserves_pdfium_pixels_and_search_state() {
                 "repeat write duplicated {line:?}"
             );
         }
+    }
+    let mut last_dense_offset = 0;
+    for line_number in 1..=70 {
+        let line = format!("Line {line_number:02} value {}", 1000 + line_number);
+        let offset = written_text[2]
+            .find(&line)
+            .unwrap_or_else(|| panic!("PDFium did not extract {line:?} from the non-zero CropBox dense page"));
+        assert!(
+            offset >= last_dense_offset,
+            "PDFium dense-page reading order changed at {line:?}"
+        );
+        last_dense_offset = offset;
+        assert_eq!(
+            repeated_text[2].match_indices(&line).count(),
+            1,
+            "repeat write duplicated {line:?}"
+        );
     }
 
     let baseline_pixels = rendered_pages(&baseline);

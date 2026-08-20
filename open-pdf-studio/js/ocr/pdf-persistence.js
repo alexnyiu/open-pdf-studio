@@ -379,8 +379,11 @@ export function validateOcrPdfiumCandidateResult(plan, result) {
     }
     for (const entry of plan.tokensByPage[pageIndex] || []) {
       const baselineCount = occurrenceCount(page.baselineText || '', entry.token);
-      if (occurrenceCount(page.candidateText || '', entry.token) !== baselineCount + entry.desiredOccurrences) {
-        fail('PDFIUM_TOKEN_COUNT_MISMATCH', `PDFium did not reopen selected token ${JSON.stringify(entry.token)} exactly once per owned run`);
+      const candidateCount = occurrenceCount(page.candidateText || '', entry.token);
+      const expectedCount = baselineCount + entry.desiredOccurrences;
+      if (candidateCount !== expectedCount) {
+        fail('PDFIUM_TOKEN_COUNT_MISMATCH',
+          `PDFium reopened selected token ${JSON.stringify(entry.token)} ${candidateCount} time(s); expected ${expectedCount} (${baselineCount} baseline + ${entry.desiredOccurrences} owned)`);
       }
     }
   }

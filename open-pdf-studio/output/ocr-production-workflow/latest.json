@@ -1,0 +1,162 @@
+{
+  "status": "pass",
+  "platform": "macos",
+  "appPath": "/Users/alexander/Personal Projects/open-pdf-studio/target/release/bundle/macos/Open PDF Studio.app/Contents/MacOS/open-pdf-studio",
+  "appBytes": 68853936,
+  "runDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-production-workflow-omqUNj",
+  "productionEntry": "Organize ribbon #ep-recognize-text -> RecognizeTextDialog -> startOcrFromApplicationAction -> OcrWorkflowService -> OcrApplicationController.startDocumentJob",
+  "syntheticStateInjection": false,
+  "testOnlyOcrEntryPointUsed": false,
+  "genericAutomationUsed": [
+    "open/switch/close document",
+    "click visible production controls",
+    "type into visible production controls",
+    "query visible geometry/accessibility state",
+    "trusted macOS mouse and keyboard events for copy"
+  ],
+  "fixtureContract": "open-pdf-studio.ocr.production-workflow-corpus",
+  "qualityFixtureContract": "open-pdf-studio.ocr.quality-corpus",
+  "criteria": {
+    "1": {
+      "status": "pass",
+      "evidence": [
+        "packaged action created job/child 57955; accessible progress announced; Cancel reaped it"
+      ]
+    },
+    "2": {
+      "status": "pass",
+      "evidence": [
+        "packaged action created job/child 57955; accessible progress announced; Cancel reaped it"
+      ]
+    },
+    "3": {
+      "status": "pass",
+      "evidence": [
+        "packaged action created job/child 57955; accessible progress announced; Cancel reaped it"
+      ]
+    },
+    "4": {
+      "status": "pass",
+      "evidence": [
+        "packaged action created job/child 57955; accessible progress announced; Cancel reaped it"
+      ]
+    },
+    "5": {
+      "status": "pass",
+      "evidence": [
+        "completed child 58104 created pending OCR; search found \"OPEN PDF STUDIO\""
+      ]
+    },
+    "6": {
+      "status": "pass",
+      "evidence": [
+        "completed child 58104 created pending OCR; search found \"OPEN PDF STUDIO\""
+      ]
+    },
+    "7": {
+      "status": "pass",
+      "evidence": [
+        "trusted macOS drag and Command-C copied pending OCR: \"OPEN PDF STUDIO\""
+      ]
+    },
+    "8": {
+      "status": "pass",
+      "evidence": [
+        "normalized OCR geometry stayed aligned across zoom, rotation, single-page, and continuous modes",
+        "saved representative corpus proved CropBox/UserUnit, skew, dense, columns, Unicode, skip/dedup, and unsupported policies in packaged output"
+      ]
+    },
+    "9": {
+      "status": "pass",
+      "evidence": [
+        "Save, Save As, and repeated Save retained exactly one owned rendering-mode-3 stream and one corrected text occurrence",
+        "saved representative corpus proved CropBox/UserUnit, skew, dense, columns, Unicode, skip/dedup, and unsupported policies in packaged output"
+      ]
+    },
+    "10": {
+      "status": "pass",
+      "evidence": [
+        "reopened app search/copy, PDF.js extraction, PDFium text layer, and Apple Preview copy preserved approved Unicode"
+      ]
+    },
+    "11": {
+      "status": "pass",
+      "evidence": [
+        "reopened app search/copy, PDF.js extraction, PDFium text layer, and Apple Preview copy preserved approved Unicode",
+        "saved representative corpus proved CropBox/UserUnit, skew, dense, columns, Unicode, skip/dedup, and unsupported policies in packaged output"
+      ]
+    },
+    "12": {
+      "status": "pass",
+      "evidence": [
+        "Save, Save As, and repeated Save retained exactly one owned rendering-mode-3 stream and one corrected text occurrence"
+      ]
+    },
+    "13": {
+      "status": "pass",
+      "evidence": [
+        "packaged review DOM retained engineText while effectiveText changed to approved Unicode"
+      ]
+    },
+    "14": {
+      "status": "pass",
+      "evidence": [
+        "production Undo/Redo removed and restored text, pending ownership, dirty state, and search results",
+        "Remove/Undo/Redo restored ownership and search; saved removal restored the original non-owned content references"
+      ]
+    },
+    "15": {
+      "status": "pass",
+      "evidence": [
+        "review rerun used child 58246 and replaced only the owned stream"
+      ]
+    },
+    "16": {
+      "status": "pass",
+      "evidence": [
+        "Remove/Undo/Redo restored ownership and search; saved removal restored the original non-owned content references"
+      ]
+    },
+    "17": {
+      "status": "pass",
+      "evidence": [
+        "default production run skipped native and mixed pages, deduplicated native text, and exposed an unsupported alert with no searchable OCR layer",
+        "saved representative corpus proved CropBox/UserUnit, skew, dense, columns, Unicode, skip/dedup, and unsupported policies in packaged output"
+      ]
+    },
+    "18": {
+      "status": "pass",
+      "evidence": [
+        "default production run skipped native and mixed pages, deduplicated native text, and exposed an unsupported alert with no searchable OCR layer",
+        "saved representative corpus proved CropBox/UserUnit, skew, dense, columns, Unicode, skip/dedup, and unsupported policies in packaged output"
+      ]
+    },
+    "19": {
+      "status": "pass",
+      "evidence": [
+        "default production run skipped native and mixed pages, deduplicated native text, and exposed an unsupported alert with no searchable OCR layer",
+        "saved representative corpus proved CropBox/UserUnit, skew, dense, columns, Unicode, skip/dedup, and unsupported policies in packaged output"
+      ]
+    },
+    "20": {
+      "status": "pass",
+      "evidence": [
+        "document close reaped active child 58040",
+        "application close reaped active child 58412 before exit"
+      ]
+    }
+  },
+  "externalReaders": {
+    "pdfJs": "pass",
+    "pdfium": "pass",
+    "applePreview": "pass"
+  },
+  "disposableChildren": {
+    "cancelled": 57955,
+    "documentClose": 58040,
+    "completed": 58104,
+    "rerun": 58246,
+    "representative": 58314,
+    "applicationClose": 58412
+  }
+}

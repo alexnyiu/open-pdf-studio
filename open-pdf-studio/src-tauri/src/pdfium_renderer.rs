@@ -128,6 +128,30 @@ impl PdfiumDocumentHandle {
     }
 }
 
+/// Extract every character in PDFium's page text stream without applying an
+/// origin-zero rectangle. `PdfPageText::all()` delegates to bounded extraction
+/// using `page_size()`, which excludes valid text near the upper/right edge of
+/// a non-zero CropBox.
+pub fn extract_all_page_text(
+    doc: &PdfDocument<'static>,
+    page_index: u32,
+) -> Result<String, String> {
+    let _guard = inproc_guard();
+    let pages = doc.pages();
+    let page = pages
+        .get(page_index as i32)
+        .map_err(|error| format!("Page {page_index} not found: {error}"))?;
+    let text = page
+        .text()
+        .map_err(|error| format!("Page {page_index} text extraction failed: {error}"))?;
+    let extracted = text
+        .chars()
+        .iter()
+        .filter_map(|character| character.unicode_char())
+        .collect::<String>();
+    Ok(extracted.replace("\r\n", "\n").replace('\r', "\n"))
+}
+
 /// Document-handle cache. Tauri state. Keyed by full file path.
 #[derive(Default)]
 pub struct PdfiumDocCache(pub Mutex<HashMap<String, Arc<PdfiumDocumentHandle>>>);

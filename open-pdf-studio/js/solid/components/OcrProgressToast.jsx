@@ -154,6 +154,7 @@ export default function OcrProgressToast() {
                   <button
                     type="button"
                     class="ocr-progress-action"
+                    data-ocr-action="cancel"
                     onClick={() => { void cancelActiveDocumentOcr().catch(() => {}); }}
                   >
                     {t('organize.cancelOcr')}
@@ -226,6 +227,7 @@ export default function OcrProgressToast() {
                 <button
                   type="button"
                   class="ocr-progress-action"
+                  data-ocr-action="cancel"
                   onClick={() => { void cancelActiveDocumentOcr().catch(() => {}); }}
                 >
                   {t('organize.cancelOcr')}

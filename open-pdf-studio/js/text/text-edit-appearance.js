@@ -3,6 +3,20 @@ export function normalizePageRotation(rotation) {
   return normalized === 90 || normalized === 180 || normalized === 270 ? normalized : 0;
 }
 
+/**
+ * PDF.js multiplies viewport scale by a page's UserUnit and applies the
+ * intrinsic page rotation. The unified single-page viewport applies both
+ * sizing and rotation itself, so its text layer must stay in unrotated raw
+ * PDF user space or it will be transformed twice.
+ */
+export function rawPdfTextLayerViewportOptions(userUnit = 1) {
+  const numericUserUnit = Number(userUnit);
+  const pointsPerUserUnit = Number.isFinite(numericUserUnit) && numericUserUnit > 0
+    ? numericUserUnit
+    : 1;
+  return { scale: 1 / pointsPerUserUnit, rotation: 0 };
+}
+
 export function getPageRotationMatrix(pageWidth, pageHeight, rotation) {
   switch (normalizePageRotation(rotation)) {
     case 90:

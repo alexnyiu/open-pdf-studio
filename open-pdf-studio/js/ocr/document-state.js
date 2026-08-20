@@ -1,6 +1,6 @@
 // @ts-check
 
-import { $PROXY } from 'solid-js';
+import { $PROXY, batch } from 'solid-js';
 import { unwrap } from 'solid-js/store';
 import { assertOcrResultV2 } from './contracts/v2.js';
 import {
@@ -43,13 +43,23 @@ function deepFreeze(value) {
   return Object.freeze(value);
 }
 
-/** @template T @param {T} value @returns {Readonly<T>} */
-function immutableContractSnapshot(value) {
+/**
+ * @template T
+ * @param {Record<string, any>} target
+ * @param {string} property
+ * @param {T} value
+ * @returns {Readonly<T>}
+ */
+function reactiveImmutableContractSnapshot(target, property, value) {
   const snapshot = clone(value);
   // Solid lazily defines its proxy marker on plain objects. Install a
-  // non-enumerable self marker before freezing so the snapshot remains a plain
-  // JSON object (and can be revalidated) without Solid trying to mutate it.
+  // non-enumerable self marker before publication so the snapshot remains a
+  // plain JSON object (and can be revalidated) without Solid trying to mutate
+  // it. Publish through the reactive proxy before freezing: assigning through
+  // the raw object leaves an already-subscribed production UI on its cached
+  // pre-OCR null value.
   Object.defineProperty(snapshot, $PROXY, { value: snapshot });
+  target[property] = snapshot;
   return deepFreeze(snapshot);
 }
 
@@ -483,40 +493,39 @@ export function applyOcrPageResult(doc, { result, pageGeometry, token }) {
   assertMatchingGeometry(validatedResult, validatedGeometry);
 
   const page = ensureOcrPageState(doc, token.pageNumber);
-  // Assign snapshots through the raw nested state. Solid's normal setter
-  // unwraps frozen objects into mutable clones before storing them.
-  const rawRecognition = unwrap(page.recognition);
-  rawRecognition.result = immutableContractSnapshot(validatedResult);
-  rawRecognition.geometry = immutableContractSnapshot(validatedGeometry);
-  page.recognition.revision += 1;
-  page.recognition.ownership = {
-    owner: OPEN_PDF_STUDIO_OCR_OWNER,
-    stream: PENDING_OCR_STREAM,
-    jobId: validatedResult.jobId,
-    requestId: validatedResult.requestId,
-    createdAt: new Date().toISOString(),
-  };
-  page.recognition.warnings = clone(validatedResult.warnings || []);
-  page.review.corrections = {};
-  page.review.estimatedBaselines = Object.fromEntries(
-    validatedResult.lines
-      .filter((line) => line.baseline.status !== 'provided')
-      .map((line) => [line.id, estimateOcrLineBaseline(line)])
-      .filter(([, baseline]) => baseline !== null),
-  );
-  page.review.revision += 1;
-  page.status = validatedResult.page.status === 'unsupported'
-    ? 'unsupported'
-    : validatedResult.page.status === 'failed'
-      ? 'failed'
-      : validatedResult.page.status === 'cancelled'
-        ? 'cancelled'
-        : 'ready';
-  page.review.dirty = true;
-  const ocr = ensureDocumentOcrState(doc);
-  ocr.revision += 1;
-  ocr.dirty = true;
-  doc.modified = true;
+  batch(() => {
+    reactiveImmutableContractSnapshot(page.recognition, 'result', validatedResult);
+    reactiveImmutableContractSnapshot(page.recognition, 'geometry', validatedGeometry);
+    page.recognition.revision += 1;
+    page.recognition.ownership = {
+      owner: OPEN_PDF_STUDIO_OCR_OWNER,
+      stream: PENDING_OCR_STREAM,
+      jobId: validatedResult.jobId,
+      requestId: validatedResult.requestId,
+      createdAt: new Date().toISOString(),
+    };
+    page.recognition.warnings = clone(validatedResult.warnings || []);
+    page.review.corrections = {};
+    page.review.estimatedBaselines = Object.fromEntries(
+      validatedResult.lines
+        .filter((line) => line.baseline.status !== 'provided')
+        .map((line) => [line.id, estimateOcrLineBaseline(line)])
+        .filter(([, baseline]) => baseline !== null),
+    );
+    page.review.revision += 1;
+    page.status = validatedResult.page.status === 'unsupported'
+      ? 'unsupported'
+      : validatedResult.page.status === 'failed'
+        ? 'failed'
+        : validatedResult.page.status === 'cancelled'
+          ? 'cancelled'
+          : 'ready';
+    page.review.dirty = true;
+    const ocr = ensureDocumentOcrState(doc);
+    ocr.revision += 1;
+    ocr.dirty = true;
+    doc.modified = true;
+  });
   notifyPageChanged(doc, token.pageNumber);
   return { applied: true, reason: null };
 }

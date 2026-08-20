@@ -85,6 +85,11 @@ fn get_opened_file(state: tauri::State<OpenedFiles>) -> Vec<String> {
 
 #[tauri::command]
 fn get_session_file_path() -> String {
+    if std::env::var("OPS_ENABLE_MCP").as_deref() == Ok("1") {
+        if let Some(path) = std::env::var_os("OPS_TEST_SESSION_PATH") {
+            return std::path::PathBuf::from(path).to_string_lossy().to_string();
+        }
+    }
     if let Some(data_dir) = dirs::data_local_dir() {
         let app_dir = data_dir.join("OpenPDFStudio");
         if !app_dir.exists() {

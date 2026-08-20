@@ -82,6 +82,8 @@ function OcrReviewLine(props) {
         ref={cardRef}
         class={`ocr-review-line${props.selected ? ' selected' : ''}`}
         data-ocr-review-line={props.line.id}
+        data-ocr-engine-text={props.line.engineText}
+        data-ocr-effective-text={props.line.effectiveText}
         data-confidence-band={props.line.confidenceBand}
         tabIndex={props.focusable ? 0 : -1}
         aria-current={props.selected ? 'true' : undefined}
@@ -412,6 +414,7 @@ export default function OcrReviewPanel() {
             <button
               type="button"
               class="ocr-review-primary-button"
+              data-ocr-action="rerun-page"
               disabled={actionBusy() || workflowBusy()
                 || !ownedPageNumbers().includes(activeDocument()?.currentPage)}
               onClick={() => runAction(rerunActiveOcrReviewPage)}
@@ -421,6 +424,7 @@ export default function OcrReviewPanel() {
             <button
               type="button"
               class="ocr-review-danger-button"
+              data-ocr-action="remove-page"
               disabled={actionBusy() || !ownedPageNumbers().includes(activeDocument()?.currentPage)}
               onClick={removeActiveOcrReviewPage}
             >
@@ -430,6 +434,7 @@ export default function OcrReviewPanel() {
               <button
                 type="button"
                 class="ocr-review-danger-button"
+                data-ocr-action="remove-document"
                 disabled={actionBusy()}
                 onClick={removeActiveOcrReviewDocument}
               >
@@ -440,6 +445,7 @@ export default function OcrReviewPanel() {
               <button
                 type="button"
                 class="ocr-review-secondary-button"
+                data-ocr-action="undo"
                 aria-label={t('ocrReview.undoAccessible')}
                 disabled={!canUndoOcrReviewAction() || actionBusy()}
                 onClick={() => runAction(undoOcrReviewAction)}
@@ -449,6 +455,7 @@ export default function OcrReviewPanel() {
               <button
                 type="button"
                 class="ocr-review-secondary-button"
+                data-ocr-action="redo"
                 aria-label={t('ocrReview.redoAccessible')}
                 disabled={!canRedoOcrReviewAction() || actionBusy()}
                 onClick={() => runAction(redoOcrReviewAction)}

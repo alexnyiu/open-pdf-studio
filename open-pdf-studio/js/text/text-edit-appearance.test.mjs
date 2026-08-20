@@ -8,6 +8,7 @@ import {
   getTextLayerCssMatrix,
   invertPageRotation,
   restoreTextEditSnapshot,
+  rawPdfTextLayerViewportOptions,
   resolveTextEditPageGeometry,
   selectTextColor,
 } from './text-edit-appearance.js';
@@ -111,4 +112,10 @@ test('page geometry combines intrinsic and user rotation', () => {
     resolveTextEditPageGeometry({ widthPt: 600, heightPt: 800, rotation: 90 }, 800, 600, 90),
     { pageWidth: 600, pageHeight: 800, rotation: 180, displayWidth: 600, displayHeight: 800 },
   );
+});
+
+test('unified text layers stay in unrotated raw PDF user space', () => {
+  assert.deepEqual(rawPdfTextLayerViewportOptions(1.25), { scale: 0.8, rotation: 0 });
+  assert.deepEqual(rawPdfTextLayerViewportOptions(1), { scale: 1, rotation: 0 });
+  assert.deepEqual(rawPdfTextLayerViewportOptions(0), { scale: 1, rotation: 0 });
 });

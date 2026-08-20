@@ -220,13 +220,15 @@ test('reconciliation preserves unrelated owned pages and removes only explicit t
     ...writerInput(fixture, initial, pageZeroOnly),
     removePageIndexes: [],
   });
-  assert.deepEqual((await inspectOwnedInvisibleOcrLayer(updated)).map((page) => page.owned), [true, true]);
+  assert.deepEqual((await inspectOwnedInvisibleOcrLayer(updated)).map((page) => page.owned),
+    fixture.pages.map(() => true));
 
   const removedSecond = await reconcileOwnedInvisibleOcrLayer({
     ...writerInput(fixture, updated, pageZeroOnly),
     removePageIndexes: [1],
   });
-  assert.deepEqual((await inspectOwnedInvisibleOcrLayer(removedSecond)).map((page) => page.owned), [true, false]);
+  assert.deepEqual((await inspectOwnedInvisibleOcrLayer(removedSecond)).map((page) => page.owned),
+    fixture.pages.map((_, pageIndex) => pageIndex !== 1));
   const text = await extractedPages(removedSecond);
   assert.equal(text[0].includes('Updated searchable line'), true);
   assert.deepEqual(text[1], [fixture.thirdPartyText[1]]);

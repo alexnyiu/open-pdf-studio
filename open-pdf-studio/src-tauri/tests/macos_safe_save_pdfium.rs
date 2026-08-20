@@ -6,7 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use app_lib::pdfium_renderer::{init_pdfium, render_page_to_rgba, PdfiumDocumentHandle};
+use app_lib::pdfium_renderer::{
+    extract_all_page_text, init_pdfium, render_page_to_rgba, PdfiumDocumentHandle,
+};
 
 fn load(path: &Path) -> PdfiumDocumentHandle {
     let bytes =
@@ -16,18 +18,9 @@ fn load(path: &Path) -> PdfiumDocumentHandle {
 }
 
 fn text_pages(handle: &PdfiumDocumentHandle) -> Vec<String> {
-    let pages = handle.document().pages();
-    (0..pages.len())
-        .map(|index| {
-            pages
-                .get(index as i32)
-                .unwrap_or_else(|error| panic!("page {index}: {error}"))
-                .text()
-                .map(|text| text.all())
-                .unwrap_or_else(|error| panic!("page {index} text: {error}"))
-                .replace("\r\n", "\n")
-                .replace('\r', "\n")
-        })
+    (0..handle.document().pages().len())
+        .map(|index| extract_all_page_text(handle.document(), index as u32)
+            .unwrap_or_else(|error| panic!("page {index} text: {error}")))
         .collect()
 }
 

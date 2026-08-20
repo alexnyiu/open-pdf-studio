@@ -120,7 +120,8 @@ fn handle_initialize(webview_ready: bool) -> Value {
         },
         "_meta": {
             "openPdfStudio": {
-                "webviewReady": webview_ready
+                "webviewReady": webview_ready,
+                "processId": std::process::id()
             }
         }
     })
@@ -1380,6 +1381,10 @@ mod tests {
         assert_eq!(v["capabilities"]["tools"]["listChanged"], false);
         assert_eq!(v["protocolVersion"], "2025-03-26");
         assert_eq!(v["_meta"]["openPdfStudio"]["webviewReady"], false);
+        assert_eq!(
+            v["_meta"]["openPdfStudio"]["processId"],
+            std::process::id()
+        );
     }
 
     #[test]

@@ -617,6 +617,30 @@ test('page revisions do not reuse persistent cache identities after a structure-
   assert.ok(second.pageRevision > first.pageRevision);
 });
 
+test('a completed job retains pending OCR on the production reactive document', async () => {
+  const document = makeDocument('document-reactive-completion', [[]]);
+  state.documents.splice(0, state.documents.length, document);
+  state.activeDocumentIndex = 0;
+  const activeDocument = state.documents[0];
+  const fixtures = new Map();
+  const controller = new OcrApplicationController({ runPage: completedRunPage(fixtures) });
+
+  const summary = await startJob(controller, activeDocument, fixtures).completion;
+
+  assert.equal(summary.status, 'completed');
+  assert.equal(activeDocument.ocr.pages[1].recognition.ownership?.owner, 'open-pdf-studio');
+  assert.equal(getPendingOcrTextItems(activeDocument, 1).length, 2);
+  assert.equal(Object.isFrozen(activeDocument.ocr.pages[1].recognition.result), true);
+  assert.equal(Object.isFrozen(activeDocument.ocr.pages[1].recognition.result.lines), true);
+  assert.throws(() => {
+    activeDocument.ocr.pages[1].recognition.result.lines[0].text = 'mutated';
+  }, TypeError);
+  assert.equal(activeDocument.undoStack[0].type, 'ocrApplyCompound');
+  controller.dispose();
+  state.documents.splice(0, state.documents.length);
+  state.activeDocumentIndex = -1;
+});
+
 test('typed OCR undo and redo restore search text, ownership, dirty state, and removal', async () => {
   const document = makeDocument('document-typed-undo', [[]]);
   const fixtures = new Map();
