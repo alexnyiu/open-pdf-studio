@@ -1,5 +1,6 @@
 import type { Annotation } from './annotation.js';
 import type { DocumentOcrState } from './ocr.js';
+import type { ScannedTextEditStateV1 } from './scanned-text-edit.js';
 
 export interface MeasureScale {
   pixelsPerUnit: number;
@@ -62,6 +63,8 @@ export interface DocumentState {
   textEdits: TextEdit[];
   /** Unsaved searchable OCR and review state; never serialized as textEdits. */
   ocr: DocumentOcrState;
+  /** Application-owned mutable scan repairs; never written into immutable OCR results. */
+  scannedTextEdits: ScannedTextEditStateV1 | null;
   watermarks: Watermark[];
   bookmarks: Bookmark[];
   undoStack: UndoCommand[];

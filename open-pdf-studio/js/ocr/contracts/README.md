@@ -8,6 +8,7 @@ Deze map bevat de bevroren productiecontracten voor de macOS-OCR-pijplijn. De be
 | `job` en `progress` v1 | Aanvrager en scheduler | Een job is een onveranderlijke opdracht voor precies één pagina; progress is een reeks engine-events. Applicatiestappen zoals toepassen en overslaan horen hier niet thuis. |
 | `document-state` v1 | Documentlaag | Veranderlijk; bevat reviewstatus, correcties, acceptatie, geschatte baselines, zichtbare bewerkingsregio's en undo-metadata. |
 | `page-geometry` v1 | PDF-/rastergrens | Onveranderlijk; bevat paginavakken, `UserUnit`, rotaties, werkelijke rasterafmetingen en de volledige inverteerbare transformatieketen. |
+| `scanned-text-edit-state` v1 | Applicatielaag | Veranderlijk en afzonderlijk van OCR-resultaten; verwijst via stabiele OCR-ID's, bewaart bronpatches, verklaarbare geschiktheid, reparatiepixels, eigendom en revisies. |
 | `model-pack` v1 | Modelinstallatiegrens | Onveranderlijk; bevat exacte assets, checksums, platformcompatibiliteit, distributiebeleid, trust-root en toepassingsversies. |
 | `worker-message` v1 | JavaScript Worker-grens | Strikt, afzonderlijk geversioneerd structured-clone-protocol voor opdrachten, resultaten, fouten en lifecycle-events. De rasterbuffer is het enige niet-JSON-veld en wordt overgedragen, niet gekopieerd. |
 
@@ -16,6 +17,8 @@ Page geometry is de enige autoriteit voor coördinaten. De keten gebruikt 3×3-h
 Herkenningsgeometrie gebruikt `source-raster-pixels` of `preprocessed-raster-pixels`; de eerste naam is de bestaande productiealias voor rendered-raster pixels. Iedere polygoon en baseline noemt de ruimte. Een lijnpolygoon is verplicht; woordpolygonen zijn optioneel. Een ontbrekende engine-baseline wordt expliciet als `unavailable` vastgelegd. Een later berekende baseline hoort uitsluitend met provenance `estimated` in documentstate. Rechthoekige bounds zijn uitsluitend afgeleide hulpmiddelen en vervangen nooit polygonen of baselines. `pdf-default-user-space` en PDF-transformaties komen alleen voor in page geometry.
 
 Job-, document-, pagina-, revisie-, generatie-, model-pack-, configuratie- en rasteridentiteiten vormen samen de stale-result-beveiliging. Een cache mag daarom alleen het gevalideerde, onveranderlijke engine-resultaat opslaan en nooit latere documentstate opnemen.
+
+Zichtbare reparaties van gescande tekst gebruiken uitsluitend `scanned-text-edit-state` op `doc.scannedTextEdits`. Dit contract bevat alleen stabiele verwijzingen naar OCR-lijnen en kopieert de canonieke brongeometrie; het schrijft nooit selectie-, analyse-, reparatie- of revisiestatus terug in een onveranderlijk OCR-resultaat. Het oudere `visibleEditRegions`-veld in documentstate blijft een lege, niet-authoritatieve compatibiliteitsprojectie en wordt niet door de bewerkingsfundering gebruikt.
 
 Alle inkomende waarden worden eerst op JSON-veiligheid, grootte, versie en exacte keys gecontroleerd. Migraties valideren zowel de bron als het nieuwe resultaat en maken geen woordgeometrie, alternatieven, taaldetectie, schrijfrichting of engine-baselines aan. `schema-validation.js` voert dezelfde fixturecorpora uit via de JSON Schema-route, inclusief de OCR-semantische keywords voor controles die standaard JSON Schema niet kan uitdrukken, zoals zelfsnijdende polygonen en rastergrenzen.
 

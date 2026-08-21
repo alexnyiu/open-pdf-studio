@@ -17,6 +17,7 @@ export function createDocument(filePath: string | null = null): DocumentState {
     annotations: [],
     textEdits: [],
     ocr: createDocumentOcrState(id),
+    scannedTextEdits: null,
     watermarks: [],
     bookmarks: [],
     undoStack: [],

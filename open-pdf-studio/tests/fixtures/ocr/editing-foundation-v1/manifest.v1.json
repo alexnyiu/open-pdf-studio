@@ -1,0 +1,212 @@
+{
+  "contract": "open-pdf-studio.scanned-text-edit-fixtures",
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-20T12:00:00.000Z",
+  "generator": "scripts/generate-scanned-text-edit-fixtures.mjs",
+  "deterministic": true,
+  "modelUsed": false,
+  "fixtures": [
+    {
+      "id": "flat-color",
+      "file": "flat-color.png",
+      "widthPx": 256,
+      "heightPx": 160,
+      "rgbaSha256": "186c390cf5700aa946ab31f8e802f623c57ecbd6326f259274b167d5b7f3f775",
+      "pngSha256": "423ead93fa07fdcfa550f9804662e39ddd5fb316ffcd65958d728e767aafe3f9",
+      "expectedClassification": "flat",
+      "expectedEligible": true,
+      "ocrLine": {
+        "id": "line-1",
+        "text": "SCAN TEXT",
+        "x": 72,
+        "y": 64,
+        "width": 112,
+        "height": 24,
+        "confidence": 0.97
+      }
+    },
+    {
+      "id": "mild-paper-texture",
+      "file": "mild-paper-texture.png",
+      "widthPx": 256,
+      "heightPx": 160,
+      "rgbaSha256": "58f15d3ead3c53437822f232df5722233c49c5b6ab5e31a949ed7534de481c28",
+      "pngSha256": "6afbd2bfaa0798ce3d097f02effe3b26395396e056c0d42a4753cd3afcf89360",
+      "expectedClassification": "textured",
+      "expectedEligible": false,
+      "ocrLine": {
+        "id": "line-1",
+        "text": "SCAN TEXT",
+        "x": 72,
+        "y": 64,
+        "width": 112,
+        "height": 24,
+        "confidence": 0.97
+      }
+    },
+    {
+      "id": "ruled-lines",
+      "file": "ruled-lines.png",
+      "widthPx": 256,
+      "heightPx": 160,
+      "rgbaSha256": "9dd428bc572f53052a9b9001865b6531ed9614cc88afd8cc8c9452671b915698",
+      "pngSha256": "5e11d3b95f59b9ce51616975ad4a351f9ac4a2ae9d49c04eb1b0e83d20c59cbd",
+      "expectedClassification": "table-line-art",
+      "expectedEligible": false,
+      "ocrLine": {
+        "id": "line-1",
+        "text": "SCAN TEXT",
+        "x": 72,
+        "y": 64,
+        "width": 112,
+        "height": 24,
+        "confidence": 0.97
+      }
+    },
+    {
+      "id": "table",
+      "file": "table.png",
+      "widthPx": 256,
+      "heightPx": 160,
+      "rgbaSha256": "a57994e58f6286bfe06e802efb670f1f1e7fe508aae1d490b26de716c56ad491",
+      "pngSha256": "59fc9649b3a73a55dafd698984695a4cc71d6745e910d86b7c5c905361c6a65d",
+      "expectedClassification": "table-line-art",
+      "expectedEligible": false,
+      "ocrLine": {
+        "id": "line-1",
+        "text": "SCAN TEXT",
+        "x": 72,
+        "y": 64,
+        "width": 112,
+        "height": 24,
+        "confidence": 0.97
+      }
+    },
+    {
+      "id": "photo",
+      "file": "photo.png",
+      "widthPx": 256,
+      "heightPx": 160,
+      "rgbaSha256": "c5b0b302d23f0271dcc3071316b9633e1a5979086369ee7d86c66cc114648bf9",
+      "pngSha256": "5d4978857d4ac7a040e27a68839f3a17a04b515f45dac5d848680c7456edba5e",
+      "expectedClassification": "photographic",
+      "expectedEligible": false,
+      "ocrLine": {
+        "id": "line-1",
+        "text": "SCAN TEXT",
+        "x": 72,
+        "y": 64,
+        "width": 112,
+        "height": 24,
+        "confidence": 0.97
+      }
+    },
+    {
+      "id": "gradient",
+      "file": "gradient.png",
+      "widthPx": 256,
+      "heightPx": 160,
+      "rgbaSha256": "30485bf2feb896a0325262c72271a56d99c841b06d71ba05db7940c7b1881961",
+      "pngSha256": "699c2748e29d4ec641ec78e52d523628e9eec938e6b81fff8102066b2ad4b3aa",
+      "expectedClassification": "gradient",
+      "expectedEligible": false,
+      "ocrLine": {
+        "id": "line-1",
+        "text": "SCAN TEXT",
+        "x": 72,
+        "y": 64,
+        "width": 112,
+        "height": 24,
+        "confidence": 0.97
+      }
+    },
+    {
+      "id": "shadow",
+      "file": "shadow.png",
+      "widthPx": 256,
+      "heightPx": 160,
+      "rgbaSha256": "74bccba7de40b8cab197c59c02aff58e00b64ed825c68446eec79361c879ef6e",
+      "pngSha256": "681338cc1db4d9ee750ee14d732b90a7ac14ea7891830ac5779c3b3ea0606b73",
+      "expectedClassification": "gradient",
+      "expectedEligible": false,
+      "ocrLine": {
+        "id": "line-1",
+        "text": "SCAN TEXT",
+        "x": 72,
+        "y": 64,
+        "width": 112,
+        "height": 24,
+        "confidence": 0.97
+      }
+    },
+    {
+      "id": "compression-noise",
+      "file": "compression-noise.png",
+      "widthPx": 256,
+      "heightPx": 160,
+      "rgbaSha256": "96b120454c33f1e7d92423e48cb16e6f35287184b7b72b84f46e9e4e86065227",
+      "pngSha256": "c94450dd633b6969ba1a0aeaadf7145a925d611295a18453febcfc20f685376f",
+      "expectedClassification": "near-flat",
+      "expectedEligible": true,
+      "ocrLine": {
+        "id": "line-1",
+        "text": "SCAN TEXT",
+        "x": 72,
+        "y": 64,
+        "width": 112,
+        "height": 24,
+        "confidence": 0.97
+      }
+    },
+    {
+      "id": "low-confidence-geometry",
+      "file": "low-confidence-geometry.png",
+      "widthPx": 256,
+      "heightPx": 160,
+      "rgbaSha256": "37a5aa10157b9b02cd9fde81b970ccb17be692369ebde753e4304caa8b0240e2",
+      "pngSha256": "2267da1f514e4fb177396a824de9e3424207545821d0c9da1d50f6a5bff73824",
+      "expectedClassification": "flat",
+      "expectedEligible": false,
+      "ocrLine": {
+        "id": "line-1",
+        "text": "SCAN TEXT",
+        "x": 72,
+        "y": 64,
+        "width": 112,
+        "height": 24,
+        "confidence": 0.35
+      }
+    }
+  ],
+  "pdfProof": {
+    "source": "flat-scanned-source.pdf",
+    "repaired": "flat-scanned-repaired.pdf",
+    "reverted": "flat-scanned-reverted.pdf",
+    "sourceSha256": "35338518a98d88195c189e39486ad7e992bb7dcfde7bf80fb7a91ad25fddfd6b",
+    "repairedSha256": "6c91ca3f784e25517efafa3120dc72e1198d26c0bf73fdd74a01275b7b8b5ecb",
+    "revertedSha256": "00758b448345143ba8c5c96c3e2741c6704d686294861c8def395544e1ec5a77",
+    "approvedRegion": {
+      "coordinateSpace": "source-raster-pixels",
+      "x": 71,
+      "y": 63,
+      "width": 114,
+      "height": 26
+    },
+    "changedRegion": {
+      "actualBounds": {
+        "coordinateSpace": "source-raster-pixels",
+        "x": 77,
+        "y": 68,
+        "width": 87,
+        "height": 16
+      },
+      "changedPixelCount": 482,
+      "outsideApprovedChangedPixels": 0,
+      "maxChannelDelta": 207,
+      "beforeSha256": "f049ef0d52dd6474de3a9231f115275032b5fc8ed62288d074646fc3cc9ebf6f",
+      "afterSha256": "fcebe9180e3b22f48a6420601aabbf5ca5ced6c9ba7a4b9af2f953ab546b5784"
+    },
+    "stateId": "scanned-text-edit-fixture-state",
+    "stateRevision": 1
+  }
+}

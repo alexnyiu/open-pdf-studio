@@ -19,6 +19,7 @@ import {
   OCR_PROGRESS_CONTRACT,
   OCR_PROGRESS_STAGES,
   OCR_RESULT_CONTRACT,
+  SCANNED_TEXT_EDIT_STATE_CONTRACT,
   OCR_SOURCE_RASTER_SPACE,
   OCR_WORKER_MESSAGE_CONTRACT,
   OCR_WORKER_MESSAGE_SCHEMA_VERSION,
@@ -70,6 +71,7 @@ const SCHEMA_NAMES = [
   'page-geometry.v1.schema.json',
   'worker-message.v1.schema.json',
   'native-job.v1.schema.json',
+  'scanned-text-edit-state.v1.schema.json',
 ];
 const schemas = new Map(await Promise.all(SCHEMA_NAMES.map(async (name) => [
   name,
@@ -601,6 +603,7 @@ test('production schemas retain the v1 lineage and separate immutable result, mu
   assert.equal(Object.hasOwn(resultSchema.properties, 'pageTransform'), false);
   assert.equal(schemas.get('document-state.v1.schema.json').properties.contract.const, OCR_DOCUMENT_STATE_CONTRACT);
   assert.equal(schemas.get('page-geometry.v1.schema.json').properties.contract.const, OCR_PAGE_GEOMETRY_CONTRACT);
+  assert.equal(schemas.get('scanned-text-edit-state.v1.schema.json').properties.contract.const, SCANNED_TEXT_EDIT_STATE_CONTRACT);
 });
 
 test('the model pack names its fixed 50-language/script support and has explicit install-safety metadata', () => {

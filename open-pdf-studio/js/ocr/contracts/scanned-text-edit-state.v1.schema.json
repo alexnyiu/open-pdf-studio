@@ -1,0 +1,354 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openpdfstudio.org/contracts/ocr/scanned-text-edit-state.v1.schema.json",
+  "title": "Open PDF Studio application-owned scanned-text edit state v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract", "schemaVersion", "stateId", "owner", "document", "stateRevision",
+    "pages", "history", "createdAt", "updatedAt"
+  ],
+  "properties": {
+    "contract": { "const": "open-pdf-studio.scanned-text-edit-state" },
+    "schemaVersion": { "const": 1 },
+    "stateId": { "$ref": "common.schema.json#/$defs/id" },
+    "owner": { "$ref": "#/$defs/owner" },
+    "document": { "$ref": "common.schema.json#/$defs/documentIdentity" },
+    "stateRevision": { "type": "integer", "minimum": 0 },
+    "pages": {
+      "type": "array",
+      "maxItems": 100000,
+      "x-uniqueBy": "id",
+      "items": { "$ref": "#/$defs/page" }
+    },
+    "history": { "$ref": "#/$defs/history" },
+    "createdAt": { "$ref": "common.schema.json#/$defs/timestamp" },
+    "updatedAt": { "$ref": "common.schema.json#/$defs/timestamp" }
+  },
+  "$defs": {
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["application", "feature", "instanceId"],
+      "properties": {
+        "application": { "const": "open-pdf-studio" },
+        "feature": { "const": "scanned-text-editing" },
+        "instanceId": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    },
+    "sourceRaster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "fingerprint", "coordinateSpace", "widthPx", "heightPx", "dpi", "rgbaSha256"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "fingerprint": { "$ref": "common.schema.json#/$defs/fingerprint" },
+        "coordinateSpace": { "const": "source-raster-pixels" },
+        "widthPx": { "type": "integer", "minimum": 1 },
+        "heightPx": { "type": "integer", "minimum": 1 },
+        "dpi": { "type": "number", "exclusiveMinimum": 0 },
+        "rgbaSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "pageGeometryRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract", "schemaVersion", "geometryId"],
+      "properties": {
+        "contract": { "const": "open-pdf-studio.ocr.page-geometry" },
+        "schemaVersion": { "const": 1 },
+        "geometryId": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "index", "revision", "sourceRaster", "pageGeometry", "selections"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "index": { "type": "integer", "minimum": 0 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "sourceRaster": { "$ref": "#/$defs/sourceRaster" },
+        "pageGeometry": { "$ref": "#/$defs/pageGeometryRef" },
+        "selections": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100000,
+          "x-uniqueBy": "id",
+          "items": { "$ref": "#/$defs/selection" }
+        }
+      }
+    },
+    "resultRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jobId", "requestId", "pageId", "pageRevision", "sourceRasterId", "sourceRasterFingerprint"],
+      "properties": {
+        "jobId": { "$ref": "common.schema.json#/$defs/id" },
+        "requestId": { "$ref": "common.schema.json#/$defs/id" },
+        "pageId": { "$ref": "common.schema.json#/$defs/id" },
+        "pageRevision": { "type": "integer", "minimum": 0 },
+        "sourceRasterId": { "$ref": "common.schema.json#/$defs/id" },
+        "sourceRasterFingerprint": { "$ref": "common.schema.json#/$defs/fingerprint" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "targetId", "lineIds", "result"],
+      "properties": {
+        "kind": { "enum": ["line", "region"] },
+        "targetId": { "$ref": "common.schema.json#/$defs/id" },
+        "lineIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/id" }
+        },
+        "result": { "$ref": "#/$defs/resultRef" }
+      }
+    },
+    "homography": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fromSpace", "toSpace", "matrix", "inverseMatrix"],
+      "properties": {
+        "fromSpace": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "toSpace": { "const": "source-raster-pixels" },
+        "matrix": { "type": "array", "minItems": 9, "maxItems": 9, "items": { "type": "number" } },
+        "inverseMatrix": { "type": "array", "minItems": 9, "maxItems": 9, "items": { "type": "number" } }
+      },
+      "x-ocrHomography": true
+    },
+    "lineGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lineId", "sourceSpace", "originalPolygon", "sourcePolygon", "transform", "roundTripMaxErrorPx"],
+      "properties": {
+        "lineId": { "$ref": "common.schema.json#/$defs/id" },
+        "sourceSpace": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "originalPolygon": { "$ref": "common.schema.json#/$defs/coordinatePolygon" },
+        "sourcePolygon": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coordinateSpace", "points"],
+          "properties": {
+            "coordinateSpace": { "const": "source-raster-pixels" },
+            "points": { "$ref": "common.schema.json#/$defs/polygonPoints" }
+          }
+        },
+        "transform": { "$ref": "#/$defs/homography" },
+        "roundTripMaxErrorPx": { "type": "number", "minimum": 0 }
+      }
+    },
+    "sourceBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinateSpace", "x", "y", "width", "height"],
+      "properties": {
+        "coordinateSpace": { "const": "source-raster-pixels" },
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "sourcePolygon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coordinateSpace", "points"],
+      "properties": {
+        "coordinateSpace": { "const": "source-raster-pixels" },
+        "points": { "$ref": "common.schema.json#/$defs/polygonPoints" }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinateSpace", "lineGeometry", "selectionPolygon", "repairBounds", "extractionBounds",
+        "roundTripMaxErrorPx", "clipped", "confidence"
+      ],
+      "properties": {
+        "coordinateSpace": { "const": "source-raster-pixels" },
+        "lineGeometry": { "type": "array", "minItems": 1, "x-uniqueBy": "lineId", "items": { "$ref": "#/$defs/lineGeometry" } },
+        "selectionPolygon": { "$ref": "#/$defs/sourcePolygon" },
+        "repairBounds": { "$ref": "#/$defs/sourceBox" },
+        "extractionBounds": { "$ref": "#/$defs/sourceBox" },
+        "roundTripMaxErrorPx": { "type": "number", "minimum": 0 },
+        "clipped": { "type": "boolean" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "encoding", "coordinateSpace", "originX", "originY", "widthPx", "heightPx",
+        "rowBytes", "byteLength", "sha256", "data"
+      ],
+      "properties": {
+        "encoding": { "const": "rgba8-base64" },
+        "coordinateSpace": { "const": "source-raster-pixels" },
+        "originX": { "type": "integer", "minimum": 0 },
+        "originY": { "type": "integer", "minimum": 0 },
+        "widthPx": { "type": "integer", "minimum": 1 },
+        "heightPx": { "type": "integer", "minimum": 1 },
+        "rowBytes": { "type": "integer", "minimum": 4 },
+        "byteLength": { "type": "integer", "minimum": 4 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "data": { "type": "string", "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sampleCount", "sampleCoverage", "meanRgb", "channelStddev", "channelRobustRange",
+        "luminanceStddev", "luminanceRobustRange", "edgeDensity", "strongEdgeDensity",
+        "axisAlignedLineScore", "colorBinCount", "saturationStddev", "gradientSpan",
+        "gradientExplainedVariance", "gradientResidualStddev", "opaqueFraction"
+      ],
+      "properties": {
+        "sampleCount": { "type": "integer", "minimum": 0 },
+        "sampleCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "meanRgb": { "$ref": "#/$defs/channelTriple" },
+        "channelStddev": { "$ref": "#/$defs/channelTriple" },
+        "channelRobustRange": { "$ref": "#/$defs/channelTriple" },
+        "luminanceStddev": { "type": "number", "minimum": 0 },
+        "luminanceRobustRange": { "type": "number", "minimum": 0 },
+        "edgeDensity": { "type": "number", "minimum": 0 },
+        "strongEdgeDensity": { "type": "number", "minimum": 0 },
+        "axisAlignedLineScore": { "type": "number", "minimum": 0 },
+        "colorBinCount": { "type": "integer", "minimum": 0 },
+        "saturationStddev": { "type": "number", "minimum": 0 },
+        "gradientSpan": { "type": "number", "minimum": 0 },
+        "gradientExplainedVariance": { "type": "number", "minimum": 0, "maximum": 1 },
+        "gradientResidualStddev": { "type": "number", "minimum": 0 },
+        "opaqueFraction": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "channelTriple": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "number", "minimum": 0 }
+    },
+    "scoreComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "value", "weight", "contribution"],
+      "properties": {
+        "id": { "enum": ["background-safety", "geometry-confidence", "context-sufficiency", "boundary-stability"] },
+        "value": { "type": "number", "minimum": 0, "maximum": 1 },
+        "weight": { "type": "number", "minimum": 0, "maximum": 1 },
+        "contribution": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "rejectionReason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "evidence"],
+      "properties": {
+        "code": {
+          "enum": [
+            "BACKGROUND_NOT_REPAIRABLE", "GEOMETRY_CONFIDENCE_LOW", "GEOMETRY_CLIPPED",
+            "TRANSFORM_ROUND_TRIP_EXCEEDED", "INSUFFICIENT_BACKGROUND_CONTEXT",
+            "NON_OPAQUE_BACKGROUND", "ELIGIBILITY_SCORE_BELOW_THRESHOLD"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "evidence": { "type": "string", "minLength": 1, "maxLength": 1024 }
+      }
+    },
+    "eligibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "threshold", "eligible", "components", "rejectionReasons"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "threshold": { "const": 0.82 },
+        "eligible": { "type": "boolean" },
+        "components": { "type": "array", "minItems": 4, "maxItems": 4, "x-uniqueBy": "id", "items": { "$ref": "#/$defs/scoreComponent" } },
+        "rejectionReasons": { "type": "array", "maxItems": 16, "x-uniqueBy": "code", "items": { "$ref": "#/$defs/rejectionReason" } }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classifier", "classifierVersion", "classification", "metrics", "eligibility"],
+      "properties": {
+        "classifier": { "const": "deterministic-background-statistics" },
+        "classifierVersion": { "const": 1 },
+        "classification": { "enum": ["flat", "near-flat", "textured", "photographic", "table-line-art", "gradient", "unknown"] },
+        "metrics": { "$ref": "#/$defs/metrics" },
+        "eligibility": { "$ref": "#/$defs/eligibility" }
+      }
+    },
+    "changedRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actualBounds", "changedPixelCount", "outsideApprovedChangedPixels", "maxChannelDelta", "beforeSha256", "afterSha256"],
+      "properties": {
+        "actualBounds": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/sourceBox" }] },
+        "changedPixelCount": { "type": "integer", "minimum": 0 },
+        "outsideApprovedChangedPixels": { "const": 0 },
+        "maxChannelDelta": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "beforeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "afterSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "repair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "method", "approvedRegion", "repairedPatch", "changedRegion"],
+      "properties": {
+        "status": { "enum": ["rejected", "applied", "reverted"] },
+        "method": { "type": ["string", "null"], "enum": [null, "flat-median-fill-v1", "near-flat-edge-interpolation-v1"] },
+        "approvedRegion": { "$ref": "#/$defs/sourceBox" },
+        "repairedPatch": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/patch" }] },
+        "changedRegion": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/changedRegion" }] }
+      }
+    },
+    "operationOwnership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "operationId", "revision", "parentRevision", "createdAt", "updatedAt"],
+      "properties": {
+        "owner": { "const": "open-pdf-studio" },
+        "operationId": { "$ref": "common.schema.json#/$defs/id" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "parentRevision": { "type": "integer", "minimum": 0 },
+        "createdAt": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "updatedAt": { "$ref": "common.schema.json#/$defs/timestamp" }
+      }
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "revision", "target", "geometry", "originalPatch", "analysis", "repair", "ownership"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "target": { "$ref": "#/$defs/target" },
+        "geometry": { "$ref": "#/$defs/geometry" },
+        "originalPatch": { "$ref": "#/$defs/patch" },
+        "analysis": { "$ref": "#/$defs/analysis" },
+        "repair": { "$ref": "#/$defs/repair" },
+        "ownership": { "$ref": "#/$defs/operationOwnership" }
+      }
+    },
+    "history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "undoDepth", "redoDepth", "lastOperationId"],
+      "properties": {
+        "generation": { "type": "integer", "minimum": 0 },
+        "undoDepth": { "type": "integer", "minimum": 0 },
+        "redoDepth": { "type": "integer", "minimum": 0 },
+        "lastOperationId": { "anyOf": [{ "type": "null" }, { "$ref": "common.schema.json#/$defs/id" }] }
+      }
+    }
+  },
+  "x-maxUtf8Bytes": 67108864
+}

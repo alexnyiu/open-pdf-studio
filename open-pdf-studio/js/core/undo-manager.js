@@ -1,8 +1,11 @@
 import { state, getActiveDocument, getPageRotation, setPageRotation } from './state.js';
 import { cloneAnnotation } from '../annotations/factory.js';
 import { restoreOcrCommandState } from '../ocr/document-state.js';
+import { restoreScannedTextEditCommandState } from '../ocr/editing/edit-state.js';
 const MAX_UNDO_STACK = 100;
-const OCR_COMMAND_TYPES = new Set(['ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned']);
+const DOCUMENT_STATE_COMMAND_TYPES = new Set([
+  'ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned', 'scannedTextEdit',
+]);
 let undoTransactionDepth = 0;
 let undoTransactionCommands = null;
 let undoTransactionDocumentId = null;
@@ -67,7 +70,7 @@ function updateButtons() {}
 function pagesForCommand(cmd) {
   const pages = new Set();
   if (!cmd) return pages;
-  if (OCR_COMMAND_TYPES.has(cmd.type)) return pages;
+  if (DOCUMENT_STATE_COMMAND_TYPES.has(cmd.type)) return pages;
   const addPage = (p) => { if (Number.isInteger(p) && p >= 1) pages.add(p); };
   const addFrom = (obj) => { if (obj && typeof obj === 'object') addPage(obj.page); };
 
@@ -103,7 +106,7 @@ function pagesForCommand(cmd) {
     // handled by restorePageState → clearThumbnailCache + generateThumbnails,
     // which regenerates every thumbnail. A per-page hook here would be wrong.
     'pageStructure',
-    'ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned',
+    'ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned', 'scannedTextEdit',
   ]);
   if (pages.size === 0 && !skipTypes.has(cmd.type)) {
     const doc = getActiveDocument();
@@ -167,7 +170,7 @@ export function executeForDocument(doc, cmd) {
   if (!doc || !cmd || typeof cmd.type !== 'string') return false;
   if (pendingPropertyChange) flushPropertyChange();
   if (undoTransactionDepth > 0 && undoTransactionDocumentId === doc.id &&
-      !OCR_COMMAND_TYPES.has(cmd.type)) {
+      !DOCUMENT_STATE_COMMAND_TYPES.has(cmd.type)) {
     undoTransactionCommands.push(cmd);
     return true;
   }
@@ -206,7 +209,7 @@ export async function undo() {
   await persistMeasureScaleIfNeeded(cmd);
   syncModifiedState();
 
-  if (OCR_COMMAND_TYPES.has(cmd.type)) {
+  if (DOCUMENT_STATE_COMMAND_TYPES.has(cmd.type)) {
     updateButtons();
     return;
   }
@@ -260,7 +263,7 @@ export async function redo() {
   await persistMeasureScaleIfNeeded(cmd);
   syncModifiedState();
 
-  if (OCR_COMMAND_TYPES.has(cmd.type)) {
+  if (DOCUMENT_STATE_COMMAND_TYPES.has(cmd.type)) {
     updateButtons();
     return;
   }
@@ -391,6 +394,10 @@ function applyUndo(cmd) {
     case 'ocrCorrectPage':
     case 'ocrRemoveOwned': {
       restoreOcrCommandState(doc, cmd.before);
+      break;
+    }
+    case 'scannedTextEdit': {
+      restoreScannedTextEditCommandState(doc, cmd.before);
       break;
     }
     case 'bulkDelete': {
@@ -577,6 +584,10 @@ function applyRedo(cmd) {
     case 'ocrCorrectPage':
     case 'ocrRemoveOwned': {
       restoreOcrCommandState(doc, cmd.after);
+      break;
+    }
+    case 'scannedTextEdit': {
+      restoreScannedTextEditCommandState(doc, cmd.after);
       break;
     }
     case 'bulkDelete': {

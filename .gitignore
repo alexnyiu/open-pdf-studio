@@ -35,6 +35,7 @@ nul
 # Test files
 *.jpg
 *.png
+!open-pdf-studio/tests/fixtures/ocr/editing-foundation-v1/*.png
 !open-pdf-studio/public/icon.png
 !open-pdf-studio/public/pdfjs/**
 !open-pdf-studio/src-tauri/icons/**
