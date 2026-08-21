@@ -2,8 +2,8 @@
   "status": "pass",
   "platform": "macos",
   "appPath": "/Users/alexander/Personal Projects/open-pdf-studio/target/release/bundle/macos/Open PDF Studio.app/Contents/MacOS/open-pdf-studio",
-  "appBytes": 68853936,
-  "runDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-production-workflow-omqUNj",
+  "appBytes": 69238352,
+  "runDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-production-workflow-XrYRSM",
   "productionEntry": "Organize ribbon #ep-recognize-text -> RecognizeTextDialog -> startOcrFromApplicationAction -> OcrWorkflowService -> OcrApplicationController.startDocumentJob",
   "syntheticStateInjection": false,
   "testOnlyOcrEntryPointUsed": false,
@@ -20,37 +20,37 @@
     "1": {
       "status": "pass",
       "evidence": [
-        "packaged action created job/child 57955; accessible progress announced; Cancel reaped it"
+        "packaged action created job/child 71827; accessible progress announced; Cancel reaped it"
       ]
     },
     "2": {
       "status": "pass",
       "evidence": [
-        "packaged action created job/child 57955; accessible progress announced; Cancel reaped it"
+        "packaged action created job/child 71827; accessible progress announced; Cancel reaped it"
       ]
     },
     "3": {
       "status": "pass",
       "evidence": [
-        "packaged action created job/child 57955; accessible progress announced; Cancel reaped it"
+        "packaged action created job/child 71827; accessible progress announced; Cancel reaped it"
       ]
     },
     "4": {
       "status": "pass",
       "evidence": [
-        "packaged action created job/child 57955; accessible progress announced; Cancel reaped it"
+        "packaged action created job/child 71827; accessible progress announced; Cancel reaped it"
       ]
     },
     "5": {
       "status": "pass",
       "evidence": [
-        "completed child 58104 created pending OCR; search found \"OPEN PDF STUDIO\""
+        "completed child 71927 created pending OCR; search found \"OPEN PDF STUDIO\""
       ]
     },
     "6": {
       "status": "pass",
       "evidence": [
-        "completed child 58104 created pending OCR; search found \"OPEN PDF STUDIO\""
+        "completed child 71927 created pending OCR; search found \"OPEN PDF STUDIO\""
       ]
     },
     "7": {
@@ -108,7 +108,7 @@
     "15": {
       "status": "pass",
       "evidence": [
-        "review rerun used child 58246 and replaced only the owned stream"
+        "review rerun used child 72042 and replaced only the owned stream"
       ]
     },
     "16": {
@@ -141,8 +141,8 @@
     "20": {
       "status": "pass",
       "evidence": [
-        "document close reaped active child 58040",
-        "application close reaped active child 58412 before exit"
+        "document close reaped active child 71884",
+        "application close reaped active child 72165 before exit"
       ]
     }
   },
@@ -152,11 +152,11 @@
     "applePreview": "pass"
   },
   "disposableChildren": {
-    "cancelled": 57955,
-    "documentClose": 58040,
-    "completed": 58104,
-    "rerun": 58246,
-    "representative": 58314,
-    "applicationClose": 58412
+    "cancelled": 71827,
+    "documentClose": 71884,
+    "completed": 71927,
+    "rerun": 72042,
+    "representative": 72089,
+    "applicationClose": 72165
   }
 }

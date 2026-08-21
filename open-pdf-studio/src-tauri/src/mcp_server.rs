@@ -1373,6 +1373,25 @@ pub async fn start(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
+    fn pdfium_render_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        static INITIALIZED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+        let guard = SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let result = INITIALIZED.get_or_init(|| {
+            let dll_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("binaries")
+                .join("macos-universal");
+            crate::pdfium_renderer::init_pdfium(&dll_dir)
+        });
+        if let Err(error) = result {
+            panic!("initialize PDFium for MCP render tests: {error}");
+        }
+        guard
+    }
+
     #[test]
     fn initialize_response_shape() {
         let v = handle_initialize(false);
@@ -1507,6 +1526,8 @@ mod tests {
             eprintln!("[skip] corpus dir missing at {:?}", corpus);
             return;
         }
+        #[cfg(target_os = "macos")]
+        let _pdfium_guard = pdfium_render_test_guard();
         // Pick the smallest PDF deterministically.
         let mut pdfs: Vec<_> = std::fs::read_dir(&corpus).unwrap()
             .filter_map(|e| e.ok())
@@ -1608,6 +1629,8 @@ mod tests {
             eprintln!("[skip] corpus dir missing");
             return;
         }
+        #[cfg(target_os = "macos")]
+        let _pdfium_guard = pdfium_render_test_guard();
         // Pick the smallest multi-page-or-one PDF so the test runs fast.
         let pdfs: Vec<_> = std::fs::read_dir(&corpus).unwrap()
             .filter_map(|e| e.ok())
