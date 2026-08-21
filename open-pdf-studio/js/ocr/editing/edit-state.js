@@ -22,6 +22,14 @@ import {
 } from './raster.js';
 import { selectScannedTextEditTarget } from './selection.js';
 
+export class ScannedTextEditStateConflictError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'ScannedTextEditStateConflictError';
+    this.code = code;
+  }
+}
+
 function generatedId(prefix) {
   const suffix = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -262,10 +270,45 @@ function pageForEvaluation(evaluation) {
   };
 }
 
+function assertCurrentOwnedOcrSource(doc, evaluation) {
+  const ocr = doc?.ocr;
+  // Low-level contract consumers may commit without application OCR state. In
+  // the production document path, a generation identifies the authoritative
+  // source and must still own the exact result and geometry being committed.
+  if (typeof ocr?.generation !== 'string') return;
+  const page = ocr.pages?.[evaluation.page.index + 1];
+  const result = page?.recognition?.result;
+  const geometry = page?.recognition?.geometry;
+  const matches = ocr.documentId === doc.id
+    && ocr.generation === evaluation.document.generation
+    && page?.generation === evaluation.document.generation
+    && page?.pageId === evaluation.page.id
+    && page?.pageRevision === evaluation.page.revision
+    && page?.recognition?.ownership?.owner === SCANNED_TEXT_EDIT_OWNER
+    && result?.document?.id === evaluation.document.id
+    && result?.document?.revision === evaluation.document.revision
+    && result?.document?.generation === evaluation.document.generation
+    && result?.page?.id === evaluation.page.id
+    && result?.page?.index === evaluation.page.index
+    && result?.page?.revision === evaluation.page.revision
+    && result?.sourceRaster?.id === evaluation.sourceRaster.id
+    && sameFingerprint(result?.sourceRaster?.fingerprint, evaluation.sourceRaster.fingerprint)
+    && result?.sourceRaster?.widthPx === evaluation.sourceRaster.widthPx
+    && result?.sourceRaster?.heightPx === evaluation.sourceRaster.heightPx
+    && geometry?.geometryId === evaluation.pageGeometry.geometryId;
+  if (!matches) {
+    throw new ScannedTextEditStateConflictError(
+      'STALE_OCR_SOURCE',
+      'Scanned-text edit evaluation no longer matches the current application-owned OCR source',
+    );
+  }
+}
+
 export function commitScannedTextEditEvaluation(doc, evaluation, {
   modifiedAt,
 } = {}) {
   const now = timestamp(modifiedAt ?? evaluation.selection.ownership.updatedAt);
+  assertCurrentOwnedOcrSource(doc, evaluation);
   const before = doc.scannedTextEdits ? toValidatedScannedTextEditStateV1Json(doc.scannedTextEdits) : null;
   const next = before ? clone(before) : createScannedTextEditStateV1({
     document: evaluation.document,
@@ -288,6 +331,14 @@ export function commitScannedTextEditEvaluation(doc, evaluation, {
     throw new TypeError('Scanned-text edit page is stale for the source raster or canonical geometry');
   }
   const index = page.selections.findIndex((entry) => entry.id === evaluation.selection.id);
+  const currentRevision = index >= 0 ? page.selections[index].revision : 0;
+  if (evaluation.selection.ownership.parentRevision !== currentRevision
+      || evaluation.selection.revision !== currentRevision + 1) {
+    throw new ScannedTextEditStateConflictError(
+      'STALE_EDIT_REVISION',
+      'Scanned-text edit evaluation is stale for the current target revision',
+    );
+  }
   if (index >= 0) page.selections[index] = clone(evaluation.selection);
   else page.selections.push(clone(evaluation.selection));
   page.selections.sort((left, right) => left.id.localeCompare(right.id));

@@ -213,6 +213,7 @@ for (const [name, factory, expectedClassification, expectedEligible, ocrLine] of
 
 const flatRaw = rawByName.get('flat-color');
 const flatPng = pngByName.get('flat-color');
+const baselinePdf = await sourcePdf(flatPng);
 const fixture = makeOcrFixture({
   documentId: 'scanned-text-edit-fixture-document',
   documentGeneration: 'scanned-text-edit-fixture-generation',
@@ -221,6 +222,7 @@ const fixture = makeOcrFixture({
   lines: [line],
   width: widthPx,
   height: heightPx,
+  documentFingerprint: { algorithm: 'sha256', value: sha256(baselinePdf) },
 });
 const evaluation = await evaluateScannedTextEdit({
   ...fixture,
@@ -253,7 +255,6 @@ const documentState = {
   }),
 };
 commitScannedTextEditEvaluation(documentState, evaluation, { modifiedAt: fixedTime });
-const baselinePdf = await sourcePdf(flatPng);
 const candidatePdf = await writeOwnedScannedTextRepairLayer({
   pdfBytes: baselinePdf,
   state: documentState.scannedTextEdits,

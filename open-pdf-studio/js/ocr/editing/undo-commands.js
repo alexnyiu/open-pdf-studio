@@ -1,4 +1,5 @@
 import { executeForDocument } from '../../core/undo-manager.js';
+import { deriveScannedTextEditSelectionId } from '../contracts/scanned-text-edit-state.v1.js';
 import {
   commitScannedTextEditEvaluation,
   evaluateScannedTextEdit,
@@ -14,7 +15,11 @@ function targetId(target) {
 /** Evaluate and record one scanned-text eligibility/repair operation atomically. */
 export async function applyScannedTextEditForDocument(doc, input) {
   const stableTargetId = targetId(input.target);
-  const selectionId = `scan-edit-${input.result?.page?.id}-${input.target?.kind}-${stableTargetId}`;
+  const selectionId = deriveScannedTextEditSelectionId(
+    input.result?.page?.id,
+    input.target?.kind,
+    stableTargetId,
+  );
   const { revision, parentRevision } = nextSelectionRevision(doc, selectionId);
   const evaluation = await evaluateScannedTextEdit({
     ...input,

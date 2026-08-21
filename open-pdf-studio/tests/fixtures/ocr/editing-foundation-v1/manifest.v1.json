@@ -183,7 +183,7 @@
     "repaired": "flat-scanned-repaired.pdf",
     "reverted": "flat-scanned-reverted.pdf",
     "sourceSha256": "35338518a98d88195c189e39486ad7e992bb7dcfde7bf80fb7a91ad25fddfd6b",
-    "repairedSha256": "6c91ca3f784e25517efafa3120dc72e1198d26c0bf73fdd74a01275b7b8b5ecb",
+    "repairedSha256": "3f9ee56a5146c7dd9911b12a4ef7955459a3feb0ff162184b56c47bf9b8e73ce",
     "revertedSha256": "00758b448345143ba8c5c96c3e2741c6704d686294861c8def395544e1ec5a77",
     "approvedRegion": {
       "coordinateSpace": "source-raster-pixels",

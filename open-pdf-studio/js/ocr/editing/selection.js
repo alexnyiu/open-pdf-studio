@@ -1,5 +1,6 @@
 import { assertOcrResultV2 } from '../contracts/v2.js';
 import { assertOcrPageGeometryV1 } from '../contracts/page-geometry.v1.js';
+import { deriveScannedTextEditSelectionId } from '../contracts/scanned-text-edit-state.v1.js';
 import {
   OCR_SOURCE_RASTER_SPACE,
   applyHomography,
@@ -202,7 +203,11 @@ export function selectScannedTextEditTarget({
   const confidence = rounded(Math.max(0, Math.min(1,
     minimumLineConfidence * 0.7 + coverage * 0.2 + roundTripScore * 0.1,
   )));
-  const selectionId = `scan-edit-${result.page.id}-${normalizedTarget.kind}-${normalizedTarget.targetId}`;
+  const selectionId = deriveScannedTextEditSelectionId(
+    result.page.id,
+    normalizedTarget.kind,
+    normalizedTarget.targetId,
+  );
 
   return {
     id: selectionId,

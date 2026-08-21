@@ -62,9 +62,33 @@ export const SCANNED_TEXT_EDIT_REJECTION_CODES = Object.freeze([
   'ELIGIBILITY_SCORE_BELOW_THRESHOLD',
 ]);
 export const SCANNED_TEXT_EDIT_MAX_STATE_BYTES = 64 * 1024 * 1024;
+export const SCANNED_TEXT_EDIT_MAX_SELECTION_ID_CODE_UNITS = 1024;
 
 const PATCH_ENCODING = 'rgba8-base64';
 const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+const SELECTION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,1023}$/u;
+
+/**
+ * Length-prefix both caller-owned identifiers so delimiter characters inside a
+ * valid OCR ID cannot make two distinct targets share one selection identity.
+ */
+export function deriveScannedTextEditSelectionId(pageId, kind, targetId) {
+  if (typeof pageId !== 'string' || !['line', 'region'].includes(kind)
+      || typeof targetId !== 'string') {
+    throw new TypeError('Scanned-text selection identity requires valid page, target kind, and target identifiers');
+  }
+  return `scan-edit-v1:${pageId.length}:${pageId}:${kind}:${targetId.length}:${targetId}`;
+}
+
+function validateSelectionIdentifier(value, path, issues) {
+  const valid = validateString(value, path, issues, {
+    nonEmpty: true,
+    maxCodeUnits: SCANNED_TEXT_EDIT_MAX_SELECTION_ID_CODE_UNITS,
+  });
+  if (valid && !SELECTION_ID.test(value)) {
+    issues.push(`${path} contains unsupported identifier characters`);
+  }
+}
 
 function validateDocument(value, issues) {
   if (!isObject(value)) {
@@ -604,10 +628,15 @@ function validateSelection(value, path, issues, page) {
   requireExactKeys(value, new Set([
     'id', 'revision', 'target', 'geometry', 'originalPatch', 'analysis', 'repair', 'ownership',
   ]), path, issues);
-  validateIdentifier(value.id, `${path}.id`, issues);
+  validateSelectionIdentifier(value.id, `${path}.id`, issues);
   validatePositiveInteger(value.revision, `${path}.revision`, issues);
   const lineIds = validateTarget(value.target, `${path}.target`, issues);
-  if (value.id !== `scan-edit-${page?.id}-${value.target?.kind}-${value.target?.targetId}`) {
+  const expectedId = typeof page?.id === 'string'
+    && ['line', 'region'].includes(value.target?.kind)
+    && typeof value.target?.targetId === 'string'
+    ? deriveScannedTextEditSelectionId(page.id, value.target.kind, value.target.targetId)
+    : null;
+  if (expectedId !== null && value.id !== expectedId) {
     issues.push(`${path}.id must be derived from the stable page and target IDs`);
   }
   if (value.target?.result?.pageId !== page?.id || value.target?.result?.pageRevision !== page?.revision

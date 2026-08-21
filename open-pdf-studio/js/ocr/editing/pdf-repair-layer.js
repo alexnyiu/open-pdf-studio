@@ -95,6 +95,10 @@ function sameRef(left, right) {
     && left.objectNumber === right.objectNumber && left.generationNumber === right.generationNumber;
 }
 
+function sameFingerprint(left, right) {
+  return left?.algorithm === right?.algorithm && left?.value === right?.value;
+}
+
 function decodedStreamBytes(stream) {
   try {
     return decodePDFRawStream(stream).decode();
@@ -508,16 +512,43 @@ function failPdfLoad(error) {
   fail('MALFORMED_PDF', `PDF could not be loaded: ${message}`);
 }
 
-function geometryForPage(pageState, pageGeometries) {
+async function loadPdfWithPages(sourceBytes) {
+  try {
+    const pdfDoc = await PDFDocument.load(sourceBytes, { updateMetadata: false });
+    return { pdfDoc, pages: pdfDoc.getPages() };
+  } catch (error) {
+    failPdfLoad(error);
+  }
+}
+
+function geometryForPage(pageState, documentState, pageGeometries) {
   const geometry = pageGeometries.find((entry) => entry.geometryId === pageState.pageGeometry.geometryId);
   if (!geometry) fail('MISSING_PAGE_GEOMETRY', `Canonical page geometry ${pageState.pageGeometry.geometryId} is unavailable`);
   assertOcrPageGeometryV1(geometry);
-  if (geometry.page.id !== pageState.id || geometry.page.index !== pageState.index
+  if (geometry.document.id !== documentState.id
+      || geometry.document.revision !== documentState.revision
+      || geometry.document.generation !== documentState.generation
+      || geometry.document.pageCount !== documentState.pageCount
+      || !sameFingerprint(geometry.document.fingerprint, documentState.fingerprint)
+      || geometry.page.id !== pageState.id || geometry.page.index !== pageState.index
       || geometry.page.revision !== pageState.revision
       || geometry.sourceRaster.id !== pageState.sourceRaster.id) {
     fail('STALE_PAGE_GEOMETRY', 'Canonical page geometry does not match the owned scanned-text edit page');
   }
   return geometry;
+}
+
+async function assertTargetDocumentLineage(sourceBytes, state, ownershipByPage) {
+  const expectedDigest = state.document.fingerprint.value;
+  const ownedDigests = new Set(ownershipByPage
+    .filter(Boolean)
+    .map((ownership) => ownership.state.document.fingerprint.value));
+  if (ownedDigests.size > 1 || (ownedDigests.size === 1 && !ownedDigests.has(expectedDigest))) {
+    fail('STALE_DOCUMENT', 'Existing scanned-text repair ownership belongs to a different source PDF');
+  }
+  if (ownedDigests.size === 0 && await sha256Hex(sourceBytes) !== expectedDigest) {
+    fail('STALE_DOCUMENT', 'Scanned-text edit state fingerprint does not match the target source PDF');
+  }
 }
 
 function removeValidatedOwnership(page, context, ownership) {
@@ -555,14 +586,8 @@ export async function writeOwnedScannedTextRepairLayer({
   assertScannedTextEditStateV1(state);
   await verifyStatePatchDigests(state);
   if (!Array.isArray(pageGeometries)) fail('INVALID_PAGE_GEOMETRY', 'pageGeometries must be an array');
-  let pdfDoc;
-  try {
-    pdfDoc = await PDFDocument.load(sourceBytes, { updateMetadata: false });
-  } catch (error) {
-    failPdfLoad(error);
-  }
+  const { pdfDoc, pages } = await loadPdfWithPages(sourceBytes);
   const context = pdfDoc.context;
-  const pages = pdfDoc.getPages();
   if (state.document.pageCount !== pages.length) {
     fail('STALE_DOCUMENT', 'Scanned-text edit state page count does not match the target PDF');
   }
@@ -575,7 +600,7 @@ export async function writeOwnedScannedTextRepairLayer({
     return [{
       pageState,
       page,
-      geometry: geometryForPage(pageState, pageGeometries),
+      geometry: geometryForPage(pageState, state.document, pageGeometries),
       selections,
     }];
   });
@@ -584,6 +609,7 @@ export async function writeOwnedScannedTextRepairLayer({
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
     ownershipByPage.push(await validateOwnership(pages[pageIndex], context, pageIndex, pages.length));
   }
+  await assertTargetDocumentLineage(sourceBytes, state, ownershipByPage);
   const preparedIndexes = new Set(prepared.map((entry) => entry.pageState.index));
   let changed = false;
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
@@ -698,13 +724,7 @@ export async function writeOwnedScannedTextRepairLayer({
 
 export async function inspectOwnedScannedTextRepairLayer(pdfBytes) {
   const sourceBytes = asBytes(pdfBytes);
-  let pdfDoc;
-  try {
-    pdfDoc = await PDFDocument.load(sourceBytes, { updateMetadata: false });
-  } catch (error) {
-    failPdfLoad(error);
-  }
-  const pages = pdfDoc.getPages();
+  const { pdfDoc, pages } = await loadPdfWithPages(sourceBytes);
   const inspections = [];
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
     const page = pages[pageIndex];
@@ -737,13 +757,7 @@ export async function inspectOwnedScannedTextRepairLayer(pdfBytes) {
 
 export async function removeOwnedScannedTextRepairLayer({ pdfBytes, pageIndexes } = {}) {
   const sourceBytes = asBytes(pdfBytes);
-  let pdfDoc;
-  try {
-    pdfDoc = await PDFDocument.load(sourceBytes, { updateMetadata: false });
-  } catch (error) {
-    failPdfLoad(error);
-  }
-  const pages = pdfDoc.getPages();
+  const { pdfDoc, pages } = await loadPdfWithPages(sourceBytes);
   const selected = pageIndexes === undefined ? null : new Set(pageIndexes);
   if (selected !== null && (!Array.isArray(pageIndexes) || selected.size !== pageIndexes.length
       || pageIndexes.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= pages.length))) {

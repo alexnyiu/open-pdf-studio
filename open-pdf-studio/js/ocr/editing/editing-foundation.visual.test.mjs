@@ -5,6 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { createCanvas } from '@napi-rs/canvas';
+import { PDFDocument } from 'pdf-lib';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import sharp from 'sharp';
 
@@ -236,6 +237,7 @@ test('PDF.js proves exact approved-region pixels, preserved scan content, owned 
     lines: [flatEntry.ocrLine],
     width: flatEntry.widthPx,
     height: flatEntry.heightPx,
+    documentFingerprint: repairedInspection.state.document.fingerprint,
   }).pageGeometry;
   const repeatedBytes = await writeOwnedScannedTextRepairLayer({
     pdfBytes: repairedBytes,
@@ -262,6 +264,34 @@ test('PDF writer failure returns no partial output and leaves source bytes untou
   const repairedBytes = new Uint8Array(await readFile(new URL(fixtureManifest.pdfProof.repaired, FIXTURE_ROOT)));
   const sourceBefore = sourceBytes.slice();
   const [inspection] = await inspectOwnedScannedTextRepairLayer(repairedBytes);
+  const malformedPdf = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37]);
+  await assert.rejects(
+    () => inspectOwnedScannedTextRepairLayer(malformedPdf),
+    (error) => error.code === 'MALFORMED_PDF',
+  );
+  const unrelatedDocument = await PDFDocument.create();
+  unrelatedDocument.addPage([256, 160]);
+  const unrelatedBytes = await unrelatedDocument.save();
+  const unrelatedGeometry = makeOcrFixture({
+    documentId: inspection.state.document.id,
+    documentGeneration: inspection.state.document.generation,
+    pageId: inspection.state.pages[0].id,
+    pageRevision: inspection.state.pages[0].revision,
+    lines: [{ id: 'line-1', text: 'SCAN TEXT', x: 72, y: 64, width: 112, height: 24, confidence: 0.97 }],
+    width: 256,
+    height: 160,
+    documentFingerprint: inspection.state.document.fingerprint,
+  }).pageGeometry;
+  await assert.rejects(
+    () => writeOwnedScannedTextRepairLayer({
+      pdfBytes: unrelatedBytes,
+      state: inspection.state,
+      pageGeometries: [unrelatedGeometry],
+      modifiedAt: FIXED_PDF_TIME,
+    }),
+    (error) => error.code === 'STALE_DOCUMENT'
+      && /fingerprint does not match the target source PDF/u.test(error.message),
+  );
   const invalidGeometry = structuredClone(inspection.state.pages[0].pageGeometry);
   invalidGeometry.geometryId = 'missing-canonical-geometry';
   await assert.rejects(

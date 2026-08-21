@@ -58,6 +58,7 @@ export function makeOcrFixture({
   width = 612,
   height = 792,
   requestId = `request-${pageRevision}`,
+  documentFingerprint = hash('a'),
 } = {}) {
   const v1 = {
     contract: OCR_RESULT_CONTRACT,
@@ -98,7 +99,7 @@ export function makeOcrFixture({
   const result = migrateOcrResultToCurrent(v1, {
     modelPack,
     documentId,
-    documentFingerprint: hash('a'),
+    documentFingerprint,
     documentRevision: 0,
     documentGeneration,
     documentPageCount: pageCount,

@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import { createServer } from 'vite';
 
 import {
+  SCANNED_TEXT_EDIT_MAX_STATE_BYTES,
   SCANNED_TEXT_EDIT_STATE_CONTRACT,
   assertScannedTextEditStateV1,
   validateScannedTextEditStateV1,
@@ -145,9 +146,9 @@ test('selects stable OCR line and region IDs into canonical source geometry with
     target: { kind: 'region', regionId: 'region-stable-1', lineIds: ['line-stable-1', 'line-stable-2'] },
     contextPaddingPx: 16,
   });
-  assert.equal(line.id, 'scan-edit-edit-page-selection-line-line-stable-1');
+  assert.equal(line.id, 'scan-edit-v1:19:edit-page-selection:line:13:line-stable-1');
   assert.deepEqual(line.target.lineIds, ['line-stable-1']);
-  assert.equal(region.id, 'scan-edit-edit-page-selection-region-region-stable-1');
+  assert.equal(region.id, 'scan-edit-v1:19:edit-page-selection:region:15:region-stable-1');
   assert.deepEqual(region.target.lineIds, ['line-stable-1', 'line-stable-2']);
   assert.equal(region.geometry.coordinateSpace, 'source-raster-pixels');
   assert.equal(region.geometry.lineGeometry.length, 2);
@@ -156,6 +157,32 @@ test('selects stable OCR line and region IDs into canonical source geometry with
   assert.deepEqual(result, immutableBefore);
   assert.equal(Object.hasOwn(result, 'editState'), false);
   assert.equal(Object.hasOwn(result.lines[0], 'repair'), false);
+});
+
+test('stable selection IDs are collision-free for delimiters and accept maximum contract IDs', () => {
+  const select = (pageId, lineId) => {
+    const fixture = makeOcrFixture({
+      documentId: 'edit-document-selection-id',
+      documentGeneration: 'edit-generation-selection-id',
+      pageId,
+      pageRevision: 0,
+      width: 128,
+      height: 96,
+      lines: [{ id: lineId, text: 'x', x: 20, y: 20, width: 30, height: 12, confidence: 0.99 }],
+    });
+    return selectScannedTextEditTarget({
+      ...fixture,
+      target: { kind: 'line', lineId },
+      contextPaddingPx: 12,
+    }).id;
+  };
+
+  assert.notEqual(select('a-line-b', 'c'), select('a', 'b-line-c'));
+  const maximumPageId = `p${'a'.repeat(255)}`;
+  const maximumLineId = `l${'b'.repeat(255)}`;
+  const maximumId = select(maximumPageId, maximumLineId);
+  assert.ok(maximumId.length <= 1024);
+  assert.match(maximumId, /^[A-Za-z0-9][A-Za-z0-9._:-]+$/u);
 });
 
 test('canonical source geometry stores an invertible non-identity OCR transform', () => {
@@ -365,6 +392,37 @@ test('separate edit-state contract validates through runtime and JSON Schema pat
   assert.equal(validateScannedTextEditStateV1(tampered).ok, false);
 });
 
+test('malformed and oversized edit state is rejected by the contract boundary', () => {
+  const fixture = makeOcrFixture({
+    documentId: 'edit-document-input-limits',
+    documentGeneration: 'edit-generation-input-limits',
+    pageId: 'edit-page-input-limits',
+    pageRevision: 0,
+    width: 128,
+    height: 96,
+    lines: [{ id: 'line-input-limits', text: 'x', x: 20, y: 20, width: 30, height: 12, confidence: 0.99 }],
+  });
+  const valid = createScannedTextEditStateV1({
+    document: fixture.result.document,
+    stateId: 'edit-state-input-limits',
+    instanceId: 'edit-instance-input-limits',
+    createdAt: FIXED_TIME,
+  });
+  const serializedBytes = new TextEncoder().encode(JSON.stringify(valid)).byteLength;
+  const oversized = validateScannedTextEditStateV1(valid, {
+    maxSerializedBytes: serializedBytes - 1,
+  });
+  assert.equal(oversized.ok, false);
+  assert.ok(oversized.issues.some((issue) => /exceeds .* serialized UTF-8 bytes/u.test(issue)));
+  assert.equal(SCANNED_TEXT_EDIT_MAX_STATE_BYTES, 64 * 1024 * 1024);
+
+  const cyclic = structuredClone(valid);
+  cyclic.unexpected = cyclic;
+  const malformed = validateScannedTextEditStateV1(cyclic);
+  assert.equal(malformed.ok, false);
+  assert.ok(malformed.issues.some((issue) => /cyclic/u.test(issue)));
+});
+
 test('application and operation ownership retain monotonic state and target revisions', async () => {
   const { entry, raster } = await loadVisualFixture('flat-color');
   const fixture = ocrFor(entry, 'ownership-revision');
@@ -402,6 +460,81 @@ test('application and operation ownership retain monotonic state and target revi
   assert.equal(second.command.before.pages[0].selections[0].revision, 1);
   assert.equal(second.command.after.pages[0].selections[0].revision, 2);
   assertScannedTextEditStateV1(doc.scannedTextEdits);
+});
+
+test('stale concurrent target revisions are rejected before document state changes', async () => {
+  const { entry, raster } = await loadVisualFixture('flat-color');
+  const fixture = ocrFor(entry, 'concurrent-revision');
+  const input = {
+    ...fixture,
+    raster: boundRaster(raster, fixture.result),
+    target: { kind: 'line', lineId: entry.ocrLine.id },
+    contextPaddingPx: 24,
+    revision: 1,
+    parentRevision: 0,
+    modifiedAt: FIXED_TIME,
+  };
+  const [first, stale] = await Promise.all([
+    evaluateScannedTextEdit({ ...input, operationId: 'concurrent-operation-1' }),
+    evaluateScannedTextEdit({ ...input, operationId: 'concurrent-operation-2' }),
+  ]);
+  const doc = documentFor(fixture.result);
+  commitScannedTextEditEvaluation(doc, first);
+  const committed = structuredClone(doc.scannedTextEdits);
+  assert.throws(
+    () => commitScannedTextEditEvaluation(doc, stale),
+    (error) => error?.code === 'STALE_EDIT_REVISION'
+      && /stale for the current target revision/u.test(error.message),
+  );
+  assert.deepEqual(doc.scannedTextEdits, committed);
+});
+
+test('active OCR generation and owned source must still match at commit time', async () => {
+  const { entry, raster } = await loadVisualFixture('flat-color');
+  const fixture = ocrFor(entry, 'active-ocr-source');
+  const evaluation = await evaluateScannedTextEdit({
+    ...fixture,
+    raster: boundRaster(raster, fixture.result),
+    target: { kind: 'line', lineId: entry.ocrLine.id },
+    contextPaddingPx: 24,
+    operationId: 'active-ocr-source-operation',
+    modifiedAt: FIXED_TIME,
+  });
+  const doc = documentFor(fixture.result);
+  doc.ocr = {
+    documentId: doc.id,
+    generation: fixture.result.document.generation,
+    revision: fixture.result.document.revision + 1,
+    pages: {
+      1: {
+        generation: fixture.result.document.generation,
+        pageId: fixture.result.page.id,
+        pageRevision: fixture.result.page.revision,
+        recognition: {
+          result: fixture.result,
+          geometry: fixture.pageGeometry,
+          ownership: { owner: 'open-pdf-studio' },
+        },
+      },
+    },
+  };
+  const initialState = structuredClone(doc.scannedTextEdits);
+
+  doc.ocr.generation = 'replacement-document-generation';
+  assert.throws(
+    () => commitScannedTextEditEvaluation(doc, evaluation),
+    (error) => error?.code === 'STALE_OCR_SOURCE'
+      && /no longer matches the current application-owned OCR source/u.test(error.message),
+  );
+  assert.deepEqual(doc.scannedTextEdits, initialState);
+
+  doc.ocr.generation = fixture.result.document.generation;
+  doc.ocr.pages[1].pageRevision += 1;
+  assert.throws(
+    () => commitScannedTextEditEvaluation(doc, evaluation),
+    (error) => error?.code === 'STALE_OCR_SOURCE',
+  );
+  assert.deepEqual(doc.scannedTextEdits, initialState);
 });
 
 test('typed undo and redo restore the original patch and the exact repaired patch', async () => {

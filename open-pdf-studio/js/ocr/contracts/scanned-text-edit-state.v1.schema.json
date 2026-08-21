@@ -323,12 +323,18 @@
         "updatedAt": { "$ref": "common.schema.json#/$defs/timestamp" }
       }
     },
+    "selectionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,1023}$"
+    },
     "selection": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "revision", "target", "geometry", "originalPatch", "analysis", "repair", "ownership"],
       "properties": {
-        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "id": { "$ref": "#/$defs/selectionId" },
         "revision": { "type": "integer", "minimum": 1 },
         "target": { "$ref": "#/$defs/target" },
         "geometry": { "$ref": "#/$defs/geometry" },
