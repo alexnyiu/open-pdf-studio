@@ -227,5 +227,25 @@
     },
     "stateId": "scanned-text-single-line-fixture-state",
     "stateRevision": 1
+  },
+  "fixedRegionProof": {
+    "source": "flat-scanned-region-source.pdf",
+    "edited": "flat-scanned-region-edited.pdf",
+    "editedRepeat": "flat-scanned-region-edited-repeat.pdf",
+    "sourceSha256": "7301309cbbea6bfde4e13572b3399b656cea7142f3b5e3c0e07cbb5f53aa661e",
+    "editedSha256": "fe835db66d49395ab2c9dbd63aa2c08366d3ff0000eb58a5eb95ca3eb6813b11",
+    "editedRepeatSha256": "4f16d6540b97d3ae2a56cf7e83e5f8365ea3ac5970038f1fd9527ef05157d5ba",
+    "originalText": "SCAN ONE\nSCAN TWO\nSCAN THREE",
+    "replacementText": "REGION ONE\nREGION TWO\nREGION THREE",
+    "approvedRegion": {
+      "coordinateSpace": "source-raster-pixels",
+      "x": 27,
+      "y": 27,
+      "width": 202,
+      "height": 90
+    },
+    "measuredLineSpacingPt": 32,
+    "stateId": "scanned-text-fixed-region-fixture-state",
+    "stateRevision": 1
   }
 }

@@ -86,6 +86,67 @@ export interface ScannedTextSingleLineContent {
   };
 }
 
+export interface ScannedTextFixedRegionContent {
+  scope: 'fixed-region-multiline';
+  source: {
+    ocrIds: { regionId: string; lineIds: string[]; wordIds: string[] };
+    originalText: string;
+    originalPolygons: OcrCoordinatePolygon[];
+    canonicalRegion: OcrCoordinatePolygon;
+    canonicalBaselines: OcrCoordinateBaseline[];
+    lineSpacing: {
+      valuePt: number;
+      valuePx: number;
+      measured: true;
+      method: 'median-canonical-baseline-delta-v1';
+    };
+  };
+  replacementText: string;
+  estimatedStyle: ScannedTextSingleLineContent['estimatedStyle'];
+  layout: {
+    fontName: string;
+    direction: 'ltr';
+    shaping: 'pdf-lib-standard-font-winansi-v1';
+    glyphCoverage: 'complete';
+    availableWidthPt: number;
+    availableHeightPt: number;
+    canonicalRegion: OcrCoordinatePolygon;
+    measuredLineSpacingPt: number;
+    lineSpacingMethod: 'median-canonical-baseline-delta-v1';
+    alignment: 'left' | 'center' | 'right';
+    safeWrapped: boolean;
+    clippingPrevented: true;
+    overflow: false;
+    lines: Array<{
+      index: number;
+      text: string;
+      encodedGlyphCount: number;
+      encodedText: string;
+      widthPt: number;
+      heightPt: number;
+      origin: { coordinateSpace: 'pdf-default-user-space'; point: [number, number] };
+      angleDegrees: number;
+      baselineAligned: true;
+      canonicalPolygon: OcrCoordinatePolygon;
+      canonicalBaseline: OcrCoordinateBaseline;
+    }>;
+  };
+  repairPatch: ScannedTextRgbaPatch;
+  visibleReplacement: ScannedTextSingleLineContent['visibleReplacement'];
+  searchableText: {
+    text: string;
+    renderingMode: 'owned-invisible-ocr';
+    synchronized: true;
+    lines: Array<{
+      index: number;
+      text: string;
+      polygon: OcrCoordinatePolygon;
+      baseline: OcrCoordinateBaseline;
+    }>;
+  };
+  undo: ScannedTextSingleLineContent['undo'];
+}
+
 export interface ScannedTextEditSelection {
   id: string;
   revision: number;
@@ -101,7 +162,7 @@ export interface ScannedTextEditSelection {
     changedRegion: Record<string, any> | null;
   };
   /** Absent only on legacy foundation-v1 state written before line content existed. */
-  content?: ScannedTextSingleLineContent | null;
+  content?: ScannedTextSingleLineContent | ScannedTextFixedRegionContent | null;
   ownership: Record<string, any>;
 }
 

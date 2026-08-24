@@ -6,8 +6,10 @@ import { markDocumentModified } from '../ui/chrome/tabs.js';
 import { canvasContainer, continuousContainer, pdfCanvas } from '../ui/dom-elements.js';
 import { showPdfTextEditor, hidePdfTextEditor, getPdfEditorText as getEditorText,
   updatePdfEditorStyle, shiftPdfEditorPosition, setPdfEditorStatus } from '../bridge.js';
+import { showMessage } from '../solid/stores/dialogStore.js';
 import { injectSyntheticTextSpans, refreshPendingOcrTextLayer, resolveTextLayerFonts } from '../text/text-layer.js';
 import { evaluateScannedTextEdit } from '../ocr/editing/edit-state.js';
+import { fixedRegionTargetFromLineIds } from '../ocr/editing/fixed-region.js';
 import {
   applyScannedTextEditForDocument,
   removeScannedTextEditForDocument,
@@ -27,6 +29,7 @@ let activeEditor = null;
 let hoverListeners = [];
 let textLayerObserver = null;
 let blockGroupsCache = new Map();
+const stagedScannedLineSelections = new WeakMap();
 // WeakMap: span -> block group, for fast lookup on hover/click
 let spanToBlock = new WeakMap();
 
@@ -484,16 +487,33 @@ function enableTextLayerHover() {
       span.classList.add('edit-text-hoverable');
       const enterHandler = () => span.classList.add('edit-text-block-hover');
       const leaveHandler = () => span.classList.remove('edit-text-block-hover');
+      const mouseDownHandler = () => {
+        if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
+        // A native click normally collapses the DOM range before `click` runs.
+        // Capture only the user's current explicit OCR line selection here; do
+        // not synthesize neighbouring lines or infer a paragraph.
+        stagedScannedLineSelections.set(span, explicitScannedLineSelection(span));
+      };
       const clickHandler = async (event) => {
         event.preventDefault();
         event.stopPropagation();
         if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
-        await startScannedTextEditing(span, pageNum);
+        const explicitLineIds = stagedScannedLineSelections.get(span)
+          || explicitScannedLineSelection(span);
+        stagedScannedLineSelections.delete(span);
+        await startScannedTextEditing(span, pageNum, explicitLineIds);
       };
       span.addEventListener('mouseenter', enterHandler);
       span.addEventListener('mouseleave', leaveHandler);
+      span.addEventListener('mousedown', mouseDownHandler);
       span.addEventListener('click', clickHandler);
-      hoverListeners.push({ span, enter: enterHandler, leave: leaveHandler, click: clickHandler });
+      hoverListeners.push({
+        span,
+        enter: enterHandler,
+        leave: leaveHandler,
+        mouseDown: mouseDownHandler,
+        click: clickHandler,
+      });
     });
   });
 }
@@ -506,6 +526,7 @@ function disableTextLayerHover() {
   for (const h of hoverListeners) {
     h.span.removeEventListener('mouseenter', h.enter);
     h.span.removeEventListener('mouseleave', h.leave);
+    if (h.mouseDown) h.span.removeEventListener('mousedown', h.mouseDown);
     h.span.removeEventListener('click', h.click);
     h.span.classList.remove('edit-text-hoverable', 'edit-text-block-hover');
     h.span.style.pointerEvents = keepTextAccess ? 'auto' : '';
@@ -520,13 +541,66 @@ function disableTextLayerHover() {
 
 // ── Inline editor ──
 
-function appliedScannedSelection(doc, pageNum, lineId) {
+function appliedScannedSelection(doc, pageNum, lineId, selectionId = null) {
   return doc?.scannedTextEdits?.pages
     ?.find((page) => page.index === pageNum - 1)
-    ?.selections?.find((selection) => selection.target?.kind === 'line'
-      && selection.target.targetId === lineId
+    ?.selections?.find((selection) => (selectionId
+      ? selection.id === selectionId
+      : selection.target?.targetId === lineId || selection.target?.lineIds?.includes(lineId))
       && selection.repair?.status === 'applied'
-      && selection.content?.scope === 'isolated-horizontal-line') || null;
+      && ['isolated-horizontal-line', 'fixed-region-multiline'].includes(selection.content?.scope)) || null;
+}
+
+function explicitScannedLineSelection(span) {
+  const selection = window.getSelection?.();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return [];
+  const range = selection.getRangeAt(0);
+  try {
+    if (!range.intersectsNode(span)) return [];
+  } catch (_) {
+    return [];
+  }
+  const layer = span.closest('.textLayer');
+  if (!layer) return [];
+  const ids = [];
+  const seen = new Set();
+  const candidates = [...layer.querySelectorAll('span[data-ocr-owner][data-ocr-line-id]')]
+    .sort((left, right) => Number(left.dataset.ocrReadingOrder) - Number(right.dataset.ocrReadingOrder));
+  for (const candidate of candidates) {
+    if (candidate.dataset.scannedTextEditHitOnly === 'true') continue;
+    let intersects = false;
+    try { intersects = range.intersectsNode(candidate); } catch (_) {}
+    if (!intersects) continue;
+    const sourceIds = (candidate.dataset.ocrSourceLineIds || candidate.dataset.ocrLineId || '')
+      .split(/\s+/u).filter(Boolean);
+    for (const lineId of sourceIds) {
+      if (seen.has(lineId)) continue;
+      seen.add(lineId);
+      ids.push(lineId);
+    }
+  }
+  return ids;
+}
+
+function scannedEditorRect(span, lineIds) {
+  const layer = span.closest('.textLayer');
+  const selected = lineIds.length > 1 && layer
+    ? [...layer.querySelectorAll('span[data-ocr-owner][data-ocr-line-id]')].filter((candidate) => {
+        const ids = (candidate.dataset.ocrSourceLineIds || candidate.dataset.ocrLineId || '')
+          .split(/\s+/u).filter(Boolean);
+        return ids.some((lineId) => lineIds.includes(lineId));
+      })
+    : [span];
+  const rects = selected.map((candidate) => candidate.getBoundingClientRect());
+  return {
+    left: Math.min(...rects.map((rect) => rect.left)),
+    top: Math.min(...rects.map((rect) => rect.top)),
+    right: Math.max(...rects.map((rect) => rect.right)),
+    bottom: Math.max(...rects.map((rect) => rect.bottom)),
+    width: Math.max(...rects.map((rect) => rect.right)) - Math.min(...rects.map((rect) => rect.left)),
+    height: Math.max(...rects.map((rect) => rect.bottom)) - Math.min(...rects.map((rect) => rect.top)),
+    firstLineHeight: rects[0]?.height || 0,
+  };
 }
 
 function scannedDisplayFont(fontClass) {
@@ -553,14 +627,15 @@ function scannedStyleOverrides(editor) {
   return output;
 }
 
-function createScannedRepairPreview(span, selection) {
+function createScannedRepairPreview(span, selection, editorRect = null) {
   const patch = selection.repair.repairedPatch;
-  const sourcePolygon = selection.geometry.lineGeometry[0].sourcePolygon.points;
-  const minX = Math.min(...sourcePolygon.map((point) => point[0]));
-  const maxX = Math.max(...sourcePolygon.map((point) => point[0]));
-  const minY = Math.min(...sourcePolygon.map((point) => point[1]));
-  const maxY = Math.max(...sourcePolygon.map((point) => point[1]));
-  const rect = span.getBoundingClientRect();
+  const sourcePoints = selection.geometry.lineGeometry
+    .flatMap((entry) => entry.sourcePolygon.points);
+  const minX = Math.min(...sourcePoints.map((point) => point[0]));
+  const maxX = Math.max(...sourcePoints.map((point) => point[0]));
+  const minY = Math.min(...sourcePoints.map((point) => point[1]));
+  const maxY = Math.max(...sourcePoints.map((point) => point[1]));
+  const rect = editorRect || span.getBoundingClientRect();
   const scaleX = rect.width / Math.max(1, maxX - minX);
   const scaleY = rect.height / Math.max(1, maxY - minY);
   const canvas = document.createElement('canvas');
@@ -611,15 +686,28 @@ async function sourceRasterForScannedLine(doc, result) {
   };
 }
 
-async function startScannedTextEditing(span, pageNum) {
+async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
   finishPdfTextEditing();
   const doc = getActiveDocument();
   const lineId = span.dataset.ocrLineId;
   if (!doc || !lineId) return;
-  let selection = appliedScannedSelection(doc, pageNum, lineId);
+  let selection = appliedScannedSelection(
+    doc,
+    pageNum,
+    lineId,
+    span.dataset.scannedTextEditSelectionId || null,
+  );
+  const existingOwnedEdit = Boolean(selection);
   let raster = null;
   let result = null;
   let pageGeometry = null;
+  let target = selection?.target?.kind === 'region'
+    ? {
+        kind: 'region',
+        regionId: selection.target.targetId,
+        lineIds: [...selection.target.lineIds],
+      }
+    : { kind: 'line', lineId: selection?.target?.targetId || lineId };
   try {
     if (!selection) {
       const pageState = doc.ocr?.pages?.[pageNum];
@@ -630,21 +718,32 @@ async function startScannedTextEditing(span, pageNum) {
           code: 'OCR_SOURCE_UNAVAILABLE',
         });
       }
-      const line = result.lines.find((entry) => entry.id === lineId);
+      const explicitlySelectedLineIds = (stagedLineIds.length > 0
+        ? stagedLineIds
+        : explicitScannedLineSelection(span))
+        .filter((candidate) => result.lines.some((line) => line.id === candidate));
+      target = explicitlySelectedLineIds.length > 1
+        ? fixedRegionTargetFromLineIds(result, explicitlySelectedLineIds)
+        : { kind: 'line', lineId };
+      const targetLines = target.kind === 'region'
+        ? target.lineIds.map((targetLineId) => result.lines.find((entry) => entry.id === targetLineId))
+        : [result.lines.find((entry) => entry.id === lineId)];
+      const line = targetLines[0];
       if (!line) throw new Error('The selected OCR line is no longer available');
+      if (targetLines.some((entry) => !entry)) throw new Error('One or more selected OCR lines are no longer available');
       raster = await sourceRasterForScannedLine(doc, result);
       const preflight = await evaluateScannedTextEdit({
         result,
         pageGeometry,
         raster,
-        target: { kind: 'line', lineId },
-        replacementText: line.text,
+        target,
+        replacementText: targetLines.map((entry) => entry.text).join('\n'),
         contextPaddingPx: 24,
       });
       if (!preflight.selection.analysis.eligibility.eligible || !preflight.selection.content) {
         const reasons = preflight.selection.analysis.eligibility.rejectionReasons
           .map((reason) => reason.message).join('; ');
-        throw Object.assign(new Error(reasons || 'This scanned line is not eligible for safe editing'), {
+        throw Object.assign(new Error(reasons || 'This scanned region is not eligible for safe editing'), {
           code: 'INELIGIBLE_EDIT_REGION',
         });
       }
@@ -658,10 +757,18 @@ async function startScannedTextEditing(span, pageNum) {
 
   const estimate = selection.content.estimatedStyle;
   const font = scannedDisplayFont(estimate.fontClass.value);
-  const rect = span.getBoundingClientRect();
-  const fontSizePx = Math.max(1, rect.height || estimate.fontSize.value * (doc.scale || 1));
+  const lineIds = selection.target.lineIds;
+  const fixedRegion = selection.content.scope === 'fixed-region-multiline';
+  const rect = scannedEditorRect(span, lineIds);
+  const fixedRegionLineHeight = rect.height / Math.max(1, lineIds.length);
+  const fontSizePx = Math.max(1, fixedRegion
+    ? Math.min(rect.firstLineHeight || fixedRegionLineHeight, fixedRegionLineHeight)
+    : rect.firstLineHeight || estimate.fontSize.value * (doc.scale || 1));
   const initialText = selection.content.replacementText;
-  const preview = createScannedRepairPreview(span, selection);
+  const preview = createScannedRepairPreview(span, selection, rect);
+  const lineHeightPx = fixedRegion
+    ? Math.max(fontSizePx, rect.height / Math.max(1, selection.content.source.canonicalBaselines.length))
+    : Math.max(fontSizePx, rect.height);
   const styleObj = {
     position: 'fixed',
     left: `${rect.left}px`,
@@ -669,7 +776,7 @@ async function startScannedTextEditing(span, pageNum) {
     width: `${Math.max(rect.width + 4, 80)}px`,
     height: `${Math.max(rect.height, 24)}px`,
     'font-size': `${fontSizePx}px`,
-    'line-height': `${Math.max(fontSizePx, rect.height)}px`,
+    'line-height': `${lineHeightPx}px`,
     'font-family': font.css,
     'font-weight': estimate.weight.value === 'bold' ? 'bold' : 'normal',
     'font-style': estimate.italic.value ? 'italic' : 'normal',
@@ -683,18 +790,20 @@ async function startScannedTextEditing(span, pageNum) {
     pageNum,
     kind: 'scannedText',
     selectionId: selection.id,
-    existingOwnedEdit: Boolean(appliedScannedSelection(doc, pageNum, lineId)),
+    existingOwnedEdit,
     originalText: initialText,
     result,
     pageGeometry,
     raster,
     lineId,
+    target,
+    fixedRegion,
     preview,
     committing: false,
     scale: doc.scale || 1,
     visualScale: fontSizePx / estimate.fontSize.value,
     editorBaseline: rect.top + fontSizePx * 0.82,
-    lineSpacing: estimate.fontSize.value,
+    lineSpacing: fixedRegion ? selection.content.source.lineSpacing.valuePt : estimate.fontSize.value,
     styleTouchedKeys: new Set(),
     styleState: {
       family: font.name,
@@ -738,7 +847,7 @@ async function startScannedTextEditing(span, pageNum) {
           result: editor.result,
           pageGeometry: editor.pageGeometry,
           raster: editor.raster,
-          target: { kind: 'line', lineId: editor.lineId },
+          target: editor.target,
           replacementText,
           styleOverrides,
           contextPaddingPx: 24,
@@ -781,11 +890,17 @@ async function startScannedTextEditing(span, pageNum) {
       cancel();
       return;
     }
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !editor.fixedRegion) {
       event.preventDefault();
       event.stopPropagation();
       if (event.ctrlKey || event.metaKey) void finish();
       else setPdfEditorStatus('Line breaks are not supported. Use Command-Enter to apply this one-line edit.');
+    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void finish();
+    } else if (event.key === 'Enter') {
+      event.stopPropagation();
     }
   };
   const handleBlur = () => {
@@ -803,10 +918,15 @@ async function startScannedTextEditing(span, pageNum) {
     onKeyDown: handleKeyDown,
     onBlur: handleBlur,
     options: {
-      singleLine: true,
+      singleLine: !fixedRegion,
+      fixedRegion,
       direction: 'ltr',
-      ariaLabel: `Edit scanned text line: ${initialText}`,
-      status: 'Editing one isolated scanned text line. Font properties are estimates.',
+      ariaLabel: fixedRegion
+        ? `Edit scanned text fixed region: ${initialText}`
+        : `Edit scanned text line: ${initialText}`,
+      status: fixedRegion
+        ? 'Editing multiple OCR lines inside one fixed original region. Command-Enter applies; overflow is rejected.'
+        : 'Editing one isolated scanned text line. Font properties are estimates.',
     },
   });
 }

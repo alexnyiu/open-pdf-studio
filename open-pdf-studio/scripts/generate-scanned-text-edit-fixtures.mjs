@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
-import { createCanvas } from '@napi-rs/canvas';
+import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
 import sharp from 'sharp';
 import { PDFDocument } from 'pdf-lib';
 
@@ -10,6 +10,7 @@ import {
   createScannedTextEditStateV1,
   evaluateScannedTextEdit,
 } from '../js/ocr/editing/edit-state.js';
+import { mapPointBetweenSpaces, OCR_PDF_USER_SPACE, OCR_SOURCE_RASTER_SPACE } from '../js/ocr/contracts/geometry.js';
 import {
   removeOwnedScannedTextRepairLayer,
   writeOwnedScannedTextRepairLayer,
@@ -204,6 +205,36 @@ function visibleLineRenderer({ basePatchBytes, patch, text, style, geometry, sou
   return new Uint8Array(context.getImageData(0, 0, patch.widthPx, patch.heightPx).data);
 }
 
+function visibleRegionRenderer({ basePatchBytes, patch, style, geometry, layout, sourceRaster }) {
+  const canvas = createCanvas(patch.widthPx, patch.heightPx);
+  const context = canvas.getContext('2d');
+  const image = context.createImageData(patch.widthPx, patch.heightPx);
+  image.data.set(basePatchBytes);
+  context.putImageData(image, 0, 0);
+  const family = style.fontClass.value === 'monospace' ? 'Courier New'
+    : style.fontClass.value === 'serif' ? 'Times New Roman'
+      : 'Helvetica';
+  const sizePx = style.fontSize.value * sourceRaster.dpi / 72;
+  context.font = `${style.italic.value ? 'italic ' : ''}${style.weight.value === 'bold' ? 'bold ' : ''}${sizePx}px ${family}`;
+  context.textAlign = 'left';
+  context.textBaseline = 'alphabetic';
+  context.fillStyle = style.textColor.value;
+  for (const lineLayout of layout.lines) {
+    const origin = mapPointBetweenSpaces(
+      geometry.transformChain,
+      lineLayout.origin.point,
+      OCR_PDF_USER_SPACE,
+      OCR_SOURCE_RASTER_SPACE,
+    );
+    context.save();
+    context.translate(origin[0] - patch.originX, origin[1] - patch.originY);
+    context.rotate(lineLayout.angleDegrees * Math.PI / 180);
+    context.fillText(lineLayout.text, 0, 0);
+    context.restore();
+  }
+  return new Uint8Array(context.getImageData(0, 0, patch.widthPx, patch.heightPx).data);
+}
+
 function writerLine(text, content) {
   const baselinePoints = content.source.canonicalBaseline.points;
   return {
@@ -223,6 +254,26 @@ function writerLine(text, content) {
       end: { x: baselinePoints.at(-1)[0], y: baselinePoints.at(-1)[1] },
     },
   };
+}
+
+function writerRegionLines(content) {
+  return content.searchableText.lines.map((line, readingOrder) => ({
+    id: `${content.source.ocrIds.regionId}-line-${readingOrder}`,
+    text: line.text,
+    direction: 'ltr',
+    readingOrder,
+    polygon: {
+      coordinateSpace: line.polygon.coordinateSpace,
+      points: line.polygon.points.map(([x, y]) => ({ x, y })),
+    },
+    baseline: {
+      status: 'provided',
+      provenance: line.baseline.provenance,
+      coordinateSpace: line.baseline.coordinateSpace,
+      start: { x: line.baseline.points[0][0], y: line.baseline.points[0][1] },
+      end: { x: line.baseline.points.at(-1)[0], y: line.baseline.points.at(-1)[1] },
+    },
+  }));
 }
 
 async function pngBytes(raw) {
@@ -397,6 +448,108 @@ await writeFile(new URL('flat-scanned-line-edited.pdf', outputDir), editedLinePd
 await writeFile(new URL('flat-scanned-line-edited-repeat.pdf', outputDir), repeatedEditedLinePdf);
 await writeFile(new URL('flat-scanned-line-restored.pdf', outputDir), restoredLinePdf);
 
+const regionLines = [
+  { id: 'region-line-1', text: 'SCAN ONE', x: 28, y: 28, width: 200, height: 24, confidence: 0.98 },
+  { id: 'region-line-2', text: 'SCAN TWO', x: 28, y: 60, width: 200, height: 24, confidence: 0.97 },
+  { id: 'region-line-3', text: 'SCAN THREE', x: 28, y: 92, width: 200, height: 24, confidence: 0.96 },
+];
+if (!GlobalFonts.register(Buffer.from(fontBytes), 'OpenPdfStudioFixture')) {
+  throw new Error('Could not register the deterministic fixed-region fixture font');
+}
+const regionCanvas = createCanvas(widthPx, heightPx);
+const regionContext = regionCanvas.getContext('2d');
+regionContext.fillStyle = 'rgb(232, 236, 242)';
+regionContext.fillRect(0, 0, widthPx, heightPx);
+regionContext.fillStyle = 'rgb(28, 31, 35)';
+regionContext.font = '20px OpenPdfStudioFixture';
+regionContext.textBaseline = 'top';
+for (const regionLine of regionLines) {
+  regionContext.fillText(regionLine.text, regionLine.x + 5, regionLine.y + 1);
+}
+const regionRaw = new Uint8ClampedArray(
+  regionContext.getImageData(0, 0, widthPx, heightPx).data,
+);
+const regionPng = await pngBytes(regionRaw);
+const regionSourcePdf = await sourcePdf(regionPng);
+const regionFixture = makeOcrFixture({
+  documentId: 'scanned-text-fixed-region-fixture-document',
+  documentGeneration: 'scanned-text-fixed-region-fixture-generation',
+  pageId: 'scanned-text-fixed-region-fixture-page',
+  pageRevision: 0,
+  lines: regionLines,
+  width: widthPx,
+  height: heightPx,
+  documentFingerprint: { algorithm: 'sha256', value: sha256(regionSourcePdf) },
+});
+const regionEvaluation = await evaluateScannedTextEdit({
+  ...regionFixture,
+  raster: {
+    widthPx,
+    heightPx,
+    rowBytes: widthPx * 4,
+    data: regionRaw,
+    sourceRasterId: regionFixture.result.sourceRaster.id,
+    sourceRasterFingerprint: regionFixture.result.sourceRaster.fingerprint,
+  },
+  target: {
+    kind: 'region',
+    regionId: 'fixed-region-fixture',
+    lineIds: regionLines.map((entry) => entry.id),
+  },
+  repairPaddingPx: 1,
+  contextPaddingPx: 24,
+  replacementText: 'REGION ONE\nREGION TWO\nREGION THREE',
+  renderVisiblePatch: visibleRegionRenderer,
+  operationId: 'scanned-text-fixed-region-fixture-operation',
+  modifiedAt: fixedTime,
+});
+const regionDocumentState = {
+  id: regionFixture.result.document.id,
+  undoStack: [],
+  redoStack: [],
+  scannedTextEdits: createScannedTextEditStateV1({
+    document: regionFixture.result.document,
+    stateId: 'scanned-text-fixed-region-fixture-state',
+    instanceId: 'scanned-text-fixed-region-fixture-instance',
+    createdAt: fixedTime,
+  }),
+};
+commitScannedTextEditEvaluation(regionDocumentState, regionEvaluation, { modifiedAt: fixedTime });
+const visibleRegionPdf = await writeOwnedScannedTextRepairLayer({
+  pdfBytes: regionSourcePdf,
+  state: regionDocumentState.scannedTextEdits,
+  pageGeometries: [regionFixture.pageGeometry],
+  modifiedAt: fixedPdfDate,
+});
+const regionWriterPages = [{
+  pageIndex: 0,
+  lines: writerRegionLines(regionEvaluation.selection.content),
+}];
+const editedRegionPdf = await writeOwnedInvisibleOcrLayer({
+  pdfBytes: visibleRegionPdf,
+  fontBytes,
+  fontSha256,
+  pages: regionWriterPages,
+  modifiedAt: fixedPdfDate,
+});
+const repeatedVisibleRegionPdf = await writeOwnedScannedTextRepairLayer({
+  pdfBytes: editedRegionPdf,
+  lineagePdfBytes: regionSourcePdf,
+  state: regionDocumentState.scannedTextEdits,
+  pageGeometries: [regionFixture.pageGeometry],
+  modifiedAt: fixedPdfDate,
+});
+const repeatedEditedRegionPdf = await writeOwnedInvisibleOcrLayer({
+  pdfBytes: repeatedVisibleRegionPdf,
+  fontBytes,
+  fontSha256,
+  pages: regionWriterPages,
+  modifiedAt: fixedPdfDate,
+});
+await writeFile(new URL('flat-scanned-region-source.pdf', outputDir), regionSourcePdf);
+await writeFile(new URL('flat-scanned-region-edited.pdf', outputDir), editedRegionPdf);
+await writeFile(new URL('flat-scanned-region-edited-repeat.pdf', outputDir), repeatedEditedRegionPdf);
+
 const manifest = {
   contract: 'open-pdf-studio.scanned-text-edit-fixtures',
   schemaVersion: 1,
@@ -429,6 +582,20 @@ const manifest = {
     approvedRegion: lineEvaluation.selection.repair.approvedRegion,
     stateId: lineDocumentState.scannedTextEdits.stateId,
     stateRevision: lineDocumentState.scannedTextEdits.stateRevision,
+  },
+  fixedRegionProof: {
+    source: 'flat-scanned-region-source.pdf',
+    edited: 'flat-scanned-region-edited.pdf',
+    editedRepeat: 'flat-scanned-region-edited-repeat.pdf',
+    sourceSha256: sha256(regionSourcePdf),
+    editedSha256: sha256(editedRegionPdf),
+    editedRepeatSha256: sha256(repeatedEditedRegionPdf),
+    originalText: regionEvaluation.selection.content.source.originalText,
+    replacementText: regionEvaluation.selection.content.replacementText,
+    approvedRegion: regionEvaluation.selection.repair.approvedRegion,
+    measuredLineSpacingPt: regionEvaluation.selection.content.layout.measuredLineSpacingPt,
+    stateId: regionDocumentState.scannedTextEdits.stateId,
+    stateRevision: regionDocumentState.scannedTextEdits.stateRevision,
   },
 };
 await writeFile(new URL('manifest.v1.json', outputDir), `${JSON.stringify(manifest, null, 2)}\n`);

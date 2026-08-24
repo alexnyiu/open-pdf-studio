@@ -752,6 +752,232 @@ function validateHalo(value, path, issues) {
   if (value.passed !== true) issues.push(`${path}.passed must be true`);
 }
 
+function validateFixedRegionSource(value, path, issues, selection, lineIds) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'ocrIds', 'originalText', 'originalPolygons', 'canonicalRegion',
+    'canonicalBaselines', 'lineSpacing',
+  ]), path, issues);
+  if (!isObject(value.ocrIds)) issues.push(`${path}.ocrIds must be an object`);
+  else {
+    requireExactKeys(value.ocrIds, new Set(['regionId', 'lineIds', 'wordIds']), `${path}.ocrIds`, issues);
+    validateIdentifier(value.ocrIds.regionId, `${path}.ocrIds.regionId`, issues);
+    if (value.ocrIds.regionId !== selection?.target?.targetId) {
+      issues.push(`${path}.ocrIds.regionId must identify the selected fixed region`);
+    }
+    for (const key of ['lineIds', 'wordIds']) {
+      if (!Array.isArray(value.ocrIds[key])) issues.push(`${path}.ocrIds.${key} must be an array`);
+      else {
+        const seen = new Set();
+        value.ocrIds[key].forEach((id, index) => {
+          validateIdentifier(id, `${path}.ocrIds.${key}[${index}]`, issues);
+          if (seen.has(id)) issues.push(`${path}.ocrIds.${key}[${index}] must be unique`);
+          seen.add(id);
+        });
+      }
+    }
+    if (Array.isArray(value.ocrIds.lineIds)
+        && (value.ocrIds.lineIds.length !== lineIds.size
+          || value.ocrIds.lineIds.some((lineId) => !lineIds.has(lineId)))) {
+      issues.push(`${path}.ocrIds.lineIds must exactly identify the selected OCR lines`);
+    }
+  }
+  validateString(value.originalText, `${path}.originalText`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
+  if (!Array.isArray(value.originalPolygons) || value.originalPolygons.length !== lineIds.size) {
+    issues.push(`${path}.originalPolygons must contain one polygon per selected OCR line`);
+  } else {
+    value.originalPolygons.forEach((polygon, index) =>
+      validateCoordinatePolygon(polygon, `${path}.originalPolygons[${index}]`, issues));
+  }
+  validateCoordinatePolygon(value.canonicalRegion, `${path}.canonicalRegion`, issues, {
+    allowedSpaces: [OCR_PDF_USER_SPACE],
+  });
+  if (!Array.isArray(value.canonicalBaselines) || value.canonicalBaselines.length !== lineIds.size) {
+    issues.push(`${path}.canonicalBaselines must contain one baseline per selected OCR line`);
+  } else {
+    value.canonicalBaselines.forEach((baseline, index) => validateBaseline(
+      baseline,
+      `${path}.canonicalBaselines[${index}]`,
+      issues,
+      {
+        allowedSpaces: [OCR_PDF_USER_SPACE],
+        allowedProvenance: ['ocr-engine', 'engine', 'estimated-from-ocr-polygon'],
+      },
+    ));
+  }
+  if (!isObject(value.lineSpacing)) issues.push(`${path}.lineSpacing must be an object`);
+  else {
+    requireExactKeys(value.lineSpacing, new Set(['valuePt', 'valuePx', 'measured', 'method']), `${path}.lineSpacing`, issues);
+    validatePositiveNumber(value.lineSpacing.valuePt, `${path}.lineSpacing.valuePt`, issues);
+    validatePositiveNumber(value.lineSpacing.valuePx, `${path}.lineSpacing.valuePx`, issues);
+    if (value.lineSpacing.measured !== true) issues.push(`${path}.lineSpacing.measured must be true`);
+    if (value.lineSpacing.method !== 'median-canonical-baseline-delta-v1') {
+      issues.push(`${path}.lineSpacing.method is unsupported`);
+    }
+  }
+}
+
+function validateFixedRegionLine(value, path, issues, expectedIndex) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'index', 'text', 'encodedGlyphCount', 'encodedText', 'widthPt', 'heightPt',
+    'origin', 'angleDegrees', 'baselineAligned', 'canonicalPolygon', 'canonicalBaseline',
+  ]), path, issues);
+  if (value.index !== expectedIndex) issues.push(`${path}.index must equal its layout order`);
+  validateString(value.text, `${path}.text`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
+  if (typeof value.text === 'string' && /[\r\n\u2028\u2029]/u.test(value.text)) {
+    issues.push(`${path}.text must be one laid-out line`);
+  }
+  validatePositiveInteger(value.encodedGlyphCount, `${path}.encodedGlyphCount`, issues);
+  validateString(value.encodedText, `${path}.encodedText`, issues, { nonEmpty: true, maxCodeUnits: 16384 });
+  validatePositiveNumber(value.widthPt, `${path}.widthPt`, issues);
+  validatePositiveNumber(value.heightPt, `${path}.heightPt`, issues);
+  if (!isObject(value.origin)) issues.push(`${path}.origin must be an object`);
+  else {
+    requireExactKeys(value.origin, new Set(['coordinateSpace', 'point']), `${path}.origin`, issues);
+    if (value.origin.coordinateSpace !== OCR_PDF_USER_SPACE) issues.push(`${path}.origin.coordinateSpace must be ${OCR_PDF_USER_SPACE}`);
+    if (!Array.isArray(value.origin.point) || value.origin.point.length !== 2 || !value.origin.point.every(isFiniteNumber)) {
+      issues.push(`${path}.origin.point must contain two finite numbers`);
+    }
+  }
+  if (!isFiniteNumber(value.angleDegrees) || Math.abs(value.angleDegrees) > 3.000001) {
+    issues.push(`${path}.angleDegrees must remain horizontal within three degrees`);
+  }
+  if (value.baselineAligned !== true) issues.push(`${path}.baselineAligned must be true`);
+  validateCoordinatePolygon(value.canonicalPolygon, `${path}.canonicalPolygon`, issues, {
+    allowedSpaces: [OCR_PDF_USER_SPACE],
+  });
+  validateBaseline(value.canonicalBaseline, `${path}.canonicalBaseline`, issues, {
+    allowedSpaces: [OCR_PDF_USER_SPACE],
+    allowedProvenance: ['ocr-engine', 'engine', 'estimated-from-ocr-polygon'],
+  });
+}
+
+function validateFixedRegionLayout(value, path, issues, lineCount) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'fontName', 'direction', 'shaping', 'glyphCoverage', 'availableWidthPt',
+    'availableHeightPt', 'canonicalRegion', 'measuredLineSpacingPt',
+    'lineSpacingMethod', 'alignment', 'safeWrapped', 'clippingPrevented',
+    'overflow', 'lines',
+  ]), path, issues);
+  validateString(value.fontName, `${path}.fontName`, issues, { nonEmpty: true, maxCodeUnits: 128 });
+  if (value.direction !== 'ltr') issues.push(`${path}.direction must be ltr`);
+  if (value.shaping !== 'pdf-lib-standard-font-winansi-v1') issues.push(`${path}.shaping is unsupported`);
+  if (value.glyphCoverage !== 'complete') issues.push(`${path}.glyphCoverage must be complete`);
+  validatePositiveNumber(value.availableWidthPt, `${path}.availableWidthPt`, issues);
+  validatePositiveNumber(value.availableHeightPt, `${path}.availableHeightPt`, issues);
+  validateCoordinatePolygon(value.canonicalRegion, `${path}.canonicalRegion`, issues, {
+    allowedSpaces: [OCR_PDF_USER_SPACE],
+  });
+  validatePositiveNumber(value.measuredLineSpacingPt, `${path}.measuredLineSpacingPt`, issues);
+  if (value.lineSpacingMethod !== 'median-canonical-baseline-delta-v1') issues.push(`${path}.lineSpacingMethod is unsupported`);
+  if (!['left', 'center', 'right'].includes(value.alignment)) issues.push(`${path}.alignment is unsupported`);
+  if (typeof value.safeWrapped !== 'boolean') issues.push(`${path}.safeWrapped must be boolean`);
+  if (value.clippingPrevented !== true) issues.push(`${path}.clippingPrevented must be true`);
+  if (value.overflow !== false) issues.push(`${path}.overflow must be false`);
+  if (!Array.isArray(value.lines) || value.lines.length === 0 || value.lines.length > lineCount) {
+    issues.push(`${path}.lines must fit within the original selected line count`);
+  } else {
+    value.lines.forEach((line, index) => validateFixedRegionLine(line, `${path}.lines[${index}]`, issues, index));
+  }
+}
+
+function validateFixedRegionContent(value, path, issues, selection, lineIds) {
+  requireExactKeys(value, new Set([
+    'scope', 'source', 'replacementText', 'estimatedStyle', 'layout', 'repairPatch',
+    'visibleReplacement', 'searchableText', 'undo',
+  ]), path, issues);
+  if (value.scope !== 'fixed-region-multiline') issues.push(`${path}.scope must be fixed-region-multiline`);
+  if (selection?.target?.kind !== 'region' || lineIds.size < 2) issues.push(`${path} requires a multiple-line region target`);
+  validateFixedRegionSource(value.source, `${path}.source`, issues, selection, lineIds);
+  validateString(value.replacementText, `${path}.replacementText`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
+  validateEstimatedStyle(value.estimatedStyle, `${path}.estimatedStyle`, issues);
+  validateFixedRegionLayout(value.layout, `${path}.layout`, issues, lineIds.size);
+  if (Array.isArray(value.layout?.lines)
+      && value.layout.lines.map((line) => line.text).join('\n') !== value.replacementText) {
+    issues.push(`${path}.replacementText must equal the laid-out visible lines`);
+  }
+  validatePatch(value.repairPatch, `${path}.repairPatch`, issues);
+  if (value.repairPatch?.sha256 !== selection?.repair?.repairedPatch?.sha256) {
+    issues.push(`${path}.repairPatch must equal the owned background repair patch`);
+  }
+  if (!isObject(value.visibleReplacement)) issues.push(`${path}.visibleReplacement must be an object`);
+  else {
+    requireExactKeys(value.visibleReplacement, new Set([
+      'text', 'patch', 'halo', 'outsideEditRegionChangedPixels',
+    ]), `${path}.visibleReplacement`, issues);
+    if (value.visibleReplacement.text !== value.replacementText) issues.push(`${path}.visibleReplacement.text must equal replacementText`);
+    validatePatch(value.visibleReplacement.patch, `${path}.visibleReplacement.patch`, issues);
+    validateHalo(value.visibleReplacement.halo, `${path}.visibleReplacement.halo`, issues);
+    if (value.visibleReplacement.outsideEditRegionChangedPixels !== 0) {
+      issues.push(`${path}.visibleReplacement.outsideEditRegionChangedPixels must be zero`);
+    }
+  }
+  if (!isObject(value.searchableText)) issues.push(`${path}.searchableText must be an object`);
+  else {
+    requireExactKeys(value.searchableText, new Set(['text', 'renderingMode', 'synchronized', 'lines']), `${path}.searchableText`, issues);
+    if (value.searchableText.text !== value.replacementText) issues.push(`${path}.searchableText.text must equal replacementText`);
+    if (value.searchableText.renderingMode !== 'owned-invisible-ocr') issues.push(`${path}.searchableText.renderingMode is unsupported`);
+    if (value.searchableText.synchronized !== true) issues.push(`${path}.searchableText.synchronized must be true`);
+    if (!Array.isArray(value.searchableText.lines)
+        || value.searchableText.lines.length !== value.layout?.lines?.length) {
+      issues.push(`${path}.searchableText.lines must match layout.lines`);
+    } else {
+      value.searchableText.lines.forEach((line, index) => {
+        const linePath = `${path}.searchableText.lines[${index}]`;
+        if (!isObject(line)) {
+          issues.push(`${linePath} must be an object`);
+          return;
+        }
+        requireExactKeys(line, new Set(['index', 'text', 'polygon', 'baseline']), linePath, issues);
+        if (line.index !== index || line.text !== value.layout.lines[index]?.text) {
+          issues.push(`${linePath} must match its visible layout line`);
+        }
+        validateCoordinatePolygon(line.polygon, `${linePath}.polygon`, issues, { allowedSpaces: [OCR_PDF_USER_SPACE] });
+        validateBaseline(line.baseline, `${linePath}.baseline`, issues, {
+          allowedSpaces: [OCR_PDF_USER_SPACE],
+          allowedProvenance: ['ocr-engine', 'engine', 'estimated-from-ocr-polygon'],
+        });
+      });
+    }
+  }
+  if (!isObject(value.undo)) issues.push(`${path}.undo must be an object`);
+  else {
+    requireExactKeys(value.undo, new Set(['kind', 'before', 'after', 'revision', 'parentRevision']), `${path}.undo`, issues);
+    if (value.undo.kind !== 'scanned-text-edit') issues.push(`${path}.undo.kind is unsupported`);
+    for (const key of ['before', 'after']) {
+      if (!isObject(value.undo[key])) issues.push(`${path}.undo.${key} must be an object`);
+      else {
+        requireExactKeys(value.undo[key], new Set(['text', 'repairStatus']), `${path}.undo.${key}`, issues);
+        validateString(value.undo[key].text, `${path}.undo.${key}.text`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
+      }
+    }
+    if (!['original', 'applied'].includes(value.undo.before?.repairStatus)) issues.push(`${path}.undo.before.repairStatus is unsupported`);
+    if (value.undo.after?.repairStatus !== 'applied') issues.push(`${path}.undo.after.repairStatus must be applied`);
+    if (value.undo.parentRevision === 0
+        && (value.undo.before?.repairStatus !== 'original' || value.undo.before?.text !== value.source?.originalText)) {
+      issues.push(`${path}.undo first revision must begin with source.originalText`);
+    }
+    if (value.undo.parentRevision > 0 && value.undo.before?.repairStatus !== 'applied') {
+      issues.push(`${path}.undo later revisions must begin with the preceding applied edit`);
+    }
+    if (value.undo.after?.text !== value.replacementText) issues.push(`${path}.undo.after.text must equal replacementText`);
+    if (value.undo.revision !== selection?.revision || value.undo.parentRevision !== selection?.ownership?.parentRevision) {
+      issues.push(`${path}.undo revisions must equal selection ownership revisions`);
+    }
+  }
+}
+
 function validateSingleLineContent(value, path, issues, selection, lineIds) {
   if (value === null) return;
   if (!isObject(value)) {
@@ -859,7 +1085,11 @@ function validateSelection(value, path, issues, page) {
   validateAnalysis(value.analysis, `${path}.analysis`, issues, value.geometry);
   validateRepair(value.repair, `${path}.repair`, issues, value.geometry, value.analysis);
   if (Object.hasOwn(value, 'content')) {
-    validateSingleLineContent(value.content, `${path}.content`, issues, value, lineIds);
+    if (value.content?.scope === 'fixed-region-multiline') {
+      validateFixedRegionContent(value.content, `${path}.content`, issues, value, lineIds);
+    } else {
+      validateSingleLineContent(value.content, `${path}.content`, issues, value, lineIds);
+    }
   }
   validateOperationOwnership(value.ownership, `${path}.ownership`, issues, value.revision);
   if (value.analysis?.eligibility?.eligible === true && value.repair?.status === 'rejected') {

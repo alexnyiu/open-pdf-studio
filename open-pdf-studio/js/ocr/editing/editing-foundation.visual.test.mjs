@@ -474,6 +474,73 @@ test('single-line visible and invisible layers survive reopen and repeat save wi
   }
 });
 
+test('fixed-region visual and searchable lines survive reopen and repeated save inside the exact original region', async () => {
+  const fixtureManifest = await manifest();
+  const proof = fixtureManifest.fixedRegionProof;
+  const [sourceBytes, editedBytes, repeatedBytes] = await Promise.all([
+    readFile(new URL(proof.source, FIXTURE_ROOT)).then((bytes) => new Uint8Array(bytes)),
+    readFile(new URL(proof.edited, FIXTURE_ROOT)).then((bytes) => new Uint8Array(bytes)),
+    readFile(new URL(proof.editedRepeat, FIXTURE_ROOT)).then((bytes) => new Uint8Array(bytes)),
+  ]);
+  assert.equal(digest(sourceBytes), proof.sourceSha256);
+  assert.equal(digest(editedBytes), proof.editedSha256);
+  assert.equal(digest(repeatedBytes), proof.editedRepeatSha256);
+  const [editedInspection, repeatedInspection] = await Promise.all([
+    inspectOwnedScannedTextRepairLayer(editedBytes).then((entries) => entries[0]),
+    inspectOwnedScannedTextRepairLayer(repeatedBytes).then((entries) => entries[0]),
+  ]);
+  assert.equal(editedInspection.owned, true);
+  assert.equal(editedInspection.selectionIds.length, 1);
+  assert.equal(repeatedInspection.selectionIds.length, 1);
+  const content = editedInspection.state.pages[0].selections[0].content;
+  assert.equal(content.scope, 'fixed-region-multiline');
+  assert.equal(content.layout.measuredLineSpacingPt, proof.measuredLineSpacingPt);
+  assert.equal(content.layout.clippingPrevented, true);
+  assert.equal(content.layout.overflow, false);
+  assert.deepEqual(
+    content.visibleReplacement.text.split('\n'),
+    content.searchableText.lines.map((line) => line.text),
+  );
+  assertScannedTextEditStateV1(editedInspection.state);
+  assert.deepEqual(repeatedInspection.state, editedInspection.state);
+
+  const [sourceRaster, editedRaster, repeatedRaster] = await Promise.all([
+    renderPdfPage(sourceBytes),
+    renderPdfPage(editedBytes),
+    renderPdfPage(repeatedBytes),
+  ]);
+  const comparison = comparePixels(sourceRaster, editedRaster, proof.approvedRegion);
+  assert.ok(comparison.changedPixelCount > 0);
+  assert.equal(comparison.outsideApprovedChangedPixels, 0);
+  assert.deepEqual(repeatedRaster.data, editedRaster.data,
+    'fixed-region repeated save must preserve every visible pixel');
+
+  for (const bytes of [editedBytes, repeatedBytes]) {
+    const loadingTask = pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false, verbosity: 0 });
+    const document = await loadingTask.promise;
+    try {
+      const textContent = await (await document.getPage(1)).getTextContent();
+      const extracted = textContent.items.map((item) => item.str).filter(Boolean).join('\n');
+      for (const token of proof.replacementText.split('\n')) {
+        assert.equal(extracted.split(token).length - 1, 1);
+      }
+      for (const token of proof.originalText.split('\n')) {
+        assert.equal(extracted.includes(token), false);
+      }
+    } finally {
+      await document.destroy();
+    }
+  }
+
+  const reopened = { id: editedInspection.state.document.id };
+  await hydrateOwnedScannedTextEditState(reopened, editedBytes);
+  assert.deepEqual(reopened.scannedTextEdits, editedInspection.state);
+  const removedVisibleBytes = await removeOwnedScannedTextRepairLayer({ pdfBytes: repeatedBytes });
+  const removedRaster = await renderPdfPage(removedVisibleBytes);
+  assert.deepEqual(removedRaster.data, sourceRaster.data,
+    'reversible fixed-region repair must reveal the untouched source scan');
+});
+
 test('PDF writer failure returns no partial output and leaves source bytes untouched', async () => {
   const fixtureManifest = await manifest();
   const sourceBytes = new Uint8Array(await readFile(new URL(fixtureManifest.pdfProof.source, FIXTURE_ROOT)));

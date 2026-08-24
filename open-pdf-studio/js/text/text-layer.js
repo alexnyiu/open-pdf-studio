@@ -92,17 +92,22 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
   const editPage = doc.scannedTextEdits?.pages?.find((page) => page.index === pageNum - 1);
   const appliedEdits = (editPage?.selections || []).filter((selection) =>
     selection.repair?.status === 'applied'
-      && selection.content?.scope === 'isolated-horizontal-line');
+      && ['isolated-horizontal-line', 'fixed-region-multiline'].includes(selection.content?.scope));
   let items = pendingItems;
   if (appliedEdits.length > 0) {
-    const editsByLine = new Map(appliedEdits.map((selection) => [selection.target.targetId, selection]));
-    const pendingLineIds = new Set(pendingItems.map((item) => item.lineId));
+    const editsByLine = new Map(appliedEdits
+      .filter((selection) => selection.target.kind === 'line')
+      .map((selection) => [selection.target.targetId, selection]));
+    const pendingSelectionIds = new Set(pendingItems
+      .map((item) => item.scannedSelection?.id)
+      .filter(Boolean));
     items = pendingItems.map((item) => ({
       ...item,
-      scannedSelection: editsByLine.get(item.lineId) || null,
+      scannedSelection: item.scannedSelection || editsByLine.get(item.lineId) || null,
     }));
     for (const selection of appliedEdits) {
-      if (pendingLineIds.has(selection.target.targetId)) continue;
+      if (pendingSelectionIds.has(selection.id)) continue;
+      const fixedRegion = selection.content.scope === 'fixed-region-multiline';
       items.push({
         id: `${selection.id}-hit-target`,
         lineId: selection.target.targetId,
@@ -110,8 +115,12 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
         readingOrder: Number.MAX_SAFE_INTEGER,
         text: selection.content.searchableText.text,
         confidence: selection.geometry.confidence,
-        polygon: selection.content.source.canonicalPolygon,
-        baseline: selection.content.source.canonicalBaseline,
+        polygon: fixedRegion
+          ? selection.content.source.canonicalRegion
+          : selection.content.source.canonicalPolygon,
+        baseline: fixedRegion
+          ? selection.content.source.canonicalBaselines[0]
+          : selection.content.source.canonicalBaseline,
         pageGeometry: doc.ocr?.pages?.[pageNum]?.recognition?.geometry
           || (editPage?.pageGeometry?.transformChain ? editPage.pageGeometry : null),
         resultRevision: 0,
@@ -122,6 +131,7 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
         words: undefined,
         ownership: { stream: 'persisted-scanned-text-edit' },
         scannedSelection: selection,
+        sourceLineIds: fixedRegion ? [...selection.target.lineIds] : [selection.target.targetId],
         hitOnly: true,
       });
     }
@@ -166,6 +176,9 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
         canvas.dataset.ocrOwner = OPEN_PDF_STUDIO_OCR_OWNER;
         canvas.dataset.ocrStream = 'scanned-text-visible-preview';
         canvas.dataset.ocrLineId = item.lineId;
+        if (scannedSelection.target?.kind === 'region') {
+          canvas.dataset.ocrRegionId = scannedSelection.target.targetId;
+        }
         canvas.style.position = 'absolute';
         canvas.style.left = `${previewProjection.origin[0].toFixed(4)}px`;
         canvas.style.top = `${previewProjection.origin[1].toFixed(4)}px`;
@@ -228,6 +241,7 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
     span.dataset.ocrOwner = OPEN_PDF_STUDIO_OCR_OWNER;
     span.dataset.ocrStream = item.ownership.stream;
     span.dataset.ocrLineId = item.lineId;
+    if (Array.isArray(item.sourceLineIds)) span.dataset.ocrSourceLineIds = item.sourceLineIds.join(' ');
     span.dataset.ocrConfidence = String(item.confidence);
     span.dataset.ocrReadingOrder = String(item.readingOrder);
     span.dataset.ocrResultRevision = String(item.resultRevision);
@@ -236,6 +250,9 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
       span.dataset.scannedTextEditRevision = String(item.scannedTextEditRevision || 0);
     }
     if (scannedSelection) span.dataset.scannedTextEditSelectionId = scannedSelection.id;
+    if (scannedSelection?.target?.kind === 'region') {
+      span.dataset.ocrRegionId = scannedSelection.target.targetId;
+    }
     if (item.hitOnly) span.dataset.scannedTextEditHitOnly = 'true';
     if (item.language) span.dataset.ocrLanguage = item.language;
     if (item.direction) span.dataset.ocrDirection = item.direction;

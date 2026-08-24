@@ -25,6 +25,7 @@ import {
   buildIsolatedSingleLineContent,
   buildScannedTextSearchablePageSnapshot,
 } from './single-line.js';
+import { buildFixedRegionMultilineContent } from './fixed-region.js';
 
 export class ScannedTextEditStateConflictError extends Error {
   constructor(code, message) {
@@ -226,7 +227,10 @@ export async function evaluateScannedTextEdit({
     if (sourceAfter !== sourceBefore) {
       throw new Error('The original scanned raster was mutated during repair evaluation');
     }
-    const content = replacementText === null ? null : await buildIsolatedSingleLineContent({
+    const buildContent = selected.target.kind === 'region'
+      ? buildFixedRegionMultilineContent
+      : buildIsolatedSingleLineContent;
+    const content = replacementText === null ? null : await buildContent({
       result,
       pageGeometry,
       raster,

@@ -218,6 +218,62 @@ fn owned_repair_changes_only_approved_pixels_and_removal_restores_source() {
     assert_eq!(repeated_text.match_indices(original_text).count(), 0);
     assert_eq!(restored_text.match_indices(original_text).count(), 1);
     assert_eq!(restored_text.match_indices(replacement_text).count(), 0);
+
+    let region_source_name = manifest
+        .pointer("/fixedRegionProof/source")
+        .and_then(Value::as_str)
+        .expect("fixed-region source fixture name");
+    let region_edited_name = manifest
+        .pointer("/fixedRegionProof/edited")
+        .and_then(Value::as_str)
+        .expect("fixed-region edited fixture name");
+    let region_repeated_name = manifest
+        .pointer("/fixedRegionProof/editedRepeat")
+        .and_then(Value::as_str)
+        .expect("fixed-region repeated fixture name");
+    let region_replacement_text = manifest
+        .pointer("/fixedRegionProof/replacementText")
+        .and_then(Value::as_str)
+        .expect("fixed-region replacement text");
+    let region_original_text = manifest
+        .pointer("/fixedRegionProof/originalText")
+        .and_then(Value::as_str)
+        .expect("fixed-region original text");
+    let region_source_handle = load(&fixture_dir.join(region_source_name));
+    let region_edited_handle = load(&fixture_dir.join(region_edited_name));
+    let region_repeated_handle = load(&fixture_dir.join(region_repeated_name));
+    let region_source = render(&region_source_handle);
+    let region_edited = render(&region_edited_handle);
+    let region_repeated = render(&region_repeated_handle);
+    let region_approved = (
+        integer(&manifest, "/fixedRegionProof/approvedRegion/x"),
+        integer(&manifest, "/fixedRegionProof/approvedRegion/y"),
+        integer(&manifest, "/fixedRegionProof/approvedRegion/width"),
+        integer(&manifest, "/fixedRegionProof/approvedRegion/height"),
+    );
+    let region_difference = compare(&region_source, &region_edited, Some(region_approved));
+    assert!(
+        region_difference.changed_pixels > 0,
+        "PDFium must render every visible fixed-region replacement line"
+    );
+    assert_eq!(region_difference.outside_approved_changed_pixels, 0);
+    assert_eq!(
+        compare(&region_edited, &region_repeated, None).changed_pixels,
+        0,
+        "fixed-region repeated save must preserve exact visible pixels"
+    );
+    let region_edited_text = extract_all_page_text(region_edited_handle.document(), 0)
+        .expect("PDFium extracts fixed-region searchable text");
+    let region_repeated_text = extract_all_page_text(region_repeated_handle.document(), 0)
+        .expect("PDFium extracts repeated fixed-region searchable text");
+    for token in region_replacement_text.lines() {
+        assert_eq!(region_edited_text.match_indices(token).count(), 1);
+        assert_eq!(region_repeated_text.match_indices(token).count(), 1);
+    }
+    for token in region_original_text.lines() {
+        assert_eq!(region_edited_text.match_indices(token).count(), 0);
+        assert_eq!(region_repeated_text.match_indices(token).count(), 0);
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -235,6 +291,10 @@ fn owned_repair_changes_only_approved_pixels_and_removal_restores_source() {
             "singleLineReplacementOccurrences": edited_text.match_indices(replacement_text).count(),
             "singleLineRepeatedReplacementOccurrences": repeated_text.match_indices(replacement_text).count(),
             "singleLineRestoredOriginalOccurrences": restored_text.match_indices(original_text).count(),
+            "fixedRegionChangedPixels": region_difference.changed_pixels,
+            "fixedRegionOutsideApprovedChangedPixels": region_difference.outside_approved_changed_pixels,
+            "fixedRegionRepeatedChangedPixels": compare(&region_edited, &region_repeated, None).changed_pixels,
+            "fixedRegionReplacementLines": region_replacement_text.lines().count(),
         }))
         .expect("serialize PDFium comparison")
     );

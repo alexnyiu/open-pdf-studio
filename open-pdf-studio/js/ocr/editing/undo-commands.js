@@ -7,6 +7,10 @@ import {
 } from './edit-state.js';
 import { toValidatedScannedTextEditStateV1Json } from '../contracts/scanned-text-edit-state.v1.js';
 import { reviseIsolatedSingleLineContent } from './single-line.js';
+import {
+  SCANNED_TEXT_FIXED_REGION_SCOPE,
+  reviseFixedRegionMultilineContent,
+} from './fixed-region.js';
 
 function targetId(target) {
   if (target?.kind === 'line') return target.lineId ?? target.targetId;
@@ -104,7 +108,7 @@ export function removeScannedTextEditForDocument(doc, selectionId, {
   return command;
 }
 
-/** Revise one applied line from its owned original/repair patches. */
+/** Revise one applied line or fixed region from its owned original/repair patches. */
 export async function reviseScannedTextEditForDocument(doc, selectionId, {
   replacementText,
   styleOverrides = {},
@@ -131,7 +135,10 @@ export async function reviseScannedTextEditForDocument(doc, selectionId, {
   }
   const parentRevision = selection.revision;
   const revision = parentRevision + 1;
-  selection.content = await reviseIsolatedSingleLineContent({
+  const reviseContent = selection.content.scope === SCANNED_TEXT_FIXED_REGION_SCOPE
+    ? reviseFixedRegionMultilineContent
+    : reviseIsolatedSingleLineContent;
+  selection.content = await reviseContent({
     page,
     selection,
     replacementText,

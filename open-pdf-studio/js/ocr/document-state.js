@@ -641,16 +641,60 @@ function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) 
   // idempotently after reopen.
   if (pendingOnly && page.existingText?.meaningful && ownership.persisted !== true) return [];
 
+  const editPage = doc?.scannedTextEdits?.pages
+    ?.find((entry) => entry.index === pageNum - 1);
+  const appliedSelections = (editPage?.selections || []).filter((selection) =>
+    selection.repair?.status === 'applied' && selection.content);
+  const lineEdits = new Map(appliedSelections
+    .filter((selection) => selection.target?.kind === 'line'
+      && selection.content?.scope === 'isolated-horizontal-line')
+    .map((selection) => [selection.target.targetId, selection]));
+  const regionEditsByLine = new Map();
+  for (const selection of appliedSelections) {
+    if (selection.target?.kind !== 'region'
+        || selection.content?.scope !== 'fixed-region-multiline') continue;
+    for (const lineId of selection.target.lineIds) regionEditsByLine.set(lineId, selection);
+  }
+
   return page.recognition.result.lines
     .filter((line) => typeof line.text === 'string' && line.text.length > 0)
-    .map((line, readingOrder) => {
+    .flatMap((line) => {
       const correction = page.review.corrections[line.id];
-      const scannedEdit = doc?.scannedTextEdits?.pages
-        ?.find((entry) => entry.index === pageNum - 1)
-        ?.selections?.find((selection) => selection.target?.kind === 'line'
-          && selection.target.targetId === line.id
-          && selection.repair?.status === 'applied'
-          && selection.content?.scope === 'isolated-horizontal-line');
+      const scannedEdit = lineEdits.get(line.id);
+      const regionEdit = regionEditsByLine.get(line.id);
+      if (regionEdit) {
+        if (regionEdit.target.lineIds[0] !== line.id) return [];
+        return regionEdit.content.searchableText.lines.map((outputLine) => {
+          const polygon = outputLine.polygon;
+          const baseline = outputLine.baseline;
+          const xs = polygon.points.map((point) => point[0]);
+          const ys = polygon.points.map((point) => point[1]);
+          const anchor = baseline.status === 'provided' && baseline.points?.length
+            ? { x: baseline.points[0][0], y: baseline.points[0][1], source: 'baseline' }
+            : { x: Math.min(...xs), y: Math.max(...ys), source: 'polygon' };
+          const outputId = `${regionEdit.id}-line-${outputLine.index}`;
+          return {
+            id: stableOcrTextId(doc.id, pageNum, outputId),
+            lineId: outputId,
+            pageNum,
+            text: outputLine.text,
+            confidence: regionEdit.geometry.confidence,
+            polygon,
+            baseline,
+            anchor,
+            pageGeometry: page.recognition.geometry,
+            resultRevision: page.recognition.revision,
+            correctionRevision: page.review.revision,
+            scannedTextEditRevision: regionEdit.revision,
+            language: null,
+            direction: 'ltr',
+            words: undefined,
+            ownership: page.recognition.ownership,
+            scannedSelection: regionEdit,
+            sourceLineIds: [...regionEdit.target.lineIds],
+          };
+        });
+      }
       const polygon = mapPolygonBetweenSpaces(
         page.recognition.geometry.transformChain,
         line.polygon,
@@ -695,7 +739,6 @@ function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) 
         id: stableOcrTextId(doc.id, pageNum, line.id),
         lineId: line.id,
         pageNum,
-        readingOrder,
         text: scannedEdit?.content?.searchableText?.text ?? correction?.correctedText ?? line.text,
         confidence: line.confidence,
         polygon,
@@ -709,8 +752,11 @@ function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) 
         direction: line.detectedWritingDirection || null,
         words,
         ownership: page.recognition.ownership,
+        scannedSelection: scannedEdit || null,
+        sourceLineIds: [line.id],
       };
-    });
+    })
+    .map((item, readingOrder) => ({ ...item, readingOrder }));
 }
 
 /**

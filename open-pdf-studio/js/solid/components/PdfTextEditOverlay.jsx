@@ -11,6 +11,17 @@ export default function PdfTextEditOverlay() {
     const minWidth = parseFloat(base.width) || 80;
     const minHeight = parseFloat(base.height) || 24;
 
+    if (editorOptions().fixedRegion) {
+      textareaRef.style.width = `${minWidth}px`;
+      textareaRef.style.height = `${minHeight}px`;
+      textareaRef.style.maxWidth = `${minWidth}px`;
+      textareaRef.style.maxHeight = `${minHeight}px`;
+      textareaRef.style.overflow = 'auto';
+      textareaRef.style.whiteSpace = 'pre-wrap';
+      textareaRef.style.overflowWrap = 'normal';
+      return;
+    }
+
     // wrap="off" keeps the live layout identical to the saved PDF: only an
     // explicit Enter creates a new line. Grow instead of introducing a visual
     // wrap that would disappear after saving.
@@ -54,11 +65,12 @@ export default function PdfTextEditOverlay() {
           ref={textareaRef}
           class="pdf-text-editor"
           dir={editorOptions().direction || 'auto'}
-          wrap="off"
+          wrap={editorOptions().fixedRegion ? 'soft' : 'off'}
           spellcheck={false}
           aria-label={editorOptions().ariaLabel || 'Edit PDF text'}
           aria-multiline={editorOptions().singleLine ? 'false' : 'true'}
-          aria-describedby={editorOptions().singleLine ? 'scanned-text-edit-status' : undefined}
+          aria-describedby={(editorOptions().singleLine || editorOptions().fixedRegion)
+            ? 'scanned-text-edit-status' : undefined}
           style={editorStyle()}
           value={text()}
           onBeforeInput={(e) => {
@@ -84,13 +96,22 @@ export default function PdfTextEditOverlay() {
             }
             setText(value);
             queueMicrotask(resizeToContent);
+            if (editorOptions().fixedRegion) {
+              queueMicrotask(() => {
+                const overflow = textareaRef.scrollHeight > textareaRef.clientHeight + 1
+                  || textareaRef.scrollWidth > textareaRef.clientWidth + 1;
+                setEditorStatus(overflow
+                  ? 'Content exceeds the fixed preview. Apply will wrap only if it fits; otherwise the edit is rejected.'
+                  : editorOptions().status || 'Editing inside one fixed original region.');
+              });
+            }
           }}
           onKeyDown={handleKeyDown}
           onBlur={handleBlur}
         />
-        <Show when={editorOptions().singleLine}>
+        <Show when={editorOptions().singleLine || editorOptions().fixedRegion}>
           <div id="scanned-text-edit-status" class="ocr-review-live-region" role="status" aria-live="polite" aria-atomic="true">
-            {editorStatus() || editorOptions().status || 'Editing one isolated scanned text line. Font properties are estimates.'}
+            {editorStatus() || editorOptions().status || 'Editing scanned text. Font properties are estimates.'}
           </div>
         </Show>
       </>

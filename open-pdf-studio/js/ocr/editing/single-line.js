@@ -120,7 +120,7 @@ function assertSingleLineTarget(result, selected) {
   return line;
 }
 
-function canonicalGeometry(line, selected, pageGeometry) {
+export function canonicalGeometry(line, selected, pageGeometry) {
   const sourcePolygon = selected.geometry.lineGeometry[0].sourcePolygon;
   const canonicalPolygon = mapPolygonBetweenSpaces(
     pageGeometry.transformChain,
@@ -201,7 +201,7 @@ function rgbHex(red, green, blue) {
   return `#${[red, green, blue].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
 }
 
-function estimateStyle({ line, raster, geometry, pageGeometry, analysis, overrides = {} }) {
+export function estimateStyle({ line, raster, geometry, pageGeometry, analysis, overrides = {} }) {
   const points = geometry.sourcePolygon.points;
   const minX = Math.max(0, Math.floor(Math.min(...points.map((point) => point[0]))));
   const maxX = Math.min(raster.widthPx, Math.ceil(Math.max(...points.map((point) => point[0]))));
@@ -299,7 +299,7 @@ function estimateStyle({ line, raster, geometry, pageGeometry, analysis, overrid
   };
 }
 
-function standardFontName(style) {
+export function standardFontName(style) {
   const bold = style.weight.value === 'bold';
   const italic = style.italic.value;
   if (style.fontClass.value === 'monospace') {
@@ -392,7 +392,7 @@ function layoutReplacement({ text, style, geometry, selected, sourceRaster }) {
   };
 }
 
-function cssFont(style, sourceRaster) {
+export function cssFont(style, sourceRaster) {
   const family = style.fontClass.value === 'monospace' ? 'Courier New, Courier, monospace'
     : style.fontClass.value === 'serif' ? 'Times New Roman, Times, serif'
       : 'Helvetica, Arial, sans-serif';
@@ -444,7 +444,7 @@ function pixelOffset(width, x, y) {
   return (y * width + x) * 4;
 }
 
-function repairHaloMetrics(originalExtraction, originalPatch, repairedBytes, approvedRegion) {
+export function repairHaloMetrics(originalExtraction, originalPatch, repairedBytes, approvedRegion) {
   const relativeX = approvedRegion.x - originalPatch.originX;
   const relativeY = approvedRegion.y - originalPatch.originY;
   let maximum = 0;
@@ -483,7 +483,7 @@ function repairHaloMetrics(originalExtraction, originalPatch, repairedBytes, app
   return metrics;
 }
 
-async function patchRecord(bytes, bounds) {
+export async function patchRecord(bytes, bounds) {
   return {
     encoding: 'rgba8-base64',
     coordinateSpace: OCR_SOURCE_RASTER_SPACE,
@@ -656,7 +656,7 @@ export function buildScannedTextSearchablePageSnapshot(result, pageGeometry) {
   });
 }
 
-function revisedEstimatedStyle(previous, overrides) {
+export function revisedEstimatedStyle(previous, overrides) {
   const allowed = new Set(['fontClass', 'fontSize', 'weight', 'italic', 'textColor', 'alignment']);
   for (const key of Object.keys(overrides || {})) {
     if (!allowed.has(key)) fail('UNSUPPORTED_STYLE_PROPERTY', `Scanned text style ${key} is outside this phase`);

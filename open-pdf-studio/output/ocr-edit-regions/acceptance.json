@@ -1,0 +1,34 @@
+{
+  "status": "pass",
+  "platform": "darwin",
+  "packagedApp": "/Users/alexander/Personal Projects/open-pdf-studio/target/release/bundle/macos/Open PDF Studio.app",
+  "testDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-edit-regions-9j5oYy",
+  "productionEntryPath": true,
+  "testOnlyEntryPoint": false,
+  "assertions": {
+    "undoRedo": true,
+    "firstSave": {
+      "pdfJsLines": 3,
+      "ownedVisible": true,
+      "ownedInvisible": true,
+      "nativePdfiumGatePassed": true,
+      "outsideEditRegionChangedPixels": 0
+    },
+    "reopenAndCopy": {
+      "ownedEditor": true,
+      "copiedText": "MACOS ONE MACOS TWO MACOS THREE"
+    },
+    "repeatedSave": {
+      "visibleSelectionCount": 1,
+      "contentStreamCount": 3,
+      "pdfJsLines": 3,
+      "nativePdfiumGatePassed": true
+    },
+    "explicitOverflowRejection": true,
+    "externalReaders": {
+      "applePreviewCopy": "MACOS ONE MACOS TWO MACOS THREE",
+      "chromePdfiumCopy": "MACOS ONE MACOS TWO MACOS THREE"
+    }
+  },
+  "completedAt": "2026-08-24T09:53:41.423Z"
+}

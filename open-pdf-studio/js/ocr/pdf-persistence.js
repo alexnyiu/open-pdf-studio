@@ -103,14 +103,34 @@ export function collectOwnedOcrWriterPages(document) {
       .filter((selection) => selection.repair?.status === 'applied'
         && selection.content?.scope === 'isolated-horizontal-line')
       .map((selection) => [selection.target.targetId, selection]));
-    const lines = page.searchableTextSnapshot.map((line) => {
+    const regionEdits = page.selections.filter((selection) =>
+      selection.repair?.status === 'applied'
+        && selection.content?.scope === 'fixed-region-multiline');
+    const regionBySourceLine = new Map();
+    for (const selection of regionEdits) {
+      for (const lineId of selection.target.lineIds) regionBySourceLine.set(lineId, selection);
+    }
+    const lines = page.searchableTextSnapshot.flatMap((line) => {
+      const regionEdit = regionBySourceLine.get(line.lineId);
+      if (regionEdit) {
+        if (regionEdit.target.lineIds[0] !== line.lineId) return [];
+        return regionEdit.content.searchableText.lines.map((outputLine) => writerLine({
+          lineId: `${regionEdit.id}-line-${outputLine.index}`,
+          text: outputLine.text,
+          direction: 'ltr',
+          readingOrder: line.readingOrder + outputLine.index,
+          polygon: outputLine.polygon,
+          baseline: outputLine.baseline,
+          words: undefined,
+        }));
+      }
       const edit = edits.get(line.lineId);
-      return writerLine({
+      return [writerLine({
         ...line,
         text: edit?.content?.searchableText?.text ?? line.text,
         words: edit ? undefined : line.words,
-      });
-    });
+      })];
+    }).map((line, readingOrder) => ({ ...line, readingOrder }));
     byPage.set(page.index, { pageIndex: page.index, lines });
   }
   return [...byPage.values()].sort((left, right) => left.pageIndex - right.pageIndex);
