@@ -15,6 +15,9 @@ export default function TextFormatSection() {
   const isLocked = () => annotProps.locked === true || annotProps.locked === 'mixed';
 
   const fonts = createMemo(() => {
+    if (annotProps.scannedTextEstimate === true) {
+      return ['Arial', 'Times New Roman', 'Courier New'];
+    }
     const currentFont = annotProps.fontFamily;
     if (currentFont) {
       ensureFontInStore(currentFont);
@@ -25,6 +28,11 @@ export default function TextFormatSection() {
   return (
     <Show when={sectionVis.textFormat}>
       <CollapsibleSection title={t('textFormat.title')} name="textFormat" id="prop-text-format-section">
+        <Show when={annotProps.scannedTextEstimate === true}>
+          <p class="scanned-text-estimate-note" role="note">
+            Font class, size, weight, italic state, color, and alignment are estimates. The source font is not recovered exactly.
+          </p>
+        </Show>
         <ColorPalettePicker
           label={t('textFormat.textColor')}
           color={() => annotProps.textColor}
@@ -71,16 +79,18 @@ export default function TextFormatSection() {
               onClick={() => updateAnnotProp('fontItalic', annotProps.fontItalic === 'mixed' ? true : !annotProps.fontItalic)}>
               <em>I</em>
             </button>
-            <button type="button" class={`text-style-btn${annotProps.fontUnderline === true ? ' active' : ''}`}
-              title={t('textFormat.underline')} disabled={isLocked()}
-              onClick={() => updateAnnotProp('fontUnderline', annotProps.fontUnderline === 'mixed' ? true : !annotProps.fontUnderline)}>
-              <u>U</u>
-            </button>
-            <button type="button" class={`text-style-btn${annotProps.fontStrikethrough === true ? ' active' : ''}`}
-              title={t('textFormat.strikethrough')} disabled={isLocked()}
-              onClick={() => updateAnnotProp('fontStrikethrough', annotProps.fontStrikethrough === 'mixed' ? true : !annotProps.fontStrikethrough)}>
-              <s>S</s>
-            </button>
+            <Show when={annotProps.scannedTextEstimate !== true}>
+              <button type="button" class={`text-style-btn${annotProps.fontUnderline === true ? ' active' : ''}`}
+                title={t('textFormat.underline')} disabled={isLocked()}
+                onClick={() => updateAnnotProp('fontUnderline', annotProps.fontUnderline === 'mixed' ? true : !annotProps.fontUnderline)}>
+                <u>U</u>
+              </button>
+              <button type="button" class={`text-style-btn${annotProps.fontStrikethrough === true ? ' active' : ''}`}
+                title={t('textFormat.strikethrough')} disabled={isLocked()}
+                onClick={() => updateAnnotProp('fontStrikethrough', annotProps.fontStrikethrough === 'mixed' ? true : !annotProps.fontStrikethrough)}>
+                <s>S</s>
+              </button>
+            </Show>
           </div>
         </div>
 

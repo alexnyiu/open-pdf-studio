@@ -1,5 +1,6 @@
 import { Show, createEffect } from 'solid-js';
-import { active, editorStyle, text, setText, keyDownHandler, blurHandler, selectOnFocus, setSelectOnFocus } from '../stores/pdfTextEditStore.js';
+import { active, editorStyle, text, setText, keyDownHandler, blurHandler, selectOnFocus,
+  setSelectOnFocus, editorOptions, editorStatus, setEditorStatus } from '../stores/pdfTextEditStore.js';
 
 export default function PdfTextEditOverlay() {
   let textareaRef;
@@ -48,21 +49,51 @@ export default function PdfTextEditOverlay() {
 
   return (
     <Show when={active()}>
-      <textarea
-        ref={textareaRef}
-        class="pdf-text-editor"
-        dir="auto"
-        wrap="off"
-        spellcheck={false}
-        style={editorStyle()}
-        value={text()}
-        onInput={(e) => {
-          setText(e.target.value);
-          queueMicrotask(resizeToContent);
-        }}
-        onKeyDown={handleKeyDown}
-        onBlur={handleBlur}
-      />
+      <>
+        <textarea
+          ref={textareaRef}
+          class="pdf-text-editor"
+          dir={editorOptions().direction || 'auto'}
+          wrap="off"
+          spellcheck={false}
+          aria-label={editorOptions().ariaLabel || 'Edit PDF text'}
+          aria-multiline={editorOptions().singleLine ? 'false' : 'true'}
+          aria-describedby={editorOptions().singleLine ? 'scanned-text-edit-status' : undefined}
+          style={editorStyle()}
+          value={text()}
+          onBeforeInput={(e) => {
+            if (editorOptions().singleLine && ['insertParagraph', 'insertLineBreak'].includes(e.inputType)) {
+              e.preventDefault();
+              setEditorStatus('Scanned text editing supports one line only.');
+            }
+          }}
+          onPaste={(e) => {
+            if (!editorOptions().singleLine) return;
+            const pasted = e.clipboardData?.getData('text') || '';
+            if (/[\r\n\u2028\u2029]/u.test(pasted)) {
+              e.preventDefault();
+              setEditorStatus('Pasted text was rejected because multiline editing is not supported.');
+            }
+          }}
+          onInput={(e) => {
+            let value = e.target.value;
+            if (editorOptions().singleLine && /[\r\n\u2028\u2029]/u.test(value)) {
+              value = value.replace(/[\r\n\u2028\u2029]+/gu, '');
+              e.target.value = value;
+              setEditorStatus('Line breaks are not supported for scanned text.');
+            }
+            setText(value);
+            queueMicrotask(resizeToContent);
+          }}
+          onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+        />
+        <Show when={editorOptions().singleLine}>
+          <div id="scanned-text-edit-status" class="ocr-review-live-region" role="status" aria-live="polite" aria-atomic="true">
+            {editorStatus() || editorOptions().status || 'Editing one isolated scanned text line. Font properties are estimates.'}
+          </div>
+        </Show>
+      </>
     </Show>
   );
 }

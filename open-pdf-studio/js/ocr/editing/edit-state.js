@@ -21,6 +21,10 @@ import {
   zeroBytes,
 } from './raster.js';
 import { selectScannedTextEditTarget } from './selection.js';
+import {
+  buildIsolatedSingleLineContent,
+  buildScannedTextSearchablePageSnapshot,
+} from './single-line.js';
 
 export class ScannedTextEditStateConflictError extends Error {
   constructor(code, message) {
@@ -136,6 +140,9 @@ export async function evaluateScannedTextEdit({
   modifiedAt,
   onStage,
   onCleanup,
+  replacementText = null,
+  styleOverrides = {},
+  renderVisiblePatch,
 }) {
   const ephemeral = [];
   let completed = false;
@@ -219,6 +226,27 @@ export async function evaluateScannedTextEdit({
     if (sourceAfter !== sourceBefore) {
       throw new Error('The original scanned raster was mutated during repair evaluation');
     }
+    const content = replacementText === null ? null : await buildIsolatedSingleLineContent({
+      result,
+      pageGeometry,
+      raster,
+      selected,
+      originalPatch,
+      repair,
+      analysis,
+      replacementText,
+      styleOverrides,
+      revision,
+      parentRevision,
+      renderVisiblePatch,
+    });
+    if (content) {
+      await notifyStage(onStage, 'replacement-rendered', {
+        selectionId: selected.id,
+        replacementText: content.replacementText,
+      });
+      throwIfAborted(signal, 'replacement finalization');
+    }
     const selection = {
       id: selected.id,
       revision,
@@ -227,6 +255,7 @@ export async function evaluateScannedTextEdit({
       originalPatch,
       analysis,
       repair,
+      content,
       ownership: {
         owner: SCANNED_TEXT_EDIT_OWNER,
         operationId,
@@ -240,12 +269,15 @@ export async function evaluateScannedTextEdit({
     return {
       selection,
       page: selected.page,
-      pageGeometry: selected.pageGeometry,
+      pageGeometry: clone(pageGeometry),
       sourceRaster: {
         ...selected.sourceRaster,
         rgbaSha256: sourceBefore,
       },
       document: selected.document,
+      searchableTextSnapshot: content
+        ? buildScannedTextSearchablePageSnapshot(result, pageGeometry)
+        : [],
     };
   } finally {
     for (const bytes of ephemeral) zeroBytes(bytes);
@@ -266,6 +298,7 @@ function pageForEvaluation(evaluation) {
     revision: evaluation.page.revision,
     sourceRaster: clone(evaluation.sourceRaster),
     pageGeometry: clone(evaluation.pageGeometry),
+    searchableTextSnapshot: clone(evaluation.searchableTextSnapshot || []),
     selections: [],
   };
 }
@@ -352,6 +385,8 @@ export function commitScannedTextEditEvaluation(doc, evaluation, {
   next.updatedAt = now;
   const after = toValidatedScannedTextEditStateV1Json(next);
   doc.scannedTextEdits = after;
+  doc.scannedTextEditRemovalPending = false;
+  if (evaluation.selection.content && doc.ocr) doc.ocr.dirty = true;
   notifyStateChanged(doc, evaluation.page.index);
   return { before, after };
 }
@@ -363,10 +398,15 @@ export function snapshotScannedTextEditCommandState(doc) {
 export function restoreScannedTextEditCommandState(doc, snapshot) {
   if (snapshot === null) {
     doc.scannedTextEdits = null;
+    doc.scannedTextEditRemovalPending = true;
+    if (doc?.ocr) doc.ocr.dirty = true;
     notifyStateChanged(doc, null);
     return null;
   }
   doc.scannedTextEdits = toValidatedScannedTextEditStateV1Json(snapshot);
+  doc.scannedTextEditRemovalPending = doc.scannedTextEdits.pages
+    .some((page) => page.selections.some((selection) => selection.repair.status === 'reverted'));
+  if (doc?.ocr) doc.ocr.dirty = true;
   notifyStateChanged(doc, null);
   return doc.scannedTextEdits;
 }

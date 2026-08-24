@@ -30,6 +30,7 @@
     "test:ocr-ui:macos": "node scripts/test-ocr-searchable-layer-macos.mjs && node scripts/test-ocr-recognition-dialog-macos.mjs && node scripts/test-ocr-progress-macos.mjs && node scripts/test-ocr-review-macos.mjs && node scripts/test-ocr-production-workflow-macos.mjs",
     "test:ocr-workflow:macos": "node scripts/test-ocr-production-workflow-macos.mjs",
     "test:ocr-save:macos": "node scripts/test-macos-safe-ocr-save-packaged.mjs",
+    "test:ocr-edit-single-line:macos": "node scripts/test-ocr-edit-single-line-macos.mjs",
     "benchmark": "npm run benchmark:ocr -- --output-dir /tmp/open-pdf-studio-ocr-benchmark",
     "benchmark:ocr": "node scripts/run-ocr-quality-benchmark.mjs",
     "measure:ocr": "node scripts/measure-ocr-phase-a.mjs",

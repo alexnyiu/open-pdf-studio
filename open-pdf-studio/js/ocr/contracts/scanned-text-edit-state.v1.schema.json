@@ -69,7 +69,18 @@
         "index": { "type": "integer", "minimum": 0 },
         "revision": { "type": "integer", "minimum": 0 },
         "sourceRaster": { "$ref": "#/$defs/sourceRaster" },
-        "pageGeometry": { "$ref": "#/$defs/pageGeometryRef" },
+        "pageGeometry": {
+          "anyOf": [
+            { "$ref": "#/$defs/pageGeometryRef" },
+            { "$ref": "page-geometry.v1.schema.json" }
+          ]
+        },
+        "searchableTextSnapshot": {
+          "type": "array",
+          "maxItems": 100000,
+          "x-uniqueBy": "lineId",
+          "items": { "$ref": "#/$defs/searchableLineSnapshot" }
+        },
         "selections": {
           "type": "array",
           "minItems": 1,
@@ -77,6 +88,48 @@
           "x-uniqueBy": "id",
           "items": { "$ref": "#/$defs/selection" }
         }
+      }
+    },
+    "searchableWordSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "text", "direction", "polygon"],
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/id" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "direction": { "enum": [null, "ltr", "rtl", "ttb", "btt"] },
+        "polygon": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coordinateSpace", "points"],
+          "properties": {
+            "coordinateSpace": { "const": "pdf-default-user-space" },
+            "points": { "$ref": "common.schema.json#/$defs/polygonPoints" }
+          }
+        }
+      }
+    },
+    "searchableLineSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lineId", "text", "confidence", "readingOrder", "direction", "polygon", "baseline"],
+      "properties": {
+        "lineId": { "$ref": "common.schema.json#/$defs/id" },
+        "text": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "readingOrder": { "type": "integer", "minimum": 0 },
+        "direction": { "enum": [null, "ltr", "rtl", "ttb", "btt"] },
+        "polygon": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coordinateSpace", "points"],
+          "properties": {
+            "coordinateSpace": { "const": "pdf-default-user-space" },
+            "points": { "$ref": "common.schema.json#/$defs/polygonPoints" }
+          }
+        },
+        "baseline": { "$ref": "#/$defs/canonicalBaseline" },
+        "words": { "type": "array", "items": { "$ref": "#/$defs/searchableWordSnapshot" } }
       }
     },
     "resultRef": {
@@ -310,6 +363,232 @@
         "changedRegion": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/changedRegion" }] }
       }
     },
+    "styleEstimateFontClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "estimated", "confidence", "method"],
+      "properties": {
+        "value": { "enum": ["serif", "sans-serif", "monospace"] },
+        "estimated": { "const": true },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "method": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    },
+    "styleEstimateFontSize": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "estimated", "confidence", "method"],
+      "properties": {
+        "value": { "type": "number", "exclusiveMinimum": 0 },
+        "estimated": { "const": true },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "method": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    },
+    "styleEstimateWeight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "estimated", "confidence", "method"],
+      "properties": {
+        "value": { "enum": ["normal", "bold"] },
+        "estimated": { "const": true },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "method": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    },
+    "styleEstimateItalic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "estimated", "confidence", "method"],
+      "properties": {
+        "value": { "type": "boolean" },
+        "estimated": { "const": true },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "method": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    },
+    "styleEstimateColor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "estimated", "confidence", "method"],
+      "properties": {
+        "value": { "type": "string", "pattern": "^#[0-9a-f]{6}$" },
+        "estimated": { "const": true },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "method": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    },
+    "styleEstimateAlignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "estimated", "confidence", "method"],
+      "properties": {
+        "value": { "enum": ["left", "center", "right"] },
+        "estimated": { "const": true },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "method": { "$ref": "common.schema.json#/$defs/id" }
+      }
+    },
+    "estimatedStyle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fontClass", "fontSize", "weight", "italic", "textColor", "alignment"],
+      "properties": {
+        "fontClass": { "$ref": "#/$defs/styleEstimateFontClass" },
+        "fontSize": { "$ref": "#/$defs/styleEstimateFontSize" },
+        "weight": { "$ref": "#/$defs/styleEstimateWeight" },
+        "italic": { "$ref": "#/$defs/styleEstimateItalic" },
+        "textColor": { "$ref": "#/$defs/styleEstimateColor" },
+        "alignment": { "$ref": "#/$defs/styleEstimateAlignment" }
+      }
+    },
+    "canonicalBaseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "provenance", "coordinateSpace", "points"],
+      "properties": {
+        "status": { "const": "provided" },
+        "provenance": { "enum": ["engine", "ocr-engine", "estimated-from-ocr-polygon"] },
+        "coordinateSpace": { "const": "pdf-default-user-space" },
+        "points": { "$ref": "common.schema.json#/$defs/polylinePoints" }
+      }
+    },
+    "singleLineSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ocrIds", "originalText", "originalPolygon", "canonicalPolygon", "canonicalBaseline"],
+      "properties": {
+        "ocrIds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lineId", "wordIds"],
+          "properties": {
+            "lineId": { "$ref": "common.schema.json#/$defs/id" },
+            "wordIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "common.schema.json#/$defs/id" } }
+          }
+        },
+        "originalText": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "originalPolygon": { "$ref": "common.schema.json#/$defs/coordinatePolygon" },
+        "canonicalPolygon": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coordinateSpace", "points"],
+          "properties": {
+            "coordinateSpace": { "const": "pdf-default-user-space" },
+            "points": { "$ref": "common.schema.json#/$defs/polygonPoints" }
+          }
+        },
+        "canonicalBaseline": { "$ref": "#/$defs/canonicalBaseline" }
+      }
+    },
+    "singleLineLayout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fontName", "direction", "shaping", "glyphCoverage", "encodedGlyphCount",
+        "encodedText", "widthPt", "heightPt", "availableWidthPt", "availableHeightPt",
+        "origin", "angleDegrees", "baselineAligned", "overflow"
+      ],
+      "properties": {
+        "fontName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "direction": { "const": "ltr" },
+        "shaping": { "const": "pdf-lib-standard-font-winansi-v1" },
+        "glyphCoverage": { "const": "complete" },
+        "encodedGlyphCount": { "type": "integer", "minimum": 1 },
+        "encodedText": { "type": "string", "minLength": 1, "maxLength": 16384 },
+        "widthPt": { "type": "number", "exclusiveMinimum": 0 },
+        "heightPt": { "type": "number", "exclusiveMinimum": 0 },
+        "availableWidthPt": { "type": "number", "exclusiveMinimum": 0 },
+        "availableHeightPt": { "type": "number", "exclusiveMinimum": 0 },
+        "origin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["coordinateSpace", "point"],
+          "properties": {
+            "coordinateSpace": { "const": "pdf-default-user-space" },
+            "point": { "$ref": "common.schema.json#/$defs/point" }
+          }
+        },
+        "angleDegrees": { "type": "number", "minimum": -3.000001, "maximum": 3.000001 },
+        "baselineAligned": { "const": true },
+        "overflow": { "const": false }
+      }
+    },
+    "halo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxBoundaryChannelDelta", "meanBoundaryChannelDelta", "sampleCount", "tolerance", "passed"],
+      "properties": {
+        "maxBoundaryChannelDelta": { "type": "integer", "minimum": 0, "maximum": 72 },
+        "meanBoundaryChannelDelta": { "type": "number", "minimum": 0, "maximum": 24 },
+        "sampleCount": { "type": "integer", "minimum": 0 },
+        "tolerance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxBoundaryChannelDelta", "meanBoundaryChannelDelta"],
+          "properties": {
+            "maxBoundaryChannelDelta": { "const": 72 },
+            "meanBoundaryChannelDelta": { "const": 24 }
+          }
+        },
+        "passed": { "const": true }
+      }
+    },
+    "singleLineContent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope", "source", "replacementText", "estimatedStyle", "layout", "repairPatch",
+        "visibleReplacement", "searchableText", "undo"
+      ],
+      "properties": {
+        "scope": { "const": "isolated-horizontal-line" },
+        "source": { "$ref": "#/$defs/singleLineSource" },
+        "replacementText": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\r\\n\\u2028\\u2029]+$" },
+        "estimatedStyle": { "$ref": "#/$defs/estimatedStyle" },
+        "layout": { "$ref": "#/$defs/singleLineLayout" },
+        "repairPatch": { "$ref": "#/$defs/patch" },
+        "visibleReplacement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "patch", "halo", "outsideEditRegionChangedPixels"],
+          "properties": {
+            "text": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "patch": { "$ref": "#/$defs/patch" },
+            "halo": { "$ref": "#/$defs/halo" },
+            "outsideEditRegionChangedPixels": { "const": 0 }
+          }
+        },
+        "searchableText": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text", "renderingMode", "synchronized"],
+          "properties": {
+            "text": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "renderingMode": { "const": "owned-invisible-ocr" },
+            "synchronized": { "const": true }
+          }
+        },
+        "undo": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "before", "after", "revision", "parentRevision"],
+          "properties": {
+            "kind": { "const": "scanned-text-edit" },
+            "before": {
+              "type": "object", "additionalProperties": false, "required": ["text", "repairStatus"],
+              "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4096 }, "repairStatus": { "enum": ["original", "applied"] } }
+            },
+            "after": {
+              "type": "object", "additionalProperties": false, "required": ["text", "repairStatus"],
+              "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4096 }, "repairStatus": { "const": "applied" } }
+            },
+            "revision": { "type": "integer", "minimum": 1 },
+            "parentRevision": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
     "operationOwnership": {
       "type": "object",
       "additionalProperties": false,
@@ -341,6 +620,7 @@
         "originalPatch": { "$ref": "#/$defs/patch" },
         "analysis": { "$ref": "#/$defs/analysis" },
         "repair": { "$ref": "#/$defs/repair" },
+        "content": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/singleLineContent" }] },
         "ownership": { "$ref": "#/$defs/operationOwnership" }
       }
     },

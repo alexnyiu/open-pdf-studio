@@ -184,6 +184,7 @@ async function verifyStatePatchDigests(state) {
       const original = await decodeRgbaPatch(selection.originalPatch);
       let beforeRegion = null;
       let repaired = null;
+      let visible = null;
       try {
         if (selection.repair.changedRegion !== null) {
           beforeRegion = extractOwnedRegion(
@@ -197,6 +198,15 @@ async function verifyStatePatchDigests(state) {
         }
         if (selection.repair.repairedPatch !== null) {
           repaired = await decodeRgbaPatch(selection.repair.repairedPatch);
+        }
+        if (selection.content?.visibleReplacement?.patch) {
+          visible = await decodeRgbaPatch(selection.content.visibleReplacement.patch);
+          const patch = selection.content.visibleReplacement.patch;
+          const approved = selection.repair.approvedRegion;
+          if (patch.originX !== approved.x || patch.originY !== approved.y
+              || patch.widthPx !== approved.width || patch.heightPx !== approved.height) {
+            fail('INVALID_OWNED_EDIT_STATE', 'Visible replacement patch must exactly cover the approved edit region');
+          }
         }
         if (selection.repair.changedRegion !== null) {
           const facts = changedRegionFacts(
@@ -212,9 +222,14 @@ async function verifyStatePatchDigests(state) {
         zeroBytes(original);
         zeroBytes(beforeRegion);
         zeroBytes(repaired);
+        zeroBytes(visible);
       }
     }
   }
+}
+
+function visiblePatchForSelection(selection) {
+  return selection.content?.visibleReplacement?.patch || selection.repair.repairedPatch;
 }
 
 function pageContentRefs(page, context) {
@@ -390,7 +405,7 @@ async function validateOwnership(page, context, pageIndex, pageCount) {
   const appliedSelections = pageState.selections.filter((selection) => selection.repair.status === 'applied');
   if (appliedSelections.length !== length
       || appliedSelections.some((selection, index) => selection.id !== selectionIds[index]
-        || selection.repair.repairedPatch.sha256 !== patchDigests[index])) {
+        || visiblePatchForSelection(selection).sha256 !== patchDigests[index])) {
     fail('MALFORMED_OWNERSHIP', 'Owned image metadata does not match applied edit-state selections');
   }
   return {
@@ -522,7 +537,8 @@ async function loadPdfWithPages(sourceBytes) {
 }
 
 function geometryForPage(pageState, documentState, pageGeometries) {
-  const geometry = pageGeometries.find((entry) => entry.geometryId === pageState.pageGeometry.geometryId);
+  const geometry = pageGeometries.find((entry) => entry.geometryId === pageState.pageGeometry.geometryId)
+    || (pageState.pageGeometry?.transformChain ? pageState.pageGeometry : null);
   if (!geometry) fail('MISSING_PAGE_GEOMETRY', `Canonical page geometry ${pageState.pageGeometry.geometryId} is unavailable`);
   assertOcrPageGeometryV1(geometry);
   if (geometry.document.id !== documentState.id
@@ -538,7 +554,7 @@ function geometryForPage(pageState, documentState, pageGeometries) {
   return geometry;
 }
 
-async function assertTargetDocumentLineage(sourceBytes, state, ownershipByPage) {
+async function assertTargetDocumentLineage(sourceBytes, state, ownershipByPage, lineagePdfBytes = null) {
   const expectedDigest = state.document.fingerprint.value;
   const ownedDigests = new Set(ownershipByPage
     .filter(Boolean)
@@ -546,7 +562,8 @@ async function assertTargetDocumentLineage(sourceBytes, state, ownershipByPage) 
   if (ownedDigests.size > 1 || (ownedDigests.size === 1 && !ownedDigests.has(expectedDigest))) {
     fail('STALE_DOCUMENT', 'Existing scanned-text repair ownership belongs to a different source PDF');
   }
-  if (ownedDigests.size === 0 && await sha256Hex(sourceBytes) !== expectedDigest) {
+  const lineageBytes = lineagePdfBytes === null ? sourceBytes : asBytes(lineagePdfBytes);
+  if (ownedDigests.size === 0 && await sha256Hex(lineageBytes) !== expectedDigest) {
     fail('STALE_DOCUMENT', 'Scanned-text edit state fingerprint does not match the target source PDF');
   }
 }
@@ -581,6 +598,7 @@ export async function writeOwnedScannedTextRepairLayer({
   state,
   pageGeometries,
   modifiedAt,
+  lineagePdfBytes = null,
 }) {
   const sourceBytes = asBytes(pdfBytes);
   assertScannedTextEditStateV1(state);
@@ -609,7 +627,7 @@ export async function writeOwnedScannedTextRepairLayer({
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
     ownershipByPage.push(await validateOwnership(pages[pageIndex], context, pageIndex, pages.length));
   }
-  await assertTargetDocumentLineage(sourceBytes, state, ownershipByPage);
+  await assertTargetDocumentLineage(sourceBytes, state, ownershipByPage, lineagePdfBytes);
   const preparedIndexes = new Set(prepared.map((entry) => entry.pageState.index));
   let changed = false;
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
@@ -643,7 +661,8 @@ export async function writeOwnedScannedTextRepairLayer({
     const reserved = new Set();
     const images = [];
     for (const selection of entry.selections) {
-      const rgba = await decodeRgbaPatch(selection.repair.repairedPatch);
+      const visiblePatch = visiblePatchForSelection(selection);
+      const rgba = await decodeRgbaPatch(visiblePatch);
       let rgb = null;
       try {
         rgb = rgbaToRgb(rgba);
@@ -653,15 +672,15 @@ export async function writeOwnedScannedTextRepairLayer({
         const stream = context.flateStream(rgb, {
           Type: 'XObject',
           Subtype: 'Image',
-          Width: selection.repair.repairedPatch.widthPx,
-          Height: selection.repair.repairedPatch.heightPx,
+          Width: visiblePatch.widthPx,
+          Height: visiblePatch.heightPx,
           ColorSpace: 'DeviceRGB',
           BitsPerComponent: 8,
           Interpolate: PDFBool.False,
           Owner: PDFString.of(SCANNED_TEXT_EDIT_OWNER),
           SchemaVersion: SCANNED_TEXT_EDIT_STATE_SCHEMA_VERSION,
           ImageDigest: PDFString.of(imageDigest),
-          PatchDigest: PDFString.of(selection.repair.repairedPatch.sha256),
+          PatchDigest: PDFString.of(visiblePatch.sha256),
         });
         const ref = context.register(stream);
         xobjects.set(PDFName.of(resourceName), ref);
@@ -669,7 +688,7 @@ export async function writeOwnedScannedTextRepairLayer({
           ref,
           resourceName,
           imageDigest,
-          patchDigest: selection.repair.repairedPatch.sha256,
+          patchDigest: visiblePatch.sha256,
           selectionId: selection.id,
           matrix: imageMatrix(entry.geometry, selection.repair.approvedRegion),
         });

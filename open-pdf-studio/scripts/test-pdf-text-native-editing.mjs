@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { access } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 
@@ -29,7 +30,14 @@ async function darkPixelBounds(image) {
   return { minX, minY, maxX, maxY };
 }
 
-const browser = await chromium.launch({ headless: true });
+let executablePath;
+try {
+  await access(chromium.executablePath());
+} catch {
+  executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  await access(executablePath);
+}
+const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
 
 try {
   const page = await browser.newPage({

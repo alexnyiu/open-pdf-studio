@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rand::RngCore;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri_plugin_fs::FsExt;
 
@@ -66,9 +66,30 @@ pub struct PdfiumValidatedPage {
     width: u32,
     height: u32,
     changed_pixels: usize,
+    allowed_changed_pixels: usize,
+    outside_allowed_changed_pixels: usize,
     max_channel_delta: u8,
+    outside_allowed_max_channel_delta: u8,
     baseline_text: String,
     candidate_text: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PdfiumAllowedBounds {
+    coordinate_space: String,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PdfiumAllowedRegion {
+    page_index: u32,
+    source_raster_dpi: f32,
+    bounds: PdfiumAllowedBounds,
 }
 
 #[derive(Serialize)]
@@ -583,6 +604,7 @@ fn record_for_token(state: &MacosSafeSaveState, token: &str) -> Result<SafeSaveR
 pub async fn validate_macos_ocr_pdf_candidate(
     token: String,
     selected_page_indexes: Vec<u32>,
+    allowed_regions: Option<Vec<PdfiumAllowedRegion>>,
     state: tauri::State<'_, MacosSafeSaveState>,
 ) -> Result<PdfiumCandidateValidation, String> {
     let record = record_for_token(&state, &token)?;
@@ -630,6 +652,21 @@ pub async fn validate_macos_ocr_pdf_candidate(
             return Err(error("INVALID_SELECTED_PAGES", "At least one PDFium validation page is required"));
         }
         let mut pages = Vec::with_capacity(indexes.len());
+        let allowed_regions = allowed_regions.unwrap_or_default();
+        for region in &allowed_regions {
+            if region.bounds.coordinate_space != "source-raster-pixels"
+                || !region.source_raster_dpi.is_finite()
+                || region.source_raster_dpi <= 0.0
+                || region.bounds.width == 0
+                || region.bounds.height == 0
+                || !indexes.contains(&region.page_index)
+            {
+                return Err(error(
+                    "INVALID_ALLOWED_REGION",
+                    "Visible scanned-text validation regions must be non-empty source-raster rectangles on selected pages",
+                ));
+            }
+        }
         for page_index in indexes {
             if page_index as usize >= candidate_page_count {
                 return Err(error("INVALID_SELECTED_PAGES", format!("Page {} is outside the candidate", page_index + 1)));
@@ -656,22 +693,61 @@ pub async fn validate_macos_ocr_pdf_candidate(
                 return Err(error("VISIBLE_PIXEL_REGRESSION", format!("Page {} dimensions changed", page_index + 1)));
             }
             let mut changed_pixels = 0_usize;
+            let mut allowed_changed_pixels = 0_usize;
+            let mut outside_allowed_changed_pixels = 0_usize;
             let mut max_channel_delta = 0_u8;
-            for (left, right) in baseline_rgba.chunks_exact(4).zip(candidate_rgba.chunks_exact(4)) {
+            let mut outside_allowed_max_channel_delta = 0_u8;
+            let page_regions = allowed_regions
+                .iter()
+                .filter(|region| region.page_index == page_index)
+                .map(|region| {
+                    let scale = PDFIUM_RENDER_SCALE * 72.0 / region.source_raster_dpi;
+                    let left = (region.bounds.x as f32 * scale).floor().max(0.0) as u32;
+                    let top = (region.bounds.y as f32 * scale).floor().max(0.0) as u32;
+                    let right = ((region.bounds.x + region.bounds.width) as f32 * scale)
+                        .ceil()
+                        .min(width as f32) as u32;
+                    let bottom = ((region.bounds.y + region.bounds.height) as f32 * scale)
+                        .ceil()
+                        .min(height as f32) as u32;
+                    (left, top, right, bottom)
+                })
+                .collect::<Vec<_>>();
+            for (pixel_index, (left, right)) in baseline_rgba
+                .chunks_exact(4)
+                .zip(candidate_rgba.chunks_exact(4))
+                .enumerate()
+            {
                 let changed = left != right;
+                let x = pixel_index as u32 % width;
+                let y = pixel_index as u32 / width;
+                let allowed = page_regions.iter().any(|(region_left, region_top, region_right, region_bottom)| {
+                    x >= *region_left && x < *region_right && y >= *region_top && y < *region_bottom
+                });
                 if changed {
                     changed_pixels += 1;
+                    if allowed {
+                        allowed_changed_pixels += 1;
+                    } else {
+                        outside_allowed_changed_pixels += 1;
+                    }
                 }
                 for channel in 0..4 {
-                    max_channel_delta = max_channel_delta.max(left[channel].abs_diff(right[channel]));
+                    let delta = left[channel].abs_diff(right[channel]);
+                    max_channel_delta = max_channel_delta.max(delta);
+                    if !allowed {
+                        outside_allowed_max_channel_delta = outside_allowed_max_channel_delta.max(delta);
+                    }
                 }
             }
-            if changed_pixels > MAX_CHANGED_PIXELS_PER_PAGE || max_channel_delta > MAX_CHANNEL_DELTA {
+            if outside_allowed_changed_pixels > MAX_CHANGED_PIXELS_PER_PAGE
+                || outside_allowed_max_channel_delta > MAX_CHANNEL_DELTA
+            {
                 return Err(error(
                     "VISIBLE_PIXEL_REGRESSION",
                     format!(
-                        "Page {} changed {changed_pixels} pixels (max channel delta {max_channel_delta})",
-                        page_index + 1
+                        "Page {} changed {outside_allowed_changed_pixels} pixels outside approved regions (outside max channel delta {outside_allowed_max_channel_delta}; total changed {changed_pixels})",
+                        page_index + 1,
                     ),
                 ));
             }
@@ -680,7 +756,10 @@ pub async fn validate_macos_ocr_pdf_candidate(
                 width,
                 height,
                 changed_pixels,
+                allowed_changed_pixels,
+                outside_allowed_changed_pixels,
                 max_channel_delta,
+                outside_allowed_max_channel_delta,
                 baseline_text,
                 candidate_text,
             });

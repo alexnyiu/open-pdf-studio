@@ -183,7 +183,7 @@
     "repaired": "flat-scanned-repaired.pdf",
     "reverted": "flat-scanned-reverted.pdf",
     "sourceSha256": "35338518a98d88195c189e39486ad7e992bb7dcfde7bf80fb7a91ad25fddfd6b",
-    "repairedSha256": "3f9ee56a5146c7dd9911b12a4ef7955459a3feb0ff162184b56c47bf9b8e73ce",
+    "repairedSha256": "ba0a12c0dc292e6441b726b91f59c1fd32104afc3817f6716ddc3f55d5a0ee98",
     "revertedSha256": "00758b448345143ba8c5c96c3e2741c6704d686294861c8def395544e1ec5a77",
     "approvedRegion": {
       "coordinateSpace": "source-raster-pixels",
@@ -207,6 +207,25 @@
       "afterSha256": "fcebe9180e3b22f48a6420601aabbf5ca5ced6c9ba7a4b9af2f953ab546b5784"
     },
     "stateId": "scanned-text-edit-fixture-state",
+    "stateRevision": 1
+  },
+  "singleLineProof": {
+    "edited": "flat-scanned-line-edited.pdf",
+    "editedRepeat": "flat-scanned-line-edited-repeat.pdf",
+    "restored": "flat-scanned-line-restored.pdf",
+    "editedSha256": "b6d5b66dff664e082207b3641f42c38b6162ff884b1346802856912c83fcbb84",
+    "editedRepeatSha256": "6c41793d7ebfcb6511e419494321c4f908791e9d3a6d924905566e4b81349470",
+    "restoredSha256": "3fca79c56653ec0d4d143485982168deac3043b2f1a9e80093bc89b42b372370",
+    "originalText": "SCAN TEXT",
+    "replacementText": "EDIT TEXT",
+    "approvedRegion": {
+      "coordinateSpace": "source-raster-pixels",
+      "x": 71,
+      "y": 63,
+      "width": 114,
+      "height": 26
+    },
+    "stateId": "scanned-text-single-line-fixture-state",
     "stateRevision": 1
   }
 }

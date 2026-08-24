@@ -18,6 +18,8 @@ export function createDocument(filePath: string | null = null): DocumentState {
     textEdits: [],
     ocr: createDocumentOcrState(id),
     scannedTextEdits: null,
+    scannedTextEditPersistedRevision: 0,
+    scannedTextEditRemovalPending: false,
     watermarks: [],
     bookmarks: [],
     undoStack: [],

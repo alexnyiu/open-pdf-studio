@@ -32,6 +32,7 @@ globalThis.window = {
   dispatchEvent() { return true; },
 };
 globalThis.location = globalThis.window.location;
+globalThis.DOMMatrix ||= class DOMMatrix {};
 
 const vite = await createServer({
   server: { middlewareMode: true },
@@ -39,7 +40,12 @@ const vite = await createServer({
 });
 const { state } = await vite.ssrLoadModule('/js/core/state.js');
 const { redo, undo } = await vite.ssrLoadModule('/js/core/undo-manager.js');
-const { applyScannedTextEditForDocument } = await vite.ssrLoadModule('/js/ocr/editing/undo-commands.js');
+const {
+  applyScannedTextEditForDocument,
+  removeScannedTextEditForDocument,
+  reviseScannedTextEditForDocument,
+} = await vite.ssrLoadModule('/js/ocr/editing/undo-commands.js');
+const { collectOwnedOcrWriterPages } = await vite.ssrLoadModule('/js/ocr/pdf-persistence.js');
 
 after(async () => {
   state.documents.splice(0, state.documents.length);
@@ -118,6 +124,26 @@ function pixelsOutsideEqual(before, after, bounds) {
     }
   }
   return { outsideChanged, insideChanged };
+}
+
+function deterministicVisiblePatch({ basePatchBytes, patch, text, geometry }) {
+  const output = new Uint8Array(basePatchBytes);
+  const baselineY = Math.max(1, Math.min(
+    patch.heightPx - 2,
+    Math.round(geometry.sourceBaseline[0][1] - patch.originY),
+  ));
+  const glyphCount = Math.min(
+    Array.from(text).length,
+    Math.max(1, Math.floor((patch.widthPx - 4) / 3)),
+  );
+  for (let glyph = 0; glyph < glyphCount; glyph += 1) {
+    const x = 2 + glyph * 3;
+    for (let y = Math.max(0, baselineY - 4); y <= baselineY; y += 1) {
+      const offset = (y * patch.widthPx + x) * 4;
+      output.set([18, 18, 18, 255], offset);
+    }
+  }
+  return output;
 }
 
 test('selects stable OCR line and region IDs into canonical source geometry without mutating results', () => {
@@ -381,9 +407,10 @@ test('separate edit-state contract validates through runtime and JSON Schema pat
   assertScannedTextEditStateV1(doc.scannedTextEdits);
   assert.deepEqual(validateScannedTextEditStateV1(doc.scannedTextEdits), { ok: true, issues: [] });
   const commonSchema = JSON.parse(await readFile(new URL('../contracts/common.schema.json', import.meta.url), 'utf8'));
+  const pageGeometrySchema = JSON.parse(await readFile(new URL('../contracts/page-geometry.v1.schema.json', import.meta.url), 'utf8'));
   const editSchema = JSON.parse(await readFile(new URL('../contracts/scanned-text-edit-state.v1.schema.json', import.meta.url), 'utf8'));
   const schemaValidation = validateAgainstJsonSchema(doc.scannedTextEdits, editSchema, {
-    schemas: [commonSchema],
+    schemas: [commonSchema, pageGeometrySchema],
   });
   assert.deepEqual(schemaValidation, { ok: true, issues: [] });
 
@@ -568,6 +595,236 @@ test('typed undo and redo restore the original patch and the exact repaired patc
     await redo();
     const afterRedo = await materializeScannedTextEditPage(raster, activeDocument.scannedTextEdits, 0);
     assert.deepEqual(afterRedo.data, repaired.data, 'redo must restore the exact repair patch');
+  } finally {
+    state.documents.splice(0, state.documents.length);
+    state.activeDocumentIndex = -1;
+  }
+});
+
+test('one eligible horizontal OCR line owns estimated style, visible pixels, and synchronized searchable text', async () => {
+  const { entry, raster } = await loadVisualFixture('flat-color');
+  const fixture = ocrFor(entry, 'single-line-content');
+  const doc = documentFor(fixture.result);
+  const immutableOcr = structuredClone(fixture.result);
+  const evaluation = await applyScannedTextEditForDocument(doc, {
+    ...fixture,
+    raster: boundRaster(raster, fixture.result),
+    target: { kind: 'line', lineId: entry.ocrLine.id },
+    replacementText: 'EDIT TEXT',
+    renderVisiblePatch: deterministicVisiblePatch,
+    contextPaddingPx: 24,
+    operationId: 'single-line-content-operation',
+    modifiedAt: FIXED_TIME,
+  });
+  const selection = evaluation.selection;
+  const content = selection.content;
+  assert.equal(content.scope, 'isolated-horizontal-line');
+  assert.deepEqual(content.source.ocrIds, { lineId: entry.ocrLine.id, wordIds: [] });
+  assert.equal(content.source.originalText, entry.ocrLine.text);
+  assert.equal(content.source.originalPolygon.coordinateSpace, fixture.result.lines[0].polygon.coordinateSpace);
+  assert.equal(content.source.canonicalPolygon.coordinateSpace, 'pdf-default-user-space');
+  assert.equal(content.source.canonicalBaseline.coordinateSpace, 'pdf-default-user-space');
+  assert.equal(content.replacementText, 'EDIT TEXT');
+  assert.deepEqual(Object.keys(content.estimatedStyle).sort(), [
+    'alignment', 'fontClass', 'fontSize', 'italic', 'textColor', 'weight',
+  ]);
+  assert.equal(Object.values(content.estimatedStyle).every((value) => value.estimated === true), true);
+  assert.equal(content.layout.baselineAligned, true);
+  assert.equal(content.layout.glyphCoverage, 'complete');
+  assert.equal(content.layout.direction, 'ltr');
+  assert.equal(content.layout.overflow, false);
+  assert.equal(content.repairPatch.sha256, selection.repair.repairedPatch.sha256);
+  assert.notEqual(content.visibleReplacement.patch.sha256, content.repairPatch.sha256);
+  assert.equal(content.visibleReplacement.outsideEditRegionChangedPixels, 0);
+  assert.equal(content.visibleReplacement.halo.passed, true);
+  assert.deepEqual(content.searchableText, {
+    text: 'EDIT TEXT',
+    renderingMode: 'owned-invisible-ocr',
+    synchronized: true,
+  });
+  assert.deepEqual(content.undo, {
+    kind: 'scanned-text-edit',
+    before: { text: entry.ocrLine.text, repairStatus: 'original' },
+    after: { text: 'EDIT TEXT', repairStatus: 'applied' },
+    revision: 1,
+    parentRevision: 0,
+  });
+  assert.deepEqual(fixture.result, immutableOcr, 'immutable OCR results must not become edit state');
+  assert.equal(doc.ocr.dirty, true);
+  assertScannedTextEditStateV1(doc.scannedTextEdits);
+
+  doc.ocr = null;
+  const [writerPage] = collectOwnedOcrWriterPages(doc);
+  assert.equal(writerPage.pageIndex, 0);
+  assert.equal(writerPage.lines.length, 1);
+  assert.equal(writerPage.lines[0].text, 'EDIT TEXT');
+  assert.equal(writerPage.lines[0].words, undefined, 'an edited line must have one synchronized searchable run');
+});
+
+test('single-line scope rejects multiline text, unsupported glyphs, overflow, and non-LTR OCR', async () => {
+  const { entry, raster } = await loadVisualFixture('flat-color');
+  const fixture = ocrFor(entry, 'single-line-rejections');
+  const input = {
+    ...fixture,
+    raster: boundRaster(raster, fixture.result),
+    target: { kind: 'line', lineId: entry.ocrLine.id },
+    renderVisiblePatch: deterministicVisiblePatch,
+    contextPaddingPx: 24,
+    operationId: 'single-line-rejection-operation',
+    modifiedAt: FIXED_TIME,
+  };
+  await assert.rejects(
+    () => evaluateScannedTextEdit({ ...input, replacementText: 'one\ntwo' }),
+    (error) => error.code === 'MULTILINE_NOT_SUPPORTED',
+  );
+  await assert.rejects(
+    () => evaluateScannedTextEdit({ ...input, replacementText: '你好' }),
+    (error) => error.code === 'MISSING_GLYPH',
+  );
+  const unsupportedSource = ocrFor(entry, 'single-line-unsupported-source');
+  unsupportedSource.result.text = '你好';
+  unsupportedSource.result.lines[0].text = '你好';
+  await assert.rejects(
+    () => evaluateScannedTextEdit({
+      ...unsupportedSource,
+      raster: boundRaster(raster, unsupportedSource.result),
+      target: { kind: 'line', lineId: entry.ocrLine.id },
+      replacementText: 'EDIT',
+      renderVisiblePatch: deterministicVisiblePatch,
+      contextPaddingPx: 24,
+      operationId: 'single-line-unsupported-source-operation',
+      modifiedAt: FIXED_TIME,
+    }),
+    (error) => error.code === 'UNSUPPORTED_SCRIPT',
+  );
+  await assert.rejects(
+    () => evaluateScannedTextEdit({ ...input, replacementText: 'A'.repeat(120) }),
+    (error) => error.code === 'REPLACEMENT_OVERFLOW',
+  );
+  const rtlFixture = ocrFor(entry, 'single-line-rtl');
+  rtlFixture.result.engine.engineId = 'fixture-writing-direction-engine';
+  rtlFixture.result.engine.capabilities.writingDirectionDetection = true;
+  rtlFixture.result.lines[0].detectedWritingDirection = 'rtl';
+  await assert.rejects(
+    () => evaluateScannedTextEdit({
+      ...rtlFixture,
+      raster: boundRaster(raster, rtlFixture.result),
+      target: { kind: 'line', lineId: entry.ocrLine.id },
+      replacementText: 'EDIT',
+      renderVisiblePatch: deterministicVisiblePatch,
+      contextPaddingPx: 24,
+      operationId: 'single-line-rtl-operation',
+      modifiedAt: FIXED_TIME,
+    }),
+    (error) => error.code === 'UNSUPPORTED_TEXT_DIRECTION',
+  );
+});
+
+test('line revision preserves an engine-provided OCR baseline for visible and searchable text', async () => {
+  const { entry, raster } = await loadVisualFixture('flat-color');
+  const fixture = ocrFor(entry, 'single-line-engine-baseline');
+  const providedBaseline = [[74, 83], [182, 83]];
+  fixture.result.engine.engineId = 'fixture-baseline-engine';
+  fixture.result.engine.capabilities.lineBaselines = true;
+  fixture.result.lines[0].baseline = {
+    status: 'provided',
+    provenance: 'engine',
+    coordinateSpace: 'source-raster-pixels',
+    points: providedBaseline,
+  };
+  const doc = documentFor(fixture.result);
+  state.documents.splice(0, state.documents.length, doc);
+  state.activeDocumentIndex = 0;
+  try {
+    const applied = await applyScannedTextEditForDocument(doc, {
+      ...fixture,
+      raster: boundRaster(raster, fixture.result),
+      target: { kind: 'line', lineId: entry.ocrLine.id },
+      replacementText: 'EDIT',
+      styleOverrides: { alignment: 'left' },
+      renderVisiblePatch: deterministicVisiblePatch,
+      contextPaddingPx: 24,
+      operationId: 'single-line-engine-baseline-apply',
+      modifiedAt: FIXED_TIME,
+    });
+    let revisedGeometry = null;
+    await reviseScannedTextEditForDocument(doc, applied.selection.id, {
+      replacementText: 'REVISED',
+      styleOverrides: { alignment: 'left' },
+      renderVisiblePatch(options) {
+        revisedGeometry = structuredClone(options.geometry);
+        return deterministicVisiblePatch(options);
+      },
+      operationId: 'single-line-engine-baseline-revise',
+      modifiedAt: '2026-08-20T12:01:00.000Z',
+    });
+    const content = doc.scannedTextEdits.pages[0].selections[0].content;
+    assert.deepEqual(revisedGeometry.sourceBaseline, providedBaseline);
+    assert.deepEqual(content.layout.origin.point, revisedGeometry.canonicalBaseline.points[0]);
+    assert.equal(content.layout.baselineAligned, true);
+    assert.deepEqual(content.searchableText, {
+      text: 'REVISED',
+      renderingMode: 'owned-invisible-ocr',
+      synchronized: true,
+    });
+  } finally {
+    state.documents.splice(0, state.documents.length);
+    state.activeDocumentIndex = -1;
+  }
+});
+
+test('line revision and removal have exact typed undo/redo and restore original searchable text', async () => {
+  const { entry, raster } = await loadVisualFixture('flat-color');
+  const fixture = ocrFor(entry, 'single-line-history');
+  const doc = documentFor(fixture.result);
+  state.documents.splice(0, state.documents.length, doc);
+  state.activeDocumentIndex = 0;
+  try {
+    const activeDocument = state.documents[0];
+    const applied = await applyScannedTextEditForDocument(activeDocument, {
+      ...fixture,
+      raster: boundRaster(raster, fixture.result),
+      target: { kind: 'line', lineId: entry.ocrLine.id },
+      replacementText: 'EDIT',
+      renderVisiblePatch: deterministicVisiblePatch,
+      contextPaddingPx: 24,
+      operationId: 'single-line-history-apply',
+      modifiedAt: FIXED_TIME,
+    });
+    const selectionId = applied.selection.id;
+    const appliedState = structuredClone(activeDocument.scannedTextEdits);
+    await reviseScannedTextEditForDocument(activeDocument, selectionId, {
+      replacementText: 'REVISED',
+      styleOverrides: { alignment: 'center', weight: 'bold' },
+      renderVisiblePatch: deterministicVisiblePatch,
+      operationId: 'single-line-history-revise',
+      modifiedAt: '2026-08-20T12:01:00.000Z',
+    });
+    const revisedState = structuredClone(activeDocument.scannedTextEdits);
+    assert.equal(revisedState.pages[0].selections[0].revision, 2);
+    assert.equal(revisedState.pages[0].selections[0].content.replacementText, 'REVISED');
+    assert.equal(revisedState.pages[0].selections[0].content.estimatedStyle.alignment.estimated, true);
+    assert.equal(revisedState.pages[0].selections[0].content.estimatedStyle.weight.estimated, true);
+
+    await undo();
+    assert.deepEqual(activeDocument.scannedTextEdits, appliedState);
+    await redo();
+    assert.deepEqual(activeDocument.scannedTextEdits, revisedState);
+
+    removeScannedTextEditForDocument(activeDocument, selectionId, {
+      operationId: 'single-line-history-remove',
+      modifiedAt: '2026-08-20T12:02:00.000Z',
+    });
+    const removedState = structuredClone(activeDocument.scannedTextEdits);
+    assert.equal(removedState.pages[0].selections[0].repair.status, 'reverted');
+    assert.equal(removedState.pages[0].selections[0].content, null);
+    activeDocument.ocr = null;
+    assert.equal(collectOwnedOcrWriterPages(activeDocument)[0].lines[0].text, entry.ocrLine.text);
+
+    await undo();
+    assert.deepEqual(activeDocument.scannedTextEdits, revisedState);
+    await redo();
+    assert.deepEqual(activeDocument.scannedTextEdits, removedState);
   } finally {
     state.documents.splice(0, state.documents.length);
     state.activeDocumentIndex = -1;

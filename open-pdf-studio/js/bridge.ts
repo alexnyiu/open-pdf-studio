@@ -157,6 +157,7 @@ export {
   getEditorText as getPdfEditorText,
   updateEditorStyle as updatePdfEditorStyle,
   shiftEditorPosition as shiftPdfEditorPosition,
+  setEditorStatus as setPdfEditorStatus,
 } from './solid/stores/pdfTextEditStore.js';
 
 // ============= SCREENSHOT =============
@@ -266,4 +267,3 @@ export {
   setCountText as setTagCountText,
   setEmptyMessage as setTagEmptyMessage,
 } from './solid/stores/panels/tagsStore.js';
-

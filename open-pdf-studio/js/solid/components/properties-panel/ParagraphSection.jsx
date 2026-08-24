@@ -41,27 +41,29 @@ export default function ParagraphSection() {
           </div>
         </div>
 
-        <div class="property-group">
-          <label>{t('paragraph.lineSpacing')}</label>
-          <PrefComboBox
-            value={() => annotProps.lineSpacing}
-            setValue={(val) => updateAnnotProp('lineSpacing', val)}
-            options={[1, 1.15, 1.5, 2, 2.5, 3]}
-            min={0.5} max={5} fallback={1.5} suffix="x"
-            disabled={isLocked}
-          />
-        </div>
+        <Show when={annotProps.scannedTextEstimate !== true}>
+          <div class="property-group">
+            <label>{t('paragraph.lineSpacing')}</label>
+            <PrefComboBox
+              value={() => annotProps.lineSpacing}
+              setValue={(val) => updateAnnotProp('lineSpacing', val)}
+              options={[1, 1.15, 1.5, 2, 2.5, 3]}
+              min={0.5} max={5} fallback={1.5} suffix="x"
+              disabled={isLocked}
+            />
+          </div>
 
-        <div class="property-group">
-          <label>{t('paragraph.rotation')}</label>
-          <PrefComboBox
-            value={() => annotProps.rotation}
-            setValue={(val) => updateAnnotProp('rotation', val)}
-            options={[0, 45, 90, 135, 180, 225, 270, 315]}
-            min={-360} max={360} fallback={0} suffix="°"
-            disabled={isLocked}
-          />
-        </div>
+          <div class="property-group">
+            <label>{t('paragraph.rotation')}</label>
+            <PrefComboBox
+              value={() => annotProps.rotation}
+              setValue={(val) => updateAnnotProp('rotation', val)}
+              options={[0, 45, 90, 135, 180, 225, 270, 315]}
+              min={-360} max={360} fallback={0} suffix="°"
+              disabled={isLocked}
+            />
+          </div>
+        </Show>
       </CollapsibleSection>
     </Show>
   );

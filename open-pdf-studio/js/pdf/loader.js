@@ -378,6 +378,17 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     }
     console.log(`[PERF] File read done: ${(performance.now() - _t0).toFixed(0)}ms, size: ${typedArray.length} bytes`);
 
+    // Restore only validated Open PDF Studio-owned scanned-text edit state.
+    // Foreign or malformed PieceInfo never becomes editable application state.
+    try {
+      const { hydrateOwnedScannedTextEditState } = await import('../ocr/editing/pdf-persistence.js');
+      await hydrateOwnedScannedTextEditState(doc, typedArray);
+    } catch (error) {
+      doc.scannedTextEdits = null;
+      doc.scannedTextEditPersistedRevision = 0;
+      console.warn('[scanned-text-edit] Owned state was not hydrated:', error?.message || error);
+    }
+
     // Load PDF using pdf.js (this transfers the buffer to a worker)
     doc.pdfDoc = await pdfjsLib.getDocument({
       data: typedArray,

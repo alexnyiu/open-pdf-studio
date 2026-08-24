@@ -86,7 +86,7 @@ function writerLine(item) {
 
 /** @param {any} document */
 export function collectOwnedOcrWriterPages(document) {
-  return Object.keys(document?.ocr?.pages || {})
+  const livePages = Object.keys(document?.ocr?.pages || {})
     .map(Number)
     .filter((pageNumber) => Number.isSafeInteger(pageNumber) && pageNumber > 0)
     .sort((left, right) => left - right)
@@ -95,6 +95,25 @@ export function collectOwnedOcrWriterPages(document) {
       lines: getOwnedOcrTextItems(document, pageNumber).map(writerLine),
     }))
     .filter((page) => page.lines.length > 0);
+  const byPage = new Map(livePages.map((page) => [page.pageIndex, page]));
+  for (const page of document?.scannedTextEdits?.pages || []) {
+    if (byPage.has(page.index) || !Array.isArray(page.searchableTextSnapshot)
+        || page.searchableTextSnapshot.length === 0) continue;
+    const edits = new Map(page.selections
+      .filter((selection) => selection.repair?.status === 'applied'
+        && selection.content?.scope === 'isolated-horizontal-line')
+      .map((selection) => [selection.target.targetId, selection]));
+    const lines = page.searchableTextSnapshot.map((line) => {
+      const edit = edits.get(line.lineId);
+      return writerLine({
+        ...line,
+        text: edit?.content?.searchableText?.text ?? line.text,
+        words: edit ? undefined : line.words,
+      });
+    });
+    byPage.set(page.index, { pageIndex: page.index, lines });
+  }
+  return [...byPage.values()].sort((left, right) => left.pageIndex - right.pageIndex);
 }
 
 /**
@@ -363,7 +382,7 @@ export async function buildAndValidateOcrPdfCandidate(input) {
 }
 
 /** @param {any} plan @param {any} result */
-export function validateOcrPdfiumCandidateResult(plan, result) {
+export function validateOcrPdfiumCandidateResult(plan, result, { allowOwnedVisibleChanges = false } = {}) {
   if (!result || result.status !== 'pass'
     || result.renderScale !== OCR_PDFIUM_RENDER_SCALE
     || result.maxChangedPixelsPerPage !== OCR_VISIBLE_PIXEL_TOLERANCE.maxChangedPixelsPerPage
@@ -373,8 +392,11 @@ export function validateOcrPdfiumCandidateResult(plan, result) {
   const returned = new Map((result.pages || []).map((page) => [page.pageIndex, page]));
   for (const pageIndex of plan.selectedPageIndexes) {
     const page = returned.get(pageIndex);
-    if (!page || page.changedPixels > OCR_VISIBLE_PIXEL_TOLERANCE.maxChangedPixelsPerPage
-      || page.maxChannelDelta > OCR_VISIBLE_PIXEL_TOLERANCE.maxChannelDelta) {
+    if (!page || (!allowOwnedVisibleChanges
+      && (page.changedPixels > OCR_VISIBLE_PIXEL_TOLERANCE.maxChangedPixelsPerPage
+        || page.maxChannelDelta > OCR_VISIBLE_PIXEL_TOLERANCE.maxChannelDelta))
+      || (allowOwnedVisibleChanges
+        && (page.outsideAllowedChangedPixels !== 0 || page.outsideAllowedMaxChannelDelta !== 0))) {
       fail('VISIBLE_PIXEL_REGRESSION', `PDFium found visible pixel changes on page ${pageIndex + 1}`);
     }
     for (const entry of plan.tokensByPage[pageIndex] || []) {

@@ -95,6 +95,7 @@ const [annotProps, setAnnotProps] = createStore({
   textAlign: 'left',
   lineSpacing: '1.5',
   rotation: 0,
+  scannedTextEstimate: false,
   imageWidth: 0,
   imageHeight: 0,
   imageRotation: 0,
@@ -307,6 +308,7 @@ export function storeShowProperties(annotation) {
     textAlign: annotation.textAlign || 'left',
     lineSpacing: annotation.lineSpacing || '1.5',
     rotation: annotation.rotation || 0,
+    scannedTextEstimate: annotation.scannedTextEstimate === true,
     imageWidth: annotation.type === 'image' ? Math.round(annotation.width) : 0,
     imageHeight: annotation.type === 'image' ? Math.round(annotation.height) : 0,
     imageRotation: annotation.type === 'image' ? Math.round(annotation.rotation || 0) : 0,
@@ -647,7 +649,7 @@ export function storeShowTextEditProperties(info) {
     fontItalic: info.isItalic || false,
     fontUnderline: info.isUnderline || false,
     fontStrikethrough: info.isStrikethrough || false,
-    textAlign: 'left',
+    textAlign: info.textAlign || 'left',
     lineSpacing: '1.5',
     lineWidth: 0,
     opacity: 1,
@@ -656,7 +658,8 @@ export function storeShowTextEditProperties(info) {
     locked: false,
     printable: true,
     page: info.page || 1,
-    subject: i18next.t('pdfText', { ns: 'properties' }),
+    subject: info.scannedTextEstimate ? 'Scanned PDF text — estimated style' : i18next.t('pdfText', { ns: 'properties' }),
+    scannedTextEstimate: info.scannedTextEstimate === true,
     author: '',
     createdAt: '',
     modifiedAt: ''
@@ -668,7 +671,9 @@ export function storeShowTextEditProperties(info) {
   storeShowProperties(pseudoAnnotation);
 
   // Override type display and hide irrelevant sections
-  setAnnotProps('typeDisplay', i18next.t('pdfText', { ns: 'properties' }));
+  setAnnotProps('typeDisplay', info.scannedTextEstimate
+    ? 'Scanned PDF text — estimated style'
+    : i18next.t('pdfText', { ns: 'properties' }));
   setAnnotProps('textFontSize', Math.round(info.fontSize || 12));
 
   setSectionVis({
@@ -679,7 +684,7 @@ export function storeShowTextEditProperties(info) {
     dimensions: false,
     measurement: false,
     textFormat: true,
-    paragraph: false,
+    paragraph: info.scannedTextEstimate === true,
     content: false,
     image: false,
     actions: false,

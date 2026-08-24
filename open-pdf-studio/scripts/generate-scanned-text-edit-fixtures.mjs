@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
+import { createCanvas } from '@napi-rs/canvas';
 import sharp from 'sharp';
 import { PDFDocument } from 'pdf-lib';
 
@@ -13,6 +14,7 @@ import {
   removeOwnedScannedTextRepairLayer,
   writeOwnedScannedTextRepairLayer,
 } from '../js/ocr/editing/pdf-repair-layer.js';
+import { writeOwnedInvisibleOcrLayer } from '../js/ocr/pdf-writer-proof.js';
 import { makeOcrFixture } from '../js/ocr/searchable-layer.test-fixtures.mjs';
 
 const outputDir = new URL('../tests/fixtures/ocr/editing-foundation-v1/', import.meta.url);
@@ -169,6 +171,60 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+function visibleLineRenderer({ basePatchBytes, patch, text, style, geometry, sourceRaster }) {
+  const canvas = createCanvas(patch.widthPx, patch.heightPx);
+  const context = canvas.getContext('2d');
+  const image = context.createImageData(patch.widthPx, patch.heightPx);
+  image.data.set(basePatchBytes);
+  context.putImageData(image, 0, 0);
+  const family = style.fontClass.value === 'monospace' ? 'Courier New'
+    : style.fontClass.value === 'serif' ? 'Times New Roman'
+      : 'Helvetica';
+  const sizePx = style.fontSize.value * sourceRaster.dpi / 72;
+  context.font = `${style.italic.value ? 'italic ' : ''}${style.weight.value === 'bold' ? 'bold ' : ''}${sizePx}px ${family}`;
+  context.textAlign = 'left';
+  context.textBaseline = 'alphabetic';
+  context.fillStyle = style.textColor.value;
+  const start = geometry.sourceBaseline[0];
+  const end = geometry.sourceBaseline.at(-1);
+  const angle = Math.atan2(end[1] - start[1], end[0] - start[0]);
+  const textWidth = context.measureText(text).width;
+  const baselineWidth = Math.hypot(end[0] - start[0], end[1] - start[1]);
+  const alignmentOffset = style.alignment.value === 'center' ? (baselineWidth - textWidth) / 2
+    : style.alignment.value === 'right' ? baselineWidth - textWidth
+      : 0;
+  context.save();
+  context.translate(
+    start[0] - patch.originX + Math.cos(angle) * alignmentOffset,
+    start[1] - patch.originY + Math.sin(angle) * alignmentOffset,
+  );
+  context.rotate(angle);
+  context.fillText(text, 0, 0);
+  context.restore();
+  return new Uint8Array(context.getImageData(0, 0, patch.widthPx, patch.heightPx).data);
+}
+
+function writerLine(text, content) {
+  const baselinePoints = content.source.canonicalBaseline.points;
+  return {
+    id: content.source.ocrIds.lineId,
+    text,
+    direction: 'ltr',
+    readingOrder: 0,
+    polygon: {
+      coordinateSpace: content.source.canonicalPolygon.coordinateSpace,
+      points: content.source.canonicalPolygon.points.map(([x, y]) => ({ x, y })),
+    },
+    baseline: {
+      status: 'provided',
+      provenance: content.source.canonicalBaseline.provenance,
+      coordinateSpace: content.source.canonicalBaseline.coordinateSpace,
+      start: { x: baselinePoints[0][0], y: baselinePoints[0][1] },
+      end: { x: baselinePoints.at(-1)[0], y: baselinePoints.at(-1)[1] },
+    },
+  };
+}
+
 async function pngBytes(raw) {
   return sharp(raw, { raw: { width: widthPx, height: heightPx, channels: 4 } })
     .png({ compressionLevel: 9, adaptiveFiltering: false })
@@ -266,6 +322,81 @@ await writeFile(new URL('flat-scanned-source.pdf', outputDir), baselinePdf);
 await writeFile(new URL('flat-scanned-repaired.pdf', outputDir), candidatePdf);
 await writeFile(new URL('flat-scanned-reverted.pdf', outputDir), revertedPdf);
 
+const lineEvaluation = await evaluateScannedTextEdit({
+  ...fixture,
+  raster: {
+    widthPx,
+    heightPx,
+    rowBytes: widthPx * 4,
+    data: flatRaw,
+    sourceRasterId: fixture.result.sourceRaster.id,
+    sourceRasterFingerprint: fixture.result.sourceRaster.fingerprint,
+  },
+  target: { kind: 'line', lineId: line.id },
+  repairPaddingPx: 1,
+  contextPaddingPx: 24,
+  replacementText: 'EDIT TEXT',
+  renderVisiblePatch: visibleLineRenderer,
+  operationId: 'scanned-text-single-line-fixture-operation',
+  modifiedAt: fixedTime,
+});
+const lineDocumentState = {
+  id: fixture.result.document.id,
+  undoStack: [],
+  redoStack: [],
+  scannedTextEdits: createScannedTextEditStateV1({
+    document: fixture.result.document,
+    stateId: 'scanned-text-single-line-fixture-state',
+    instanceId: 'scanned-text-single-line-fixture-instance',
+    createdAt: fixedTime,
+  }),
+};
+commitScannedTextEditEvaluation(lineDocumentState, lineEvaluation, { modifiedAt: fixedTime });
+const visibleLinePdf = await writeOwnedScannedTextRepairLayer({
+  pdfBytes: baselinePdf,
+  state: lineDocumentState.scannedTextEdits,
+  pageGeometries: [fixture.pageGeometry],
+  modifiedAt: fixedPdfDate,
+});
+const fontBytes = new Uint8Array(await readFile(new URL(
+  '../public/pdfjs/web/standard_fonts/LiberationSans-Regular.ttf',
+  import.meta.url,
+)));
+const fontSha256 = sha256(fontBytes);
+const content = lineEvaluation.selection.content;
+const editedPages = [{ pageIndex: 0, lines: [writerLine(content.replacementText, content)] }];
+const editedLinePdf = await writeOwnedInvisibleOcrLayer({
+  pdfBytes: visibleLinePdf,
+  fontBytes,
+  fontSha256,
+  pages: editedPages,
+  modifiedAt: fixedPdfDate,
+});
+const repeatedVisibleLinePdf = await writeOwnedScannedTextRepairLayer({
+  pdfBytes: editedLinePdf,
+  lineagePdfBytes: baselinePdf,
+  state: lineDocumentState.scannedTextEdits,
+  pageGeometries: [fixture.pageGeometry],
+  modifiedAt: fixedPdfDate,
+});
+const repeatedEditedLinePdf = await writeOwnedInvisibleOcrLayer({
+  pdfBytes: repeatedVisibleLinePdf,
+  fontBytes,
+  fontSha256,
+  pages: editedPages,
+  modifiedAt: fixedPdfDate,
+});
+const restoredLinePdf = await writeOwnedInvisibleOcrLayer({
+  pdfBytes: baselinePdf,
+  fontBytes,
+  fontSha256,
+  pages: [{ pageIndex: 0, lines: [writerLine(content.source.originalText, content)] }],
+  modifiedAt: fixedPdfDate,
+});
+await writeFile(new URL('flat-scanned-line-edited.pdf', outputDir), editedLinePdf);
+await writeFile(new URL('flat-scanned-line-edited-repeat.pdf', outputDir), repeatedEditedLinePdf);
+await writeFile(new URL('flat-scanned-line-restored.pdf', outputDir), restoredLinePdf);
+
 const manifest = {
   contract: 'open-pdf-studio.scanned-text-edit-fixtures',
   schemaVersion: 1,
@@ -285,6 +416,19 @@ const manifest = {
     changedRegion: evaluation.selection.repair.changedRegion,
     stateId: documentState.scannedTextEdits.stateId,
     stateRevision: documentState.scannedTextEdits.stateRevision,
+  },
+  singleLineProof: {
+    edited: 'flat-scanned-line-edited.pdf',
+    editedRepeat: 'flat-scanned-line-edited-repeat.pdf',
+    restored: 'flat-scanned-line-restored.pdf',
+    editedSha256: sha256(editedLinePdf),
+    editedRepeatSha256: sha256(repeatedEditedLinePdf),
+    restoredSha256: sha256(restoredLinePdf),
+    originalText: content.source.originalText,
+    replacementText: content.replacementText,
+    approvedRegion: lineEvaluation.selection.repair.approvedRegion,
+    stateId: lineDocumentState.scannedTextEdits.stateId,
+    stateRevision: lineDocumentState.scannedTextEdits.stateRevision,
   },
 };
 await writeFile(new URL('manifest.v1.json', outputDir), `${JSON.stringify(manifest, null, 2)}\n`);

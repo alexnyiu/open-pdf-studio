@@ -14,6 +14,7 @@ import {
   assertScannedTextEditStateV1,
 } from '../contracts/scanned-text-edit-state.v1.js';
 import {
+  commitScannedTextEditEvaluation,
   createScannedTextEditStateV1,
   evaluateScannedTextEdit,
 } from './edit-state.js';
@@ -23,6 +24,18 @@ import {
   writeOwnedScannedTextRepairLayer,
 } from './pdf-repair-layer.js';
 import { makeOcrFixture } from '../searchable-layer.test-fixtures.mjs';
+
+globalThis.DOMMatrix ||= class DOMMatrix {};
+const {
+  buildAndValidateScannedTextEditPdfCandidate,
+  hydrateOwnedScannedTextEditState,
+  validateScannedTextEditPdfiumCandidateResult,
+} = await import('./pdf-persistence.js');
+const {
+  buildAndValidateOcrPdfCandidate,
+  collectOwnedOcrWriterPages,
+  destroyPreparedPdfJsDocument,
+} = await import('../pdf-persistence.js');
 
 const FIXTURE_ROOT = new URL('../../../tests/fixtures/ocr/editing-foundation-v1/', import.meta.url);
 const FIXED_PDF_TIME = 'D:20260820120000Z';
@@ -139,6 +152,39 @@ function comparePixels(before, after, approvedRegion) {
   };
 }
 
+function visibleLineRenderer({ basePatchBytes, patch, text, style, geometry, sourceRaster }) {
+  const canvas = createCanvas(patch.widthPx, patch.heightPx);
+  const context = canvas.getContext('2d');
+  const image = context.createImageData(patch.widthPx, patch.heightPx);
+  image.data.set(basePatchBytes);
+  context.putImageData(image, 0, 0);
+  const family = style.fontClass.value === 'monospace' ? 'Courier New'
+    : style.fontClass.value === 'serif' ? 'Times New Roman'
+      : 'Helvetica';
+  const sizePx = style.fontSize.value * sourceRaster.dpi / 72;
+  context.font = `${style.italic.value ? 'italic ' : ''}${style.weight.value === 'bold' ? 'bold ' : ''}${sizePx}px ${family}`;
+  context.textAlign = 'left';
+  context.textBaseline = 'alphabetic';
+  context.fillStyle = style.textColor.value;
+  const start = geometry.sourceBaseline[0];
+  const end = geometry.sourceBaseline.at(-1);
+  const angle = Math.atan2(end[1] - start[1], end[0] - start[0]);
+  const textWidth = context.measureText(text).width;
+  const baselineWidth = Math.hypot(end[0] - start[0], end[1] - start[1]);
+  const offset = style.alignment.value === 'center' ? (baselineWidth - textWidth) / 2
+    : style.alignment.value === 'right' ? baselineWidth - textWidth
+      : 0;
+  context.save();
+  context.translate(
+    start[0] - patch.originX + Math.cos(angle) * offset,
+    start[1] - patch.originY + Math.sin(angle) * offset,
+  );
+  context.rotate(angle);
+  context.fillText(text, 0, 0);
+  context.restore();
+  return new Uint8Array(context.getImageData(0, 0, patch.widthPx, patch.heightPx).data);
+}
+
 test('visual fixtures classify every supported background and reject uncertainty explicitly', async () => {
   const fixtureManifest = await manifest();
   assert.equal(fixtureManifest.deterministic, true);
@@ -181,6 +227,47 @@ test('visual fixtures classify every supported background and reject uncertainty
     'table-line-art',
     'textured',
   ]);
+});
+
+test('native save result requires visible pixels inside and exact zero pixels outside the edit region', () => {
+  const plan = {
+    selectedPageIndexes: [0],
+    allowedRegions: [{
+      pageIndex: 0,
+      sourceRasterDpi: 72,
+      bounds: { coordinateSpace: 'source-raster-pixels', x: 71, y: 63, width: 114, height: 26 },
+    }],
+  };
+  const passing = {
+    status: 'pass',
+    renderScale: 2,
+    maxChangedPixelsPerPage: 0,
+    maxChannelDeltaTolerance: 0,
+    pages: [{
+      pageIndex: 0,
+      changedPixels: 884,
+      allowedChangedPixels: 884,
+      outsideAllowedChangedPixels: 0,
+      maxChannelDelta: 255,
+      outsideAllowedMaxChannelDelta: 0,
+    }],
+  };
+  assert.equal(validateScannedTextEditPdfiumCandidateResult(plan, passing), true);
+  const outside = structuredClone(passing);
+  outside.pages[0].changedPixels += 1;
+  outside.pages[0].outsideAllowedChangedPixels = 1;
+  outside.pages[0].outsideAllowedMaxChannelDelta = 1;
+  assert.throws(
+    () => validateScannedTextEditPdfiumCandidateResult(plan, outside),
+    (error) => error.code === 'PIXELS_CHANGED_OUTSIDE_EDIT_REGION',
+  );
+  const missing = structuredClone(passing);
+  missing.pages[0].changedPixels = 0;
+  missing.pages[0].allowedChangedPixels = 0;
+  assert.throws(
+    () => validateScannedTextEditPdfiumCandidateResult(plan, missing),
+    (error) => error.code === 'VISIBLE_REPLACEMENT_MISSING',
+  );
 });
 
 test('PDF.js proves exact approved-region pixels, preserved scan content, owned reopen state, and reversible removal', async () => {
@@ -258,6 +345,135 @@ test('PDF.js proves exact approved-region pixels, preserved scan content, owned 
   assert.deepEqual(removedRaster.data, sourceRaster.data, 'removing the owned repair layer must reveal the preserved original scan');
 });
 
+test('single-line visible and invisible layers survive reopen and repeat save without pixel or text duplication', async () => {
+  const fixtureManifest = await manifest();
+  const flatEntry = fixtureManifest.fixtures.find((entry) => entry.id === 'flat-color');
+  const sourceBytes = new Uint8Array(await readFile(new URL(fixtureManifest.pdfProof.source, FIXTURE_ROOT)));
+  const raster = await fixtureRaster(flatEntry);
+  const fixture = makeOcrFixture({
+    documentId: 'single-line-visual-document',
+    documentGeneration: 'single-line-visual-generation',
+    pageId: 'single-line-visual-page',
+    pageRevision: 0,
+    lines: [flatEntry.ocrLine],
+    width: flatEntry.widthPx,
+    height: flatEntry.heightPx,
+    documentFingerprint: { algorithm: 'sha256', value: digest(sourceBytes) },
+  });
+  const evaluation = await evaluateScannedTextEdit({
+    ...fixture,
+    raster: {
+      ...raster,
+      sourceRasterId: fixture.result.sourceRaster.id,
+      sourceRasterFingerprint: fixture.result.sourceRaster.fingerprint,
+    },
+    target: { kind: 'line', lineId: flatEntry.ocrLine.id },
+    replacementText: 'EDIT TEXT',
+    renderVisiblePatch: visibleLineRenderer,
+    contextPaddingPx: 24,
+    operationId: 'single-line-visual-operation',
+    modifiedAt: '2026-08-20T12:00:00.000Z',
+  });
+  const documentState = {
+    id: fixture.result.document.id,
+    undoStack: [],
+    redoStack: [],
+    ocr: null,
+    scannedTextEdits: createScannedTextEditStateV1({
+      document: fixture.result.document,
+      stateId: 'single-line-visual-state',
+      instanceId: 'single-line-visual-instance',
+      createdAt: '2026-08-20T12:00:00.000Z',
+    }),
+  };
+  commitScannedTextEditEvaluation(documentState, evaluation);
+  assertScannedTextEditStateV1(documentState.scannedTextEdits);
+
+  let visibleCandidate;
+  let searchableCandidate;
+  let repeatedSearchableCandidate;
+  try {
+    visibleCandidate = await buildAndValidateScannedTextEditPdfCandidate({
+      baseBytes: sourceBytes,
+      state: documentState.scannedTextEdits,
+      pageGeometries: [fixture.pageGeometry],
+      expectedPageCount: 1,
+      modifiedAt: FIXED_PDF_TIME,
+    });
+    assert.deepEqual(visibleCandidate.pdfiumPlan.selectedPageIndexes, [0]);
+    assert.equal(visibleCandidate.pdfiumPlan.allowedRegions.length, 1);
+    assert.deepEqual(visibleCandidate.pdfiumPlan.allowedRegions[0].bounds,
+      evaluation.selection.repair.approvedRegion);
+    const [sourceRaster, visibleRaster] = await Promise.all([
+      renderPdfPage(sourceBytes),
+      renderPdfPage(visibleCandidate.candidateBytes),
+    ]);
+    const visibleDifference = comparePixels(
+      sourceRaster,
+      visibleRaster,
+      evaluation.selection.repair.approvedRegion,
+    );
+    assert.ok(visibleDifference.changedPixelCount > 0);
+    assert.equal(visibleDifference.outsideApprovedChangedPixels, 0);
+
+    const reopened = { id: documentState.id };
+    await hydrateOwnedScannedTextEditState(reopened, visibleCandidate.candidateBytes);
+    assert.deepEqual(reopened.scannedTextEdits, documentState.scannedTextEdits);
+    assert.equal(reopened.scannedTextEditPersistedRevision,
+      documentState.scannedTextEdits.stateRevision);
+
+    const writerPages = collectOwnedOcrWriterPages(documentState);
+    assert.equal(writerPages[0].lines[0].text, 'EDIT TEXT');
+    const fontBytes = new Uint8Array(await readFile(new URL(
+      '../../../public/pdfjs/web/standard_fonts/LiberationSans-Regular.ttf',
+      import.meta.url,
+    )));
+    searchableCandidate = await buildAndValidateOcrPdfCandidate({
+      baseBytes: visibleCandidate.candidateBytes,
+      fontBytes,
+      writerPages,
+      expectedPageCount: 1,
+      modifiedAt: FIXED_PDF_TIME,
+    });
+    const searchableContent = await (await searchableCandidate.candidatePdfJsDocument.getPage(1)).getTextContent();
+    const searchableText = searchableContent.items.map((item) => item.str).join('\n');
+    assert.equal(searchableText.split('EDIT TEXT').length - 1, 1);
+    assert.equal(searchableText.includes(flatEntry.ocrLine.text), false);
+
+    repeatedSearchableCandidate = await buildAndValidateOcrPdfCandidate({
+      baseBytes: searchableCandidate.candidateBytes,
+      fontBytes,
+      writerPages,
+      expectedPageCount: 1,
+      modifiedAt: FIXED_PDF_TIME,
+    });
+    const repeatedContent = await (await repeatedSearchableCandidate.candidatePdfJsDocument.getPage(1)).getTextContent();
+    const repeatedText = repeatedContent.items.map((item) => item.str).join('\n');
+    assert.equal(repeatedText.split('EDIT TEXT').length - 1, 1);
+    const [ownedAfterRepeatedSave] = await inspectOwnedScannedTextRepairLayer(
+      repeatedSearchableCandidate.candidateBytes,
+    );
+    assert.equal(ownedAfterRepeatedSave.owned, true);
+    assert.equal(ownedAfterRepeatedSave.selectionIds.length, 1);
+    assert.deepEqual(ownedAfterRepeatedSave.state, documentState.scannedTextEdits);
+
+    const removedVisibleBytes = await removeOwnedScannedTextRepairLayer({
+      pdfBytes: repeatedSearchableCandidate.candidateBytes,
+    });
+    const [removedInspection] = await inspectOwnedScannedTextRepairLayer(removedVisibleBytes);
+    assert.equal(removedInspection.owned, false);
+    const removedVisibleRaster = await renderPdfPage(removedVisibleBytes);
+    assert.deepEqual(removedVisibleRaster.data, sourceRaster.data,
+      'removing owned visible state must reveal the exact preserved scan while invisible text remains non-rendering');
+  } finally {
+    await Promise.all([
+      visibleCandidate?.candidatePdfJsDocument?.destroy?.(),
+      destroyPreparedPdfJsDocument(searchableCandidate?.candidatePdfJsDocument),
+      destroyPreparedPdfJsDocument(repeatedSearchableCandidate?.candidatePdfJsDocument),
+    ]);
+  }
+});
+
 test('PDF writer failure returns no partial output and leaves source bytes untouched', async () => {
   const fixtureManifest = await manifest();
   const sourceBytes = new Uint8Array(await readFile(new URL(fixtureManifest.pdfProof.source, FIXTURE_ROOT)));
@@ -292,12 +508,27 @@ test('PDF writer failure returns no partial output and leaves source bytes untou
     (error) => error.code === 'STALE_DOCUMENT'
       && /fingerprint does not match the target source PDF/u.test(error.message),
   );
+  const selfContainedGeometryBytes = await writeOwnedScannedTextRepairLayer({
+    pdfBytes: sourceBytes,
+    state: inspection.state,
+    pageGeometries: [],
+    modifiedAt: FIXED_PDF_TIME,
+  });
+  assert.equal((await inspectOwnedScannedTextRepairLayer(selfContainedGeometryBytes))[0].owned, true,
+    'reopened owned state must retain the full canonical geometry needed by repeat save');
+
+  const legacyGeometryState = structuredClone(inspection.state);
+  legacyGeometryState.pages[0].pageGeometry = {
+    contract: inspection.state.pages[0].pageGeometry.contract,
+    schemaVersion: inspection.state.pages[0].pageGeometry.schemaVersion,
+    geometryId: inspection.state.pages[0].pageGeometry.geometryId,
+  };
   const invalidGeometry = structuredClone(inspection.state.pages[0].pageGeometry);
   invalidGeometry.geometryId = 'missing-canonical-geometry';
   await assert.rejects(
     () => writeOwnedScannedTextRepairLayer({
       pdfBytes: sourceBytes,
-      state: inspection.state,
+      state: legacyGeometryState,
       pageGeometries: [invalidGeometry],
       modifiedAt: FIXED_PDF_TIME,
     }),

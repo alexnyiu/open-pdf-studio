@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { access } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
 const APP_URL = 'http://127.0.0.1:3041';
@@ -44,7 +45,14 @@ async function assertSelectAllStaysInEditor(page, selector, text, moveFocus = tr
     'Ctrl+A in an active text editor must not select page annotations');
 }
 
-const browser = await chromium.launch({ headless: true });
+let executablePath;
+try {
+  await access(chromium.executablePath());
+} catch {
+  executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  await access(executablePath);
+}
+const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
 
 try {
   // The vector renderer does not call PDF.js page.render(). Embedded font

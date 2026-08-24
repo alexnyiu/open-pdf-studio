@@ -65,6 +65,10 @@ export interface DocumentState {
   ocr: DocumentOcrState;
   /** Application-owned mutable scan repairs; never written into immutable OCR results. */
   scannedTextEdits: ScannedTextEditStateV1 | null;
+  /** Last visible scanned-text state revision installed in the saved PDF. */
+  scannedTextEditPersistedRevision: number;
+  /** A typed removal must delete the application-owned visible stream on save. */
+  scannedTextEditRemovalPending: boolean;
   watermarks: Watermark[];
   bookmarks: Bookmark[];
   undoStack: UndoCommand[];

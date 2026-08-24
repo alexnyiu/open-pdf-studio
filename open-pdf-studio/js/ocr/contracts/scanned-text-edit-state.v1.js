@@ -16,11 +16,14 @@ import {
   validateString,
 } from './validation.js';
 import {
+  OCR_PDF_USER_SPACE,
   OCR_SOURCE_RASTER_SPACE,
+  validateBaseline,
   validateCoordinateBoundingBox,
   validateCoordinatePolygon,
   validateHomographyInverse,
 } from './geometry.js';
+import { validateOcrPageGeometryV1 } from './page-geometry.v1.js';
 
 export const SCANNED_TEXT_EDIT_STATE_CONTRACT = 'open-pdf-studio.scanned-text-edit-state';
 export const SCANNED_TEXT_EDIT_STATE_SCHEMA_VERSION = 1;
@@ -620,14 +623,214 @@ function validateTarget(value, path, issues) {
   return lineIds;
 }
 
-function validateSelection(value, path, issues, page) {
+function validateEstimate(value, path, issues, validateValue) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an estimate object`);
+    return;
+  }
+  requireExactKeys(value, new Set(['value', 'estimated', 'confidence', 'method']), path, issues);
+  if (value.estimated !== true) issues.push(`${path}.estimated must be true`);
+  validateConfidence(value.confidence, `${path}.confidence`, issues);
+  validateIdentifier(value.method, `${path}.method`, issues);
+  validateValue(value.value, `${path}.value`, issues);
+}
+
+function validateEstimatedStyle(value, path, issues) {
   if (!isObject(value)) {
     issues.push(`${path} must be an object`);
     return;
   }
   requireExactKeys(value, new Set([
-    'id', 'revision', 'target', 'geometry', 'originalPatch', 'analysis', 'repair', 'ownership',
+    'fontClass', 'fontSize', 'weight', 'italic', 'textColor', 'alignment',
   ]), path, issues);
+  validateEstimate(value.fontClass, `${path}.fontClass`, issues, (entry, entryPath, entryIssues) => {
+    if (!['serif', 'sans-serif', 'monospace'].includes(entry)) entryIssues.push(`${entryPath} is unsupported`);
+  });
+  validateEstimate(value.fontSize, `${path}.fontSize`, issues, (entry, entryPath, entryIssues) => {
+    validatePositiveNumber(entry, entryPath, entryIssues);
+  });
+  validateEstimate(value.weight, `${path}.weight`, issues, (entry, entryPath, entryIssues) => {
+    if (!['normal', 'bold'].includes(entry)) entryIssues.push(`${entryPath} is unsupported`);
+  });
+  validateEstimate(value.italic, `${path}.italic`, issues, (entry, entryPath, entryIssues) => {
+    if (typeof entry !== 'boolean') entryIssues.push(`${entryPath} must be boolean`);
+  });
+  validateEstimate(value.textColor, `${path}.textColor`, issues, (entry, entryPath, entryIssues) => {
+    if (typeof entry !== 'string' || !/^#[0-9a-f]{6}$/u.test(entry)) entryIssues.push(`${entryPath} must be lowercase RGB hex`);
+  });
+  validateEstimate(value.alignment, `${path}.alignment`, issues, (entry, entryPath, entryIssues) => {
+    if (!['left', 'center', 'right'].includes(entry)) entryIssues.push(`${entryPath} is unsupported`);
+  });
+}
+
+function validateSingleLineSource(value, path, issues, lineIds) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'ocrIds', 'originalText', 'originalPolygon', 'canonicalPolygon', 'canonicalBaseline',
+  ]), path, issues);
+  if (!isObject(value.ocrIds)) {
+    issues.push(`${path}.ocrIds must be an object`);
+  } else {
+    requireExactKeys(value.ocrIds, new Set(['lineId', 'wordIds']), `${path}.ocrIds`, issues);
+    validateIdentifier(value.ocrIds.lineId, `${path}.ocrIds.lineId`, issues);
+    if (!lineIds.has(value.ocrIds.lineId)) issues.push(`${path}.ocrIds.lineId must identify the selected OCR line`);
+    if (!Array.isArray(value.ocrIds.wordIds)) issues.push(`${path}.ocrIds.wordIds must be an array`);
+    else {
+      const seen = new Set();
+      value.ocrIds.wordIds.forEach((id, index) => {
+        validateIdentifier(id, `${path}.ocrIds.wordIds[${index}]`, issues);
+        if (seen.has(id)) issues.push(`${path}.ocrIds.wordIds[${index}] must be unique`);
+        seen.add(id);
+      });
+    }
+  }
+  validateString(value.originalText, `${path}.originalText`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
+  validateCoordinatePolygon(value.originalPolygon, `${path}.originalPolygon`, issues);
+  validateCoordinatePolygon(value.canonicalPolygon, `${path}.canonicalPolygon`, issues, {
+    allowedSpaces: [OCR_PDF_USER_SPACE],
+  });
+  validateBaseline(value.canonicalBaseline, `${path}.canonicalBaseline`, issues, {
+    allowedSpaces: [OCR_PDF_USER_SPACE],
+    allowedProvenance: ['ocr-engine', 'engine', 'estimated-from-ocr-polygon'],
+  });
+}
+
+function validateSingleLineLayout(value, path, issues) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'fontName', 'direction', 'shaping', 'glyphCoverage', 'encodedGlyphCount',
+    'encodedText', 'widthPt', 'heightPt', 'availableWidthPt', 'availableHeightPt',
+    'origin', 'angleDegrees', 'baselineAligned', 'overflow',
+  ]), path, issues);
+  validateString(value.fontName, `${path}.fontName`, issues, { nonEmpty: true, maxCodeUnits: 128 });
+  if (value.direction !== 'ltr') issues.push(`${path}.direction must be ltr`);
+  if (value.shaping !== 'pdf-lib-standard-font-winansi-v1') issues.push(`${path}.shaping is unsupported`);
+  if (value.glyphCoverage !== 'complete') issues.push(`${path}.glyphCoverage must be complete`);
+  validatePositiveInteger(value.encodedGlyphCount, `${path}.encodedGlyphCount`, issues);
+  validateString(value.encodedText, `${path}.encodedText`, issues, { nonEmpty: true, maxCodeUnits: 16384 });
+  for (const key of ['widthPt', 'heightPt', 'availableWidthPt', 'availableHeightPt']) {
+    validatePositiveNumber(value[key], `${path}.${key}`, issues);
+  }
+  if (!isObject(value.origin)) issues.push(`${path}.origin must be an object`);
+  else {
+    requireExactKeys(value.origin, new Set(['coordinateSpace', 'point']), `${path}.origin`, issues);
+    if (value.origin.coordinateSpace !== OCR_PDF_USER_SPACE) issues.push(`${path}.origin.coordinateSpace must be ${OCR_PDF_USER_SPACE}`);
+    if (!Array.isArray(value.origin.point) || value.origin.point.length !== 2 || !value.origin.point.every(isFiniteNumber)) {
+      issues.push(`${path}.origin.point must contain two finite numbers`);
+    }
+  }
+  if (!isFiniteNumber(value.angleDegrees) || Math.abs(value.angleDegrees) > 3.000001) {
+    issues.push(`${path}.angleDegrees must remain horizontal within three degrees`);
+  }
+  if (value.baselineAligned !== true) issues.push(`${path}.baselineAligned must be true`);
+  if (value.overflow !== false) issues.push(`${path}.overflow must be false`);
+}
+
+function validateHalo(value, path, issues) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'maxBoundaryChannelDelta', 'meanBoundaryChannelDelta', 'sampleCount', 'tolerance', 'passed',
+  ]), path, issues);
+  validateNonNegativeInteger(value.maxBoundaryChannelDelta, `${path}.maxBoundaryChannelDelta`, issues, { maximum: 255 });
+  validateNonNegativeNumber(value.meanBoundaryChannelDelta, `${path}.meanBoundaryChannelDelta`, issues);
+  validateNonNegativeInteger(value.sampleCount, `${path}.sampleCount`, issues);
+  if (!isObject(value.tolerance)) issues.push(`${path}.tolerance must be an object`);
+  else {
+    requireExactKeys(value.tolerance, new Set(['maxBoundaryChannelDelta', 'meanBoundaryChannelDelta']), `${path}.tolerance`, issues);
+    if (value.tolerance.maxBoundaryChannelDelta !== 72) issues.push(`${path}.tolerance.maxBoundaryChannelDelta must be 72`);
+    if (value.tolerance.meanBoundaryChannelDelta !== 24) issues.push(`${path}.tolerance.meanBoundaryChannelDelta must be 24`);
+  }
+  if (value.passed !== true) issues.push(`${path}.passed must be true`);
+}
+
+function validateSingleLineContent(value, path, issues, selection, lineIds) {
+  if (value === null) return;
+  if (!isObject(value)) {
+    issues.push(`${path} must be null or an object`);
+    return;
+  }
+  requireExactKeys(value, new Set([
+    'scope', 'source', 'replacementText', 'estimatedStyle', 'layout', 'repairPatch',
+    'visibleReplacement', 'searchableText', 'undo',
+  ]), path, issues);
+  if (value.scope !== 'isolated-horizontal-line') issues.push(`${path}.scope must be isolated-horizontal-line`);
+  if (selection?.target?.kind !== 'line' || lineIds.size !== 1) issues.push(`${path} may exist only for one OCR line target`);
+  validateSingleLineSource(value.source, `${path}.source`, issues, lineIds);
+  validateString(value.replacementText, `${path}.replacementText`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
+  if (typeof value.replacementText === 'string' && /[\r\n\u2028\u2029]/u.test(value.replacementText)) {
+    issues.push(`${path}.replacementText must remain one line`);
+  }
+  validateEstimatedStyle(value.estimatedStyle, `${path}.estimatedStyle`, issues);
+  validateSingleLineLayout(value.layout, `${path}.layout`, issues);
+  validatePatch(value.repairPatch, `${path}.repairPatch`, issues);
+  if (value.repairPatch?.sha256 !== selection?.repair?.repairedPatch?.sha256) {
+    issues.push(`${path}.repairPatch must equal the owned background repair patch`);
+  }
+  if (!isObject(value.visibleReplacement)) issues.push(`${path}.visibleReplacement must be an object`);
+  else {
+    requireExactKeys(value.visibleReplacement, new Set([
+      'text', 'patch', 'halo', 'outsideEditRegionChangedPixels',
+    ]), `${path}.visibleReplacement`, issues);
+    if (value.visibleReplacement.text !== value.replacementText) issues.push(`${path}.visibleReplacement.text must equal replacementText`);
+    validatePatch(value.visibleReplacement.patch, `${path}.visibleReplacement.patch`, issues);
+    validateHalo(value.visibleReplacement.halo, `${path}.visibleReplacement.halo`, issues);
+    if (value.visibleReplacement.outsideEditRegionChangedPixels !== 0) {
+      issues.push(`${path}.visibleReplacement.outsideEditRegionChangedPixels must be zero`);
+    }
+  }
+  if (!isObject(value.searchableText)) issues.push(`${path}.searchableText must be an object`);
+  else {
+    requireExactKeys(value.searchableText, new Set(['text', 'renderingMode', 'synchronized']), `${path}.searchableText`, issues);
+    if (value.searchableText.text !== value.replacementText) issues.push(`${path}.searchableText.text must equal replacementText`);
+    if (value.searchableText.renderingMode !== 'owned-invisible-ocr') issues.push(`${path}.searchableText.renderingMode is unsupported`);
+    if (value.searchableText.synchronized !== true) issues.push(`${path}.searchableText.synchronized must be true`);
+  }
+  if (!isObject(value.undo)) issues.push(`${path}.undo must be an object`);
+  else {
+    requireExactKeys(value.undo, new Set(['kind', 'before', 'after', 'revision', 'parentRevision']), `${path}.undo`, issues);
+    if (value.undo.kind !== 'scanned-text-edit') issues.push(`${path}.undo.kind is unsupported`);
+    for (const key of ['before', 'after']) {
+      if (!isObject(value.undo[key])) issues.push(`${path}.undo.${key} must be an object`);
+      else {
+        requireExactKeys(value.undo[key], new Set(['text', 'repairStatus']), `${path}.undo.${key}`, issues);
+        validateString(value.undo[key].text, `${path}.undo.${key}.text`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
+      }
+    }
+    if (!['original', 'applied'].includes(value.undo.before?.repairStatus)) issues.push(`${path}.undo.before.repairStatus is unsupported`);
+    if (value.undo.after?.repairStatus !== 'applied') issues.push(`${path}.undo.after.repairStatus must be applied`);
+    if (value.undo.parentRevision === 0
+        && (value.undo.before?.repairStatus !== 'original' || value.undo.before?.text !== value.source?.originalText)) {
+      issues.push(`${path}.undo first revision must begin with source.originalText`);
+    }
+    if (value.undo.parentRevision > 0 && value.undo.before?.repairStatus !== 'applied') {
+      issues.push(`${path}.undo later revisions must begin with the preceding applied edit`);
+    }
+    if (value.undo.after?.text !== value.replacementText) issues.push(`${path}.undo.after.text must equal replacementText`);
+    if (value.undo.revision !== selection?.revision || value.undo.parentRevision !== selection?.ownership?.parentRevision) {
+      issues.push(`${path}.undo revisions must equal selection ownership revisions`);
+    }
+  }
+}
+
+function validateSelection(value, path, issues, page) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  const selectionKeys = new Set([
+    'id', 'revision', 'target', 'geometry', 'originalPatch', 'analysis', 'repair', 'ownership',
+  ]);
+  if (Object.hasOwn(value, 'content')) selectionKeys.add('content');
+  requireExactKeys(value, selectionKeys, path, issues);
   validateSelectionIdentifier(value.id, `${path}.id`, issues);
   validatePositiveInteger(value.revision, `${path}.revision`, issues);
   const lineIds = validateTarget(value.target, `${path}.target`, issues);
@@ -655,6 +858,9 @@ function validateSelection(value, path, issues, page) {
   }
   validateAnalysis(value.analysis, `${path}.analysis`, issues, value.geometry);
   validateRepair(value.repair, `${path}.repair`, issues, value.geometry, value.analysis);
+  if (Object.hasOwn(value, 'content')) {
+    validateSingleLineContent(value.content, `${path}.content`, issues, value, lineIds);
+  }
   validateOperationOwnership(value.ownership, `${path}.ownership`, issues, value.revision);
   if (value.analysis?.eligibility?.eligible === true && value.repair?.status === 'rejected') {
     issues.push(`${path}.repair may not be rejected when eligibility is true`);
@@ -664,15 +870,66 @@ function validateSelection(value, path, issues, page) {
   }
 }
 
+function validateSearchableTextSnapshot(value, path, issues) {
+  if (!Array.isArray(value)) {
+    issues.push(`${path} must be an array`);
+    return;
+  }
+  const ids = new Set();
+  value.forEach((line, index) => {
+    const linePath = `${path}[${index}]`;
+    if (!isObject(line)) {
+      issues.push(`${linePath} must be an object`);
+      return;
+    }
+    const required = new Set(['lineId', 'text', 'confidence', 'readingOrder', 'direction', 'polygon', 'baseline']);
+    if (Object.hasOwn(line, 'words')) required.add('words');
+    requireExactKeys(line, required, linePath, issues);
+    validateIdentifier(line.lineId, `${linePath}.lineId`, issues);
+    if (ids.has(line.lineId)) issues.push(`${linePath}.lineId must be unique`);
+    ids.add(line.lineId);
+    validateString(line.text, `${linePath}.text`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
+    validateConfidence(line.confidence, `${linePath}.confidence`, issues);
+    validateNonNegativeInteger(line.readingOrder, `${linePath}.readingOrder`, issues);
+    if (line.direction !== null && !['ltr', 'rtl', 'ttb', 'btt'].includes(line.direction)) {
+      issues.push(`${linePath}.direction must be null or a supported OCR direction`);
+    }
+    validateCoordinatePolygon(line.polygon, `${linePath}.polygon`, issues, { allowedSpaces: [OCR_PDF_USER_SPACE] });
+    validateBaseline(line.baseline, `${linePath}.baseline`, issues, {
+      allowedSpaces: [OCR_PDF_USER_SPACE],
+      allowedProvenance: ['engine', 'ocr-engine', 'estimated-from-ocr-polygon'],
+    });
+    if (line.words !== undefined) {
+      if (!Array.isArray(line.words)) issues.push(`${linePath}.words must be an array`);
+      else line.words.forEach((word, wordIndex) => {
+        const wordPath = `${linePath}.words[${wordIndex}]`;
+        if (!isObject(word)) {
+          issues.push(`${wordPath} must be an object`);
+          return;
+        }
+        requireExactKeys(word, new Set(['id', 'text', 'direction', 'polygon']), wordPath, issues);
+        validateIdentifier(word.id, `${wordPath}.id`, issues);
+        validateString(word.text, `${wordPath}.text`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
+        if (word.direction !== null && !['ltr', 'rtl', 'ttb', 'btt'].includes(word.direction)) {
+          issues.push(`${wordPath}.direction must be null or a supported OCR direction`);
+        }
+        validateCoordinatePolygon(word.polygon, `${wordPath}.polygon`, issues, { allowedSpaces: [OCR_PDF_USER_SPACE] });
+      });
+    }
+  });
+}
+
 function validatePage(value, index, state, issues) {
   const path = `pages[${index}]`;
   if (!isObject(value)) {
     issues.push(`${path} must be an object`);
     return;
   }
-  requireExactKeys(value, new Set([
+  const pageKeys = new Set([
     'id', 'index', 'revision', 'sourceRaster', 'pageGeometry', 'selections',
-  ]), path, issues);
+  ]);
+  if (Object.hasOwn(value, 'searchableTextSnapshot')) pageKeys.add('searchableTextSnapshot');
+  requireExactKeys(value, pageKeys, path, issues);
   validateIdentifier(value.id, `${path}.id`, issues);
   if (state.pageIds.has(value.id)) issues.push(`${path}.id must be unique`);
   state.pageIds.add(value.id);
@@ -686,6 +943,18 @@ function validatePage(value, index, state, issues) {
   validateSourceRaster(value.sourceRaster, `${path}.sourceRaster`, issues);
   if (!isObject(value.pageGeometry)) {
     issues.push(`${path}.pageGeometry must be an object`);
+  } else if (Object.hasOwn(value.pageGeometry, 'transformChain')) {
+    const geometryValidation = validateOcrPageGeometryV1(value.pageGeometry);
+    issues.push(...geometryValidation.issues.map((issue) => `${path}.pageGeometry.${issue}`));
+    if (value.pageGeometry.page?.id !== value.id
+        || value.pageGeometry.page?.index !== value.index
+        || value.pageGeometry.page?.revision !== value.revision
+        || value.pageGeometry.sourceRaster?.id !== value.sourceRaster?.id
+        || value.pageGeometry.document?.id !== state.document?.id
+        || value.pageGeometry.document?.revision !== state.document?.revision
+        || value.pageGeometry.document?.generation !== state.document?.generation) {
+      issues.push(`${path}.pageGeometry must match the owning document, page, and source raster`);
+    }
   } else {
     requireExactKeys(value.pageGeometry, new Set(['contract', 'schemaVersion', 'geometryId']), `${path}.pageGeometry`, issues);
     if (value.pageGeometry.contract !== 'open-pdf-studio.ocr.page-geometry') {
@@ -693,6 +962,9 @@ function validatePage(value, index, state, issues) {
     }
     if (value.pageGeometry.schemaVersion !== 1) issues.push(`${path}.pageGeometry.schemaVersion must be 1`);
     validateIdentifier(value.pageGeometry.geometryId, `${path}.pageGeometry.geometryId`, issues);
+  }
+  if (Object.hasOwn(value, 'searchableTextSnapshot')) {
+    validateSearchableTextSnapshot(value.searchableTextSnapshot, `${path}.searchableTextSnapshot`, issues);
   }
   if (!Array.isArray(value.selections)) {
     issues.push(`${path}.selections must be an array`);
@@ -751,6 +1023,7 @@ export function validateScannedTextEditStateV1(value, {
       pageIndexes: new Set(),
       selectionIds: new Set(),
       pageCount: value.document?.pageCount,
+      document: value.document,
     };
     value.pages.forEach((page, index) => validatePage(page, index, state, issues));
   }

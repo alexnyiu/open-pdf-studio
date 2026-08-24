@@ -18,8 +18,13 @@ import {
   preparePdfJsSaveCandidate,
   validateOcrPdfiumCandidateResult,
 } from '../ocr/pdf-persistence.js';
-import { inspectPdfModificationPolicy } from '../ocr/pdf-writer-proof.js';
+import { inspectPdfModificationPolicy, removeOwnedInvisibleOcrLayer } from '../ocr/pdf-writer-proof.js';
 import { markOwnedOcrPersisted } from '../ocr/document-state.js';
+import {
+  buildAndValidateScannedTextEditPdfCandidate,
+  markOwnedScannedTextEditsPersisted,
+  validateScannedTextEditPdfiumCandidateResult,
+} from '../ocr/editing/pdf-persistence.js';
 import {
   abortMacosSafePdfSave,
   finalizeMacosSafePdfSave,
@@ -2636,19 +2641,42 @@ export async function savePDF(saveAsPath = null) {
     // comparison baseline includes legitimate annotation/form changes.
     const preOcrBytes = new Uint8Array(await pdfDocLib.save());
     let savedBytes = preOcrBytes;
+    let scannedTextEditPersistence = null;
+    const scannedState = activeDoc?.scannedTextEdits || null;
+    const scannedStateRevision = scannedState?.stateRevision ?? 0;
+    const persistScannedTextEdits = isMacosTauri()
+      && (activeDoc?.scannedTextEditRemovalPending === true
+        || scannedStateRevision !== (activeDoc?.scannedTextEditPersistedRevision ?? 0));
+    if (persistScannedTextEdits) {
+      const date = new Date().toISOString().replace(/[-:T]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
+      const pageGeometries = Object.values(activeDoc?.ocr?.pages || {})
+        .map((pageState) => pageState?.recognition?.geometry)
+        .filter(Boolean);
+      scannedTextEditPersistence = await buildAndValidateScannedTextEditPdfCandidate({
+        baseBytes: preOcrBytes,
+        lineagePdfBytes: existingPdfBytes,
+        state: scannedState,
+        pageGeometries,
+        expectedPageCount: pages.length,
+        modifiedAt: `D:${date}`,
+      });
+      savedBytes = scannedTextEditPersistence.candidateBytes;
+      preparedPdfJsDocument = scannedTextEditPersistence.candidatePdfJsDocument;
+    }
     let ocrPersistence = null;
     const persistOcr = isMacosTauri() && activeDoc?.ocr?.dirty === true;
     if (persistOcr) {
       const date = new Date().toISOString().replace(/[-:T]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
       ocrPersistence = await buildAndValidateOcrPdfCandidate({
         document: activeDoc,
-        baseBytes: preOcrBytes,
+        baseBytes: savedBytes,
         expectedPageCount: pages.length,
         modifiedAt: `D:${date}`,
       });
       savedBytes = ocrPersistence.candidateBytes;
+      await destroyPreparedPdfJsDocument(preparedPdfJsDocument);
       preparedPdfJsDocument = ocrPersistence.candidatePdfJsDocument;
-    } else {
+    } else if (!preparedPdfJsDocument) {
       preparedPdfJsDocument = await preparePdfJsSaveCandidate(savedBytes, pages.length);
     }
 
@@ -2659,19 +2687,43 @@ export async function savePDF(saveAsPath = null) {
     await unlockFile(outputPath);
     try {
       if (isMacosTauri()) {
+        let validationBaselineBytes = ocrPersistence?.validationBaselineBytes
+          || scannedTextEditPersistence?.validationBaselineBytes
+          || null;
+        if (ocrPersistence && scannedTextEditPersistence) {
+          validationBaselineBytes = await removeOwnedInvisibleOcrLayer({
+            pdfBytes: scannedTextEditPersistence.validationBaselineBytes,
+          });
+        }
         const staged = await stageMacosSafePdfSave({
           destinationPath: outputPath,
           protectedOriginalPath: savePolicy.protectedOriginal ? currentPath : null,
           candidateBytes: savedBytes,
-          validationBaselineBytes: ocrPersistence?.validationBaselineBytes || null,
+          validationBaselineBytes,
         });
         stagedToken = staged.token;
-        if (ocrPersistence) {
+        if (ocrPersistence || scannedTextEditPersistence) {
+          const selectedPageIndexes = [...new Set([
+            ...(ocrPersistence?.pdfiumPlan?.selectedPageIndexes || []),
+            ...(scannedTextEditPersistence?.pdfiumPlan?.selectedPageIndexes || []),
+          ])].sort((left, right) => left - right);
+          const allowedRegions = scannedTextEditPersistence?.pdfiumPlan?.allowedRegions || [];
           const pdfiumResult = await validateStagedOcrPdfWithPdfium(
             stagedToken,
-            ocrPersistence.pdfiumPlan.selectedPageIndexes,
+            selectedPageIndexes,
+            allowedRegions,
           );
-          validateOcrPdfiumCandidateResult(ocrPersistence.pdfiumPlan, pdfiumResult);
+          if (scannedTextEditPersistence) {
+            validateScannedTextEditPdfiumCandidateResult(
+              scannedTextEditPersistence.pdfiumPlan,
+              pdfiumResult,
+            );
+          }
+          if (ocrPersistence) {
+            validateOcrPdfiumCandidateResult(ocrPersistence.pdfiumPlan, pdfiumResult, {
+              allowOwnedVisibleChanges: Boolean(scannedTextEditPersistence),
+            });
+          }
         }
         const finalized = await finalizeMacosSafePdfSave(stagedToken);
         stagedToken = null;
@@ -2710,6 +2762,10 @@ export async function savePDF(saveAsPath = null) {
       await invoke('invalidate_pdf_cache', { path: outputPath });
     }
     if (ocrPersistence && activeDoc) markOwnedOcrPersisted(activeDoc, ocrPersistence.inspection);
+    if (scannedTextEditPersistence && activeDoc) {
+      markOwnedScannedTextEditsPersisted(activeDoc, scannedTextEditPersistence.inspection);
+      activeDoc.scannedTextEditRemovalPending = false;
+    }
     if (activeDoc) {
       await installValidatedSavedPdfDocument(activeDoc, outputPath, savedBytes, preparedPdfJsDocument);
       preparedPdfJsDocument = null;

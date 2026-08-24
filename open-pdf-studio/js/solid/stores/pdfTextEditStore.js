@@ -8,6 +8,8 @@ const [cancelHandler, setCancelHandler] = createSignal(null);
 const [keyDownHandler, setKeyDownHandler] = createSignal(null);
 const [blurHandler, setBlurHandler] = createSignal(null);
 const [selectOnFocus, setSelectOnFocus] = createSignal(false);
+const [editorOptions, setEditorOptions] = createSignal({});
+const [editorStatus, setEditorStatus] = createSignal('');
 
 export function showPdfTextEditor(style, initialText, handlers) {
   setEditorStyle(style);
@@ -16,6 +18,8 @@ export function showPdfTextEditor(style, initialText, handlers) {
   setCancelHandler(() => handlers.onCancel || null);
   setKeyDownHandler(() => handlers.onKeyDown || null);
   setBlurHandler(() => handlers.onBlur || null);
+  setEditorOptions(handlers.options || {});
+  setEditorStatus('');
   setSelectOnFocus(true);
   setActive(true);
 }
@@ -23,6 +27,8 @@ export function showPdfTextEditor(style, initialText, handlers) {
 export function hidePdfTextEditor() {
   setActive(false);
   setSelectOnFocus(false);
+  setEditorOptions({});
+  setEditorStatus('');
 }
 
 export function getEditorText() {
@@ -48,4 +54,5 @@ export function shiftEditorPosition(dxPx, dyPx) {
   });
 }
 
-export { active, editorStyle, text, setText, commitHandler, cancelHandler, keyDownHandler, blurHandler, selectOnFocus, setSelectOnFocus };
+export { active, editorStyle, text, setText, commitHandler, cancelHandler, keyDownHandler, blurHandler,
+  selectOnFocus, setSelectOnFocus, editorOptions, editorStatus, setEditorStatus };

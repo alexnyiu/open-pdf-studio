@@ -5,8 +5,15 @@ import { showTextEditProperties, hideProperties } from '../ui/panels/properties-
 import { markDocumentModified } from '../ui/chrome/tabs.js';
 import { canvasContainer, continuousContainer, pdfCanvas } from '../ui/dom-elements.js';
 import { showPdfTextEditor, hidePdfTextEditor, getPdfEditorText as getEditorText,
-  updatePdfEditorStyle, shiftPdfEditorPosition } from '../bridge.js';
-import { injectSyntheticTextSpans, resolveTextLayerFonts } from '../text/text-layer.js';
+  updatePdfEditorStyle, shiftPdfEditorPosition, setPdfEditorStatus } from '../bridge.js';
+import { injectSyntheticTextSpans, refreshPendingOcrTextLayer, resolveTextLayerFonts } from '../text/text-layer.js';
+import { evaluateScannedTextEdit } from '../ocr/editing/edit-state.js';
+import {
+  applyScannedTextEditForDocument,
+  removeScannedTextEditForDocument,
+  reviseScannedTextEditForDocument,
+} from '../ocr/editing/undo-commands.js';
+import { rasterizePdfPageForOcr } from '../ocr/spike.js';
 import {
   applyPageRotation,
   getPageRotationMatrix,
@@ -146,6 +153,7 @@ function applyStyleStateToEditor(st) {
     'text-decoration-line': decorations.length ? decorations.join(' ') : 'none',
     'text-decoration-thickness': '0.06em',
     'text-underline-offset': '0.08em',
+    'text-align': st.alignment || 'left',
   };
 
   if (activeEditor && st.size > 0) {
@@ -467,6 +475,26 @@ function enableTextLayerHover() {
       span.addEventListener('click', clickHandler);
       hoverListeners.push({ span, enter: enterHandler, leave: leaveHandler, click: clickHandler });
     });
+
+    const scannedSpans = layer.querySelectorAll('span[data-ocr-owner][data-ocr-line-id]');
+    scannedSpans.forEach((span) => {
+      if (alreadyAttached.has(span)) return;
+      span.style.pointerEvents = 'auto';
+      span.style.cursor = 'text';
+      span.classList.add('edit-text-hoverable');
+      const enterHandler = () => span.classList.add('edit-text-block-hover');
+      const leaveHandler = () => span.classList.remove('edit-text-block-hover');
+      const clickHandler = async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
+        await startScannedTextEditing(span, pageNum);
+      };
+      span.addEventListener('mouseenter', enterHandler);
+      span.addEventListener('mouseleave', leaveHandler);
+      span.addEventListener('click', clickHandler);
+      hoverListeners.push({ span, enter: enterHandler, leave: leaveHandler, click: clickHandler });
+    });
   });
 }
 
@@ -491,6 +519,297 @@ function disableTextLayerHover() {
 }
 
 // ── Inline editor ──
+
+function appliedScannedSelection(doc, pageNum, lineId) {
+  return doc?.scannedTextEdits?.pages
+    ?.find((page) => page.index === pageNum - 1)
+    ?.selections?.find((selection) => selection.target?.kind === 'line'
+      && selection.target.targetId === lineId
+      && selection.repair?.status === 'applied'
+      && selection.content?.scope === 'isolated-horizontal-line') || null;
+}
+
+function scannedDisplayFont(fontClass) {
+  if (fontClass === 'monospace') return { name: 'Courier New', css: '"Courier New", Courier, monospace' };
+  if (fontClass === 'serif') return { name: 'Times New Roman', css: '"Times New Roman", Times, serif' };
+  return { name: 'Arial', css: 'Helvetica, Arial, sans-serif' };
+}
+
+function scannedStyleOverrides(editor) {
+  const touched = editor.styleTouchedKeys || new Set();
+  const style = editor.styleState;
+  const output = {};
+  if (touched.has('fontClass')) {
+    const family = (style.family || '').toLowerCase();
+    output.fontClass = family.includes('courier') || family.includes('mono') ? 'monospace'
+      : family.includes('times') || family.includes('serif') ? 'serif'
+        : 'sans-serif';
+  }
+  if (touched.has('fontSize')) output.fontSize = style.size;
+  if (touched.has('weight')) output.weight = style.bold ? 'bold' : 'normal';
+  if (touched.has('italic')) output.italic = style.italic === true;
+  if (touched.has('textColor')) output.textColor = style.color;
+  if (touched.has('alignment')) output.alignment = style.alignment;
+  return output;
+}
+
+function createScannedRepairPreview(span, selection) {
+  const patch = selection.repair.repairedPatch;
+  const sourcePolygon = selection.geometry.lineGeometry[0].sourcePolygon.points;
+  const minX = Math.min(...sourcePolygon.map((point) => point[0]));
+  const maxX = Math.max(...sourcePolygon.map((point) => point[0]));
+  const minY = Math.min(...sourcePolygon.map((point) => point[1]));
+  const maxY = Math.max(...sourcePolygon.map((point) => point[1]));
+  const rect = span.getBoundingClientRect();
+  const scaleX = rect.width / Math.max(1, maxX - minX);
+  const scaleY = rect.height / Math.max(1, maxY - minY);
+  const canvas = document.createElement('canvas');
+  canvas.width = patch.widthPx;
+  canvas.height = patch.heightPx;
+  canvas.setAttribute('aria-hidden', 'true');
+  canvas.dataset.scannedTextEditorPreview = selection.id;
+  canvas.style.position = 'fixed';
+  canvas.style.left = `${rect.left - (minX - patch.originX) * scaleX}px`;
+  canvas.style.top = `${rect.top - (minY - patch.originY) * scaleY}px`;
+  canvas.style.width = `${patch.widthPx * scaleX}px`;
+  canvas.style.height = `${patch.heightPx * scaleY}px`;
+  canvas.style.zIndex = '999';
+  canvas.style.pointerEvents = 'none';
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  const binary = atob(patch.data);
+  const rgba = new Uint8ClampedArray(binary.length);
+  for (let index = 0; index < binary.length; index += 1) rgba[index] = binary.charCodeAt(index);
+  const image = context.createImageData(patch.widthPx, patch.heightPx);
+  image.data.set(rgba);
+  context.putImageData(image, 0, 0);
+  document.body.appendChild(canvas);
+  return canvas;
+}
+
+async function sourceRasterForScannedLine(doc, result) {
+  if (!doc?.filePath) throw new Error('Scanned text editing requires a saved local macOS PDF');
+  const scale = result.sourceRaster.dpi / 72;
+  const rasterized = await rasterizePdfPageForOcr({
+    path: doc.filePath,
+    pageIndex: result.page.index,
+    scale,
+  });
+  if (rasterized.image.width !== result.sourceRaster.widthPx
+      || rasterized.image.height !== result.sourceRaster.heightPx) {
+    throw Object.assign(new Error('The current PDF raster no longer matches the OCR source geometry'), {
+      code: 'STALE_OCR_RASTER',
+    });
+  }
+  return {
+    widthPx: rasterized.image.width,
+    heightPx: rasterized.image.height,
+    rowBytes: rasterized.image.width * 4,
+    data: new Uint8ClampedArray(rasterized.image.rgba),
+    sourceRasterId: result.sourceRaster.id,
+    sourceRasterFingerprint: result.sourceRaster.fingerprint,
+  };
+}
+
+async function startScannedTextEditing(span, pageNum) {
+  finishPdfTextEditing();
+  const doc = getActiveDocument();
+  const lineId = span.dataset.ocrLineId;
+  if (!doc || !lineId) return;
+  let selection = appliedScannedSelection(doc, pageNum, lineId);
+  let raster = null;
+  let result = null;
+  let pageGeometry = null;
+  try {
+    if (!selection) {
+      const pageState = doc.ocr?.pages?.[pageNum];
+      result = pageState?.recognition?.result;
+      pageGeometry = pageState?.recognition?.geometry;
+      if (!result || !pageGeometry || pageState.recognition.ownership?.owner !== 'open-pdf-studio') {
+        throw Object.assign(new Error('This scanned line does not have a current application-owned OCR result'), {
+          code: 'OCR_SOURCE_UNAVAILABLE',
+        });
+      }
+      const line = result.lines.find((entry) => entry.id === lineId);
+      if (!line) throw new Error('The selected OCR line is no longer available');
+      raster = await sourceRasterForScannedLine(doc, result);
+      const preflight = await evaluateScannedTextEdit({
+        result,
+        pageGeometry,
+        raster,
+        target: { kind: 'line', lineId },
+        replacementText: line.text,
+        contextPaddingPx: 24,
+      });
+      if (!preflight.selection.analysis.eligibility.eligible || !preflight.selection.content) {
+        const reasons = preflight.selection.analysis.eligibility.rejectionReasons
+          .map((reason) => reason.message).join('; ');
+        throw Object.assign(new Error(reasons || 'This scanned line is not eligible for safe editing'), {
+          code: 'INELIGIBLE_EDIT_REGION',
+        });
+      }
+      selection = preflight.selection;
+    }
+  } catch (error) {
+    console.warn('[scanned-text-edit] Eligibility failed:', error);
+    showMessage(`Scanned text cannot be edited: ${error?.message || String(error)}`);
+    return;
+  }
+
+  const estimate = selection.content.estimatedStyle;
+  const font = scannedDisplayFont(estimate.fontClass.value);
+  const rect = span.getBoundingClientRect();
+  const fontSizePx = Math.max(1, rect.height || estimate.fontSize.value * (doc.scale || 1));
+  const initialText = selection.content.replacementText;
+  const preview = createScannedRepairPreview(span, selection);
+  const styleObj = {
+    position: 'fixed',
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${Math.max(rect.width + 4, 80)}px`,
+    height: `${Math.max(rect.height, 24)}px`,
+    'font-size': `${fontSizePx}px`,
+    'line-height': `${Math.max(fontSizePx, rect.height)}px`,
+    'font-family': font.css,
+    'font-weight': estimate.weight.value === 'bold' ? 'bold' : 'normal',
+    'font-style': estimate.italic.value ? 'italic' : 'normal',
+    'text-align': estimate.alignment.value,
+    color: estimate.textColor.value,
+    background: 'transparent',
+    'z-index': '1000',
+  };
+  const editor = {
+    block: { spans: [] },
+    pageNum,
+    kind: 'scannedText',
+    selectionId: selection.id,
+    existingOwnedEdit: Boolean(appliedScannedSelection(doc, pageNum, lineId)),
+    originalText: initialText,
+    result,
+    pageGeometry,
+    raster,
+    lineId,
+    preview,
+    committing: false,
+    scale: doc.scale || 1,
+    visualScale: fontSizePx / estimate.fontSize.value,
+    editorBaseline: rect.top + fontSizePx * 0.82,
+    lineSpacing: estimate.fontSize.value,
+    styleTouchedKeys: new Set(),
+    styleState: {
+      family: font.name,
+      cssFamily: font.css,
+      fontFaceChanged: false,
+      size: estimate.fontSize.value,
+      color: estimate.textColor.value,
+      bold: estimate.weight.value === 'bold',
+      italic: estimate.italic.value,
+      underline: false,
+      strikethrough: false,
+      alignment: estimate.alignment.value,
+    },
+  };
+
+  const cleanup = () => {
+    preview?.remove();
+    hidePdfTextEditor();
+    if (activeEditor === editor) activeEditor = null;
+    state.pdfTextEditState = null;
+    hideProperties();
+  };
+  const cancel = () => cleanup();
+  const finish = async () => {
+    if (editor.committing || activeEditor !== editor) return;
+    const replacementText = getEditorText();
+    if (replacementText === editor.originalText && editor.styleTouchedKeys.size === 0) {
+      cleanup();
+      return;
+    }
+    editor.committing = true;
+    try {
+      const styleOverrides = scannedStyleOverrides(editor);
+      if (editor.existingOwnedEdit) {
+        await reviseScannedTextEditForDocument(doc, editor.selectionId, {
+          replacementText,
+          styleOverrides,
+        });
+      } else {
+        await applyScannedTextEditForDocument(doc, {
+          result: editor.result,
+          pageGeometry: editor.pageGeometry,
+          raster: editor.raster,
+          target: { kind: 'line', lineId: editor.lineId },
+          replacementText,
+          styleOverrides,
+          contextPaddingPx: 24,
+        });
+      }
+      markDocumentModified();
+      cleanup();
+      refreshPendingOcrTextLayer(pageNum);
+      enableTextLayerHover();
+    } catch (error) {
+      editor.committing = false;
+      const message = error?.message || String(error);
+      setPdfEditorStatus(`Scanned text change rejected: ${message}`);
+      showMessage(`Scanned text change rejected: ${message}`);
+    }
+  };
+  editor._finishEditing = finish;
+  editor._cancelEditing = cancel;
+  activeEditor = editor;
+  state.pdfTextEditState = editor;
+
+  showTextEditProperties({
+    text: initialText,
+    fontSize: estimate.fontSize.value,
+    fontFamily: font.name,
+    color: estimate.textColor.value,
+    isBold: estimate.weight.value === 'bold',
+    isItalic: estimate.italic.value,
+    isUnderline: false,
+    isStrikethrough: false,
+    textAlign: estimate.alignment.value,
+    scannedTextEstimate: true,
+    page: pageNum,
+  });
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      cancel();
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.ctrlKey || event.metaKey) void finish();
+      else setPdfEditorStatus('Line breaks are not supported. Use Command-Enter to apply this one-line edit.');
+    }
+  };
+  const handleBlur = () => {
+    setTimeout(() => {
+      if (activeEditor !== editor) return;
+      const activeElement = document.activeElement;
+      const propertiesRoot = document.getElementById('properties-panel-root');
+      if (activeElement && propertiesRoot?.contains(activeElement)) return;
+      void finish();
+    }, 150);
+  };
+  showPdfTextEditor(styleObj, initialText, {
+    onCommit: finish,
+    onCancel: cancel,
+    onKeyDown: handleKeyDown,
+    onBlur: handleBlur,
+    options: {
+      singleLine: true,
+      direction: 'ltr',
+      ariaLabel: `Edit scanned text line: ${initialText}`,
+      status: 'Editing one isolated scanned text line. Font properties are estimates.',
+    },
+  });
+}
 
 function startPdfTextEditing(span, pageNum) {
   finishPdfTextEditing();
@@ -1194,10 +1513,13 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
 export function applyActiveTextEditStyle(key, value) {
   if (!activeEditor || !activeEditor.styleState) return;
   const st = activeEditor.styleState;
+  if (activeEditor.kind === 'scannedText' && ['fontUnderline', 'fontStrikethrough'].includes(key)) return;
+  let scannedTouchedKey = null;
   switch (key) {
     case 'fontFamily':
       if (st.family !== value) st.fontFaceChanged = true;
       st.family = value;
+      scannedTouchedKey = 'fontClass';
       break;
     case 'textFontSize':
     case 'fontSize': {
@@ -1205,22 +1527,33 @@ export function applyActiveTextEditStyle(key, value) {
       if (!isNaN(n) && n > 0) {
         st.size = n;
         activeEditor.lineSpacing = n * 1.2;
+        scannedTouchedKey = 'fontSize';
       }
       break;
     }
     case 'textColor':
-    case 'color': st.color = value; break;
+    case 'color': st.color = value; scannedTouchedKey = 'textColor'; break;
     case 'fontBold':
       if (st.bold !== !!value) st.fontFaceChanged = true;
       st.bold = !!value;
+      scannedTouchedKey = 'weight';
       break;
     case 'fontItalic':
       if (st.italic !== !!value) st.fontFaceChanged = true;
       st.italic = !!value;
+      scannedTouchedKey = 'italic';
+      break;
+    case 'textAlign':
+      if (!['left', 'center', 'right'].includes(value)) return;
+      st.alignment = value;
+      scannedTouchedKey = 'alignment';
       break;
     case 'fontUnderline': st.underline = !!value; break;
     case 'fontStrikethrough': st.strikethrough = !!value; break;
     default: return;
+  }
+  if (activeEditor.kind === 'scannedText' && scannedTouchedKey) {
+    activeEditor.styleTouchedKeys.add(scannedTouchedKey);
   }
   applyStyleStateToEditor(st);
   // Record sessions (inserted text or an existing edit record) update live so
@@ -1235,6 +1568,26 @@ export function applyActiveTextEditStyle(key, value) {
 // Delete the text edit that is currently open in the inline editor.
 export function deleteActiveTextEdit() {
   if (!activeEditor) return;
+  if (activeEditor.kind === 'scannedText') {
+    const editor = activeEditor;
+    const doc = getActiveDocument();
+    editor.preview?.remove();
+    hidePdfTextEditor();
+    activeEditor = null;
+    state.pdfTextEditState = null;
+    hideProperties();
+    if (doc && editor.existingOwnedEdit) {
+      try {
+        removeScannedTextEditForDocument(doc, editor.selectionId);
+        markDocumentModified();
+        refreshPendingOcrTextLayer(editor.pageNum);
+        enableTextLayerHover();
+      } catch (error) {
+        showMessage(`Scanned text removal failed: ${error?.message || String(error)}`);
+      }
+    }
+    return;
+  }
   hidePdfTextEditor();
   // Restore any spans the existing-text session hid.
   if (activeEditor.block && activeEditor.block.spans) {

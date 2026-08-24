@@ -7,7 +7,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use app_lib::pdfium_renderer::{init_pdfium, render_page_to_rgba, PdfiumDocumentHandle};
+use app_lib::pdfium_renderer::{
+    extract_all_page_text, init_pdfium, render_page_to_rgba, PdfiumDocumentHandle,
+};
 use serde_json::{json, Value};
 
 struct Raster {
@@ -154,6 +156,68 @@ fn owned_repair_changes_only_approved_pixels_and_removal_restores_source() {
         },
         "PDFium removal must restore the exact original scan pixels"
     );
+
+    let edited_name = manifest
+        .pointer("/singleLineProof/edited")
+        .and_then(Value::as_str)
+        .expect("edited single-line fixture name");
+    let repeated_name = manifest
+        .pointer("/singleLineProof/editedRepeat")
+        .and_then(Value::as_str)
+        .expect("repeated single-line fixture name");
+    let restored_name = manifest
+        .pointer("/singleLineProof/restored")
+        .and_then(Value::as_str)
+        .expect("restored single-line fixture name");
+    let replacement_text = manifest
+        .pointer("/singleLineProof/replacementText")
+        .and_then(Value::as_str)
+        .expect("replacement text");
+    let original_text = manifest
+        .pointer("/singleLineProof/originalText")
+        .and_then(Value::as_str)
+        .expect("original text");
+    let edited_handle = load(&fixture_dir.join(edited_name));
+    let repeated_handle = load(&fixture_dir.join(repeated_name));
+    let restored_handle = load(&fixture_dir.join(restored_name));
+    let edited = render(&edited_handle);
+    let repeated = render(&repeated_handle);
+    let restored_searchable = render(&restored_handle);
+    let edit_approved = (
+        integer(&manifest, "/singleLineProof/approvedRegion/x"),
+        integer(&manifest, "/singleLineProof/approvedRegion/y"),
+        integer(&manifest, "/singleLineProof/approvedRegion/width"),
+        integer(&manifest, "/singleLineProof/approvedRegion/height"),
+    );
+    let edited_difference = compare(&source, &edited, Some(edit_approved));
+    assert!(
+        edited_difference.changed_pixels > 0,
+        "PDFium must render the visible replacement"
+    );
+    assert_eq!(edited_difference.outside_approved_changed_pixels, 0);
+    assert_eq!(
+        compare(&edited, &repeated, None).changed_pixels,
+        0,
+        "repeated save must not duplicate or alter visible replacement pixels"
+    );
+    assert_eq!(
+        compare(&source, &restored_searchable, None).changed_pixels,
+        0,
+        "restoring original searchable text must not alter scan pixels"
+    );
+
+    let edited_text = extract_all_page_text(edited_handle.document(), 0)
+        .expect("PDFium extracts edited searchable text");
+    let repeated_text = extract_all_page_text(repeated_handle.document(), 0)
+        .expect("PDFium extracts repeated-save searchable text");
+    let restored_text = extract_all_page_text(restored_handle.document(), 0)
+        .expect("PDFium extracts restored searchable text");
+    assert_eq!(edited_text.match_indices(replacement_text).count(), 1);
+    assert_eq!(edited_text.match_indices(original_text).count(), 0);
+    assert_eq!(repeated_text.match_indices(replacement_text).count(), 1);
+    assert_eq!(repeated_text.match_indices(original_text).count(), 0);
+    assert_eq!(restored_text.match_indices(original_text).count(), 1);
+    assert_eq!(restored_text.match_indices(replacement_text).count(), 0);
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -166,6 +230,11 @@ fn owned_repair_changes_only_approved_pixels_and_removal_restores_source() {
             "outsideApprovedChangedPixels": repaired_difference.outside_approved_changed_pixels,
             "actualBounds": repaired_difference.actual_bounds,
             "removalChangedPixels": reverted_difference.changed_pixels,
+            "singleLineChangedPixels": edited_difference.changed_pixels,
+            "singleLineOutsideApprovedChangedPixels": edited_difference.outside_approved_changed_pixels,
+            "singleLineReplacementOccurrences": edited_text.match_indices(replacement_text).count(),
+            "singleLineRepeatedReplacementOccurrences": repeated_text.match_indices(replacement_text).count(),
+            "singleLineRestoredOriginalOccurrences": restored_text.match_indices(original_text).count(),
         }))
         .expect("serialize PDFium comparison")
     );

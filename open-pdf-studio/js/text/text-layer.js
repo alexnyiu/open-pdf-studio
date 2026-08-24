@@ -10,6 +10,8 @@ import {
 } from '../ocr/document-state.js';
 import {
   OCR_CROPPED_DISPLAY_PDF_SPACE,
+  OCR_PDF_USER_SPACE,
+  OCR_SOURCE_RASTER_SPACE,
   mapPolygonBetweenSpaces,
 } from '../ocr/contracts/geometry.js';
 
@@ -44,8 +46,10 @@ export function projectOcrItemToTextLayer(textLayerDiv, item) {
     if (typeof context.viewport?.convertToViewportPoint !== 'function') return null;
     points = item.polygon.points.map(([x, y]) => context.viewport.convertToViewportPoint(x, y));
   } else if (context.kind === 'cropped-display') {
+    const pageGeometry = item.pageGeometry || context.pageGeometry;
+    if (!pageGeometry?.transformChain) return null;
     points = mapPolygonBetweenSpaces(
-      item.pageGeometry.transformChain,
+      pageGeometry.transformChain,
       item.polygon,
       OCR_CROPPED_DISPLAY_PDF_SPACE,
     ).points;
@@ -84,7 +88,44 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
 
   const doc = getActiveDocument();
   if (!doc || textLayerDiv._opdsOcrProjection?.documentId !== doc.id) return;
-  const items = getPendingOcrTextItems(doc, pageNum);
+  const pendingItems = getPendingOcrTextItems(doc, pageNum);
+  const editPage = doc.scannedTextEdits?.pages?.find((page) => page.index === pageNum - 1);
+  const appliedEdits = (editPage?.selections || []).filter((selection) =>
+    selection.repair?.status === 'applied'
+      && selection.content?.scope === 'isolated-horizontal-line');
+  let items = pendingItems;
+  if (appliedEdits.length > 0) {
+    const editsByLine = new Map(appliedEdits.map((selection) => [selection.target.targetId, selection]));
+    const pendingLineIds = new Set(pendingItems.map((item) => item.lineId));
+    items = pendingItems.map((item) => ({
+      ...item,
+      scannedSelection: editsByLine.get(item.lineId) || null,
+    }));
+    for (const selection of appliedEdits) {
+      if (pendingLineIds.has(selection.target.targetId)) continue;
+      items.push({
+        id: `${selection.id}-hit-target`,
+        lineId: selection.target.targetId,
+        pageNum,
+        readingOrder: Number.MAX_SAFE_INTEGER,
+        text: selection.content.searchableText.text,
+        confidence: selection.geometry.confidence,
+        polygon: selection.content.source.canonicalPolygon,
+        baseline: selection.content.source.canonicalBaseline,
+        pageGeometry: doc.ocr?.pages?.[pageNum]?.recognition?.geometry
+          || (editPage?.pageGeometry?.transformChain ? editPage.pageGeometry : null),
+        resultRevision: 0,
+        correctionRevision: 0,
+        scannedTextEditRevision: selection.revision,
+        language: null,
+        direction: 'ltr',
+        words: undefined,
+        ownership: { stream: 'persisted-scanned-text-edit' },
+        scannedSelection: selection,
+        hitOnly: true,
+      });
+    }
+  }
   if (items.length === 0) return;
 
   const measureCanvas = document.createElement('canvas');
@@ -93,7 +134,59 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
   for (const item of items) {
     const projected = projectOcrItemToTextLayer(textLayerDiv, item);
     if (!projected || !item.text) continue;
-    if (inserted > 0) {
+    const scannedSelection = item.scannedSelection;
+    const showVisiblePreview = scannedSelection
+      && doc.scannedTextEditPersistedRevision !== doc.scannedTextEdits?.stateRevision
+      && item.pageGeometry;
+    if (showVisiblePreview) {
+      const patch = scannedSelection.content.visibleReplacement.patch;
+      const bounds = scannedSelection.repair.approvedRegion;
+      const repairPolygon = mapPolygonBetweenSpaces(
+        item.pageGeometry.transformChain,
+        {
+          coordinateSpace: OCR_SOURCE_RASTER_SPACE,
+          points: [
+            [bounds.x, bounds.y],
+            [bounds.x + bounds.width, bounds.y],
+            [bounds.x + bounds.width, bounds.y + bounds.height],
+            [bounds.x, bounds.y + bounds.height],
+          ],
+        },
+        OCR_PDF_USER_SPACE,
+      );
+      const previewProjection = projectOcrItemToTextLayer(textLayerDiv, {
+        polygon: repairPolygon,
+        pageGeometry: item.pageGeometry,
+      });
+      if (previewProjection) {
+        const canvas = document.createElement('canvas');
+        canvas.width = patch.widthPx;
+        canvas.height = patch.heightPx;
+        canvas.setAttribute('aria-hidden', 'true');
+        canvas.dataset.ocrOwner = OPEN_PDF_STUDIO_OCR_OWNER;
+        canvas.dataset.ocrStream = 'scanned-text-visible-preview';
+        canvas.dataset.ocrLineId = item.lineId;
+        canvas.style.position = 'absolute';
+        canvas.style.left = `${previewProjection.origin[0].toFixed(4)}px`;
+        canvas.style.top = `${previewProjection.origin[1].toFixed(4)}px`;
+        canvas.style.width = `${previewProjection.width.toFixed(4)}px`;
+        canvas.style.height = `${previewProjection.height.toFixed(4)}px`;
+        canvas.style.transformOrigin = '0 0';
+        canvas.style.transform = `rotate(${previewProjection.angleDegrees.toFixed(6)}deg)`;
+        canvas.style.pointerEvents = 'none';
+        const context = canvas.getContext('2d');
+        if (context) {
+          const binary = atob(patch.data);
+          const rgba = new Uint8ClampedArray(binary.length);
+          for (let index = 0; index < binary.length; index += 1) rgba[index] = binary.charCodeAt(index);
+          const image = context.createImageData(patch.widthPx, patch.heightPx);
+          image.data.set(rgba);
+          context.putImageData(image, 0, 0);
+          textLayerDiv.appendChild(canvas);
+        }
+      }
+    }
+    if (inserted > 0 && !item.hitOnly) {
       const separator = document.createElement('br');
       separator.dataset.ocrOwner = OPEN_PDF_STUDIO_OCR_OWNER;
       separator.dataset.ocrStream = item.ownership.stream;
@@ -102,7 +195,7 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
 
     const span = document.createElement('span');
     span.id = item.id;
-    span.textContent = item.text;
+    span.textContent = item.hitOnly ? '' : item.text;
     span.setAttribute('aria-label', item.text);
     if (item.language) span.setAttribute('lang', item.language);
     if (item.direction === 'ltr' || item.direction === 'rtl') span.setAttribute('dir', item.direction);
@@ -122,7 +215,11 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
     span.style.caretColor = 'transparent';
     span.style.transformOrigin = '0 0';
     let scaleX = 1;
-    if (measureContext) {
+    if (item.hitOnly) {
+      span.style.display = 'block';
+      span.style.width = `${projected.width.toFixed(4)}px`;
+      span.style.height = `${projected.height.toFixed(4)}px`;
+    } else if (measureContext) {
       measureContext.font = `${projected.height}px sans-serif`;
       const measured = measureContext.measureText(item.text).width;
       if (measured > 0) scaleX = projected.width / measured;
@@ -135,6 +232,11 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
     span.dataset.ocrReadingOrder = String(item.readingOrder);
     span.dataset.ocrResultRevision = String(item.resultRevision);
     span.dataset.ocrCorrectionRevision = String(item.correctionRevision);
+    if (scannedSelection || item.hitOnly) {
+      span.dataset.scannedTextEditRevision = String(item.scannedTextEditRevision || 0);
+    }
+    if (scannedSelection) span.dataset.scannedTextEditSelectionId = scannedSelection.id;
+    if (item.hitOnly) span.dataset.scannedTextEditHitOnly = 'true';
     if (item.language) span.dataset.ocrLanguage = item.language;
     if (item.direction) span.dataset.ocrDirection = item.direction;
     const needsTextAccess = state.currentTool === 'select' || state.currentTool === 'editText';
@@ -757,6 +859,9 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
     setOcrTextLayerProjection(textLayerDiv, {
       kind: 'cropped-display',
       documentId: doc.id,
+      pageGeometry: doc.ocr?.pages?.[pageNum]?.recognition?.geometry
+        || doc.scannedTextEdits?.pages?.find((page) => page.index === pageNum - 1)?.pageGeometry
+        || null,
     });
 
     // Hidden text-width measurement canvas for --scale-x
@@ -862,5 +967,11 @@ if (typeof window !== 'undefined') {
       entry.element.querySelectorAll(`[data-ocr-owner="${OPEN_PDF_STUDIO_OCR_OWNER}"]`)
         .forEach((node) => node.remove());
     }
+  });
+  window.addEventListener('open-pdf-studio:scanned-text-edit-state-changed', (event) => {
+    const detail = event.detail;
+    if (detail?.documentId !== getActiveDocument()?.id) return;
+    if (Number.isSafeInteger(detail.pageIndex)) refreshPendingOcrTextLayer(detail.pageIndex + 1);
+    else for (const pageNum of textLayers.keys()) refreshPendingOcrTextLayer(pageNum);
   });
 }

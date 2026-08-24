@@ -85,10 +85,14 @@ export async function stageMacosSafePdfSave(input) {
   }
 }
 
-/** @param {string} token @param {number[]} selectedPageIndexes */
-export async function validateStagedOcrPdfWithPdfium(token, selectedPageIndexes) {
+/** @param {string} token @param {number[]} selectedPageIndexes @param {Array<any>} [allowedRegions] */
+export async function validateStagedOcrPdfWithPdfium(token, selectedPageIndexes, allowedRegions = []) {
   try {
-    return await invoke('validate_macos_ocr_pdf_candidate', { token, selectedPageIndexes });
+    return await invoke('validate_macos_ocr_pdf_candidate', {
+      token,
+      selectedPageIndexes,
+      allowedRegions,
+    });
   } catch (error) {
     throw nativeError(error, 'PDFIUM_VALIDATION_FAILED');
   }

@@ -193,6 +193,10 @@ writeStub('js/ui/dom-elements.mjs',
 writeStub('js/pdf/pdf-viewport.mjs',
   'export const viewport = { active: false, zoom: 1, offsetX: 0, offsetY: 0 };\n');
 stageMjs('js/annotations/factory.js');
+writeStub('js/ocr/document-state.mjs',
+  'export function restoreOcrCommandState() {}\n');
+writeStub('js/ocr/editing/edit-state.mjs',
+  'export function restoreScannedTextEditCommandState() {}\n');
 stageMjs('js/core/undo-manager.js');
 writeStub('js/ui/panels/left-panel.mjs',
   'export function invalidateThumbnails() {}\n');

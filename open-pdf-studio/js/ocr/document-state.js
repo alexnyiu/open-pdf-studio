@@ -645,6 +645,12 @@ function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) 
     .filter((line) => typeof line.text === 'string' && line.text.length > 0)
     .map((line, readingOrder) => {
       const correction = page.review.corrections[line.id];
+      const scannedEdit = doc?.scannedTextEdits?.pages
+        ?.find((entry) => entry.index === pageNum - 1)
+        ?.selections?.find((selection) => selection.target?.kind === 'line'
+          && selection.target.targetId === line.id
+          && selection.repair?.status === 'applied'
+          && selection.content?.scope === 'isolated-horizontal-line');
       const polygon = mapPolygonBetweenSpaces(
         page.recognition.geometry.transformChain,
         line.polygon,
@@ -670,7 +676,7 @@ function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) 
       const anchor = baseline.status === 'provided' && baseline.points?.length
         ? { x: baseline.points[0][0], y: baseline.points[0][1], source: 'baseline' }
         : { x: Math.min(...xs), y: Math.max(...ys), source: 'polygon' };
-      const words = correction || !Array.isArray(line.words) || line.words.length === 0
+      const words = correction || scannedEdit || !Array.isArray(line.words) || line.words.length === 0
         || line.words.some((word) => !word?.polygon)
         ? undefined
         : line.words.map((word) => ({
@@ -690,7 +696,7 @@ function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) 
         lineId: line.id,
         pageNum,
         readingOrder,
-        text: correction?.correctedText ?? line.text,
+        text: scannedEdit?.content?.searchableText?.text ?? correction?.correctedText ?? line.text,
         confidence: line.confidence,
         polygon,
         baseline,
@@ -698,6 +704,7 @@ function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) 
         pageGeometry: page.recognition.geometry,
         resultRevision: page.recognition.revision,
         correctionRevision: page.review.revision,
+        scannedTextEditRevision: scannedEdit?.revision ?? 0,
         language: line.detectedLanguage?.tag || null,
         direction: line.detectedWritingDirection || null,
         words,
