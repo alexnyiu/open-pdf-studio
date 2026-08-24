@@ -1,0 +1,40 @@
+{
+  "status": "pass",
+  "platform": "darwin",
+  "packagedApp": "/Users/alexander/Personal Projects/open-pdf-studio/target/release/bundle/macos/Open PDF Studio.app",
+  "testDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-reflow-5sstNs",
+  "productionEntryPath": true,
+  "testOnlyEntryPoint": false,
+  "assertions": {
+    "undoRedo": true,
+    "firstSave": {
+      "pdfJsLines": 3,
+      "ownedVisible": true,
+      "ownedInvisible": true,
+      "nativePdfiumGatePassed": true,
+      "outsideEditRegionChangedPixels": 0
+    },
+    "reopenAndCopy": {
+      "ownedEditor": true,
+      "copiedText": "Café Ελληνικά Привет reflows safely"
+    },
+    "repeatedSave": {
+      "visibleSelectionCount": 1,
+      "contentStreamCount": 3,
+      "pdfJsLines": 3,
+      "changedPixels": 0,
+      "nativePdfiumGatePassed": true
+    },
+    "explicitOverflowRejection": true,
+    "explicitFailureMessages": {
+      "missingGlyph": "Scanned text change rejected: Approved reflow font has no glyph for U+2603",
+      "unsupportedScript": "Scanned text change rejected: Script for U+6F22 has not passed the approved reflow shaping path",
+      "unsupportedDirection": "Scanned text change rejected: Right-to-left reflow is unavailable because the approved font and geometry path have not passed RTL shaping tests"
+    },
+    "externalReaders": {
+      "applePreviewCopy": "Café Ελληνικά Привет reflows safely",
+      "chromePdfiumCopy": "Café Ελληνικά Привет reflows safely"
+    }
+  },
+  "completedAt": "2026-08-24T10:40:17.615Z"
+}

@@ -14,12 +14,14 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { createCanvas } from '@napi-rs/canvas';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import { inspectOwnedScannedTextRepairLayer } from '../js/ocr/editing/pdf-repair-layer.js';
 import { inspectOwnedInvisibleOcrLayer } from '../js/ocr/pdf-writer-proof.js';
 
-assert.equal(process.platform, 'darwin', 'fixed-region OCR editing acceptance is macOS-only');
+const reflowMode = process.env.OPDS_OCR_EDIT_ACCEPTANCE_MODE === 'reflow';
+assert.equal(process.platform, 'darwin', `${reflowMode ? 'paragraph reflow' : 'fixed-region'} OCR editing acceptance is macOS-only`);
 
 const execFileAsync = promisify(execFile);
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,17 +35,26 @@ const fixturePath = path.join(
   projectDir, 'tests', 'fixtures', 'ocr', 'editing-foundation-v1',
   'flat-scanned-region-edited.pdf',
 );
-const evidenceDir = path.join(projectDir, 'output', 'ocr-edit-regions');
-const runDir = await mkdtemp(path.join(tmpdir(), 'opds-ocr-edit-regions-'));
-const workingPdf = path.join(runDir, 'fixed-region-working.pdf');
-const firstSavedPdf = path.join(runDir, 'fixed-region-first-save.pdf');
+const sourceFixturePath = path.join(
+  projectDir, 'tests', 'fixtures', 'ocr', 'editing-foundation-v1',
+  'flat-scanned-region-source.pdf',
+);
+const evidenceDir = path.join(projectDir, 'output', reflowMode ? 'ocr-reflow' : 'ocr-edit-regions');
+const runDir = await mkdtemp(path.join(tmpdir(), reflowMode ? 'opds-ocr-reflow-' : 'opds-ocr-edit-regions-'));
+const workingPdf = path.join(runDir, reflowMode ? 'reflow-working.pdf' : 'fixed-region-working.pdf');
+const firstSavedPdf = path.join(runDir, reflowMode ? 'reflow-first-save.pdf' : 'fixed-region-first-save.pdf');
 const sessionPath = path.join(runDir, 'session.json');
 const copyHelper = path.join(runDir, 'macos-real-text-copy');
 const stdoutPath = path.join(runDir, 'packaged-app.stdout.log');
 const stderrPath = path.join(runDir, 'packaged-app.stderr.log');
 const reportPath = path.join(evidenceDir, 'acceptance.json');
-const replacementLines = ['MACOS ONE', 'MACOS TWO', 'MACOS THREE'];
+const replacementLines = reflowMode
+  ? ['Café Ελληνικά Привет reflows safely']
+  : ['MACOS ONE', 'MACOS TWO', 'MACOS THREE'];
 const replacementText = replacementLines.join('\n');
+const replacementTokens = reflowMode
+  ? ['Café', 'Ελληνικά', 'Привет', 'reflows', 'safely']
+  : replacementLines;
 const logs = [];
 let requestId = 0;
 let endpoint;
@@ -190,6 +201,47 @@ async function extractedText(pdfPath) {
   }
 }
 
+async function renderedPage(pdfPath) {
+  const document = await pdfjsLib.getDocument({
+    data: new Uint8Array(await readFile(pdfPath)),
+    isEvalSupported: false,
+    verbosity: 0,
+  }).promise;
+  try {
+    const page = await document.getPage(1);
+    const viewport = page.getViewport({ scale: 1 });
+    const canvas = createCanvas(Math.round(viewport.width), Math.round(viewport.height));
+    const context = canvas.getContext('2d');
+    await page.render({ canvas, canvasContext: context, viewport }).promise;
+    return {
+      width: canvas.width,
+      height: canvas.height,
+      data: new Uint8ClampedArray(context.getImageData(0, 0, canvas.width, canvas.height).data),
+    };
+  } finally {
+    await document.destroy();
+  }
+}
+
+function comparePixels(before, after, approvedRegion = null) {
+  assert.equal(after.width, before.width);
+  assert.equal(after.height, before.height);
+  let changedPixels = 0;
+  let outsideApprovedChangedPixels = 0;
+  for (let index = 0; index < before.data.length; index += 4) {
+    if ([0, 1, 2, 3].every((channel) => before.data[index + channel] === after.data[index + channel])) continue;
+    changedPixels += 1;
+    const pixel = index / 4;
+    const x = pixel % before.width;
+    const y = Math.floor(pixel / before.width);
+    const inside = approvedRegion && x >= approvedRegion.x && y >= approvedRegion.y
+      && x < approvedRegion.x + approvedRegion.width
+      && y < approvedRegion.y + approvedRegion.height;
+    if (!inside) outsideApprovedChangedPixels += 1;
+  }
+  return { changedPixels, outsideApprovedChangedPixels };
+}
+
 async function readProcesses() {
   const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,rss=,command='], {
     maxBuffer: 16 * 1024 * 1024,
@@ -214,7 +266,7 @@ async function copyAllFromReader(pid, reader) {
       });
       latest = JSON.parse(stdout);
       return latest.status === 'pass'
-        && replacementLines.every((line) => normalize(latest.text).includes(normalize(line)))
+        && replacementTokens.every((token) => normalize(latest.text).includes(normalize(token)))
         ? latest : null;
     } catch {
       return null;
@@ -280,6 +332,7 @@ async function terminateApplication() {
 await Promise.all([
   access(appPath),
   access(fixturePath),
+  access(sourceFixturePath),
   access(chromePath),
   mkdir(evidenceDir, { recursive: true }),
   copyFile(fixturePath, workingPdf),
@@ -340,6 +393,7 @@ try {
   assert.equal(status.accessibility.role, 'status');
   assert.equal(status.accessibility.live, 'polite');
   assert.equal(status.accessibility.atomic, 'true');
+  if (reflowMode) assert.match(status.text, /single paragraph reflows inside this region/iu);
   const typed = await callTool('app_type', { text: replacementText });
   assert.equal(typed.editable, true);
   assert.equal((await ui('.pdf-text-editor')).value, replacementText);
@@ -356,7 +410,7 @@ try {
   await saveInPlace();
   await copyFile(workingPdf, firstSavedPdf);
   const pdfJsText = await extractedText(firstSavedPdf);
-  for (const line of replacementLines) assert.equal(occurrences(pdfJsText, line), 1);
+  for (const token of replacementTokens) assert.equal(occurrences(pdfJsText, token), 1);
   for (const line of ['REGION ONE', 'REGION TWO', 'REGION THREE', 'SCAN ONE', 'SCAN TWO', 'SCAN THREE']) {
     assert.equal(occurrences(pdfJsText, line), 0);
   }
@@ -366,30 +420,51 @@ try {
   assert.equal(invisible.owned, true);
   assert.equal(visible.selectionIds.length, 1);
   const selection = visible.state.pages[0].selections[0];
-  assert.equal(selection.content.scope, 'fixed-region-multiline');
+  assert.equal(selection.content.scope,
+    reflowMode ? 'approved-region-paragraph-reflow' : 'fixed-region-multiline');
   assert.equal(selection.content.replacementText, replacementText);
   assert.equal(selection.content.visibleReplacement.text, selection.content.searchableText.text);
+  const savedLayoutLines = selection.content.layout.lines.map((line) => line.text);
   assert.deepEqual(
     selection.content.searchableText.lines.map((line) => line.text),
-    replacementLines,
+    savedLayoutLines,
   );
+  assert.equal(savedLayoutLines.join(reflowMode ? ' ' : '\n'), replacementText);
+  if (reflowMode) {
+    assert.equal(selection.content.layout.shaping, 'fontkit-liberation-sans-ltr-v1');
+    assert.equal(selection.content.layout.direction, 'ltr');
+    assert.equal(selection.content.layout.glyphCoverage, 'complete');
+    assert.ok(savedLayoutLines.length >= 2, 'production paragraph must visibly wrap');
+  }
   assert.equal(selection.content.layout.clippingPrevented, true);
   assert.equal(selection.content.layout.overflow, false);
   assert.equal(selection.content.visibleReplacement.outsideEditRegionChangedPixels, 0);
+  const sourceRaster = await renderedPage(sourceFixturePath);
+  const firstSavedRaster = await renderedPage(firstSavedPdf);
+  const pixelDifference = comparePixels(sourceRaster, firstSavedRaster, selection.repair.approvedRegion);
+  assert.ok(pixelDifference.changedPixels > 0);
+  assert.equal(pixelDifference.outsideApprovedChangedPixels, 0);
   evidence.assertions.firstSave = {
-    pdfJsLines: replacementLines.length,
+    pdfJsLines: savedLayoutLines.length,
     ownedVisible: true,
     ownedInvisible: true,
     nativePdfiumGatePassed: true,
-    outsideEditRegionChangedPixels: 0,
+    outsideEditRegionChangedPixels: pixelDifference.outsideApprovedChangedPixels,
   };
 
   await closeActiveTab();
   await openPdf(workingPdf);
-  await startRegionEditor(replacementText);
+  const reopenedEditor = await startRegionEditor(replacementText);
+  if (reflowMode) {
+    assert.match(reopenedEditor.editor.accessibility.label, /paragraph reflow region/iu);
+    const reopenedStatus = await waitUi('#scanned-text-edit-status',
+      (value) => value.found && value.visible && /approved original OCR region/iu.test(value.text));
+    assert.equal(reopenedStatus.accessibility.role, 'status');
+    assert.equal(reopenedStatus.accessibility.live, 'polite');
+  }
   await callTool('app_key', { key: 'Escape' });
   const nativeRegion = await waitUi('.textLayer span:not([data-ocr-owner])',
-    (value) => value.found && value.visible && replacementLines.some((line) => normalize(value.text).includes(line))
+    (value) => value.found && value.visible && replacementTokens.some((token) => normalize(value.text).includes(normalize(token)))
       && value.rect.width > 5 && value.rect.height > 5);
   evidence.assertions.reopenAndCopy = {
     ownedEditor: true,
@@ -398,14 +473,17 @@ try {
 
   await saveInPlace();
   const repeatedText = await extractedText(workingPdf);
-  for (const line of replacementLines) assert.equal(occurrences(repeatedText, line), 1);
+  for (const token of replacementTokens) assert.equal(occurrences(repeatedText, token), 1);
   const [repeatedVisible] = await inspectOwnedScannedTextRepairLayer(new Uint8Array(await readFile(workingPdf)));
   assert.equal(repeatedVisible.selectionIds.length, 1);
   assert.equal(repeatedVisible.contentRefs.length, visible.contentRefs.length);
+  const repeatedPixelDifference = comparePixels(firstSavedRaster, await renderedPage(workingPdf));
+  assert.equal(repeatedPixelDifference.changedPixels, 0);
   evidence.assertions.repeatedSave = {
     visibleSelectionCount: 1,
     contentStreamCount: repeatedVisible.contentRefs.length,
-    pdfJsLines: replacementLines.length,
+    pdfJsLines: savedLayoutLines.length,
+    changedPixels: repeatedPixelDifference.changedPixels,
     nativePdfiumGatePassed: true,
   };
 
@@ -417,6 +495,33 @@ try {
   assert.equal((await ui('.pdf-text-editor')).found, true, 'overflow rejection must retain the editor');
   await callTool('app_key', { key: 'Escape' });
   evidence.assertions.explicitOverflowRejection = true;
+
+  if (reflowMode) {
+    const rejectionCases = [
+      ['Missing ☃ glyph', /no glyph for U\+2603/iu, 'missingGlyph'],
+      ['Unsupported 漢 script', /Script for U\+6F22/iu, 'unsupportedScript'],
+      ['שלום direction', /Right-to-left reflow is unavailable/iu, 'unsupportedDirection'],
+    ];
+    evidence.assertions.explicitFailureMessages = {};
+    for (const [text, pattern, key] of rejectionCases) {
+      await closeActiveTab();
+      await openPdf(workingPdf);
+      await startRegionEditor(replacementText);
+      const typedFailure = await callTool('app_type', { text });
+      assert.equal(typedFailure.editable, true);
+      assert.equal((await ui('.pdf-text-editor')).value, text);
+      await callTool('app_key', { key: 'Enter', meta: true });
+      const rejected = await waitUi('#scanned-text-edit-status',
+        (value) => value.found && value.visible && /rejected/iu.test(value.text));
+      assert.match(rejected.text, pattern);
+      assert.equal(rejected.accessibility.role, 'status');
+      assert.equal(rejected.accessibility.live, 'polite');
+      assert.equal((await ui('.pdf-text-editor')).found, true,
+        `${key} rejection must retain the editor`);
+      await callTool('app_key', { key: 'Escape' });
+      evidence.assertions.explicitFailureMessages[key] = rejected.text;
+    }
+  }
 
   await terminateApplication();
   evidence.assertions.externalReaders = {

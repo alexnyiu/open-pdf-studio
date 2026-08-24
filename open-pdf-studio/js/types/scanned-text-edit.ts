@@ -87,7 +87,7 @@ export interface ScannedTextSingleLineContent {
 }
 
 export interface ScannedTextFixedRegionContent {
-  scope: 'fixed-region-multiline';
+  scope: 'fixed-region-multiline' | 'approved-region-paragraph-reflow';
   source: {
     ocrIds: { regionId: string; lineIds: string[]; wordIds: string[] };
     originalText: string;
@@ -106,7 +106,7 @@ export interface ScannedTextFixedRegionContent {
   layout: {
     fontName: string;
     direction: 'ltr';
-    shaping: 'pdf-lib-standard-font-winansi-v1';
+    shaping: 'pdf-lib-standard-font-winansi-v1' | 'fontkit-liberation-sans-ltr-v1';
     glyphCoverage: 'complete';
     availableWidthPt: number;
     availableHeightPt: number;

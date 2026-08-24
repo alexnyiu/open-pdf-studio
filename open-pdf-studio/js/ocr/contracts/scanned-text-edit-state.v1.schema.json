@@ -629,12 +629,28 @@
     "fixedRegionContent": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [{
+        "oneOf": [
+          {
+            "properties": {
+              "scope": { "const": "fixed-region-multiline" },
+              "layout": { "properties": { "shaping": { "const": "pdf-lib-standard-font-winansi-v1" } } }
+            }
+          },
+          {
+            "properties": {
+              "scope": { "const": "approved-region-paragraph-reflow" },
+              "layout": { "properties": { "shaping": { "const": "fontkit-liberation-sans-ltr-v1" } } }
+            }
+          }
+        ]
+      }],
       "required": [
         "scope", "source", "replacementText", "estimatedStyle", "layout", "repairPatch",
         "visibleReplacement", "searchableText", "undo"
       ],
       "properties": {
-        "scope": { "const": "fixed-region-multiline" },
+        "scope": { "enum": ["fixed-region-multiline", "approved-region-paragraph-reflow"] },
         "source": {
           "type": "object",
           "additionalProperties": false,
@@ -704,7 +720,7 @@
           "properties": {
             "fontName": { "type": "string", "minLength": 1, "maxLength": 128 },
             "direction": { "const": "ltr" },
-            "shaping": { "const": "pdf-lib-standard-font-winansi-v1" },
+            "shaping": { "enum": ["pdf-lib-standard-font-winansi-v1", "fontkit-liberation-sans-ltr-v1"] },
             "glyphCoverage": { "const": "complete" },
             "availableWidthPt": { "type": "number", "exclusiveMinimum": 0 },
             "availableHeightPt": { "type": "number", "exclusiveMinimum": 0 },

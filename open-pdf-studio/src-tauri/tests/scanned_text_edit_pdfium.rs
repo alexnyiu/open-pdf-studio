@@ -274,6 +274,63 @@ fn owned_repair_changes_only_approved_pixels_and_removal_restores_source() {
         assert_eq!(region_edited_text.match_indices(token).count(), 0);
         assert_eq!(region_repeated_text.match_indices(token).count(), 0);
     }
+
+    let reflow_source_name = manifest
+        .pointer("/reflowProof/source")
+        .and_then(Value::as_str)
+        .expect("reflow source fixture name");
+    let reflow_edited_name = manifest
+        .pointer("/reflowProof/edited")
+        .and_then(Value::as_str)
+        .expect("reflow edited fixture name");
+    let reflow_repeated_name = manifest
+        .pointer("/reflowProof/editedRepeat")
+        .and_then(Value::as_str)
+        .expect("reflow repeated fixture name");
+    let reflow_lines = manifest
+        .pointer("/reflowProof/wrappedLines")
+        .and_then(Value::as_array)
+        .expect("reflow wrapped lines");
+    let reflow_original_text = manifest
+        .pointer("/reflowProof/originalText")
+        .and_then(Value::as_str)
+        .expect("reflow original text");
+    let reflow_source_handle = load(&fixture_dir.join(reflow_source_name));
+    let reflow_edited_handle = load(&fixture_dir.join(reflow_edited_name));
+    let reflow_repeated_handle = load(&fixture_dir.join(reflow_repeated_name));
+    let reflow_source = render(&reflow_source_handle);
+    let reflow_edited = render(&reflow_edited_handle);
+    let reflow_repeated = render(&reflow_repeated_handle);
+    let reflow_approved = (
+        integer(&manifest, "/reflowProof/approvedRegion/x"),
+        integer(&manifest, "/reflowProof/approvedRegion/y"),
+        integer(&manifest, "/reflowProof/approvedRegion/width"),
+        integer(&manifest, "/reflowProof/approvedRegion/height"),
+    );
+    let reflow_difference = compare(&reflow_source, &reflow_edited, Some(reflow_approved));
+    assert!(
+        reflow_difference.changed_pixels > 0,
+        "PDFium must render the visible paragraph reflow"
+    );
+    assert_eq!(reflow_difference.outside_approved_changed_pixels, 0);
+    assert_eq!(
+        compare(&reflow_edited, &reflow_repeated, None).changed_pixels,
+        0,
+        "paragraph reflow repeated save must preserve exact visible pixels"
+    );
+    let reflow_edited_text = extract_all_page_text(reflow_edited_handle.document(), 0)
+        .expect("PDFium extracts paragraph reflow searchable text");
+    let reflow_repeated_text = extract_all_page_text(reflow_repeated_handle.document(), 0)
+        .expect("PDFium extracts repeated paragraph reflow searchable text");
+    for token in reflow_lines {
+        let token = token.as_str().expect("reflow line must be text");
+        assert_eq!(reflow_edited_text.match_indices(token).count(), 1);
+        assert_eq!(reflow_repeated_text.match_indices(token).count(), 1);
+    }
+    for token in reflow_original_text.lines() {
+        assert_eq!(reflow_edited_text.match_indices(token).count(), 0);
+        assert_eq!(reflow_repeated_text.match_indices(token).count(), 0);
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -295,6 +352,10 @@ fn owned_repair_changes_only_approved_pixels_and_removal_restores_source() {
             "fixedRegionOutsideApprovedChangedPixels": region_difference.outside_approved_changed_pixels,
             "fixedRegionRepeatedChangedPixels": compare(&region_edited, &region_repeated, None).changed_pixels,
             "fixedRegionReplacementLines": region_replacement_text.lines().count(),
+            "reflowChangedPixels": reflow_difference.changed_pixels,
+            "reflowOutsideApprovedChangedPixels": reflow_difference.outside_approved_changed_pixels,
+            "reflowRepeatedChangedPixels": compare(&reflow_edited, &reflow_repeated, None).changed_pixels,
+            "reflowWrappedLines": reflow_lines.len(),
         }))
         .expect("serialize PDFium comparison")
     );

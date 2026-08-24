@@ -652,7 +652,8 @@ function effectiveOwnedOcrTextItems(doc, pageNum, { pendingOnly = false } = {}) 
   const regionEditsByLine = new Map();
   for (const selection of appliedSelections) {
     if (selection.target?.kind !== 'region'
-        || selection.content?.scope !== 'fixed-region-multiline') continue;
+        || !['fixed-region-multiline', 'approved-region-paragraph-reflow']
+          .includes(selection.content?.scope)) continue;
     for (const lineId of selection.target.lineIds) regionEditsByLine.set(lineId, selection);
   }
 

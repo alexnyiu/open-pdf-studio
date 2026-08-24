@@ -11,6 +11,11 @@ import {
   SCANNED_TEXT_FIXED_REGION_SCOPE,
   reviseFixedRegionMultilineContent,
 } from './fixed-region.js';
+import {
+  SCANNED_TEXT_REFLOW_LAYOUT_MODE,
+  SCANNED_TEXT_REFLOW_SCOPE,
+  reviseApprovedRegionParagraphReflowContent,
+} from './reflow.js';
 
 function targetId(target) {
   if (target?.kind === 'line') return target.lineId ?? target.targetId;
@@ -113,6 +118,8 @@ export async function reviseScannedTextEditForDocument(doc, selectionId, {
   replacementText,
   styleOverrides = {},
   renderVisiblePatch,
+  layoutMode = null,
+  reflowFontBytes,
   operationId = `scanned-text-revise-${globalThis.crypto?.randomUUID?.() || Date.now()}`,
   modifiedAt = new Date().toISOString(),
 } = {}) {
@@ -135,9 +142,19 @@ export async function reviseScannedTextEditForDocument(doc, selectionId, {
   }
   const parentRevision = selection.revision;
   const revision = parentRevision + 1;
-  const reviseContent = selection.content.scope === SCANNED_TEXT_FIXED_REGION_SCOPE
-    ? reviseFixedRegionMultilineContent
-    : reviseIsolatedSingleLineContent;
+  if (layoutMode !== null
+      && (selection.target?.kind !== 'region'
+        || layoutMode !== SCANNED_TEXT_REFLOW_LAYOUT_MODE)) {
+    throw new TypeError(`Unsupported scanned-text region layout mode: ${layoutMode}`);
+  }
+  const paragraphReflow = selection.target?.kind === 'region'
+    && (layoutMode === SCANNED_TEXT_REFLOW_LAYOUT_MODE
+      || selection.content.scope === SCANNED_TEXT_REFLOW_SCOPE);
+  const reviseContent = paragraphReflow
+    ? reviseApprovedRegionParagraphReflowContent
+    : selection.content.scope === SCANNED_TEXT_FIXED_REGION_SCOPE
+      ? reviseFixedRegionMultilineContent
+      : reviseIsolatedSingleLineContent;
   selection.content = await reviseContent({
     page,
     selection,
@@ -146,6 +163,7 @@ export async function reviseScannedTextEditForDocument(doc, selectionId, {
     revision,
     parentRevision,
     renderVisiblePatch,
+    reflowFontBytes,
   });
   selection.revision = revision;
   selection.ownership = {

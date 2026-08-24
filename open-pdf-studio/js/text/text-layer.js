@@ -92,7 +92,8 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
   const editPage = doc.scannedTextEdits?.pages?.find((page) => page.index === pageNum - 1);
   const appliedEdits = (editPage?.selections || []).filter((selection) =>
     selection.repair?.status === 'applied'
-      && ['isolated-horizontal-line', 'fixed-region-multiline'].includes(selection.content?.scope));
+      && ['isolated-horizontal-line', 'fixed-region-multiline', 'approved-region-paragraph-reflow']
+        .includes(selection.content?.scope));
   let items = pendingItems;
   if (appliedEdits.length > 0) {
     const editsByLine = new Map(appliedEdits
@@ -107,7 +108,8 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
     }));
     for (const selection of appliedEdits) {
       if (pendingSelectionIds.has(selection.id)) continue;
-      const fixedRegion = selection.content.scope === 'fixed-region-multiline';
+      const fixedRegion = ['fixed-region-multiline', 'approved-region-paragraph-reflow']
+        .includes(selection.content.scope);
       items.push({
         id: `${selection.id}-hit-target`,
         lineId: selection.target.targetId,

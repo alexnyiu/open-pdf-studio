@@ -11,6 +11,10 @@ import { injectSyntheticTextSpans, refreshPendingOcrTextLayer, resolveTextLayerF
 import { evaluateScannedTextEdit } from '../ocr/editing/edit-state.js';
 import { fixedRegionTargetFromLineIds } from '../ocr/editing/fixed-region.js';
 import {
+  SCANNED_TEXT_REFLOW_LAYOUT_MODE,
+  SCANNED_TEXT_REFLOW_SCOPE,
+} from '../ocr/editing/reflow.js';
+import {
   applyScannedTextEditForDocument,
   removeScannedTextEditForDocument,
   reviseScannedTextEditForDocument,
@@ -548,7 +552,8 @@ function appliedScannedSelection(doc, pageNum, lineId, selectionId = null) {
       ? selection.id === selectionId
       : selection.target?.targetId === lineId || selection.target?.lineIds?.includes(lineId))
       && selection.repair?.status === 'applied'
-      && ['isolated-horizontal-line', 'fixed-region-multiline'].includes(selection.content?.scope)) || null;
+      && ['isolated-horizontal-line', 'fixed-region-multiline', SCANNED_TEXT_REFLOW_SCOPE]
+        .includes(selection.content?.scope)) || null;
 }
 
 function explicitScannedLineSelection(span) {
@@ -758,7 +763,9 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
   const estimate = selection.content.estimatedStyle;
   const font = scannedDisplayFont(estimate.fontClass.value);
   const lineIds = selection.target.lineIds;
-  const fixedRegion = selection.content.scope === 'fixed-region-multiline';
+  const fixedRegion = ['fixed-region-multiline', SCANNED_TEXT_REFLOW_SCOPE]
+    .includes(selection.content.scope);
+  const paragraphReflow = selection.content.scope === SCANNED_TEXT_REFLOW_SCOPE;
   const rect = scannedEditorRect(span, lineIds);
   const fixedRegionLineHeight = rect.height / Math.max(1, lineIds.length);
   const fontSizePx = Math.max(1, fixedRegion
@@ -798,6 +805,7 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     lineId,
     target,
     fixedRegion,
+    paragraphReflow,
     preview,
     committing: false,
     scale: doc.scale || 1,
@@ -837,10 +845,15 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     editor.committing = true;
     try {
       const styleOverrides = scannedStyleOverrides(editor);
+      const layoutMode = editor.fixedRegion
+        && (editor.paragraphReflow || !/[\r\n\u2028\u2029]/u.test(replacementText))
+        ? SCANNED_TEXT_REFLOW_LAYOUT_MODE
+        : null;
       if (editor.existingOwnedEdit) {
         await reviseScannedTextEditForDocument(doc, editor.selectionId, {
           replacementText,
           styleOverrides,
+          layoutMode,
         });
       } else {
         await applyScannedTextEditForDocument(doc, {
@@ -851,6 +864,7 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
           replacementText,
           styleOverrides,
           contextPaddingPx: 24,
+          layoutMode,
         });
       }
       markDocumentModified();
@@ -922,10 +936,14 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
       fixedRegion,
       direction: 'ltr',
       ariaLabel: fixedRegion
-        ? `Edit scanned text fixed region: ${initialText}`
+        ? paragraphReflow
+          ? `Edit scanned text paragraph reflow region: ${initialText}`
+          : `Edit scanned text fixed region: ${initialText}`
         : `Edit scanned text line: ${initialText}`,
       status: fixedRegion
-        ? 'Editing multiple OCR lines inside one fixed original region. Command-Enter applies; overflow is rejected.'
+        ? paragraphReflow
+          ? 'Editing one paragraph inside its approved original OCR region. Command-Enter applies; overflow is rejected.'
+          : 'Editing multiple OCR lines inside one fixed original region. A single paragraph reflows inside this region; hard line breaks preserve fixed-line mode. Command-Enter applies.'
         : 'Editing one isolated scanned text line. Font properties are estimates.',
     },
   });

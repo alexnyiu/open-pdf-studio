@@ -17,6 +17,7 @@ import {
 } from '../js/ocr/editing/pdf-repair-layer.js';
 import { writeOwnedInvisibleOcrLayer } from '../js/ocr/pdf-writer-proof.js';
 import { makeOcrFixture } from '../js/ocr/searchable-layer.test-fixtures.mjs';
+import { SCANNED_TEXT_REFLOW_LAYOUT_MODE } from '../js/ocr/editing/reflow.js';
 
 const outputDir = new URL('../tests/fixtures/ocr/editing-foundation-v1/', import.meta.url);
 const widthPx = 256;
@@ -550,6 +551,77 @@ await writeFile(new URL('flat-scanned-region-source.pdf', outputDir), regionSour
 await writeFile(new URL('flat-scanned-region-edited.pdf', outputDir), editedRegionPdf);
 await writeFile(new URL('flat-scanned-region-edited-repeat.pdf', outputDir), repeatedEditedRegionPdf);
 
+const reflowEvaluation = await evaluateScannedTextEdit({
+  ...regionFixture,
+  raster: {
+    widthPx,
+    heightPx,
+    rowBytes: widthPx * 4,
+    data: regionRaw,
+    sourceRasterId: regionFixture.result.sourceRaster.id,
+    sourceRasterFingerprint: regionFixture.result.sourceRaster.fingerprint,
+  },
+  target: {
+    kind: 'region',
+    regionId: 'fixed-region-fixture',
+    lineIds: regionLines.map((entry) => entry.id),
+  },
+  repairPaddingPx: 1,
+  contextPaddingPx: 24,
+  replacementText: 'Café Ελληνικά Привет reflows safely',
+  layoutMode: SCANNED_TEXT_REFLOW_LAYOUT_MODE,
+  reflowFontBytes: fontBytes,
+  renderVisiblePatch: visibleRegionRenderer,
+  operationId: 'scanned-text-reflow-fixture-operation',
+  modifiedAt: fixedTime,
+});
+const reflowDocumentState = {
+  id: regionFixture.result.document.id,
+  undoStack: [],
+  redoStack: [],
+  scannedTextEdits: createScannedTextEditStateV1({
+    document: regionFixture.result.document,
+    stateId: 'scanned-text-reflow-fixture-state',
+    instanceId: 'scanned-text-reflow-fixture-instance',
+    createdAt: fixedTime,
+  }),
+};
+commitScannedTextEditEvaluation(reflowDocumentState, reflowEvaluation, { modifiedAt: fixedTime });
+const visibleReflowPdf = await writeOwnedScannedTextRepairLayer({
+  pdfBytes: regionSourcePdf,
+  state: reflowDocumentState.scannedTextEdits,
+  pageGeometries: [regionFixture.pageGeometry],
+  modifiedAt: fixedPdfDate,
+});
+const reflowWriterPages = [{
+  pageIndex: 0,
+  lines: writerRegionLines(reflowEvaluation.selection.content),
+}];
+const editedReflowPdf = await writeOwnedInvisibleOcrLayer({
+  pdfBytes: visibleReflowPdf,
+  fontBytes,
+  fontSha256,
+  pages: reflowWriterPages,
+  modifiedAt: fixedPdfDate,
+});
+const repeatedVisibleReflowPdf = await writeOwnedScannedTextRepairLayer({
+  pdfBytes: editedReflowPdf,
+  lineagePdfBytes: regionSourcePdf,
+  state: reflowDocumentState.scannedTextEdits,
+  pageGeometries: [regionFixture.pageGeometry],
+  modifiedAt: fixedPdfDate,
+});
+const repeatedEditedReflowPdf = await writeOwnedInvisibleOcrLayer({
+  pdfBytes: repeatedVisibleReflowPdf,
+  fontBytes,
+  fontSha256,
+  pages: reflowWriterPages,
+  modifiedAt: fixedPdfDate,
+});
+await writeFile(new URL('flat-scanned-reflow-source.pdf', outputDir), regionSourcePdf);
+await writeFile(new URL('flat-scanned-reflow-edited.pdf', outputDir), editedReflowPdf);
+await writeFile(new URL('flat-scanned-reflow-edited-repeat.pdf', outputDir), repeatedEditedReflowPdf);
+
 const manifest = {
   contract: 'open-pdf-studio.scanned-text-edit-fixtures',
   schemaVersion: 1,
@@ -596,6 +668,25 @@ const manifest = {
     measuredLineSpacingPt: regionEvaluation.selection.content.layout.measuredLineSpacingPt,
     stateId: regionDocumentState.scannedTextEdits.stateId,
     stateRevision: regionDocumentState.scannedTextEdits.stateRevision,
+  },
+  reflowProof: {
+    source: 'flat-scanned-reflow-source.pdf',
+    edited: 'flat-scanned-reflow-edited.pdf',
+    editedRepeat: 'flat-scanned-reflow-edited-repeat.pdf',
+    sourceSha256: sha256(regionSourcePdf),
+    editedSha256: sha256(editedReflowPdf),
+    editedRepeatSha256: sha256(repeatedEditedReflowPdf),
+    originalText: reflowEvaluation.selection.content.source.originalText,
+    replacementText: reflowEvaluation.selection.content.replacementText,
+    wrappedLines: reflowEvaluation.selection.content.layout.lines.map((entry) => entry.text),
+    approvedRegion: reflowEvaluation.selection.repair.approvedRegion,
+    measuredLineSpacingPt: reflowEvaluation.selection.content.layout.measuredLineSpacingPt,
+    alignment: reflowEvaluation.selection.content.layout.alignment,
+    shaping: reflowEvaluation.selection.content.layout.shaping,
+    outsideEditRegionChangedPixels:
+      reflowEvaluation.selection.content.visibleReplacement.outsideEditRegionChangedPixels,
+    stateId: reflowDocumentState.scannedTextEdits.stateId,
+    stateRevision: reflowDocumentState.scannedTextEdits.stateRevision,
   },
 };
 await writeFile(new URL('manifest.v1.json', outputDir), `${JSON.stringify(manifest, null, 2)}\n`);

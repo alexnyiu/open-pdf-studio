@@ -26,6 +26,10 @@ import {
   buildScannedTextSearchablePageSnapshot,
 } from './single-line.js';
 import { buildFixedRegionMultilineContent } from './fixed-region.js';
+import {
+  SCANNED_TEXT_REFLOW_LAYOUT_MODE,
+  buildApprovedRegionParagraphReflowContent,
+} from './reflow.js';
 
 export class ScannedTextEditStateConflictError extends Error {
   constructor(code, message) {
@@ -144,6 +148,8 @@ export async function evaluateScannedTextEdit({
   replacementText = null,
   styleOverrides = {},
   renderVisiblePatch,
+  layoutMode = null,
+  reflowFontBytes,
 }) {
   const ephemeral = [];
   let completed = false;
@@ -227,8 +233,15 @@ export async function evaluateScannedTextEdit({
     if (sourceAfter !== sourceBefore) {
       throw new Error('The original scanned raster was mutated during repair evaluation');
     }
+    if (layoutMode !== null
+        && (selected.target.kind !== 'region'
+          || layoutMode !== SCANNED_TEXT_REFLOW_LAYOUT_MODE)) {
+      throw new TypeError(`Unsupported scanned-text region layout mode: ${layoutMode}`);
+    }
     const buildContent = selected.target.kind === 'region'
-      ? buildFixedRegionMultilineContent
+      ? layoutMode === SCANNED_TEXT_REFLOW_LAYOUT_MODE
+        ? buildApprovedRegionParagraphReflowContent
+        : buildFixedRegionMultilineContent
       : buildIsolatedSingleLineContent;
     const content = replacementText === null ? null : await buildContent({
       result,
@@ -243,6 +256,7 @@ export async function evaluateScannedTextEdit({
       revision,
       parentRevision,
       renderVisiblePatch,
+      reflowFontBytes,
     });
     if (content) {
       await notifyStage(onStage, 'replacement-rendered', {

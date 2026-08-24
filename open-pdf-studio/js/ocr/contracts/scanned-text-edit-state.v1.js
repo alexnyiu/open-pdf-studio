@@ -859,7 +859,7 @@ function validateFixedRegionLine(value, path, issues, expectedIndex) {
   });
 }
 
-function validateFixedRegionLayout(value, path, issues, lineCount) {
+function validateFixedRegionLayout(value, path, issues, lineCount, scope) {
   if (!isObject(value)) {
     issues.push(`${path} must be an object`);
     return;
@@ -872,7 +872,10 @@ function validateFixedRegionLayout(value, path, issues, lineCount) {
   ]), path, issues);
   validateString(value.fontName, `${path}.fontName`, issues, { nonEmpty: true, maxCodeUnits: 128 });
   if (value.direction !== 'ltr') issues.push(`${path}.direction must be ltr`);
-  if (value.shaping !== 'pdf-lib-standard-font-winansi-v1') issues.push(`${path}.shaping is unsupported`);
+  const expectedShaping = scope === 'approved-region-paragraph-reflow'
+    ? 'fontkit-liberation-sans-ltr-v1'
+    : 'pdf-lib-standard-font-winansi-v1';
+  if (value.shaping !== expectedShaping) issues.push(`${path}.shaping is unsupported for ${scope}`);
   if (value.glyphCoverage !== 'complete') issues.push(`${path}.glyphCoverage must be complete`);
   validatePositiveNumber(value.availableWidthPt, `${path}.availableWidthPt`, issues);
   validatePositiveNumber(value.availableHeightPt, `${path}.availableHeightPt`, issues);
@@ -897,14 +900,17 @@ function validateFixedRegionContent(value, path, issues, selection, lineIds) {
     'scope', 'source', 'replacementText', 'estimatedStyle', 'layout', 'repairPatch',
     'visibleReplacement', 'searchableText', 'undo',
   ]), path, issues);
-  if (value.scope !== 'fixed-region-multiline') issues.push(`${path}.scope must be fixed-region-multiline`);
+  if (!['fixed-region-multiline', 'approved-region-paragraph-reflow'].includes(value.scope)) {
+    issues.push(`${path}.scope must be a supported owned region-edit scope`);
+  }
   if (selection?.target?.kind !== 'region' || lineIds.size < 2) issues.push(`${path} requires a multiple-line region target`);
   validateFixedRegionSource(value.source, `${path}.source`, issues, selection, lineIds);
   validateString(value.replacementText, `${path}.replacementText`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
   validateEstimatedStyle(value.estimatedStyle, `${path}.estimatedStyle`, issues);
-  validateFixedRegionLayout(value.layout, `${path}.layout`, issues, lineIds.size);
+  validateFixedRegionLayout(value.layout, `${path}.layout`, issues, lineIds.size, value.scope);
+  const lineSeparator = value.scope === 'approved-region-paragraph-reflow' ? ' ' : '\n';
   if (Array.isArray(value.layout?.lines)
-      && value.layout.lines.map((line) => line.text).join('\n') !== value.replacementText) {
+      && value.layout.lines.map((line) => line.text).join(lineSeparator) !== value.replacementText) {
     issues.push(`${path}.replacementText must equal the laid-out visible lines`);
   }
   validatePatch(value.repairPatch, `${path}.repairPatch`, issues);
@@ -1085,7 +1091,7 @@ function validateSelection(value, path, issues, page) {
   validateAnalysis(value.analysis, `${path}.analysis`, issues, value.geometry);
   validateRepair(value.repair, `${path}.repair`, issues, value.geometry, value.analysis);
   if (Object.hasOwn(value, 'content')) {
-    if (value.content?.scope === 'fixed-region-multiline') {
+    if (['fixed-region-multiline', 'approved-region-paragraph-reflow'].includes(value.content?.scope)) {
       validateFixedRegionContent(value.content, `${path}.content`, issues, value, lineIds);
     } else {
       validateSingleLineContent(value.content, `${path}.content`, issues, value, lineIds);

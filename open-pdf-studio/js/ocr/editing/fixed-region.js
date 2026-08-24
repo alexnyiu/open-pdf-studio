@@ -70,7 +70,7 @@ function median(values, fallback = 0) {
     : sorted[middle];
 }
 
-function boundsOfPolygon(polygon) {
+export function boundsOfPolygon(polygon) {
   const xs = polygon.points.map((point) => point[0]);
   const ys = polygon.points.map((point) => point[1]);
   return {
@@ -83,13 +83,13 @@ function boundsOfPolygon(polygon) {
   };
 }
 
-function midpoint(points) {
+export function midpoint(points) {
   const start = points[0];
   const end = points.at(-1);
   return [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
 }
 
-function horizontalAngle(points) {
+export function horizontalAngle(points) {
   const start = points[0];
   const end = points.at(-1);
   let angle = Math.atan2(end[1] - start[1], end[0] - start[0]) * 180 / Math.PI;
@@ -144,7 +144,7 @@ function selectedLineGeometry(selected, entry) {
   };
 }
 
-function assertRegionTarget(result, selected, pageGeometry) {
+export function assertRegionTarget(result, selected, pageGeometry) {
   if (selected.target.kind !== 'region'
       || selected.target.lineIds.length < SCANNED_TEXT_MIN_REGION_LINES
       || selected.target.lineIds.length > SCANNED_TEXT_MAX_REGION_LINES) {
@@ -509,7 +509,7 @@ async function defaultVisiblePatchRenderer({ basePatchBytes, patch, style, geome
   return new Uint8Array(context.getImageData(0, 0, patch.widthPx, patch.heightPx).data);
 }
 
-function sourceRecord(region, selected, pageGeometry) {
+export function sourceRecord(region, selected, pageGeometry) {
   return {
     ocrIds: {
       regionId: selected.target.targetId,
@@ -534,7 +534,7 @@ function sourceRecord(region, selected, pageGeometry) {
   };
 }
 
-function searchableRecord(layout, text) {
+export function searchableRecord(layout, text) {
   return {
     text,
     renderingMode: 'owned-invisible-ocr',

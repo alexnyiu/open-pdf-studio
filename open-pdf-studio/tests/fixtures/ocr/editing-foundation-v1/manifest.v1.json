@@ -247,5 +247,33 @@
     "measuredLineSpacingPt": 32,
     "stateId": "scanned-text-fixed-region-fixture-state",
     "stateRevision": 1
+  },
+  "reflowProof": {
+    "source": "flat-scanned-reflow-source.pdf",
+    "edited": "flat-scanned-reflow-edited.pdf",
+    "editedRepeat": "flat-scanned-reflow-edited-repeat.pdf",
+    "sourceSha256": "7301309cbbea6bfde4e13572b3399b656cea7142f3b5e3c0e07cbb5f53aa661e",
+    "editedSha256": "5e9ac6e15ce6113ef0cd2ad969075f99be09f2f6b01726ee1cba9b14f74f9490",
+    "editedRepeatSha256": "236aac9511fffec4be7853c6779699794c4494f56a08bc6f10e54ae719eb138e",
+    "originalText": "SCAN ONE\nSCAN TWO\nSCAN THREE",
+    "replacementText": "Café Ελληνικά Привет reflows safely",
+    "wrappedLines": [
+      "Café Ελληνικά",
+      "Привет reflows",
+      "safely"
+    ],
+    "approvedRegion": {
+      "coordinateSpace": "source-raster-pixels",
+      "x": 27,
+      "y": 27,
+      "width": 202,
+      "height": 90
+    },
+    "measuredLineSpacingPt": 32,
+    "alignment": "left",
+    "shaping": "fontkit-liberation-sans-ltr-v1",
+    "outsideEditRegionChangedPixels": 0,
+    "stateId": "scanned-text-reflow-fixture-state",
+    "stateRevision": 1
   }
 }

@@ -105,7 +105,8 @@ export function collectOwnedOcrWriterPages(document) {
       .map((selection) => [selection.target.targetId, selection]));
     const regionEdits = page.selections.filter((selection) =>
       selection.repair?.status === 'applied'
-        && selection.content?.scope === 'fixed-region-multiline');
+        && ['fixed-region-multiline', 'approved-region-paragraph-reflow']
+          .includes(selection.content?.scope));
     const regionBySourceLine = new Map();
     for (const selection of regionEdits) {
       for (const lineId of selection.target.lineIds) regionBySourceLine.set(lineId, selection);

@@ -541,6 +541,73 @@ test('fixed-region visual and searchable lines survive reopen and repeated save 
     'reversible fixed-region repair must reveal the untouched source scan');
 });
 
+test('approved paragraph reflow remains synchronized, pixel-bounded, and idempotent across PDF.js reopen', async () => {
+  const fixtureManifest = await manifest();
+  const proof = fixtureManifest.reflowProof;
+  const [sourceBytes, editedBytes, repeatedBytes] = await Promise.all([
+    readFile(new URL(proof.source, FIXTURE_ROOT)).then((bytes) => new Uint8Array(bytes)),
+    readFile(new URL(proof.edited, FIXTURE_ROOT)).then((bytes) => new Uint8Array(bytes)),
+    readFile(new URL(proof.editedRepeat, FIXTURE_ROOT)).then((bytes) => new Uint8Array(bytes)),
+  ]);
+  assert.equal(digest(sourceBytes), proof.sourceSha256);
+  assert.equal(digest(editedBytes), proof.editedSha256);
+  assert.equal(digest(repeatedBytes), proof.editedRepeatSha256);
+
+  const [editedInspection, repeatedInspection] = await Promise.all([
+    inspectOwnedScannedTextRepairLayer(editedBytes).then((entries) => entries[0]),
+    inspectOwnedScannedTextRepairLayer(repeatedBytes).then((entries) => entries[0]),
+  ]);
+  const content = editedInspection.state.pages[0].selections[0].content;
+  assert.equal(content.scope, 'approved-region-paragraph-reflow');
+  assert.equal(content.layout.shaping, 'fontkit-liberation-sans-ltr-v1');
+  assert.equal(content.layout.direction, 'ltr');
+  assert.equal(content.layout.glyphCoverage, 'complete');
+  assert.equal(content.layout.measuredLineSpacingPt, proof.measuredLineSpacingPt);
+  assert.equal(content.layout.alignment, proof.alignment);
+  assert.equal(content.layout.clippingPrevented, true);
+  assert.equal(content.layout.overflow, false);
+  assert.equal(content.visibleReplacement.outsideEditRegionChangedPixels, 0);
+  assert.deepEqual(content.layout.lines.map((line) => line.text), proof.wrappedLines);
+  assert.deepEqual(content.searchableText.lines.map((line) => line.text), proof.wrappedLines);
+  assert.equal(content.layout.lines.map((line) => line.text).join(' '), proof.replacementText);
+  assert.equal(content.visibleReplacement.text, content.searchableText.text);
+  assertScannedTextEditStateV1(editedInspection.state);
+  assert.deepEqual(repeatedInspection.state, editedInspection.state);
+
+  const [sourceRaster, editedRaster, repeatedRaster] = await Promise.all([
+    renderPdfPage(sourceBytes),
+    renderPdfPage(editedBytes),
+    renderPdfPage(repeatedBytes),
+  ]);
+  const comparison = comparePixels(sourceRaster, editedRaster, proof.approvedRegion);
+  assert.ok(comparison.changedPixelCount > 0);
+  assert.equal(comparison.outsideApprovedChangedPixels, 0);
+  assert.deepEqual(repeatedRaster.data, editedRaster.data,
+    'reflow repeated save must preserve every visible pixel');
+
+  for (const bytes of [editedBytes, repeatedBytes]) {
+    const loadingTask = pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false, verbosity: 0 });
+    const document = await loadingTask.promise;
+    try {
+      const textContent = await (await document.getPage(1)).getTextContent();
+      const extracted = textContent.items.map((item) => item.str).filter(Boolean).join('\n');
+      for (const token of proof.wrappedLines) assert.equal(extracted.split(token).length - 1, 1);
+      for (const token of proof.originalText.split('\n')) assert.equal(extracted.includes(token), false);
+    } finally {
+      await document.destroy();
+    }
+  }
+
+  const reopened = { id: editedInspection.state.document.id };
+  await hydrateOwnedScannedTextEditState(reopened, editedBytes);
+  assert.deepEqual(reopened.scannedTextEdits, editedInspection.state);
+  const removedRaster = await renderPdfPage(
+    await removeOwnedScannedTextRepairLayer({ pdfBytes: repeatedBytes }),
+  );
+  assert.deepEqual(removedRaster.data, sourceRaster.data,
+    'reversible reflow repair must reveal the untouched source scan');
+});
+
 test('PDF writer failure returns no partial output and leaves source bytes untouched', async () => {
   const fixtureManifest = await manifest();
   const sourceBytes = new Uint8Array(await readFile(new URL(fixtureManifest.pdfProof.source, FIXTURE_ROOT)));
