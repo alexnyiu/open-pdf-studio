@@ -58,6 +58,7 @@ export function switchToTab(index) {
   // Save scroll position of current document
   const currentDoc = getActiveDocument();
   if (currentDoc) {
+    import('../../pdf/whole-pdf-preload.js').then((module) => module.cancelWholePdfPreload(currentDoc, { reason: 'tab-switch' }));
     const container = document.getElementById('pdf-container');
     if (container) {
       currentDoc.scrollPosition = {
@@ -83,6 +84,7 @@ export function switchToTab(index) {
 
   // Switch active document
   state.activeDocumentIndex = index;
+  import('../../pdf/whole-pdf-preload.js').then((module) => module.startWholePdfPreload(getActiveDocument()));
 
   // Update tab bar UI
   updateTabBar();
@@ -242,6 +244,8 @@ export async function closeTab(index, force = false) {
   const closedPdfDocument = doc.pdfDoc;
   const { clearEditableMetadataPreload } = await import('../../pdf/editable-metadata-preload.js');
   clearEditableMetadataPreload(doc);
+  const { cancelWholePdfPreload } = await import('../../pdf/whole-pdf-preload.js');
+  cancelWholePdfPreload(doc, { release: true, reason: 'close' });
   doc.pdfDoc = null;
   try {
     await closedPdfDocument?.destroy?.();

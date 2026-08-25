@@ -42,8 +42,8 @@ function controllerFor(doc) {
   let controller = controllers.get(doc);
   if (controller) return controller;
   controller = new BoundedPdfPreloadController({
-    maxPages: 6,
-    maxBytes: 24 * 1024 * 1024,
+    maxPages: 1000,
+    maxBytes: 256 * 1024 * 1024,
     isIdle: () => (window.__pdfRenderInFlight || 0) === 0 && isThumbnailPipelineIdle(),
     log: (event) => {
       logPreload(event);
@@ -80,6 +80,20 @@ export function scheduleEditableMetadataPreload(centerPage, direction = 1, { edi
     void doc.pdfDoc.getPage(centerPage).then((page) => page.getOperatorList()).catch(() => {});
   }
   return controllerFor(doc).schedule(pages, { protectedPages: [centerPage] });
+}
+
+export async function preloadEditableMetadataPage(doc, pageNum) {
+  if (!doc?.pdfDoc || pageNum < 1 || pageNum > doc.pdfDoc.numPages) return null;
+  const controller = controllerFor(doc);
+  await controller.schedule([pageNum], { protectedPages: [doc.currentPage, pageNum] });
+  const value = controller.get(pageNum);
+  const bytes = value ? byteEstimate(value.textContent, value.sourceMap) : 0;
+  return value ? { value, bytes } : null;
+}
+
+export function releaseEditableMetadataPage(doc, pageNum) {
+  controllers.get(doc)?.delete(pageNum);
+  discardNativeTextSourcePages(doc, [pageNum]);
 }
 
 export function clearEditableMetadataPreload(doc = getActiveDocument()) {

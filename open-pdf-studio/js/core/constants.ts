@@ -274,6 +274,9 @@ export const DEFAULT_PREFERENCES: Preferences = {
   // multi-proces worker-pool: parallelle eerste render (sneller), geen
   // zwart scherm, hoofdthread blijft vrij. Uitzetbaar in Voorkeuren.
   progressiveRender: true,
+  // Preload low-resolution page resources serially while the active document
+  // is idle. Full-resolution page bitmaps remain on demand.
+  preloadEntirePdf: true,
 
   // Panels
   propertiesPanelVisible: true,

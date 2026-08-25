@@ -15,7 +15,6 @@ import WatermarkDialog from './dialogs/WatermarkDialog.jsx';
 import HeaderFooterDialog from './dialogs/HeaderFooterDialog.jsx';
 import ManageWatermarksDialog from './dialogs/ManageWatermarksDialog.jsx';
 import SignatureDialog from './dialogs/SignatureDialog.jsx';
-import TextAnnotationDialog from './dialogs/TextAnnotationDialog.jsx';
 import UpdateDialog from './dialogs/UpdateDialog.jsx';
 import BookmarkDialog from './dialogs/BookmarkDialog.jsx';
 import FormValidationDialog from './dialogs/FormValidationDialog.jsx';
@@ -37,7 +36,6 @@ import ScaleRegionDialog from './dialogs/ScaleRegionDialog.jsx';
 import MeasuredLengthDialog from './dialogs/MeasuredLengthDialog.jsx';
 import TitleBlockDialog from './dialogs/TitleBlockDialog.jsx';
 import CompareDialog from './compare/CompareDialog.jsx';
-import TextEditOverlay from './TextEditOverlay.jsx';
 import StavenreeksInlineEditor from './StavenreeksInlineEditor.jsx';
 import ParametricLabelInlineEditor from './ParametricLabelInlineEditor.jsx';
 import PdfTextEditOverlay from './PdfTextEditOverlay.jsx';
@@ -67,7 +65,6 @@ const DIALOG_MAP = {
   'header-footer': HeaderFooterDialog,
   'manage-watermarks': ManageWatermarksDialog,
   'signature': SignatureDialog,
-  'text-annotation': TextAnnotationDialog,
   'update': UpdateDialog,
   'bookmark': BookmarkDialog,
   'form-validation': FormValidationDialog,
@@ -102,7 +99,6 @@ export default function DialogHost() {
           return <Component data={dialog.data} />;
         }}
       </For>
-      <TextEditOverlay />
       <StavenreeksInlineEditor />
       <ParametricLabelInlineEditor />
       <PdfTextEditOverlay />

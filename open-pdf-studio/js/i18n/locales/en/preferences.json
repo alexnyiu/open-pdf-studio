@@ -191,6 +191,8 @@
     "rendering": "Rendering",
     "thinLines": "Thin Lines (display all lines at 1px width)",
     "progressiveRender": "Progressive rendering (fill heavy drawings tile by tile)",
+    "preloadEntirePdf": "Preload the entire PDF",
+    "preloadEntirePdfDescription": "Load low-resolution pages, thumbnails, and editable text in the background. Full-resolution pages still load on demand.",
     "showScrollbars": "Show canvas scrollbars",
     "panels": "Panels",
     "showPropertiesPanel": "Show Properties Panel by default",

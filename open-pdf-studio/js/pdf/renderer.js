@@ -17,6 +17,17 @@ import { clearEditableMetadataPreload, scheduleEditableMetadataPreload } from '.
 import { onPageRendered, clearHighlights } from '../search/find-bar.js';
 import { showPagePlaceholder, hidePagePlaceholderWhenReady } from './page-transition.js';
 import { rawPdfTextLayerViewportOptions } from '../text/text-edit-appearance.js';
+
+function scheduleBackgroundMetadata(centerPage, direction) {
+  if (state.preferences.preloadEntirePdf) {
+    void import('./whole-pdf-preload.js').then(({ startWholePdfPreload }) => startWholePdfPreload());
+    return;
+  }
+  void scheduleEditableMetadataPreload(centerPage, direction, {
+    editTextActive: state.currentTool === 'editText',
+  });
+}
+
 // Hi-DPI support: render canvases at device pixel ratio for sharp text
 export function getCanvasDPR() { return window.devicePixelRatio || 1; }
 
@@ -718,6 +729,22 @@ async function renderLowResPreview(pdfDoc, pageNum, targetWidth, targetHeight) {
     return entry.canvas;
   }
 
+  try {
+    const { getCachedThumbnailEntry } = await import('../ui/panels/left-panel.js');
+    const shared = getCachedThumbnailEntry(getActiveDocument(), pageNum);
+    if (shared?.src) {
+      const image = new Image();
+      image.src = shared.src;
+      await image.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = shared.width;
+      canvas.height = shared.height;
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      _lowResCache.set(cacheKey, { canvas, scale: shared.width / Math.max(1, targetWidth || shared.width) });
+      return canvas;
+    }
+  } catch { /* fall back to a PDF.js low-resolution render */ }
+
   const page = await pdfDoc.getPage(pageNum);
   const extraRotation = getPageRotation(pageNum);
   const vpOpts = { scale: LOW_RES_SCALE };
@@ -757,6 +784,10 @@ async function renderLowResPreview(pdfDoc, pageNum, targetWidth, targetHeight) {
 }
 
 function scheduleNearbyLowResPreviews(pdfDoc, centerPage, direction = 1) {
+  if (state.preferences.preloadEntirePdf) {
+    void import('./whole-pdf-preload.js').then(({ startWholePdfPreload }) => startWholePdfPreload());
+    return;
+  }
   const generation = ++_lowResPreloadGeneration;
   const forward = direction < 0 ? -1 : 1;
   const pages = [centerPage, centerPage + forward, centerPage + 2 * forward,
@@ -1192,7 +1223,7 @@ function _syncCurrentPageFromScroll(container) {
     doc.currentPage = bestPage;
     updateActiveThumbnail();
     updateAllStatus();
-    scheduleEditableMetadataPreload(bestPage, direction, { editTextActive: state.currentTool === 'editText' });
+    scheduleBackgroundMetadata(bestPage, direction);
     scheduleNearbyLowResPreviews(doc.pdfDoc, bestPage, direction);
   }
 }
@@ -1449,7 +1480,7 @@ export async function setViewMode(mode) {
     const wrapper = continuousContainer.querySelector(`.page-wrapper[data-page="${doc.currentPage}"]`);
     if (wrapper) wrapper.scrollIntoView({ block: 'start' });
   }
-  scheduleEditableMetadataPreload(doc.currentPage, 1, { editTextActive: state.currentTool === 'editText' });
+  scheduleBackgroundMetadata(doc.currentPage, 1);
 }
 
 // ─── Adjacent-page prefetch (idle-gated) ────────────────────────────────────
@@ -1467,6 +1498,10 @@ const PREFETCH_MAX_WAIT_MS = 4000;   // give up after this — never busy-loop
 
 export function schedulePrefetch(centerPage) {
   if (_prefetchTimer) clearTimeout(_prefetchTimer);
+  if (state.preferences.preloadEntirePdf) {
+    void import('./whole-pdf-preload.js').then(({ startWholePdfPreload }) => startWholePdfPreload());
+    return;
+  }
   _prefetchTimer = setTimeout(() => { _prefetchTimer = null; _runPrefetch(centerPage, 0); }, PREFETCH_DELAY_MS);
   void scheduleEditableMetadataPreload(centerPage, 1, { editTextActive: state.currentTool === 'editText' });
 }
@@ -1591,7 +1626,7 @@ export async function goToPage(pageNum) {
       pageWrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }
-  void scheduleEditableMetadataPreload(pageNum, direction, { editTextActive: state.currentTool === 'editText' });
+  scheduleBackgroundMetadata(pageNum, direction);
   if (doc.viewMode === 'continuous') scheduleNearbyLowResPreviews(doc.pdfDoc, pageNum, direction);
 
   // Update active thumbnail in left panel

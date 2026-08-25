@@ -145,6 +145,15 @@ export default function StatusBar() {
     const pageCount = annotations.filter(a => a.page === (state.documents[state.activeDocumentIndex]?.currentPage || 1)).length;
     return t('annotationsCount', { count: pageCount, total: annotations.length });
   };
+  const preloadStatus = () => state.documents[state.activeDocumentIndex]?.preloadStatus;
+  const preloadText = () => {
+    const preload = preloadStatus();
+    if (!preload) return '';
+    if (preload.state === 'limited') {
+      return `Preload paused at ${localizeNumber(preload.completed)}/${localizeNumber(preload.total)} (${preload.limitReason} limit)`;
+    }
+    return `Preloading ${localizeNumber(preload.completed)}/${localizeNumber(preload.total)}`;
+  };
 
   return (
     <div class="status-bar">
@@ -250,6 +259,9 @@ export default function StatusBar() {
       </Show>
 
       <div class="status-bar-right">
+        <Show when={['running', 'paused', 'limited'].includes(preloadStatus()?.state)}>
+          <div class="status-item" title={preloadText()}>{preloadText()}</div>
+        </Show>
         <div class="status-item">
           <Show when={state.statusMessageVisible}>
             {state.statusMessage}

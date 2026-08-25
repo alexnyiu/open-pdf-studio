@@ -81,6 +81,7 @@ export default function PreferencesDialog(props) {
 
   function handleSave() {
     const prevThinLines = state.preferences.thinLines;
+    const prevPreloadEntirePdf = state.preferences.preloadEntirePdf;
     for (const key of Object.keys(DEFAULT_PREFERENCES)) {
       state.preferences[key] = prefs[key][0]();
     }
@@ -97,6 +98,13 @@ export default function PreferencesDialog(props) {
       } else {
         import('../../../pdf/renderer.js').then(m => m.renderPage(getActiveDocument()?.currentPage || 1));
       }
+    }
+    if (state.preferences.preloadEntirePdf !== prevPreloadEntirePdf) {
+      import('../../../pdf/whole-pdf-preload.js').then((module) => {
+        const doc = getActiveDocument();
+        if (state.preferences.preloadEntirePdf) module.startWholePdfPreload(doc);
+        else module.cancelWholePdfPreload(doc, { release: true, reason: 'preference-off' });
+      });
     }
     close();
   }

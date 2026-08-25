@@ -1,5 +1,6 @@
 import type { DocumentState } from '../../types/document.js';
 import { createDocumentOcrState } from '../../ocr/document-state.js';
+import { createEmptyDocumentMetadata } from '../../pdf/document-metadata.js';
 
 /**
  * Creates a new document state object
@@ -11,6 +12,8 @@ export function createDocument(filePath: string | null = null): DocumentState {
     filePath: filePath,
     fileName: filePath ? filePath.split(/[\\/]/).pop()! : 'Untitled',
     pdfDoc: null,
+    metadata: createEmptyDocumentMetadata(),
+    preloadStatus: { state: 'idle', completed: 0, total: 0, retainedBytes: 0, limitReason: null },
     currentPage: 1,
     scale: 1.5,
     viewMode: 'single',

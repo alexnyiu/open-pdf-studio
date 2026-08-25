@@ -328,7 +328,8 @@
     "pageCount": "Page Count:",
     "pageSize": "Page Size:",
     "creationDate": "Creation Date:",
-    "modifiedDate": "Modified Date:"
+    "modifiedDate": "Modified Date:",
+    "invalidDate": "Enter a valid date and time."
   },
   "unsavedChanges": {
     "title": "Unsaved Changes",

@@ -111,6 +111,23 @@ function rotateDelta(deltaX, deltaY, rotationDeg) {
   };
 }
 
+function clampRectToOppositeEdges(rect, original, handleType, minWidth = 10, minHeight = 10) {
+  const dragsLeft = [HANDLE_TYPES.TOP_LEFT, HANDLE_TYPES.BOTTOM_LEFT, HANDLE_TYPES.LEFT].includes(handleType);
+  const dragsRight = [HANDLE_TYPES.TOP_RIGHT, HANDLE_TYPES.BOTTOM_RIGHT, HANDLE_TYPES.RIGHT].includes(handleType);
+  const dragsTop = [HANDLE_TYPES.TOP_LEFT, HANDLE_TYPES.TOP_RIGHT, HANDLE_TYPES.TOP].includes(handleType);
+  const dragsBottom = [HANDLE_TYPES.BOTTOM_LEFT, HANDLE_TYPES.BOTTOM_RIGHT, HANDLE_TYPES.BOTTOM].includes(handleType);
+  if (rect.width < minWidth) {
+    rect.width = minWidth;
+    if (dragsLeft) rect.x = original.x + original.width - minWidth;
+    else if (dragsRight) rect.x = original.x;
+  }
+  if (rect.height < minHeight) {
+    rect.height = minHeight;
+    if (dragsTop) rect.y = original.y + original.height - minHeight;
+    else if (dragsBottom) rect.y = original.y;
+  }
+}
+
 // Apply resize for a rotated rectangular annotation.
 // The idea: resize in local (unrotated) space, then reposition so the
 // anchor corner (opposite to the dragged handle) stays in the same
@@ -198,9 +215,13 @@ function applyRotatedResize(annotation, handleType, deltaX, deltaY, originalAnn,
       break;
   }
 
-  // Enforce minimum size
-  if (newW < 10) { newW = 10; if (lockRatio) newH = newW / aspectRatio; }
-  if (newH < 10) { newH = 10; if (lockRatio) newW = newH * aspectRatio; }
+  const clamped = { x: newX, y: newY, width: newW, height: newH };
+  clampRectToOppositeEdges(clamped, originalAnn, handleType, 10, 10);
+  newX = clamped.x; newY = clamped.y; newW = clamped.width; newH = clamped.height;
+  if (lockRatio) {
+    if (newW / newH > aspectRatio) newW = newH * aspectRatio;
+    else newH = newW / aspectRatio;
+  }
 
   // The center of the original annotation in screen space
   const rad = rot * Math.PI / 180;
@@ -335,9 +356,7 @@ export function applyResize(annotation, handleType, deltaX, deltaY, originalAnn,
             annotation.width = originalAnn.width + deltaX;
             break;
         }
-        // Ensure minimum size
-        if (annotation.width < 10) annotation.width = 10;
-        if (annotation.height < 10) annotation.height = 10;
+        clampRectToOppositeEdges(annotation, originalAnn, handleType, 10, 10);
       }
       break;
 
@@ -392,9 +411,7 @@ export function applyResize(annotation, handleType, deltaX, deltaY, originalAnn,
           }
           break;
       }
-      // Ensure minimum size
-      if (annotation.width < 50) annotation.width = 50;
-      if (annotation.height < 30) annotation.height = 30;
+      clampRectToOppositeEdges(annotation, originalAnn, handleType, 50, 30);
       // Recalculate leader line geometry (skip for move-all, already correct)
       if (handleType === HANDLE_TYPES.CALLOUT_MOVE) {
         // Everything moved together, no recalc needed

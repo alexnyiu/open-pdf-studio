@@ -8,7 +8,7 @@
 //   Escape                                   → annuleren
 //   Tab                                      → wisselen tussen de velden
 //
-// Positionering volgt hetzelfde patroon als TextEditOverlay: schermcoördinaten
+// Positionering volgt hetzelfde patroon als de inline PDF-teksteditor: schermcoördinaten
 // die uit de annotatiecoördinaten worden gerekend. Omdat zoom en pan geen
 // SolidJS-signaal zijn, wordt de positie elke frame opnieuw opgevraagd bij de
 // `locate`-functie die de vanilla-laag meegaf. Levert die null, dan bestaat de

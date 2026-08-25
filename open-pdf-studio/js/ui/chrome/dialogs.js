@@ -60,22 +60,12 @@ async function gatherDocProperties() {
     }
   }
 
-  let title = '-', author = '-', subject = '-', keywords = '-';
-  let creator = '-', producer = '-', pdfVersion = '-';
-  let created = '-', modified = '-';
+  let pdfVersion = '-';
 
   try {
     const metadata = await doc.pdfDoc.getMetadata();
     const info = metadata.info || {};
-    title = info.Title || '-';
-    author = info.Author || '-';
-    subject = info.Subject || '-';
-    keywords = info.Keywords || '-';
-    creator = info.Creator || '-';
-    producer = info.Producer || '-';
     pdfVersion = info.PDFFormatVersion || '-';
-    created = formatPdfDate(info.CreationDate) || '-';
-    modified = formatPdfDate(info.ModDate) || '-';
   } catch (e) {
     console.error('Error getting PDF metadata:', e);
   }
@@ -95,8 +85,8 @@ async function gatherDocProperties() {
 
   return {
     fileName, filePath, fileSize,
-    title, author, subject, keywords, creator, producer,
-    pdfVersion, pageCount, pageSize, created, modified,
+    metadata: doc.metadata,
+    pdfVersion, pageCount, pageSize,
   };
 }
 
@@ -106,26 +96,6 @@ function formatFileSize(bytes) {
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-function formatPdfDate(pdfDate) {
-  if (!pdfDate) return null;
-  try {
-    if (typeof pdfDate === 'string' && pdfDate.startsWith('D:')) {
-      const dateStr = pdfDate.substring(2);
-      const year = dateStr.substring(0, 4);
-      const month = dateStr.substring(4, 6) || '01';
-      const day = dateStr.substring(6, 8) || '01';
-      const hour = dateStr.substring(8, 10) || '00';
-      const min = dateStr.substring(10, 12) || '00';
-      const sec = dateStr.substring(12, 14) || '00';
-      const date = new Date(`${year}-${month}-${day}T${hour}:${min}:${sec}`);
-      return date.toLocaleString();
-    }
-    return pdfDate;
-  } catch (e) {
-    return pdfDate;
-  }
 }
 
 // ============================================
@@ -221,4 +191,3 @@ export function hidePageSetupDialog() {
 }
 
 export { getPageSetupSettings } from '../../solid/components/dialogs/PageSetupDialog.jsx';
-

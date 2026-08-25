@@ -107,6 +107,7 @@ function pagesForCommand(cmd) {
     // which regenerates every thumbnail. A per-page hook here would be wrong.
     'pageStructure',
     'ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned', 'scannedTextEdit',
+    'modifyDocumentMetadata',
   ]);
   if (pages.size === 0 && !skipTypes.has(cmd.type)) {
     const doc = getActiveDocument();
@@ -202,6 +203,7 @@ export async function undo() {
     clearEditableMetadataPreload(getActiveDocument());
     const { restorePageState } = await import('../pdf/page-manager.js');
     await restorePageState(cmd.oldBytes, cmd.oldAnnotations, cmd.oldRotations, cmd.oldPage);
+    void import('../pdf/whole-pdf-preload.js').then((module) => module.restartWholePdfPreload(getActiveDocument()));
     syncModifiedState();
     updateButtons();
     return;
@@ -258,6 +260,7 @@ export async function redo() {
     clearEditableMetadataPreload(getActiveDocument());
     const { restorePageState } = await import('../pdf/page-manager.js');
     await restorePageState(cmd.newBytes, cmd.newAnnotations, cmd.newRotations, cmd.newPage);
+    void import('../pdf/whole-pdf-preload.js').then((module) => module.restartWholePdfPreload(getActiveDocument()));
     syncModifiedState();
     updateButtons();
     return;
@@ -413,6 +416,10 @@ function applyUndo(cmd) {
     }
     case 'scannedTextEdit': {
       restoreScannedTextEditCommandState(doc, cmd.before);
+      break;
+    }
+    case 'modifyDocumentMetadata': {
+      doc.metadata = clonePlainValue(cmd.oldState);
       break;
     }
     case 'bulkDelete': {
@@ -609,6 +616,10 @@ function applyRedo(cmd) {
       restoreScannedTextEditCommandState(doc, cmd.after);
       break;
     }
+    case 'modifyDocumentMetadata': {
+      doc.metadata = clonePlainValue(cmd.newState);
+      break;
+    }
     case 'bulkDelete': {
       for (const item of cmd.items) {
         const idx = doc.annotations.findIndex(a => a.id === item.annotation.id);
@@ -688,6 +699,8 @@ async function refresh() {
     redrawAnnotations();
   }
   updateQuickAccessButtons();
+  const { populateDocInfo } = await import('../solid/stores/propertiesStore.js');
+  await populateDocInfo();
 
   // Refresh bookmarks panel if active
   const { activeTab } = await import('../solid/stores/leftPanelStore.js');
@@ -747,6 +760,14 @@ export function recordPageRotation(pageNum, oldRotation, newRotation) {
     pageNum,
     oldRotation,
     newRotation
+  });
+}
+
+export function recordDocumentMetadata(oldState, newState) {
+  execute({
+    type: 'modifyDocumentMetadata',
+    oldState: clonePlainValue(oldState),
+    newState: clonePlainValue(newState),
   });
 }
 

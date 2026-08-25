@@ -348,6 +348,12 @@ export function setTool(tool) {
     })();
   }
 
+  // Tear down select fall-through before applying the new tool's layer state.
+  // Its cleanup clears per-layer pointer-event overrides, so running it after
+  // setTextSelectionEnabled() would accidentally make the text layer intercept
+  // the first drag made with a drawing tool.
+  _setSelectFallthroughEnabled(tool === 'select');
+
   // Text selection: enabled for unified select tool (text layer activates dynamically)
   if (tool !== 'editText') {
     setTextSelectionEnabled(tool === 'select');
@@ -361,11 +367,6 @@ export function setTool(tool) {
   // Drop annotation canvas below text layer ONLY for editText tool
   // select = unified tool (annotation canvas stays above, text layer activates dynamically)
   setAnnotationCanvasForTextAccess(tool === 'editText');
-
-  // Unified select tool: install dynamic pointer-events fall-through so
-  // dragging across body text triggers native text selection while clicks
-  // on annotations still hit the annotation-canvas.
-  _setSelectFallthroughEnabled(tool === 'select');
 
   // Update status bar
   updateStatusTool();

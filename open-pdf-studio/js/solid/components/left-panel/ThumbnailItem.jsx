@@ -1,6 +1,6 @@
 import { Show } from 'solid-js';
 import {
-  activePage, thumbnailData, draggedPage, setDraggedPage, dropTarget, setDropTarget, placeholderSize,
+  activePage, thumbnailData, draggedPage, setDraggedPage, dropTarget, setDropTarget, placeholderSize, pagePlaceholderSizes,
   selectedPages, selectPage, togglePageSelection, selectPageRange, isPageSelected
 } from '../../stores/panels/thumbnailStore.js';
 import { showThumbnailMenu } from '../../stores/contextMenuStore.js';
@@ -14,7 +14,7 @@ export default function ThumbnailItem(props) {
   const isDropAfter = () => drop()?.page === props.pageNum && drop()?.position === 'after';
   const isSelected = () => { selectedPages(); return isPageSelected(props.pageNum); };
 
-  const size = () => placeholderSize();
+  const size = () => pagePlaceholderSizes[String(props.pageNum)] || placeholderSize();
 
   const handleClick = (e) => {
     if (e.ctrlKey && e.shiftKey) {
@@ -89,7 +89,7 @@ export default function ThumbnailItem(props) {
           <div class="thumbnail-spinner" />
         </div>
       }>
-        <img class="thumbnail-canvas" src={imageData().dataURL} style={{ width: imageData().width + 'px' }} />
+        <img class="thumbnail-canvas" src={imageData().src || imageData().dataURL} style={{ width: imageData().width + 'px', height: imageData().height + 'px' }} />
       </Show>
       <div class="thumbnail-label">{props.pageNum}</div>
     </div>

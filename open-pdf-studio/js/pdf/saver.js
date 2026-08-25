@@ -35,6 +35,7 @@ import {
 import { evaluatePdfModificationSavePolicy } from './modification-save-policy.js';
 import { loadPackagedFaceBytes, shapeRichTextDocument } from '../text/font-catalog.js';
 import { richTextToPlainText } from '../text/rich-text.js';
+import { applyDocumentMetadataToPdf, assertDocumentMetadataRoundTrip } from './document-metadata.js';
 
 // Sub-modules
 import { hexToRgb, buildBorderStyle, computeAnnotFlags, mapFontToPdfName,
@@ -196,6 +197,7 @@ export async function savePDF(saveAsPath = null) {
     return await savePDFAs();
   }
 
+  window.__pdfSaveInProgress = true;
   try {
     showLoading('Saving PDF...');
 
@@ -241,6 +243,7 @@ export async function savePDF(saveAsPath = null) {
     nativeTextEditReportCandidate = nativeTextCandidate.report;
 
     const pdfDocLib = await PDFDocument.load(existingPdfBytes, { updateMetadata: false });
+    applyDocumentMetadataToPdf(pdfDocLib, activeDoc.metadata);
 
     // Explicit policy: edited PDF/A output is a standard PDF copy. Application
     // compliance state changes only after the native replacement succeeds.
@@ -2791,6 +2794,7 @@ export async function savePDF(saveAsPath = null) {
     } else if (!preparedPdfJsDocument) {
       preparedPdfJsDocument = await preparePdfJsSaveCandidate(savedBytes, pages.length);
     }
+    await assertDocumentMetadataRoundTrip(preparedPdfJsDocument, activeDoc.metadata);
 
     // macOS production writes only private same-volume files until PDF.js,
     // PDFium, extraction, ownership, idempotence, removal, and exact-pixel
@@ -2905,9 +2909,11 @@ export async function savePDF(saveAsPath = null) {
     showMessage(i18next.t('failedToSavePdf', { error: error?.message || String(error) }));
     return false;
   } finally {
+    window.__pdfSaveInProgress = false;
     await abortMacosSafePdfSave(stagedToken);
     await destroyPreparedPdfJsDocument(preparedPdfJsDocument);
     hideLoading();
+    void import('./whole-pdf-preload.js').then((module) => module.startWholePdfPreload(activeDoc));
   }
 }
 

@@ -434,6 +434,14 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     assertPdfDocumentResourceLimits(doc.pdfDoc);
     console.log(`[PERF] PDF.js getDocument done: ${(performance.now() - _t0).toFixed(0)}ms, pages: ${doc.pdfDoc.numPages}`);
 
+    try {
+      const { documentMetadataFromPdfInfo } = await import('./document-metadata.js');
+      const loadedMetadata = await doc.pdfDoc.getMetadata();
+      doc.metadata = documentMetadataFromPdfInfo(loadedMetadata?.info || {});
+    } catch (error) {
+      console.warn('[metadata] Failed to hydrate document metadata:', error?.message || error);
+    }
+
     // ─── PDF.js v5.4 multi-doc pagesMapper RECOVERY PATCH ─────────────────
     // PDF.js 5.4 introduced a regression: PagesMapper.#pagesNumber is a
     // STATIC class field shared across all WorkerTransport instances. The
@@ -449,41 +457,6 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     // pdfjsLib.getDocument which re-runs the GetDoc handler and resets
     // pagesMapper to the correct count. ~500 ms cost on recovery only.
     _attachPdfDocGetPageRecovery(doc, filePath);
-
-    // ─── BACKGROUND ANALYZE PRE-WARM ─────────────────────────────────────
-    // analyze_page_type is what makes per-page navigation feel slow on
-    // construction PDFs — the lopdf operator decoder takes 500-2800 ms per
-    // huge content-stream page (NKD1a p2: ~2787 ms). Even with the new
-    // size-shortcut in analyze_page_type, the FIRST call to each page still
-    // pays the dict + size check. Fire one batch invoke for all pages in
-    // parallel (rayon on the Rust side, populates PageTypeCache) so by the
-    // time the user navigates anywhere, the result is a cached HashMap
-    // lookup. Total batch cost on NKD1a: ~50 ms total instead of ~600 ms
-    // × 7 pages sequentially as the user scrolls.
-    if (filePath && isTauri() && doc.pdfDoc.numPages > 1) {
-      const _abT0 = performance.now();
-      const allPages = Array.from({ length: doc.pdfDoc.numPages }, (_, i) => i);
-      window.__TAURI__.core.invoke('analyze_page_type_batch', {
-        path: filePath,
-        pageIndices: allPages,
-      }).then(async (results) => {
-        // Populate the JS-side cache so renderer.js skips the analyze IPC
-        // entirely on subsequent navigations — critical because during
-        // cold-open the IPC queue is saturated by thumbnail invokes and
-        // a single analyze invoke can wait 1+ second despite the Rust
-        // cache being warm.
-        try {
-          const ptcMod = await import('./page-type-cache.js');
-          ptcMod.cacheBatchResults(filePath, results);
-        } catch (e) {
-          console.warn('[PERF] page-type-cache populate failed:', e?.message ?? e);
-        }
-        console.log(`[PERF] analyze_page_type_batch ${doc.pdfDoc.numPages} pages: ${(performance.now() - _abT0).toFixed(0)}ms ` +
-          `(vector=${results.filter(r => r === 'vector').length}, tile=${results.filter(r => r === 'tile').length})`);
-      }).catch((e) => {
-        console.warn('[PERF] analyze_page_type_batch failed:', e?.message ?? e);
-      });
-    }
 
     doc.filePath = filePath;
     doc.fileName = filePath ? filePath.split(/[\\/]/).pop() : 'Untitled';
@@ -639,100 +612,8 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
       }
     }).catch((e) => { console.error('[PERF-BG] loadExistingAnnotations error:', e); });
 
-    // Background prefetch for ALL pages, dispatched by per-page classification:
-    //   - VECTOR pages → extract_draw_commands so thumbnails + main view hit
-    //     the JS-replay cache instead of falling back to the Rust thumbnail
-    //     path (which skips text operators and produces blank/colored
-    //     placeholder thumbnails on text-heavy pages).
-    //   - TILE pages → render_pdf_page at scale 1.0 so the Rust pixmap cache
-    //     is warm. Without this, the FIRST time the user navigates to a
-    //     tile-classified page (NKD1a pages 2-7, huge construction drawings)
-    //     they wait 600-2500 ms for PDFium to walk all vector commands and
-    //     produce the bitmap. With warm pixmap cache the navigation is
-    //     ~150 ms total.
-    //
-    // Both go through the analyze cache (already populated by
-    // analyze_page_type_batch earlier in loadPDF), so the per-page analyze
-    // invoke is microseconds. Concurrency=2 keeps interactive renders
-    // responsive.
-    if (filePath && isTauri()) {
-      (async () => {
-        try {
-          const vr = await import('./vector-renderer.js');
-          const pbc = await import('./page-bitmap-cache.js');
-          const numPages = doc.pdfDoc?.numPages || 0;
-          if (numPages <= 0) return;
-
-          let nextPage = 1;
-          const CONCURRENCY = 2;
-          let warmedVector = 0;
-          let warmedTile = 0;
-
-          const worker = async () => {
-            while (true) {
-              if (isClosed()) return;
-              const p = nextPage++;
-              if (p > numPages) return;
-
-              try {
-                const pageType = await invoke('analyze_page_type', {
-                  path: filePath, pageIndex: p - 1,
-                });
-                if (isClosed()) return;
-
-                if (pageType === 'vector') {
-                  if (vr.hasCachedCommands(filePath, p, 0)) continue;
-                  const cmdData = await invoke('extract_draw_commands', {
-                    path: filePath, pageIndex: p - 1, rotation: 0,
-                  });
-                  if (isClosed()) return;
-                  const cmdBytes = cmdData instanceof Uint8Array
-                    ? cmdData : new Uint8Array(cmdData);
-                  vr.cacheCommands(filePath, p, cmdBytes, 0);
-                  await vr.prepareImages(filePath, p, 0);
-                  warmedVector++;
-                } else {
-                  // TILE page — DELIBERATELY no prefetch.
-                  //
-                  // We tried prefetching tile-page bitmaps at scale=0.125 in
-                  // v1.55/v1.56 (~1.5 s per huge construction-PDF page). It
-                  // gave a blurry fallback bitmap that the orchestrator's
-                  // getBestAvailableBitmap surfaced on first navigation, but:
-                  //   - PDFium serializes via global mutex, so the prefetch
-                  //     blocked the thumbnail-processor's render_thumbnail
-                  //     calls for 6+ pages × ~1.5 s = 9-20 s. User reported
-                  //     thumbnails "weer trager".
-                  //   - The orchestrator's exact-bucket render still ran
-                  //     after the fallback paint (~2.7 s for NKD1a fit-zoom),
-                  //     so the user still waited for the crisp upgrade.
-                  //   - Net win was only the brief "blurry instead of blank"
-                  //     first paint — not worth the thumbnail regression.
-                  //
-                  // Better: let thumbnails own PDFium during cold-open. The
-                  // first nav to a tile page pays the ~2.7 s cold-render
-                  // cost ONCE; subsequent navigations hit the Rust pixmap
-                  // cache and are ~150 ms. Multi-process PDFium (v1.58+)
-                  // is the real fix for cold-render latency on huge pages.
-                  warmedTile++; // counted as "decided not to warm" for diagnostics
-                }
-              } catch (e) {
-                // One bad page shouldn't kill prefetch — just log and move on
-                console.warn(`[PERF-BG] prefetch failed page ${p}:`, e?.message ?? e);
-              }
-
-              // Yield between pages so we don't starve interactive renders
-              await new Promise(r => setTimeout(r, 0));
-            }
-          };
-
-          const workers = [];
-          for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
-          await Promise.all(workers);
-          console.log(`[PERF-BG] prefetch complete (${numPages} pages, vector=${warmedVector}, tile=${warmedTile})`);
-        } catch (e) {
-          console.warn('[PERF-BG] prefetch error:', e);
-        }
-      })();
+    if (state.preferences.preloadEntirePdf) {
+      void import('./whole-pdf-preload.js').then((module) => module.startWholePdfPreload(doc));
     }
 
   } catch (error) {

@@ -1,4 +1,4 @@
-import { applyToolTransform } from '../tool-context.js';
+import { applyToolTransform } from '../tool-transform.js';
 import { SYMBOL_STAMP_DEFAULT_SIZE } from '../../annotations/stamp-defaults.js';
 
 /**
@@ -13,20 +13,6 @@ export const commentTool = {
     ctx.addComment(ctx.x, ctx.y);
     // Auto-reset to select tool
     import("../../tools/manager.js").then(m => m.maybeRevertToSelect && m.maybeRevertToSelect());
-  },
-};
-
-export const textTool = {
-  name: 'text',
-  cursor: 'text',
-
-  onPointerDown(ctx) {
-    const { state, pageNum, canvas } = ctx;
-    if (ctx.viewMode === 'continuous') {
-      ctx.addTextAnnotation(ctx.x, ctx.y, pageNum, canvas);
-    } else {
-      ctx.addTextAnnotation(ctx.x, ctx.y);
-    }
   },
 };
 
@@ -59,7 +45,7 @@ export const stampTool = {
 
     const canvasCtx = ctx.canvasCtx;
     canvasCtx.save();
-    applyToolTransform(canvasCtx);
+    applyToolTransform(canvasCtx, ctx.transformContext);
     canvasCtx.globalAlpha = 0.6;
     canvasCtx.drawImage(previewImg, ctx.x - w / 2, ctx.y - h / 2, w, h);
     canvasCtx.restore();

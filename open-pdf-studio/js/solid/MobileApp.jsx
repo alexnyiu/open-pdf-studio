@@ -468,9 +468,9 @@ export default function MobileApp() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /></svg>
               <span>Freehand</span>
             </button>
-            <button class="mobile-tools-item" onClick={() => { window.dispatchEvent(new CustomEvent('set-tool', { detail: { tool: 'text' } })); setToolsOpen(false); }}>
+            <button class="mobile-tools-item" onClick={() => { window.dispatchEvent(new CustomEvent('set-tool', { detail: { tool: 'textbox' } })); setToolsOpen(false); }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7" /><line x1="9" y1="20" x2="15" y2="20" /><line x1="12" y1="4" x2="12" y2="20" /></svg>
-              <span>Text</span>
+              <span>Text Box</span>
             </button>
             <button class="mobile-tools-item" onClick={() => { window.dispatchEvent(new CustomEvent('set-tool', { detail: { tool: 'textSelect' } })); setToolsOpen(false); }}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3h14" /><path d="M5 21h14" /><path d="M12 3v18" /><path d="M8 7l4-4 4 4" /><path d="M8 17l4 4 4-4" /></svg>

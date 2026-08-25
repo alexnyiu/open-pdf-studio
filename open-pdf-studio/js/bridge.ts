@@ -124,14 +124,6 @@ export {
   getOpenPopups,
 } from './solid/stores/stickyNotePopupStore.js';
 
-// ============= TEXT EDIT OVERLAY =============
-export {
-  showTextEditOverlay,
-  hideTextEditOverlay,
-  getTextValue as getTextEditValue,
-  getHeightGrowth as getTextEditHeightGrowth,
-} from './solid/stores/textEditOverlayStore.js';
-
 // ============= STAVENREEKS INLINE INVOER =============
 export {
   showStavenreeksInput,
@@ -197,6 +189,7 @@ export {
   setPageCount as setThumbnailPageCount,
   setActivePage as setThumbnailActivePage,
   setPlaceholderSize as setThumbnailPlaceholderSize,
+  setPagePlaceholderSize as setThumbnailPagePlaceholderSize,
   setThumbnailImage,
   clearAllThumbnails,
   removeThumbnailImage,

@@ -172,8 +172,11 @@ const [docInfo, setDocInfo] = createStore({
   title: '-',
   author: '-',
   subject: '-',
+  keywords: '-',
   creator: '-',
   producer: '-',
+  creationDate: '-',
+  modificationDate: '-',
   version: '-',
   annotCount: '0',
   annotPage: '0',
@@ -728,16 +731,19 @@ export async function populateDocInfo() {
       setDocInfo('pageSize', '-');
     }
 
+    const metadata = doc.metadata || {};
+    setDocInfo('title', metadata.title || '-');
+    setDocInfo('author', metadata.author || '-');
+    setDocInfo('subject', metadata.subject || '-');
+    setDocInfo('keywords', metadata.keywords || '-');
+    setDocInfo('creator', metadata.creator || '-');
+    setDocInfo('producer', metadata.producer || '-');
+    setDocInfo('creationDate', metadata.creationDate ? new Date(metadata.creationDate).toLocaleString() : '-');
+    setDocInfo('modificationDate', metadata.modificationDate ? new Date(metadata.modificationDate).toLocaleString() : '-');
     try {
-      const metadata = await doc.pdfDoc.getMetadata();
-      const info = metadata.info || {};
-      setDocInfo('title', info.Title || '-');
-      setDocInfo('author', info.Author || '-');
-      setDocInfo('subject', info.Subject || '-');
-      setDocInfo('creator', info.Creator || '-');
-      setDocInfo('producer', info.Producer || '-');
-      setDocInfo('version', info.PDFFormatVersion || '-');
-    } catch (e) { /* ignore */ }
+      const pdfMetadata = await doc.pdfDoc.getMetadata();
+      setDocInfo('version', pdfMetadata?.info?.PDFFormatVersion || '-');
+    } catch (e) { setDocInfo('version', '-'); }
   } else {
     setDocInfo('pages', '-');
     setDocInfo('pageSize', '-');

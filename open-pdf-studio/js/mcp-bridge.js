@@ -535,6 +535,11 @@ async function handleKey(params) {
     metaKey: !!params?.meta,
   };
   const target = document.activeElement ?? document.body;
+  const tag = target.tagName ? target.tagName.toLowerCase() : '';
+  if ((init.ctrlKey || init.metaKey) && key.toLowerCase() === 'a'
+      && (tag === 'input' || tag === 'textarea') && typeof target.select === 'function') {
+    target.select();
+  }
   target.dispatchEvent(new KeyboardEvent('keydown', makeKeyInit(key, init)));
   target.dispatchEvent(new KeyboardEvent('keyup',   makeKeyInit(key, init)));
   return { ok: true, key, modifiers: init, target: describeTarget(target) };
@@ -630,6 +635,7 @@ async function handleGetViewportState() {
   let selectedCount = null;
   let pageCount = null;
   let statusMessage = null;
+  let preloadStatus = null;
   try {
     const stateMod = await import('/js/core/state.ts');
     renderEngine = stateMod.state?.renderEngine ?? null;
@@ -645,6 +651,7 @@ async function handleGetViewportState() {
     annotationCount = (doc?.annotations || []).length;
     selectedCount = (doc?.selectedAnnotations || []).length;
     pageCount = doc?.pdfDoc?.numPages ?? null;
+    preloadStatus = doc?.preloadStatus ? { ...doc.preloadStatus } : null;
   } catch {
     // Module may not be loaded yet; leave fields null.
   }
@@ -668,6 +675,7 @@ async function handleGetViewportState() {
       currentPage: activePageNum,
       viewMode,
       bookSpread,
+      preloadStatus,
     },
     // viewport singleton (pdf-viewport.js): the transform that maps world→screen
     viewport: vp ? {
@@ -2028,7 +2036,12 @@ async function handleClickElement(params) {
     return { ok: false, found: false, disabled: false, error: `no element matches: ${selector}` };
   }
   const disabled = _isElementDisabled(el);
-  if (!disabled) el.click();
+  if (!disabled) {
+    // Programmatic click() does not focus text/date controls in WebKit. MCP
+    // typing must follow the same focus target a real pointer click creates.
+    if (typeof el.focus === 'function') el.focus();
+    el.click();
+  }
   return {
     ok: true,
     found: true,
@@ -2080,6 +2093,9 @@ async function handleUiState(params) {
     text: (el.textContent || '').trim().slice(0, 300),
     tag: el.tagName ? el.tagName.toLowerCase() : null,
     value: typeof el.value === 'string' ? el.value.slice(0, 300) : null,
+    src: typeof el.currentSrc === 'string' && el.currentSrc
+      ? el.currentSrc.slice(0, 500)
+      : (typeof el.getAttribute?.('src') === 'string' ? el.getAttribute('src').slice(0, 500) : null),
     dataset: el.dataset ? { ...el.dataset } : {},
     inlineStyle: el.getAttribute?.('style') ?? null,
     computedStyle,

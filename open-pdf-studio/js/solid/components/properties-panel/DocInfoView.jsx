@@ -20,8 +20,11 @@ export default function DocInfoView() {
           <div class="property-group"><label>{t('docInfo.title')}</label><span class="prop-info-value">{docInfo.title}</span></div>
           <div class="property-group"><label>{t('docInfo.author')}</label><span class="prop-info-value">{docInfo.author}</span></div>
           <div class="property-group"><label>{t('docInfo.subject')}</label><span class="prop-info-value">{docInfo.subject}</span></div>
+          <div class="property-group"><label>{t('docInfo.keywords')}</label><span class="prop-info-value">{docInfo.keywords}</span></div>
           <div class="property-group"><label>{t('docInfo.creator')}</label><span class="prop-info-value">{docInfo.creator}</span></div>
           <div class="property-group"><label>{t('docInfo.producer')}</label><span class="prop-info-value">{docInfo.producer}</span></div>
+          <div class="property-group"><label>{t('docInfo.creationDate')}</label><span class="prop-info-value">{docInfo.creationDate}</span></div>
+          <div class="property-group"><label>{t('docInfo.modificationDate')}</label><span class="prop-info-value">{docInfo.modificationDate}</span></div>
           <div class="property-group"><label>{t('docInfo.pdfVersion')}</label><span class="prop-info-value">{docInfo.version}</span></div>
         </CollapsibleSection>
 

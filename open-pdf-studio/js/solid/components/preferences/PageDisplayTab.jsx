@@ -15,6 +15,15 @@ export default function PageDisplayTab(props) {
         </div>
         <div class="pref-row pref-checkbox-row">
           <label class="pref-checkbox-label">
+            <input type="checkbox" checked={p.preloadEntirePdf[0]()} onChange={e => p.preloadEntirePdf[1](e.target.checked)} />
+            <span>
+              {t('pageDisplay.preloadEntirePdf')}
+              <small class="pref-description">{t('pageDisplay.preloadEntirePdfDescription')}</small>
+            </span>
+          </label>
+        </div>
+        <div class="pref-row pref-checkbox-row">
+          <label class="pref-checkbox-label">
             <input type="checkbox" checked={p.showScrollbars[0]()} onChange={e => p.showScrollbars[1](e.target.checked)} />
             <span>{t('pageDisplay.showScrollbars')}</span>
           </label>

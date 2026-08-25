@@ -17,6 +17,7 @@ export default function PdfTextEditOverlay() {
   let richEditorRef;
   let shapingGeneration = 0;
   let shapedSignature = '';
+  let richDisplayHeight = 0;
 
   const resizeToContent = () => {
     if (!textareaRef) return;
@@ -42,6 +43,28 @@ export default function PdfTextEditOverlay() {
     textareaRef.style.height = '0px';
     textareaRef.style.height = `${Math.max(minHeight, textareaRef.scrollHeight)}px`;
     textareaRef.style.width = `${Math.max(minWidth, textareaRef.scrollWidth + 2)}px`;
+  };
+
+  const resizeRichToContent = () => {
+    if (!richEditorRef) return;
+    const base = editorStyle() || {};
+    const minWidth = parseFloat(base.width) || 80;
+    const minHeight = parseFloat(base.height) || 24;
+    const previousHeight = richDisplayHeight || minHeight;
+    richEditorRef.style.width = `${minWidth}px`;
+    richEditorRef.style.maxWidth = `${minWidth}px`;
+    richEditorRef.style.whiteSpace = 'pre-wrap';
+    richEditorRef.style.overflowWrap = 'break-word';
+    richEditorRef.style.overflow = 'hidden';
+    richEditorRef.style.height = 'auto';
+    const nextHeight = Math.max(minHeight, richEditorRef.scrollHeight);
+    richEditorRef.style.height = `${nextHeight}px`;
+    if (editorOptions().growDown && nextHeight !== previousHeight) {
+      const currentTop = parseFloat(richEditorRef.style.top || base.top) || 0;
+      richEditorRef.style.top = `${currentTop + ((nextHeight - previousHeight) / 2)}px`;
+    }
+    richDisplayHeight = nextHeight;
+    editorOptions().onHeightChange?.(nextHeight);
   };
 
   createEffect(() => {
@@ -103,8 +126,10 @@ export default function PdfTextEditOverlay() {
   createEffect(() => {
     const isActive = active();
     text();
+    richTextDocument();
     editorStyle();
     if (isActive && textareaRef) queueMicrotask(resizeToContent);
+    if (isActive && richEditorRef) queueMicrotask(resizeRichToContent);
   });
 
   const handleKeyDown = (e) => {
@@ -192,18 +217,14 @@ export default function PdfTextEditOverlay() {
     });
     const next = createRichTextDocument(lines, current.region);
     updateRichTextDraft(next, { preserveDom: true });
-    if (editorOptions().reflowWidth) {
-      queueMicrotask(() => {
-        if (richEditorRef) richEditorRef.style.height = `${Math.max(24, richEditorRef.scrollHeight)}px`;
-      });
-    }
+    if (editorOptions().reflowWidth) queueMicrotask(resizeRichToContent);
     queueMicrotask(syncRichSelection);
   };
 
   const runStyle = (run) => ({
     'font-family': run.faceId.includes('mono') ? '"Liberation Mono", monospace'
       : run.faceId.includes('serif') ? '"Liberation Serif", serif' : '"Liberation Sans", sans-serif',
-    'font-size': `${run.size}px`,
+    'font-size': `${run.size * (editorOptions().displayScale || 1)}px`,
     'font-weight': run.bold ? '700' : '400',
     'font-style': run.italic ? 'italic' : 'normal',
     color: run.color,
@@ -308,7 +329,15 @@ export default function PdfTextEditOverlay() {
             onBlur={handleBlur}
           >
             <For each={richTextDocument().lines}>{(line, lineIndex) =>
-              <div data-rich-line-index={lineIndex()} data-break-after={line.breakAfter || 'hard'} style={{ 'text-align': line.alignment }}>
+              <div
+                data-rich-line-index={lineIndex()}
+                data-break-after={line.breakAfter || 'hard'}
+                style={{
+                  'text-align': line.alignment,
+                  'min-height': `${line.baselineAdvance * (editorOptions().displayScale || 1)}px`,
+                  'line-height': `${line.baselineAdvance * (editorOptions().displayScale || 1)}px`,
+                }}
+              >
                 <For each={line.runs}>{(run) =>
                   <span
                     data-rich-run="true"

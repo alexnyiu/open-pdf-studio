@@ -312,7 +312,7 @@ export function buildAnnotationProps(tool, startX, startY, endX, endY, e) {
         fillColor: prefs.textboxFillNone ? 'none' : prefs.textboxFillColor,
         textColor: '#000000',
         fontSize: prefs.textboxFontSize,
-        fontFamily: 'Arial',
+        fontFamily: 'Liberation Sans',
         lineWidth: prefs.textboxBorderWidth,
         borderStyle: prefs.textboxBorderStyle,
         opacity: (prefs.textboxOpacity || 100) / 100

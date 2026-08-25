@@ -16,6 +16,7 @@ import {
   setLeftPanelCollapsed as setCollapsed,
   setThumbnailPageCount as setPageCount, setThumbnailActivePage as setActivePage,
   setThumbnailPlaceholderSize as setPlaceholderSize,
+  setThumbnailPagePlaceholderSize as setPagePlaceholderSize,
   setThumbnailImage, clearAllThumbnails, removeThumbnailImage,
   getThumbnailContainerRef as getContainerRef,
   thumbnailSelectedPages, selectThumbnailPage,
@@ -30,12 +31,46 @@ const THUMBNAIL_SCALE = 0.14;
 
 // Cache for thumbnail data per document: Map<docId, Map<pageNum, imageDataURL>>
 const thumbnailCache = new Map();
+const thumbnailPromises = new Map();
+const thumbnailRenderTasks = new Map();
+const preloadOnlyPages = new Map();
 
 // Per-doc per-page generation counter. Bumped on invalidateThumbnail() so a
 // stale render-completion (annotations changed mid-flight, rapid re-invalidate)
 // can be discarded and not overwrite a newer cache entry. See bumpPageGen /
 // pageGenMatches usage below.
 const pageGeneration = new Map(); // Map<docId, Map<pageNum, int>>
+
+function owningPageRotation(doc, pageNum) {
+  return Number(doc?.pageRotations?.[pageNum]) || 0;
+}
+
+function revokeThumbnailEntry(entry) {
+  const src = entry?.src;
+  if (typeof src === 'string' && src.startsWith('blob:')) URL.revokeObjectURL(src);
+}
+
+async function normalizeThumbnailEntry(rendered, generation) {
+  if (!rendered) return null;
+  let src = rendered.src || rendered.dataURL || '';
+  let bytes = Number(rendered.bytes) || 0;
+  if (src.startsWith('data:') && typeof fetch === 'function'
+      && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    try {
+      const blob = await fetch(src).then((response) => response.blob());
+      src = URL.createObjectURL(blob);
+      bytes = blob.size;
+    } catch { /* keep the data URL */ }
+  }
+  if (!bytes) bytes = Math.ceil(src.length * 0.75);
+  return {
+    src,
+    width: Math.max(1, Math.round(rendered.width || 1)),
+    height: Math.max(1, Math.round(rendered.height || 1)),
+    bytes,
+    generation,
+  };
+}
 
 function bumpPageGen(docId, pageNum) {
   let m = pageGeneration.get(docId);
@@ -149,6 +184,9 @@ function updateVisiblePriorities() {
   if (priorityPages.size > 0) {
     startProcessor();
   }
+  if (state.preferences.preloadEntirePdf) {
+    import('../../pdf/whole-pdf-preload.js').then((module) => module.startWholePdfPreload(activeDoc));
+  }
 }
 
 // Switch between tabs
@@ -218,7 +256,7 @@ export async function generateThumbnails() {
   let placeholderHeight = Math.round(150 * 1.414);
   try {
     const firstPage = await pdfDoc.getPage(1);
-    const extraRot = getPageRotation(1);
+    const extraRot = owningPageRotation(activeDoc, 1);
     const thOpts = { scale: THUMBNAIL_SCALE };
     if (extraRot) thOpts.rotation = (firstPage.rotate + extraRot) % 360;
     const viewport = firstPage.getViewport(thOpts);
@@ -277,6 +315,9 @@ export async function generateThumbnails() {
 
   // Start the processor if not running
   startProcessor();
+  if (state.preferences.preloadEntirePdf) {
+    void import('../../pdf/whole-pdf-preload.js').then((module) => module.startWholePdfPreload(activeDoc));
+  }
 }
 
 // Pause/resume mechanism: when the user navigates pages, pause thumbnail
@@ -352,19 +393,14 @@ async function processNextThumbnail() {
       }
     }
 
-    if (activeDocId && documentState.has(activeDocId)) {
-      const processed = await processDocumentThumbnail(activeDocId);
-      if (processed) {
-        setTimeout(processNextThumbnail, 0);
-        return;
-      }
-    }
-
-    for (const [docId, docState] of documentState) {
-      if (docId === activeDocId) continue;
-
-      const processed = await processDocumentThumbnail(docId);
-      if (processed) {
+    if (activeDocId && !state.preferences.preloadEntirePdf) {
+      const docState = documentState.get(activeDocId);
+      const docCache = thumbnailCache.get(activeDocId);
+      const center = activeDoc?.currentPage || 1;
+      const directional = [center, center + 1, center + 2, center + 3, center - 1]
+        .filter((page) => page >= 1 && page <= (docState?.numPages || 0) && !docCache?.has(page));
+      if (directional.length > 0) {
+        await preloadThumbnailPage(docState.doc, directional[0], { preloadOnly: false });
         setTimeout(processNextThumbnail, 0);
         return;
       }
@@ -396,84 +432,13 @@ async function processPriorityThumbnail(docId) {
     return priorityPages.size > 0;
   }
 
-  const gen = getPageGen(docId, pageNum);
   try {
-    const imageData = await renderThumbnailToDataURL(pdfDoc, pageNum, docState.doc);
-    if (imageData) {
-      // Drop result if a newer invalidate raced past us — prevents stale
-      // overlay (e.g. old annotation snapshot) from overwriting fresh cache.
-      if (!pageGenMatches(docId, pageNum, gen)) {
-        return true;
-      }
-      docCache.set(pageNum, imageData);
-
-      // Update the Solid store so the ThumbnailItem component reacts
-      const currentActiveDoc = getActiveDocument();
-      if (currentActiveDoc && currentActiveDoc.id === docId) {
-        setThumbnailImage(pageNum, imageData);
-      }
-    }
+    await preloadThumbnailPage(docState.doc, pageNum, { preloadOnly: false });
     return true;
   } catch (err) {
     console.warn(`[Thumbnails] Error rendering priority page ${pageNum}:`, err);
     return true;
   }
-}
-
-// Process one thumbnail for a specific document (sequential with wrap-around)
-async function processDocumentThumbnail(docId) {
-  const docState = documentState.get(docId);
-  const docCache = thumbnailCache.get(docId);
-
-  if (!docState || !docCache) {
-    return false;
-  }
-
-  const { pdfDoc, numPages } = docState;
-  const startPage = docState.startPage || 1;
-
-  let attempts = 0;
-  const maxAttempts = numPages;
-
-  while (attempts < maxAttempts) {
-    if (docState.wrapped && docState.nextPage === startPage) {
-      return false;
-    }
-
-    const pageNum = docState.nextPage;
-    attempts++;
-
-    docState.nextPage++;
-    if (docState.nextPage > numPages) {
-      docState.nextPage = 1;
-      docState.wrapped = true;
-    }
-
-    if (docCache.has(pageNum)) continue;
-
-    const gen = getPageGen(docId, pageNum);
-    try {
-      const imageData = await renderThumbnailToDataURL(pdfDoc, pageNum, docState.doc);
-      if (imageData) {
-        if (!pageGenMatches(docId, pageNum, gen)) {
-          return true;
-        }
-        docCache.set(pageNum, imageData);
-
-        // Update the Solid store so the ThumbnailItem component reacts
-        const currentActiveDoc = getActiveDocument();
-        if (currentActiveDoc && currentActiveDoc.id === docId) {
-          setThumbnailImage(pageNum, imageData);
-        }
-      }
-      return true;
-    } catch (err) {
-      console.warn(`[Thumbnails] Error rendering page ${pageNum} of doc ${docId}:`, err);
-      return true;
-    }
-  }
-
-  return false;
 }
 
 // Composite plugin/Solid-store annotations on top of a rendered thumbnail
@@ -516,6 +481,75 @@ async function overlayAnnotationsOnDataURL(dataURL, pageNum, width, height, scal
   }
 }
 
+async function expectedThumbnailSize(pdfDoc, pageNum, doc) {
+  const page = await pdfDoc.getPage(pageNum);
+  const rotation = (page.rotate + owningPageRotation(doc, pageNum)) % 360;
+  const viewport = page.getViewport({ scale: 1, rotation });
+  const scale = 140 / Math.max(1, viewport.width);
+  const size = {
+    width: 140,
+    height: Math.max(1, Math.round(viewport.height * scale)),
+  };
+  if (doc) {
+    if (!doc.thumbnailDims) doc.thumbnailDims = {};
+    doc.thumbnailDims[pageNum] = {
+      width: size.width,
+      height: size.height,
+      rotation,
+    };
+  }
+  if (getActiveDocument()?.id === doc?.id) setPagePlaceholderSize(pageNum, size);
+  return { ...size, viewport, rotation };
+}
+
+async function renderCompleteWorkerThumbnail(pdfDoc, pageNum, doc) {
+  if (!doc?.filePath || !window.__TAURI__) return null;
+  const expected = await expectedThumbnailSize(pdfDoc, pageNum, doc);
+  const renderWidth = 280;
+  const renderScale = Math.max(0.008, Math.min(0.75, renderWidth / Math.max(1, expected.viewport.width)));
+  const { renderPdfPage } = await import('../../pdf/engine-router.js');
+  const raw = await renderPdfPage({
+    path: doc.filePath,
+    pageIndex: pageNum - 1,
+    scale: renderScale,
+    rotation: owningPageRotation(doc, pageNum),
+  });
+  const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+  if (bytes.length <= 8) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, 8);
+  const sourceWidth = view.getUint32(0, true);
+  const sourceHeight = view.getUint32(4, true);
+  if (sourceWidth <= 0 || sourceHeight <= 0 || sourceWidth * sourceHeight * 4 !== bytes.length - 8) return null;
+
+  const source = document.createElement('canvas');
+  source.width = sourceWidth;
+  source.height = sourceHeight;
+  source.getContext('2d').putImageData(new ImageData(
+    new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + 8, sourceWidth * sourceHeight * 4),
+    sourceWidth,
+    sourceHeight,
+  ), 0, 0);
+  const canvas = document.createElement('canvas');
+  canvas.width = expected.width;
+  canvas.height = expected.height;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  const dataURL = canvas.toDataURL('image/jpeg', 0.78);
+  const composited = await overlayAnnotationsOnDataURL(
+    dataURL,
+    pageNum,
+    canvas.width,
+    canvas.height,
+    canvas.width / expected.viewport.width,
+    doc,
+  );
+  return { dataURL: composited, width: canvas.width, height: canvas.height };
+}
+
 // Render a single page thumbnail — prefers replaying JS-cached vector commands
 // (already extracted by the main viewer) for ~3-6× speedup; falls back to the
 // Rust backend, then PDF.js. Reusing the cache avoids re-parsing the PDF
@@ -531,14 +565,13 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
   // several documents were open. Only fall back to the active doc for legacy
   // direct callers that don't pass one.
   if (!doc) doc = getActiveDocument();
-
   // ── Fast path: JS replay of cached vector commands ────────────────────────
   // Only viable if the main viewer has already populated the cache for this
   // page (e.g. user navigated to it once, or it was prefetched).
   try {
     if (doc?.filePath) {
       const vr = await import('../../pdf/vector-renderer.js');
-      const rotation = (typeof getPageRotation === 'function' ? getPageRotation(pageNum) : 0) || 0;
+      const rotation = owningPageRotation(doc, pageNum);
       if (vr.hasCachedCommands(doc.filePath, pageNum, rotation)) {
         const dims = vr.getCachedPageDimensions(doc.filePath, pageNum, rotation);
         console.log(`[thumb] p${pageNum} JS-replay: dims=`, dims, `rotation=${rotation}`);
@@ -596,6 +629,13 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
     }
   } catch (_) { /* fall through to Rust path */ }
 
+  try {
+    const complete = await renderCompleteWorkerThumbnail(pdfDoc, pageNum, doc);
+    if (complete) return complete;
+  } catch (error) {
+    console.warn(`[Thumbnails] Worker thumbnail failed for page ${pageNum}:`, error);
+  }
+
   // ── Zware pagina's: thumbnail uit de progressieve whole-page-bitmap ──────
   // render_thumbnail is een SYNC in-proc command: op een zwaar CAD-blad
   // blokkeert het de IPC-lane seconden (alle andere invokes wachten) en
@@ -617,7 +657,7 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
       const _isTile = ptc.getCachedPageType(doc.filePath, pageNum - 1) === 'tile';
       if (_isTile || await prog.isHeavyPage(doc.filePath, pageNum)) {
         const pbc = await import('../../pdf/page-bitmap-cache.js');
-        const rotation = (typeof getPageRotation === 'function' ? getPageRotation(pageNum) : 0) || 0;
+        const rotation = owningPageRotation(doc, pageNum);
         const best = pbc.getBestAvailableBitmap(doc.filePath, pageNum, rotation, 1);
         if (best && best.bitmap) {
           const targetW = 140;
@@ -696,10 +736,8 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
     }
   } catch { /* val door naar het normale pad */ }
 
-  // Try Rust thumbnail rendering — uses skip_images=true so only
-  // vector content is rendered (fast). Image decoding is skipped because
-  // it can take 17+ seconds per page for complex PDFs, blocking the Rust
-  // backend and preventing page navigation.
+  // Last native fallback. It renders complete page content; stale
+  // completions are rejected by the owning document's page generation.
   if (doc?.filePath && window.__TAURI__) {
     try {
       const { invoke } = window.__TAURI__.core;
@@ -707,13 +745,13 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
       // view. Without it, a rotated page's thumbnail stayed unrotated until the
       // rotation was baked into the PDF (save + reload) — the other thumbnail
       // paths (vector replay, prog-bitmap, PDF.js fallback) already rotate.
-      const extraRot = getPageRotation(pageNum);
+      const extraRot = owningPageRotation(doc, pageNum);
       const result = await invoke('render_thumbnail', {
         path: doc.filePath,
         pageIndex: pageNum - 1,
         maxWidth: 140,
         rotation: extraRot || 0,
-        skipImages: true,
+        skipImages: false,
       });
       const data = JSON.parse(result);
       // Plugin/Solid-store annotations zijn niet in de PDF tot save; overlay
@@ -740,15 +778,17 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
 
   // Fallback: PDF.js rendering
   console.log(`[PERF-THUMB] page ${pageNum}: PDF.js fallback START`);
-  const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Render timeout')), 10000);
-  });
+  let renderTask = null;
+  let timeoutId = null;
 
   try {
     const renderPromise = (async () => {
       const page = await pdfDoc.getPage(pageNum);
-      const extraRot = getPageRotation(pageNum);
-      const trOpts = { scale: THUMBNAIL_SCALE };
+      const extraRot = owningPageRotation(doc, pageNum);
+      const baseOpts = { scale: 1 };
+      if (extraRot) baseOpts.rotation = (page.rotate + extraRot) % 360;
+      const baseViewport = page.getViewport(baseOpts);
+      const trOpts = { scale: 280 / Math.max(1, baseViewport.width) };
       if (extraRot) trOpts.rotation = (page.rotate + extraRot) % 360;
       const viewport = page.getViewport(trOpts);
 
@@ -757,11 +797,24 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
       canvas.height = viewport.height;
       const ctx = canvas.getContext('2d');
 
-      await page.render({
+      renderTask = page.render({
         canvasContext: ctx,
         viewport: viewport,
         annotationMode: 0
-      }).promise;
+      });
+      thumbnailRenderTasks.set(`${doc?.id || 'unknown'}:${pageNum}`, renderTask);
+      await renderTask.promise;
+      thumbnailRenderTasks.delete(`${doc?.id || 'unknown'}:${pageNum}`);
+
+      const output = document.createElement('canvas');
+      output.width = 140;
+      output.height = Math.max(1, Math.round(baseViewport.height * (140 / baseViewport.width)));
+      const outputCtx = output.getContext('2d');
+      outputCtx.fillStyle = '#fff';
+      outputCtx.fillRect(0, 0, output.width, output.height);
+      outputCtx.imageSmoothingEnabled = true;
+      outputCtx.imageSmoothingQuality = 'high';
+      outputCtx.drawImage(canvas, 0, 0, output.width, output.height);
 
       // Overlay plugin/Solid-store annotations op dezelfde ctx vóór toDataURL.
       // viewport.width = pdfPtWidth * THUMBNAIL_SCALE, dus scale-factor naar
@@ -772,33 +825,131 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
         const docAnn = doc || getActiveDocument();
         const annotations = (docAnn?.annotations || []).filter(a => a.page === pageNum);
         if (annotations.length > 0) {
-          ctx.save();
-          ctx.scale(THUMBNAIL_SCALE, THUMBNAIL_SCALE);
+          outputCtx.save();
+          const annotationScale = output.width / baseViewport.width;
+          outputCtx.scale(annotationScale, annotationScale);
           annotations.forEach(a => {
-            try { drawAnnotation(ctx, a); }
+            try { drawAnnotation(outputCtx, a); }
             catch (e) {
               console.warn(`[Thumbnails] drawAnnotation failed (PDF.js path) page ${pageNum} id=${a?.id ?? '?'} type=${a?.type ?? '?'}:`, e);
             }
           });
-          ctx.restore();
+          outputCtx.restore();
         }
       } catch (e) {
         console.warn(`[Thumbnails] PDF.js overlay failed for page ${pageNum}:`, e);
       }
 
       return {
-        dataURL: canvas.toDataURL('image/jpeg', 0.7),
-        width: viewport.width,
-        height: viewport.height
+        dataURL: output.toDataURL('image/jpeg', 0.78),
+        width: output.width,
+        height: output.height
       };
     })();
-
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        try { renderTask?.cancel(); } catch { /* ignore */ }
+        reject(new Error('Render timeout'));
+      }, 10000);
+    });
     const result = await Promise.race([renderPromise, timeoutPromise]);
+    clearTimeout(timeoutId);
     console.log(`[PERF-THUMB] page ${pageNum}: PDF.js fallback DONE: ${(performance.now() - _th0).toFixed(0)}ms`);
     return result;
   } catch (err) {
+    thumbnailRenderTasks.delete(`${doc?.id || 'unknown'}:${pageNum}`);
+    if (timeoutId) clearTimeout(timeoutId);
+    try { renderTask?.cancel(); } catch { /* ignore */ }
     console.warn(`[PERF-THUMB] page ${pageNum}: PDF.js fallback FAILED (${(performance.now() - _th0).toFixed(0)}ms):`, err.message);
     return null;
+  }
+}
+
+export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false } = {}) {
+  if (!doc?.pdfDoc || !Number.isInteger(pageNum) || pageNum < 1 || pageNum > doc.pdfDoc.numPages) return null;
+  if (!thumbnailCache.has(doc.id)) thumbnailCache.set(doc.id, new Map());
+  const cache = thumbnailCache.get(doc.id);
+  const cached = cache.get(pageNum);
+  if (cached) return cached;
+  const key = `${doc.id}:${pageNum}`;
+  if (thumbnailPromises.has(key)) return thumbnailPromises.get(key);
+  const generation = getPageGen(doc.id, pageNum);
+  const promise = (async () => {
+    await expectedThumbnailSize(doc.pdfDoc, pageNum, doc);
+    const rendered = await renderThumbnailToDataURL(doc.pdfDoc, pageNum, doc);
+    const entry = await normalizeThumbnailEntry(rendered, generation);
+    if (!entry || !pageGenMatches(doc.id, pageNum, generation) || !doc.pdfDoc) {
+      revokeThumbnailEntry(entry);
+      return null;
+    }
+    const previous = cache.get(pageNum);
+    if (previous) revokeThumbnailEntry(previous);
+    cache.set(pageNum, entry);
+    if (preloadOnly) {
+      if (!preloadOnlyPages.has(doc.id)) preloadOnlyPages.set(doc.id, new Set());
+      preloadOnlyPages.get(doc.id).add(pageNum);
+    } else {
+      preloadOnlyPages.get(doc.id)?.delete(pageNum);
+    }
+    if (getActiveDocument()?.id === doc.id) setThumbnailImage(pageNum, entry);
+    return entry;
+  })().finally(() => thumbnailPromises.delete(key));
+  thumbnailPromises.set(key, promise);
+  return promise;
+}
+
+export function getCachedThumbnailEntry(doc, pageNum) {
+  return doc ? thumbnailCache.get(doc.id)?.get(pageNum) || null : null;
+}
+
+export function releaseThumbnailPage(doc, pageNum) {
+  const cache = doc && thumbnailCache.get(doc.id);
+  if (!cache) return;
+  revokeThumbnailEntry(cache.get(pageNum));
+  cache.delete(pageNum);
+  preloadOnlyPages.get(doc.id)?.delete(pageNum);
+  if (getActiveDocument()?.id === doc.id) removeThumbnailImage(pageNum);
+}
+
+export function cancelDocumentThumbnailWork(doc) {
+  if (!doc) return;
+  const prefix = `${doc.id}:`;
+  for (const [key, task] of thumbnailRenderTasks) {
+    if (!key.startsWith(prefix)) continue;
+    try { task.cancel(); } catch { /* ignore */ }
+    thumbnailRenderTasks.delete(key);
+  }
+  for (const key of thumbnailPromises.keys()) {
+    if (!key.startsWith(prefix)) continue;
+    const pageNum = Number(key.slice(prefix.length));
+    if (Number.isInteger(pageNum)) bumpPageGen(doc.id, pageNum);
+  }
+}
+
+export function visibleThumbnailPages() {
+  const container = getContainerRef();
+  if (!container) return [];
+  const bounds = container.getBoundingClientRect();
+  return [...container.querySelectorAll('.thumbnail-item')]
+    .filter((item) => {
+      const rect = item.getBoundingClientRect();
+      return rect.top < bounds.bottom && rect.bottom > bounds.top;
+    })
+    .map((item) => Number(item.dataset.page))
+    .filter(Number.isInteger);
+}
+
+export function releasePreloadOnlyThumbnails(doc, keepPages = []) {
+  const cache = doc && thumbnailCache.get(doc.id);
+  const preloadPages = doc && preloadOnlyPages.get(doc.id);
+  if (!cache || !preloadPages) return;
+  const keep = new Set(keepPages);
+  for (const pageNum of [...preloadPages]) {
+    if (keep.has(pageNum)) continue;
+    revokeThumbnailEntry(cache.get(pageNum));
+    cache.delete(pageNum);
+    preloadPages.delete(pageNum);
+    if (getActiveDocument()?.id === doc.id) removeThumbnailImage(pageNum);
   }
 }
 
@@ -840,6 +991,7 @@ export function invalidateThumbnail(pageNum) {
   if (!activeDoc) return;
   const docCache = thumbnailCache.get(activeDoc.id);
   if (docCache) {
+    revokeThumbnailEntry(docCache.get(pageNum));
     docCache.delete(pageNum);
   }
   // Bump generation: any in-flight render for this page will discard its
@@ -862,7 +1014,10 @@ export function invalidateThumbnails(pageNums) {
   let any = false;
   for (const pageNum of pageNums) {
     if (!Number.isInteger(pageNum) || pageNum < 1) continue;
-    if (docCache) docCache.delete(pageNum);
+    if (docCache) {
+      revokeThumbnailEntry(docCache.get(pageNum));
+      docCache.delete(pageNum);
+    }
     bumpPageGen(activeDoc.id, pageNum);
     removeThumbnailImage(pageNum);
     priorityPages.add(pageNum);
@@ -874,8 +1029,11 @@ export function invalidateThumbnails(pageNums) {
 // Clear thumbnail cache for a specific document
 export function clearThumbnailCache(docId) {
   if (docId) {
+    for (const entry of thumbnailCache.get(docId)?.values() || []) revokeThumbnailEntry(entry);
     thumbnailCache.delete(docId);
     documentState.delete(docId);
+    preloadOnlyPages.delete(docId);
+    pageGeneration.delete(docId);
   }
 }
 

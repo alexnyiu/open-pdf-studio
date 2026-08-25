@@ -92,11 +92,13 @@ export const shapeTool = {
       endX = sq.x; endY = sq.y;
     }
 
-    const ann = ctx.createAnnotationFromTool(tool, state.startX, state.startY, endX, endY, e);
+    const ann = ctx.viewMode === 'continuous'
+      ? ctx.createContinuousAnnotation(tool, ctx.pageNum, state.startX, state.startY, endX, endY)
+      : ctx.createAnnotationFromTool(tool, state.startX, state.startY, endX, endY, e);
     if (ann) {
       const doc = state.documents[state.activeDocumentIndex];
       if (doc) doc.annotations.push(ann);
-      ctx.recordAdd(ann);
+      if (!['textbox', 'callout'].includes(ann.type)) ctx.recordAdd(ann);
     }
     ctx.redraw();
 
@@ -105,7 +107,7 @@ export const shapeTool = {
       const doc = state.documents[state.activeDocumentIndex];
       if (doc) { doc.selectedAnnotations = [ann]; doc.selectedAnnotation = ann; }
       ctx.showProperties(ann);
-      ctx.startTextEditing(ann);
+      ctx.startTextEditing(ann, { isNew: true });
     }
 
     // Auto-reset to select tool

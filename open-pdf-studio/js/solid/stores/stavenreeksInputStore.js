@@ -1,6 +1,6 @@
 // Store voor de INLINE invoer van aantal + diameter op een stavenreeks.
 //
-// Zelfde opzet als textEditOverlayStore.js: een klein signaal-paar dat de
+// Klein signaal-paar dat de
 // vanilla-laag (tools/stavenreeks-editing.js) aanstuurt en dat de SolidJS-
 // component StavenreeksInlineEditor.jsx rendert. De store houdt GEEN
 // annotatie-logica vast — bevestigen en annuleren lopen via de callbacks die

@@ -6,6 +6,37 @@ export function directionalPreloadPages(center, pageCount, direction = 1) {
     .filter((page, index, pages) => page >= 1 && page <= pageCount && pages.indexOf(page) === index);
 }
 
+export function wholeDocumentPreloadPages(center, pageCount, visiblePages = []) {
+  const pages = [center, ...visiblePages, ...Array.from({ length: pageCount }, (_, index) => index + 1)];
+  return pages.filter((page, index) => Number.isInteger(page)
+    && page >= 1 && page <= pageCount && pages.indexOf(page) === index);
+}
+
+export class PreloadResourceBudget {
+  constructor({ maxPages, maxBytes, maxWorkMs }) {
+    this.maxPages = maxPages;
+    this.maxBytes = maxBytes;
+    this.maxWorkMs = maxWorkMs;
+    this.pages = 0;
+    this.bytes = 0;
+    this.workMs = 0;
+  }
+
+  record({ bytes = 0, elapsedMs = 0 } = {}) {
+    this.pages += 1;
+    this.bytes += Math.max(0, Number(bytes) || 0);
+    this.workMs += Math.max(0, Number(elapsedMs) || 0);
+    return this.limitReason();
+  }
+
+  limitReason() {
+    if (this.pages >= this.maxPages) return 'pages';
+    if (this.bytes >= this.maxBytes) return 'bytes';
+    if (this.workMs >= this.maxWorkMs) return 'time';
+    return null;
+  }
+}
+
 export class BoundedPdfPreloadController {
   constructor({ load, beforeLoad = null, maxPages = 6, maxBytes = 24 * 1024 * 1024, isIdle = () => true, log = () => {} }) {
     this.load = load;
@@ -27,6 +58,10 @@ export class BoundedPdfPreloadController {
     entry.used = now();
     this.log({ type: 'hit', page, bytes: entry.bytes });
     return entry.value;
+  }
+
+  delete(page) {
+    return this.entries.delete(page);
   }
 
   schedule(pages, { protectedPages = [] } = {}) {

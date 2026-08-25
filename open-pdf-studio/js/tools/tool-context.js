@@ -6,7 +6,7 @@ import { findHandleAt, getCursorForHandle } from '../annotations/handles.js';
 import { applyResize, applyMove, applyRotation } from '../annotations/transforms.js';
 import { redrawAnnotations, redrawContinuous, renderAnnotationsForPage, snapToGrid } from '../annotations/rendering.js';
 import { showProperties, hideProperties, showMultiSelectionProperties } from '../ui/panels/properties-panel.js';
-import { startTextEditing, finishTextEditing, addTextAnnotation, addComment } from './text-editing.js';
+import { startTextEditing, finishTextEditing, addComment } from './text-editing.js';
 import { openStickyPopup } from '../bridge.js';
 import { findTextEditAtPosition, startTextEditEditing } from './text-edit-tool.js';
 import { markDocumentModified } from '../ui/chrome/tabs.js';
@@ -24,6 +24,8 @@ import { buildCloudPolylinePath } from '../annotations/rendering/shapes.js';
 import { drawDimension, drawMeasureAreaShape, drawCentroidLabel, drawMeasurePerimeterShape } from '../annotations/rendering/measurements.js';
 import { getAnnotationType } from '../plugins/annotation-type-registry.js';
 import { getColorPickerValue, getLineWidthValue } from '../bridge.js';
+import { applyToolTransform } from './tool-transform.js';
+export { applyToolTransform } from './tool-transform.js';
 
 /**
  * Check if any modal dialog/overlay is blocking interaction
@@ -51,7 +53,10 @@ export function resolvePointerCoords(e) {
   const docCurrentPage = doc ? doc.currentPage : 1;
   const scale = doc?.scale || 1.5;
   if (doc?.viewMode === 'continuous') {
-    const canvas = e.target.closest ? e.target.closest('.annotation-canvas') || e.target : e.target;
+    const eventCanvas = e.target.closest ? e.target.closest('.annotation-canvas') || e.target : e.target;
+    const canvas = state.isDrawing && state.activeContinuousCanvas
+      ? state.activeContinuousCanvas
+      : eventCanvas;
     if (!canvas || !canvas.getBoundingClientRect) {
       return { x: 0, y: 0, pageNum: docCurrentPage, canvas: null, canvasCtx: null };
     }
@@ -116,20 +121,6 @@ export function resolvePointerCoords(e) {
  * In legacy mode: uses doc.scale (with DPR handled elsewhere).
  * Call ctx.save() before and ctx.restore() after.
  */
-export function applyToolTransform(ctx) {
-  const doc = getActiveDocument();
-  const vp = window.__pdfViewport;
-  // Same blank-doc guard as resolvePointerCoords — blank in-memory docs
-  // bypass the viewport singleton and use doc.scale via the PDF.js path.
-  if (vp && vp.active && doc?.filePath) {
-    ctx.setTransform(vp.zoom, 0, 0, vp.zoom, vp.offsetX, vp.offsetY);
-  } else {
-    const scale = doc?.scale || 1.5;
-    const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
-  }
-}
-
 /**
  * Get the effective scale for the current rendering mode.
  * Vector mode: viewport zoom. Legacy mode: doc.scale.
@@ -149,7 +140,17 @@ export function getEffectiveScale() {
 export function buildToolContext(e, coords) {
   const ctxDoc = getActiveDocument();
   const vp = window.__pdfViewport;
-  const ctxScale = (vp && vp.active) ? vp.zoom : (ctxDoc?.scale || 1.5);
+  const ctxScale = (vp && vp.active && ctxDoc?.filePath) ? vp.zoom : (ctxDoc?.scale || 1.5);
+  const transformContext = {
+    doc: ctxDoc,
+    pageNum: coords.pageNum,
+    canvas: coords.canvas,
+    canvasCtx: coords.canvasCtx,
+    viewMode: ctxDoc?.viewMode || 'single',
+    scale: ctxDoc?.scale || 1.5,
+    viewport: vp,
+    dpr: window.devicePixelRatio || 1,
+  };
   return {
     // Coordinates
     x: coords.x,
@@ -164,6 +165,7 @@ export function buildToolContext(e, coords) {
     prefs: state.preferences,
     scale: ctxScale,
     viewMode: ctxDoc?.viewMode || 'single',
+    transformContext,
 
     // Snapping
     snap: (x, y, excludeId, extraPoints) => performSnap(x, y, ctxDoc?.annotations || [], coords.pageNum, ctxScale, excludeId, extraPoints),
@@ -175,7 +177,7 @@ export function buildToolContext(e, coords) {
     drawSnapIndicator: (snapResult) => {
       if (!coords.canvasCtx) return;
       coords.canvasCtx.save();
-      applyToolTransform(coords.canvasCtx);
+      applyToolTransform(coords.canvasCtx, transformContext);
       drawSnapIndicator(coords.canvasCtx, snapResult, ctxScale);
       coords.canvasCtx.restore();
     },
@@ -220,7 +222,6 @@ export function buildToolContext(e, coords) {
     // Text editing
     startTextEditing,
     finishTextEditing,
-    addTextAnnotation,
     addComment,
     openStickyPopup,
     findTextEditAtPosition,
@@ -236,7 +237,7 @@ export function buildToolContext(e, coords) {
     startContinuousPan,
 
     // Drawing
-    drawShapePreview,
+    drawShapePreview: (x, y, event) => drawShapePreview(x, y, event, transformContext),
     getAnnotationType,
     getColorPickerValue,
     getLineWidthValue,

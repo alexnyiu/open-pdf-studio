@@ -3,7 +3,7 @@ import RibbonGroup from './RibbonGroup.jsx';
 import AdaptiveGroups from './AdaptiveGroups.jsx';
 import RibbonButton from './RibbonButton.jsx';
 import RibbonButtonStack from './RibbonButtonStack.jsx';
-import { insertPageIcon, deletePageIcon, extractPagesIcon, mergePdfsIcon, watermarkIcon, headerFooterIcon, manageWatermarksIcon, editTextIcon, addTextIcon, cropMarginsIcon, resizePagesIcon, rotateLeftIcon, rotateRightIcon } from '../../data/ribbonIcons.js';
+import { insertPageIcon, deletePageIcon, extractPagesIcon, mergePdfsIcon, watermarkIcon, headerFooterIcon, manageWatermarksIcon, editTextIcon, textboxIcon, cropMarginsIcon, resizePagesIcon, rotateLeftIcon, rotateRightIcon } from '../../data/ribbonIcons.js';
 import { state, noPdf, getActiveDocument, getPageRotation } from '../../../core/state.js';
 import { isPdfAReadOnly } from '../../../pdf/loader.js';
 import { showInsertPageDialog, showExtractPagesDialog, showMergePdfsDialog } from '../../../ui/chrome/dialogs.js';
@@ -59,8 +59,8 @@ export default function OrganizeTab() {
         <RibbonGroup label={t('home.edit')}>
           <RibbonButton id="ep-edit-text" title={t('home.editText')} icon={editTextIcon} label={t('home.editText')}
             disabled={ro()} active={state.currentTool === 'editText'} onClick={() => setTool('editText')} />
-          <RibbonButton id="ep-add-text" title={t('home.addText')} icon={addTextIcon} label={t('home.addText')}
-            disabled={ro()} onClick={() => setTool('text')} />
+          <RibbonButton id="ep-add-text" title={t('comment.textBox')} icon={textboxIcon} label={t('comment.textBox')}
+            disabled={ro()} active={state.currentTool === 'textbox'} onClick={() => setTool('textbox')} />
           <Show when={ocrWorkflowAvailable()}>
             <RibbonButton id="ep-recognize-text" title={t('organize.recognizeCurrentPage')}
               icon={recognizeTextIcon} label={t('organize.recognizeText')}

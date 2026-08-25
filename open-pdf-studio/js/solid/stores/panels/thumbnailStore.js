@@ -15,6 +15,7 @@ export function getContainerRef() {
 const [pageCount, setPageCount] = createSignal(0);
 const [activePage, setActivePage] = createSignal(1);
 const [placeholderSize, setPlaceholderSize] = createSignal({ width: 150, height: 212 });
+const [pagePlaceholderSizes, setPagePlaceholderSizes] = createStore({});
 
 // Map of pageNum -> dataURL for rendered thumbnails
 const [thumbnailData, setThumbnailData] = createStore({});
@@ -98,8 +99,13 @@ export function setThumbnailImage(pageNum, imageData) {
   setThumbnailData(String(pageNum), imageData);
 }
 
+export function setPagePlaceholderSize(pageNum, size) {
+  setPagePlaceholderSizes(String(pageNum), size);
+}
+
 export function clearAllThumbnails() {
   setThumbnailData(reconcile({}));
+  setPagePlaceholderSizes(reconcile({}));
   setPageCount(0);
   setSelectedPages(new Set());
   setLastClickedPage(1);
@@ -113,6 +119,7 @@ export {
   pageCount, setPageCount,
   activePage, setActivePage,
   placeholderSize, setPlaceholderSize,
+  pagePlaceholderSizes,
   thumbnailData,
   draggedPage, setDraggedPage,
   dropTarget, setDropTarget,

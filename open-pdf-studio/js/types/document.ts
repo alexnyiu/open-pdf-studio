@@ -62,11 +62,32 @@ export interface ScrollPosition {
   y: number;
 }
 
+export interface DocumentMetadata {
+  title: string;
+  author: string;
+  subject: string;
+  keywords: string;
+  creator: string;
+  producer: string;
+  creationDate: string | null;
+  modificationDate: string | null;
+}
+
+export interface PreloadStatus {
+  readonly state: 'idle' | 'running' | 'paused' | 'complete' | 'limited' | 'cancelled';
+  readonly completed: number;
+  readonly total: number;
+  readonly retainedBytes: number;
+  readonly limitReason: 'pages' | 'bytes' | 'time' | null;
+}
+
 export interface DocumentState {
   id: string;
   filePath: string | null;
   fileName: string;
   pdfDoc: any; // pdfjs-dist PDFDocumentProxy
+  metadata: DocumentMetadata;
+  preloadStatus: PreloadStatus;
   currentPage: number;
   scale: number;
   viewMode: 'single' | 'continuous';
@@ -95,6 +116,7 @@ export interface DocumentState {
   scrollPosition: ScrollPosition;
   pageRotations: Record<number, number>;
   pageDims?: Record<number, { widthPt: number; heightPt: number; rotation?: number }>;
+  thumbnailDims?: Record<number, { width: number; height: number; rotation: number }>;
   pdfaCompliance: string | null;
   pdfADismissed: boolean;
   measureScale: MeasureScale | null;
