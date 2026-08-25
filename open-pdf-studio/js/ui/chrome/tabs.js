@@ -240,6 +240,8 @@ export async function closeTab(index, force = false) {
   // closed document alongside its replacement.
   const closedPath = doc.filePath;
   const closedPdfDocument = doc.pdfDoc;
+  const { clearEditableMetadataPreload } = await import('../../pdf/editable-metadata-preload.js');
+  clearEditableMetadataPreload(doc);
   doc.pdfDoc = null;
   try {
     await closedPdfDocument?.destroy?.();
@@ -417,6 +419,8 @@ export async function renameDocument(index, newName) {
     // Update document state
     const doc = getActiveDocument();
     if (doc) {
+      const { clearEditableMetadataPreload } = await import('../../pdf/editable-metadata-preload.js');
+      clearEditableMetadataPreload(doc);
       doc.filePath = newPath;
       doc.fileName = newPath ? newPath.split(/[\\/]/).pop() : 'Untitled';
     }

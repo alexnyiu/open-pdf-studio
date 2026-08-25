@@ -61,7 +61,24 @@ export interface TextLine {
   baseline: number;
   baselineAdvance: number;
   alignment: 'left' | 'center' | 'right';
+  breakAfter?: 'hard' | 'soft';
   runs: TextRun[];
+}
+
+export interface TextEditSelectionItem {
+  key: string;
+  kind: 'native' | 'record';
+  page: number;
+  rotation: 0 | 90 | 180 | 270;
+  eligible: boolean;
+  geometry: { left: number; top: number; width: number; height: number };
+  viewRect: { left: number; top: number; width: number; height: number };
+  visualBaseline: number;
+  richText: RichTextDocumentV2;
+  original: RichTextDocumentV2 | null;
+  sourceProvenance: NativeTextSourceProvenanceV1[] | null;
+  substitution: FontSubstitution | null;
+  sourceRecord?: TextEditRecordV2;
 }
 
 export interface RichTextDocumentV2 {

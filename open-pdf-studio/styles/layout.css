@@ -793,6 +793,41 @@ body.pdf-cursor-override #canvas-container * {
   outline: 1px solid rgba(0, 120, 215, 0.3);
 }
 
+.edit-text-paragraph-outline {
+  position: absolute;
+  z-index: 6;
+  box-sizing: border-box;
+  pointer-events: none;
+  background: rgba(0, 120, 215, 0.08);
+  outline: 1px solid rgba(0, 120, 215, 0.55);
+}
+
+.edit-text-selection-box,
+.edit-text-selection-union {
+  position: absolute;
+  z-index: 7;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.edit-text-selection-box {
+  background: rgba(0, 120, 215, 0.12);
+  outline: 1px solid rgba(0, 120, 215, 0.75);
+}
+
+.edit-text-selection-union {
+  border: 2px dashed #0078d7;
+}
+
+.edit-text-marquee {
+  position: fixed;
+  z-index: 2000;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 1px dashed #0078d7;
+  background: rgba(0, 120, 215, 0.08);
+}
+
 .pdf-text-editor {
   box-sizing: border-box;
   border: 0;
@@ -825,6 +860,17 @@ body.pdf-cursor-override #canvas-container * {
 .rich-text-editor > [data-rich-line-index] {
   min-height: 1em;
   white-space: pre;
+}
+
+.rich-text-editor-reflow {
+  white-space: pre-wrap;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.rich-text-editor-reflow > [data-rich-line-index] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .scanned-text-estimate-note {

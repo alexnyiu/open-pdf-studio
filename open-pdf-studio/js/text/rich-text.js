@@ -111,6 +111,10 @@ export function createTextLine(runs, options = {}) {
     baselineAdvance: Number(options.baselineAdvance) > 0
       ? Number(options.baselineAdvance) : Math.max(...safeRuns.map((run) => run.size)) * 1.2,
     alignment: ['left', 'center', 'right'].includes(options.alignment) ? options.alignment : 'left',
+    // Optional in V2. Older records omit it and therefore retain the historic
+    // interpretation that every stored line ends with an authored paragraph
+    // break. Generated wraps explicitly use "soft".
+    breakAfter: options.breakAfter === 'soft' ? 'soft' : 'hard',
     runs: safeRuns,
   };
 }
@@ -150,7 +154,11 @@ export function richTextFromPlainText(text, style = {}, region = {}) {
 
 export function richTextToPlainText(document) {
   assertRichTextDocumentV2(document);
-  return document.lines.map((line) => line.runs.map((run) => run.text).join('')).join('\n');
+  return document.lines.map((line, index) => {
+    const value = line.runs.map((run) => run.text).join('');
+    if (index === document.lines.length - 1) return value;
+    return `${value}${line.breakAfter === 'soft' ? '' : '\n'}`;
+  }).join('');
 }
 
 function sameStyle(left, right) {
@@ -322,6 +330,7 @@ export function replaceTextRange(document, selection, insertedText, typingStyle 
       baseline: startLine.baseline + baselineSign * index * startLine.baselineAdvance,
       baselineAdvance: startLine.baselineAdvance,
       alignment: startLine.alignment,
+      breakAfter: index === insertedLines.length - 1 ? endLine.breakAfter : 'hard',
     });
   });
   const followingLineShift = newLines.at(-1).baseline - endLine.baseline;
@@ -445,15 +454,19 @@ export function canonicalRichTextHash(document) {
     schema: document.schema,
     version: document.version,
     region: document.region,
-    lines: document.lines.map((line) => ({
-      baseline: line.baseline,
-      baselineAdvance: line.baselineAdvance,
-      alignment: line.alignment,
-      runs: line.runs.map((run) => Object.fromEntries([
-        ['text', run.text],
-        ...STYLE_KEYS.map((key) => [key, run[key]]),
-      ])),
-    })),
+    lines: document.lines.map((line) => {
+      const canonicalLine = {
+        baseline: line.baseline,
+        baselineAdvance: line.baselineAdvance,
+        alignment: line.alignment,
+        runs: line.runs.map((run) => Object.fromEntries([
+          ['text', run.text],
+          ...STYLE_KEYS.map((key) => [key, run[key]]),
+        ])),
+      };
+      if (line.breakAfter === 'soft') canonicalLine.breakAfter = 'soft';
+      return canonicalLine;
+    }),
   };
   return stableId('rich', JSON.stringify(canonical));
 }

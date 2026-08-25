@@ -33,6 +33,8 @@
     "test:ocr-workflow:macos": "node scripts/test-ocr-production-workflow-macos.mjs",
     "test:ocr-save:macos": "node scripts/test-macos-safe-ocr-save-packaged.mjs",
     "test:ocr-edit-single-line:macos": "node scripts/test-ocr-edit-single-line-macos.mjs",
+    "test:native-text-editing:ui": "node scripts/test-native-paragraph-editing.mjs",
+    "test:native-text-editing:macos": "node scripts/test-native-paragraph-editing-macos.mjs",
     "test:ocr-edit-regions:unit": "node --test js/ocr/editing/fixed-region.test.mjs",
     "test:ocr-edit-regions:visual": "node --test js/ocr/editing/editing-foundation.visual.test.mjs",
     "test:ocr-edit-regions:pdfium": "cargo test -p open-pdf-studio --test scanned_text_edit_pdfium -- --nocapture",
@@ -57,7 +59,7 @@
     "benchmark": "npm run benchmark:ocr -- --output-dir /tmp/open-pdf-studio-ocr-benchmark",
     "benchmark:ocr": "node scripts/run-ocr-quality-benchmark.mjs",
     "measure:ocr": "node scripts/measure-ocr-phase-a.mjs",
-    "test:unit": "node --test scripts/test-nen-ifc-map.mjs scripts/test-systeemraster.mjs scripts/font-catalog.test.mjs js/drafting/tekeningtype.test.mjs js/annotations/editable-numbers.test.mjs js/symbols/templates/wapeningskorf.test.mjs js/pdf/canvas-dpr.test.mjs js/pdf/progressive-render.test.mjs js/pdf/resource-limits.test.mjs js/pdf/tile-coverage.test.mjs js/quantities/engine.test.mjs js/quantities/schedule-image.test.mjs js/quantities/takeoff.test.mjs js/text/native-text-provenance.test.mjs js/text/owned-edit-manifest.test.mjs js/text/rich-text.test.mjs js/text/text-edit-appearance.test.mjs js/tools/embedded-image-parser.test.mjs",
+    "test:unit": "node --test scripts/test-nen-ifc-map.mjs scripts/test-systeemraster.mjs scripts/font-catalog.test.mjs js/drafting/tekeningtype.test.mjs js/annotations/editable-numbers.test.mjs js/symbols/templates/wapeningskorf.test.mjs js/pdf/canvas-dpr.test.mjs js/pdf/pdf-preload-controller.test.mjs js/pdf/progressive-render.test.mjs js/pdf/resource-limits.test.mjs js/pdf/tile-coverage.test.mjs js/quantities/engine.test.mjs js/quantities/schedule-image.test.mjs js/quantities/takeoff.test.mjs js/text/native-text-blocks.test.mjs js/text/native-text-provenance.test.mjs js/text/owned-edit-manifest.test.mjs js/text/owned-text-edit-targets.test.mjs js/text/rich-text.test.mjs js/text/text-edit-selection.test.mjs js/text/text-edit-appearance.test.mjs js/tools/embedded-image-parser.test.mjs",
     "test:render": "..\\scripts\\.venv-test\\Scripts\\python.exe ../scripts/render-regression-test.py",
     "test:render:auto": "node ../scripts/run-render-regression.mjs",
     "test:quality": "node --test scripts/native-runtime.test.mjs scripts/release-config.test.mjs scripts/linux-release-config.test.mjs scripts/pdfium-sidecar.test.mjs scripts/square-image-annotation.test.mjs"

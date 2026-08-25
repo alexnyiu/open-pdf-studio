@@ -417,6 +417,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     } catch (error) {
       doc.textEdits = [];
       doc.textEditManifest = null;
+      doc.textEditReadOnlyReason = `Open PDF Studio text-edit ownership could not be validated: ${error?.message || error}`;
       console.warn('[rich-text-edit] Owned manifest was not hydrated:', error?.message || error);
     }
 

@@ -23,6 +23,12 @@ const [mixedFormatState, setMixedFormatState] = createSignal({});
 let richTextHistory = [];
 let richTextHistoryIndex = -1;
 
+function cloneRichTextDocument(document) {
+  // Rich-text drafts can come from Solid store proxies during re-editing.
+  // The manifest contract is JSON-only, so a JSON clone safely unwraps them.
+  return JSON.parse(JSON.stringify(document));
+}
+
 export function showPdfTextEditor(style, initialText, handlers) {
   setEditorStyle(style);
   setText(initialText);
@@ -32,9 +38,12 @@ export function showPdfTextEditor(style, initialText, handlers) {
   setBlurHandler(() => handlers.onBlur || null);
   setEditorOptions(handlers.options || {});
   setEditorStatus('');
-  const richText = handlers.options?.richTextDocument || null;
+  // Never let the live contentEditable draft mutate the record (or a Solid
+  // proxy for it) before commit. Re-editing always works on an isolated copy.
+  const sourceRichText = handlers.options?.richTextDocument || null;
+  const richText = sourceRichText ? cloneRichTextDocument(sourceRichText) : null;
   setRichTextDocument(richText);
-  richTextHistory = richText ? [structuredClone(richText)] : [];
+  richTextHistory = richText ? [cloneRichTextDocument(richText)] : [];
   richTextHistoryIndex = richText ? 0 : -1;
   setRichTextSelection(richText ? {
     anchor: { line: 0, offset: 0 },
@@ -79,7 +88,7 @@ export function updateRichTextDraft(document, { recordHistory = true, preserveDo
     const previous = richTextHistory[richTextHistoryIndex];
     if (!previous || JSON.stringify(previous) !== JSON.stringify(document)) {
       richTextHistory = richTextHistory.slice(0, richTextHistoryIndex + 1);
-      richTextHistory.push(structuredClone(document));
+      richTextHistory.push(cloneRichTextDocument(document));
       richTextHistoryIndex = richTextHistory.length - 1;
     }
   }
@@ -90,7 +99,7 @@ export function updateRichTextDraft(document, { recordHistory = true, preserveDo
     // replacement into an empty document.
     const current = richTextDocument();
     if (current) {
-      const snapshot = structuredClone(document);
+      const snapshot = cloneRichTextDocument(document);
       for (const key of Object.keys(current)) {
         if (!Object.hasOwn(snapshot, key)) delete current[key];
       }
@@ -108,14 +117,14 @@ export function updateRichTextDraft(document, { recordHistory = true, preserveDo
 export function undoRichTextDraft() {
   if (richTextHistoryIndex <= 0) return false;
   richTextHistoryIndex -= 1;
-  updateRichTextDraft(structuredClone(richTextHistory[richTextHistoryIndex]), { recordHistory: false });
+  updateRichTextDraft(cloneRichTextDocument(richTextHistory[richTextHistoryIndex]), { recordHistory: false });
   return true;
 }
 
 export function redoRichTextDraft() {
   if (richTextHistoryIndex < 0 || richTextHistoryIndex >= richTextHistory.length - 1) return false;
   richTextHistoryIndex += 1;
-  updateRichTextDraft(structuredClone(richTextHistory[richTextHistoryIndex]), { recordHistory: false });
+  updateRichTextDraft(cloneRichTextDocument(richTextHistory[richTextHistoryIndex]), { recordHistory: false });
   return true;
 }
 
@@ -143,7 +152,7 @@ export function applyRichTextDraftParagraphFormat(key, value) {
   const document = richTextDocument();
   const selection = richTextSelection();
   if (!document || !selection) return false;
-  const next = structuredClone(document);
+  const next = cloneRichTextDocument(document);
   const start = Math.min(selection.anchor.line, selection.focus.line);
   const end = Math.max(selection.anchor.line, selection.focus.line);
   for (let index = start; index <= end; index += 1) {

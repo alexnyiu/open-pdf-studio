@@ -5,6 +5,7 @@ import {
   matchOwnedReplacementTextItems,
   sameNativeTextOwnership,
 } from './native-text-matching.js';
+import { collectVisibleNativeTextProvenance } from './native-text-blocks.js';
 
 function run(text, x, width, index) {
   return {
@@ -63,4 +64,22 @@ test('maps a saved owned replacement back to its PDF.js text items', () => {
     { str: 'red fox', transform: [15, 0, 0, 15, 130, 479] },
   ], [{ id: 'edit-1', newText: 'The quick red fox', pdfX: 54, pdfY: 479 }]);
   assert.deepEqual([...matches.entries()], [[0, 'edit-1'], [1, 'edit-1']]);
+});
+
+function span(textContent, sources = null) {
+  return {
+    textContent,
+    dataset: {
+      nativeTextProvenance: sources ? JSON.stringify(sources) : '',
+    },
+  };
+}
+
+test('ignores synthetic whitespace spans but requires every visible fragment', () => {
+  const source = run('Owned text', 72, 60, 0);
+  assert.deepEqual(
+    collectVisibleNativeTextProvenance([span('Owned text', [source]), span('   '), span('\u200b')]),
+    [source],
+  );
+  assert.equal(collectVisibleNativeTextProvenance([span('Owned text', [source]), span('visible')]), null);
 });

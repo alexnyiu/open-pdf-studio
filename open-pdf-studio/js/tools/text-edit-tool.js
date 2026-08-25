@@ -17,11 +17,22 @@ import {
   richTextFromPlainText,
   richTextToPlainText,
 } from '../text/rich-text.js';
+import {
+  buildMergedTextEditSelection,
+  marqueeContainsSelectionItem,
+  reflowRichTextToWidth,
+  unionSelectionGeometry,
+} from '../text/text-edit-selection.js';
 import { proposeFontSubstitution, resolvePackagedFace } from '../text/font-catalog.js';
 import { showMessage } from '../solid/stores/dialogStore.js';
 import { injectSyntheticTextSpans, refreshPendingOcrTextLayer, resolveTextLayerFonts } from '../text/text-layer.js';
 import { provenanceForSpans } from '../text/native-text-provenance.js';
 import { sameNativeTextOwnership } from '../text/native-text-matching.js';
+import {
+  groupNativeTextFragments,
+  nativeTextLinePieces,
+} from '../text/native-text-blocks.js';
+import { ownedTextEditLineTargets } from '../text/owned-text-edit-targets.js';
 import { evaluateScannedTextEdit } from '../ocr/editing/edit-state.js';
 import { fixedRegionTargetFromLineIds } from '../ocr/editing/fixed-region.js';
 import {
@@ -51,9 +62,346 @@ let layerOwnedEditListeners = [];
 let ownedEditCaptureHandler = null;
 let textLayerObserver = null;
 let blockGroupsCache = new Map();
+let paragraphOutline = null;
+let selectionOutlines = [];
+let selectedTextItems = new Map();
+let selectionKeyHandler = null;
+let marqueePointerHandlers = null;
+let marqueeState = null;
 const stagedScannedLineSelections = new WeakMap();
 // WeakMap: span -> block group, for fast lookup on hover/click
 let spanToBlock = new WeakMap();
+
+function cloneTextEditRecord(record) {
+  // Solid stores expose records as proxies, which structuredClone rejects.
+  // Text edit records are intentionally JSON-compatible manifest data.
+  return JSON.parse(JSON.stringify(record));
+}
+
+function showTextEditPropertiesSafely(properties) {
+  try {
+    showTextEditProperties(properties);
+  } catch (error) {
+    // The paragraph editor remains usable if the optional properties panel is
+    // not mounted yet or rejects a transient reactive value.
+    console.warn('[text-edit] Properties panel unavailable:', error);
+  }
+}
+
+function publishPdfTextEditState(editor) {
+  // Global editing state is only a keyboard-routing sentinel. Keep DOM nodes,
+  // callbacks, and reactive record proxies in the module-local activeEditor.
+  state.pdfTextEditState = editor ? { kind: editor.kind, pageNum: editor.pageNum } : null;
+}
+
+function rejectInvalidOwnedTextState() {
+  const reason = getActiveDocument()?.textEditReadOnlyReason;
+  if (!reason) return false;
+  showMessage(`${reason}. Previously edited text is read-only; the document was left untouched.`);
+  return true;
+}
+
+function hideParagraphOutline() {
+  paragraphOutline?.remove();
+  paragraphOutline = null;
+}
+
+function clearTextBoxSelection() {
+  selectedTextItems.clear();
+  selectionOutlines.forEach((element) => element.remove());
+  selectionOutlines = [];
+}
+
+export function clearSelectedTextBoxes() {
+  if (selectedTextItems.size === 0) return false;
+  clearTextBoxSelection();
+  return true;
+}
+
+function drawTextBoxSelection() {
+  selectionOutlines.forEach((element) => element.remove());
+  selectionOutlines = [];
+  const items = [...selectedTextItems.values()];
+  if (!items.length) return;
+  const layer = items[0].layer;
+  const parent = layer?.parentElement;
+  if (!parent) return;
+  const layerRect = layer.getBoundingClientRect();
+  const parentRect = parent.getBoundingClientRect();
+  const append = (rect, className) => {
+    const element = document.createElement('div');
+    element.className = className;
+    element.setAttribute('aria-hidden', 'true');
+    Object.assign(element.style, {
+      left: `${layerRect.left - parentRect.left + rect.left}px`,
+      top: `${layerRect.top - parentRect.top + rect.top}px`,
+      width: `${Math.max(1, rect.width)}px`,
+      height: `${Math.max(1, rect.height)}px`,
+    });
+    parent.appendChild(element);
+    selectionOutlines.push(element);
+  };
+  items.forEach((item) => append(item.viewRect, 'edit-text-selection-box'));
+  if (items.length > 1) append(unionSelectionGeometry(items, 'viewRect'), 'edit-text-selection-union');
+}
+
+function toggleTextBoxSelection(item) {
+  if (!item) return;
+  const existingPage = selectedTextItems.values().next().value?.page;
+  if (existingPage && existingPage !== item.page) clearTextBoxSelection();
+  if (selectedTextItems.has(item.key)) selectedTextItems.delete(item.key);
+  else selectedTextItems.set(item.key, item);
+  hideParagraphOutline();
+  drawTextBoxSelection();
+}
+
+function richTextForNativeBlock(block, pageNum) {
+  const { lineData, lineSpacing } = block;
+  const fontSize = lineData[0].fontSize;
+  const pdfY = lineData[0].pdfY;
+  return createRichTextDocument(lineData.map((line, index) => {
+    const runs = line.runs.map((run) => cloneTextEditRecord(run));
+    const nextText = lineData[index + 1]?.text || '';
+    if (index < lineData.length - 1 && !/\s$/u.test(line.text) && !/^[\s,.;:!?)]/u.test(nextText)) {
+      runs.push(createTextRun(' ', runs.at(-1) || line.runs[0], { seed: `wrap-space-${index}` }));
+    }
+    return createTextLine(runs, {
+      id: `source-line-${pageNum}-${index}`,
+      baseline: line.pdfY,
+      baselineAdvance: lineSpacing,
+      alignment: 'left',
+      breakAfter: index === lineData.length - 1 ? 'hard' : 'soft',
+    });
+  }), {
+    x: lineData[0].pdfX,
+    y: pdfY - (lineData.length - 1) * lineSpacing - fontSize * 0.3,
+    width: Math.max(...lineData.map((line) => line.pdfWidth)),
+    height: (lineData.length - 1) * lineSpacing + fontSize * 1.3,
+    rotation: getPageRotation(pageNum),
+  });
+}
+
+function selectionItemForRecord(record, pageNum, layer, viewRect = null) {
+  const projected = projectTextEditRecord(record);
+  const target = [...layer.querySelectorAll('span[data-edit-id]')]
+    .find((span) => span.dataset.editId === String(record.id));
+  const block = viewRect || (target ? ownedEditOutlineBlock(target, layer) : null);
+  const rect = block?.rect || viewRect;
+  if (!rect) return null;
+  const region = projected.richText.region;
+  return {
+    key: `record:${record.id}`, kind: 'record', page: pageNum,
+    rotation: region.rotation || getPageRotation(pageNum), eligible: true,
+    geometry: { left: region.x, top: region.y, width: region.width, height: region.height },
+    viewRect: rect, visualBaseline: rect.top + Math.min(rect.height, projected.fontSize),
+    richText: cloneTextEditRecord(projected.richText),
+    original: projected.original ? cloneTextEditRecord(projected.original) : null,
+    sourceProvenance: record.sourceProvenance ? cloneTextEditRecord(record.sourceProvenance) : null,
+    substitution: record.substitution ? cloneTextEditRecord(record.substitution) : null,
+    sourceRecord: record, layer,
+  };
+}
+
+async function openCombinedTextBoxEditor() {
+  if (selectedTextItems.size < 2 || activeEditor) return;
+  if (rejectInvalidOwnedTextState()) return;
+  const items = [...selectedTextItems.values()];
+  const unsupported = [...new Set(items.flatMap((item) => item.unsupportedFonts || []))];
+  if (unsupported.length) {
+    const proposed = proposeFontSubstitution(unsupported[0], false, false);
+    const face = resolvePackagedFace(unsupported[0], false, false);
+    if (!window.confirm(`The selection uses unsupported fonts (${unsupported.join(', ')}). `
+      + `Combine using the packaged substitute ${face.family}?`)) return;
+    const substitution = { ...proposed, approved: true, approvedAt: new Date().toISOString() };
+    items.forEach((item) => { if (item.unsupportedFonts?.length) item.substitution = substitution; });
+  }
+  let plan;
+  try {
+    plan = buildMergedTextEditSelection(items, {
+      createId: () => Date.now() + Math.random().toString(36).slice(2, 11),
+    });
+  } catch (error) {
+    showMessage(`${error instanceof Error ? error.message : String(error)}. The document was left untouched.`);
+    return;
+  }
+  const mergedRichText = reflowRichTextToWidth(plan.richText, Math.max(plan.geometry.width, 1));
+  const mergedRecord = createTextEditRecordV2({
+    id: plan.primaryId,
+    page: plan.page,
+    richText: mergedRichText,
+    original: plan.original,
+    sourceProvenance: plan.sourceProvenance,
+    substitution: plan.substitution,
+    revision: plan.revision,
+  });
+  const doc = getActiveDocument();
+  const originalRecords = plan.consumedRecords.map((record) => ({
+    index: doc.textEdits.findIndex((entry) => String(entry.id) === String(record.id)),
+    record: cloneTextEditRecord(record),
+  })).filter((item) => item.index >= 0);
+  const mergedIndex = originalRecords.length ? Math.min(...originalRecords.map((item) => item.index)) : doc.textEdits.length;
+  const layer = plan.orderedItems[0].layer;
+  const canvasEl = layer?.parentElement?.querySelector('canvas.pdf-canvas')
+    || pdfCanvas || document.getElementById('pdf-canvas');
+  if (!canvasEl) return;
+  clearTextBoxSelection();
+  startTextEditEditing(mergedRecord, plan.page, canvasEl, {
+    // Combining boxes is itself an edit, including an unchanged native-only
+    // merge whose normalized geometry differs from its original snapshot.
+    forceCommit: true,
+    commit(finalRecord) {
+      const consumedIds = new Set(originalRecords.map((item) => String(item.record.id)));
+      doc.textEdits = (doc.textEdits || []).filter((record) => !consumedIds.has(String(record.id)));
+      doc.textEdits.splice(Math.min(mergedIndex, doc.textEdits.length), 0, finalRecord);
+      execute({
+        type: 'replaceTextEditSet',
+        originalRecords,
+        mergedRecord: cloneTextEditRecord(finalRecord),
+        mergedIndex,
+      });
+      markDocumentModified();
+      reRenderAddedText(plan.page);
+    },
+  });
+}
+
+function installTextBoxSelectionHandlers() {
+  if (!selectionKeyHandler) {
+    selectionKeyHandler = (event) => {
+      if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
+      if (event.key === 'Escape' && clearSelectedTextBoxes()) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      } else if (!activeEditor && event.key === 'Enter' && selectedTextItems.size >= 2) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void openCombinedTextBoxEditor();
+      }
+    };
+    document.addEventListener('keydown', selectionKeyHandler, true);
+  }
+  if (marqueePointerHandlers) return;
+  const down = (event) => {
+    if (!event.shiftKey || event.button !== 0 || !state.isEditingPdfText || activeEditor) return;
+    const layer = event.target instanceof Element ? event.target.closest('.textLayer') : null;
+    if (!layer || event.target.closest('span')) return;
+    marqueeState = { layer, startX: event.clientX, startY: event.clientY, active: false, element: null };
+  };
+  const move = (event) => {
+    if (!marqueeState) return;
+    const dx = event.clientX - marqueeState.startX;
+    const dy = event.clientY - marqueeState.startY;
+    if (!marqueeState.active && Math.hypot(dx, dy) <= 4) return;
+    event.preventDefault();
+    marqueeState.active = true;
+    if (!marqueeState.element) {
+      marqueeState.element = document.createElement('div');
+      marqueeState.element.className = 'edit-text-marquee';
+      document.body.appendChild(marqueeState.element);
+    }
+    Object.assign(marqueeState.element.style, {
+      left: `${Math.min(marqueeState.startX, event.clientX)}px`,
+      top: `${Math.min(marqueeState.startY, event.clientY)}px`,
+      width: `${Math.abs(dx)}px`, height: `${Math.abs(dy)}px`,
+    });
+  };
+  const up = (event) => {
+    const current = marqueeState;
+    marqueeState = null;
+    if (!current?.active) return;
+    event.preventDefault();
+    event.stopPropagation();
+    current.element?.remove();
+    const layerRect = current.layer.getBoundingClientRect();
+    const marquee = {
+      left: Math.min(current.startX, event.clientX) - layerRect.left,
+      top: Math.min(current.startY, event.clientY) - layerRect.top,
+      width: Math.abs(event.clientX - current.startX),
+      height: Math.abs(event.clientY - current.startY),
+    };
+    const pageNum = parseInt(current.layer.dataset.page, 10) || getActiveDocument()?.currentPage || 1;
+    const candidates = getBlockGroups(current.layer).map((block) => selectionItemForBlock(block, pageNum, current.layer));
+    for (const record of getActiveDocument()?.textEdits?.filter((entry) => entry.page === pageNum) || []) {
+      const item = selectionItemForRecord(record, pageNum, current.layer);
+      if (item && !candidates.some((candidate) => candidate.key === item.key)) candidates.push(item);
+    }
+    candidates.filter((item) => marqueeContainsSelectionItem(marquee, item))
+      .forEach((item) => selectedTextItems.set(item.key, item));
+    drawTextBoxSelection();
+  };
+  document.addEventListener('pointerdown', down, true);
+  document.addEventListener('pointermove', move, true);
+  document.addEventListener('pointerup', up, true);
+  marqueePointerHandlers = { down, move, up };
+}
+
+function removeTextBoxSelectionHandlers() {
+  if (selectionKeyHandler) document.removeEventListener('keydown', selectionKeyHandler, true);
+  selectionKeyHandler = null;
+  if (marqueePointerHandlers) {
+    document.removeEventListener('pointerdown', marqueePointerHandlers.down, true);
+    document.removeEventListener('pointermove', marqueePointerHandlers.move, true);
+    document.removeEventListener('pointerup', marqueePointerHandlers.up, true);
+  }
+  marqueePointerHandlers = null;
+  marqueeState?.element?.remove();
+  marqueeState = null;
+  clearTextBoxSelection();
+}
+
+function selectionItemForBlock(block, pageNum, layer) {
+  const provenance = provenanceForSpans(block.spans);
+  const existing = provenance && getActiveDocument()?.textEdits?.find((record) => (
+    record.page === pageNum && sameNativeTextOwnership(record.sourceProvenance, provenance)
+  ));
+  if (existing) return selectionItemForRecord(existing, pageNum, layer, block.rect);
+  const richText = richTextForNativeBlock(block, pageNum);
+  const unsupportedFonts = [...new Set(block.lineData.flatMap((line) => line.spans.map((span) => (
+    span.dataset.pdfActualFontName || span.dataset.pdfFontName || 'Unknown font'
+  ))).filter((name) => !/^liberation\s*(sans|serif|mono)/iu.test(name)))];
+  const markerKey = provenance?.map((source) => source.markerId).sort().join('|') || `unowned:${block.rect.left}:${block.rect.top}`;
+  return {
+    key: `native:${markerKey}`, kind: 'native', page: pageNum,
+    rotation: getPageRotation(pageNum), eligible: Boolean(provenance),
+    geometry: { left: richText.region.x, top: richText.region.y, width: richText.region.width, height: richText.region.height },
+    viewRect: block.rect, visualBaseline: block.lineData[0].domBottom,
+    richText, original: richText, sourceProvenance: provenance,
+    unsupportedFonts, substitution: null, block, layer,
+  };
+}
+
+function showParagraphOutline(layer, block) {
+  if (!layer || !block?.rect) return;
+  hideParagraphOutline();
+  const parent = layer.parentElement;
+  if (!parent) return;
+  const layerRect = layer.getBoundingClientRect();
+  const parentRect = parent.getBoundingClientRect();
+  const outline = document.createElement('div');
+  outline.className = 'edit-text-paragraph-outline';
+  outline.setAttribute('aria-hidden', 'true');
+  outline.style.left = `${layerRect.left - parentRect.left + block.rect.left}px`;
+  outline.style.top = `${layerRect.top - parentRect.top + block.rect.top}px`;
+  outline.style.width = `${Math.max(block.rect.width, 1)}px`;
+  outline.style.height = `${Math.max(block.rect.height, 1)}px`;
+  parent.appendChild(outline);
+  paragraphOutline = outline;
+}
+
+function ownedEditOutlineBlock(span, layer) {
+  const editId = span.dataset.editId;
+  if (!editId) return null;
+  const targets = [...layer.querySelectorAll('span[data-owned-text-edit-hit]')]
+    .filter((candidate) => candidate.dataset.editId === editId);
+  if (targets.length === 0) return null;
+  const layerRect = layer.getBoundingClientRect();
+  const rects = targets.map((target) => target.getBoundingClientRect());
+  const left = Math.min(...rects.map((rect) => rect.left)) - layerRect.left;
+  const top = Math.min(...rects.map((rect) => rect.top)) - layerRect.top;
+  const right = Math.max(...rects.map((rect) => rect.right)) - layerRect.left;
+  const bottom = Math.max(...rects.map((rect) => rect.bottom)) - layerRect.top;
+  return { spans: targets, rect: { left, top, width: right - left, height: bottom - top } };
+}
 
 // ── Font mapping shared by the text-edit sessions ──
 // Map a display / actual font name + bold/italic flags to a pdf-lib StandardFont
@@ -235,6 +583,9 @@ function getTextEditGeometry(pageNum, canvasEl) {
 
 export function activateEditTextTool() {
   state.isEditingPdfText = true;
+  void import('../pdf/editable-metadata-preload.js').then(({ scheduleEditableMetadataPreload }) => (
+    scheduleEditableMetadataPreload(getActiveDocument()?.currentPage || 1, 1, { editTextActive: true })
+  ));
   if (!ownedEditCaptureHandler) {
     ownedEditCaptureHandler = (event) => {
       if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
@@ -251,6 +602,11 @@ export function activateEditTextTool() {
       if (!record || !canvasEl) return;
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (event.shiftKey) {
+        toggleTextBoxSelection(selectionItemForRecord(record, pageNum, layer));
+        return;
+      }
+      clearTextBoxSelection();
       startTextEditEditing(record, pageNum, canvasEl);
     };
     document.addEventListener('click', ownedEditCaptureHandler, true);
@@ -259,6 +615,7 @@ export function activateEditTextTool() {
   // managed centrally by setAnnotationCanvasForTextAccess() in manager.js.
   enableTextLayerHover();
   startObservingTextLayers();
+  installTextBoxSelectionHandlers();
 }
 
 export function deactivateEditTextTool() {
@@ -269,7 +626,9 @@ export function deactivateEditTextTool() {
   }
   disableTextLayerHover();
   stopObservingTextLayers();
+  removeTextBoxSelectionHandlers();
   blockGroupsCache.clear();
+  hideParagraphOutline();
   spanToBlock = new WeakMap();
   state.isEditingPdfText = false;
   state.pdfTextEditState = null;
@@ -318,12 +677,24 @@ function getBlockGroups(layer) {
 
   const layerRect = layer.getBoundingClientRect();
 
-  const items = spans.map(span => {
+  const items = spans.flatMap(span => {
     const r = span.getBoundingClientRect();
-    const transform = JSON.parse(span.dataset.pdfTransform);
+    let transform;
+    try { transform = JSON.parse(span.dataset.pdfTransform); }
+    catch (_) { return []; }
+    if (!Array.isArray(transform) || transform.length < 6) return [];
     const fontSize = Math.sqrt(transform[2] ** 2 + transform[3] ** 2);
-    return {
+    let sourceText = '';
+    try {
+      const sources = JSON.parse(span.dataset.nativeTextProvenance || 'null');
+      if (Array.isArray(sources)) sourceText = sources.map((source) => source.decodedText || '').join('');
+    } catch (_) {
+      sourceText = '';
+    }
+    return [{
       span,
+      text: span.textContent || '',
+      sourceText,
       // DOM coords – only for editor placement later
       domLeft: r.left - layerRect.left,
       domTop: r.top - layerRect.top,
@@ -334,90 +705,10 @@ function getBlockGroups(layer) {
       pdfY: transform[5],
       pdfWidth: parseFloat(span.dataset.pdfWidth) || 0,
       fontSize
-    };
+    }];
   });
-
-  // ── Step 1: group spans into lines by pdfY ──
-  // Sort by pdfY descending (reading order: top line first)
-  items.sort((a, b) => b.pdfY - a.pdfY || a.pdfX - b.pdfX);
-
-  const lines = [];
-  let curLine = [items[0]];
-  for (let i = 1; i < items.length; i++) {
-    const tolerance = curLine[0].fontSize * 0.3;
-    if (Math.abs(items[i].pdfY - curLine[0].pdfY) <= tolerance) {
-      curLine.push(items[i]);
-    } else {
-      lines.push(curLine);
-      curLine = [items[i]];
-    }
-  }
-  lines.push(curLine);
-
-  // Sort each line left → right by pdfX
-  for (const line of lines) line.sort((a, b) => a.pdfX - b.pdfX);
-
-  // ── Step 1b: split lines at large horizontal gaps (column boundaries) ──
-  const splitLines = [];
-  for (const line of lines) {
-    let segment = [line[0]];
-    for (let j = 1; j < line.length; j++) {
-      const prev = segment[segment.length - 1];
-      const curr = line[j];
-      const prevRight = prev.pdfX + prev.pdfWidth;
-      const gap = curr.pdfX - prevRight;
-      const avgFs = (prev.fontSize + curr.fontSize) / 2;
-
-      if (gap > avgFs * 3) {
-        // Large gap — treat as separate column
-        splitLines.push(segment);
-        segment = [curr];
-      } else {
-        segment.push(curr);
-      }
-    }
-    splitLines.push(segment);
-  }
-
-  // ── Step 2: group consecutive lines into blocks ──
-  //
-  // Two adjacent lines belong to the same block only when ALL of:
-  //   a) font sizes match closely   (ratio > 0.92)
-  //   b) baseline gap is reasonable  (0.5× – 1.8× fontSize)
-  //   c) left edges are aligned      (within 1× fontSize)
-  const blocks = [];
-  let curBlock = [splitLines[0]];
-
-  for (let i = 1; i < splitLines.length; i++) {
-    const prevLine = curBlock[curBlock.length - 1];
-    const nextLine = splitLines[i];
-
-    const prevFs = prevLine[0].fontSize;
-    const nextFs = nextLine[0].fontSize;
-    const fontRatio = Math.min(prevFs, nextFs) / Math.max(prevFs, nextFs);
-
-    // Baseline-to-baseline distance in PDF units (positive = going down)
-    const baselineGap = prevLine[0].pdfY - nextLine[0].pdfY;
-    const avgFs = (prevFs + nextFs) / 2;
-
-    // Left-edge proximity in PDF units
-    const prevLeft = Math.min(...prevLine.map(it => it.pdfX));
-    const nextLeft = Math.min(...nextLine.map(it => it.pdfX));
-
-    const sameBlock =
-      fontRatio > 0.92 &&
-      baselineGap > avgFs * 0.5 &&
-      baselineGap < avgFs * 1.8 &&
-      Math.abs(nextLeft - prevLeft) < avgFs * 1.0;
-
-    if (sameBlock) {
-      curBlock.push(nextLine);
-    } else {
-      blocks.push(curBlock);
-      curBlock = [nextLine];
-    }
-  }
-  blocks.push(curBlock);
+  const blocks = groupNativeTextFragments(items).map((block) => block.lines);
+  if (blocks.length === 0) { blockGroupsCache.set(layer, []); return []; }
 
   // ── Build group objects ──
   // Find the PDF canvas to sample text colors
@@ -447,13 +738,15 @@ function getBlockGroups(layer) {
 
       const color = sampleTextColor(pdfCanvasEl, firstSpan.getBoundingClientRect());
 
-      const runs = lineItems.map((item, runIndex) => {
+      const pieces = nativeTextLinePieces(lineItems);
+      const runs = pieces.map((piece, runIndex) => {
+        const item = piece.item;
         const runSpan = item.span;
         const actual = runSpan.dataset.pdfActualFontName || runSpan.dataset.pdfFontFamily || '';
         const bold = runSpan.dataset.pdfBold === 'true';
         const italic = runSpan.dataset.pdfItalic === 'true';
         const face = resolvePackagedFace(actual, bold, italic);
-        return createTextRun(runSpan.textContent || '', {
+        return createTextRun(piece.text, {
           faceId: face?.id,
           size: item.fontSize,
           color: sampleTextColor(pdfCanvasEl, runSpan.getBoundingClientRect()),
@@ -466,16 +759,16 @@ function getBlockGroups(layer) {
           id: `source-${runSpan.dataset.pdfFontName || 'font'}-${runIndex}`,
           sourceConfidence: actual ? 0.9 : 0.5,
           geometry: {
-            x: item.pdfX,
+            x: piece.syntheticSpace ? item.pdfX + item.pdfWidth : item.pdfX,
             baseline: item.pdfY,
-            width: item.pdfWidth,
+            width: piece.syntheticSpace ? Math.max(item.fontSize * 0.25, 0.5) : item.pdfWidth,
             height: item.fontSize,
           },
         });
       });
 
       return {
-        text: lineItems.map(it => it.span.textContent).join(''),
+        text: pieces.map((piece) => piece.text).join(''),
         domTop: Math.min(...lineItems.map(it => it.domTop)),
         domBottom: Math.max(...lineItems.map(it => it.domBottom)),
         pdfX: sourceExtent.x,
@@ -558,6 +851,11 @@ function enableTextLayerHover() {
         if (!hit) return;
         event.preventDefault();
         event.stopPropagation();
+        if (event.shiftKey) {
+          toggleTextBoxSelection(selectionItemForRecord(hit.record, pageNum, layer));
+          return;
+        }
+        clearTextBoxSelection();
         startTextEditEditing(hit.record, pageNum, hit.canvasEl);
       };
       layer.addEventListener('click', ownedEditClickHandler);
@@ -573,12 +871,15 @@ function enableTextLayerHover() {
       span.classList.add('edit-text-hoverable');
 
       const enterHandler = () => {
-        const block = spanToBlock.get(span);
-        if (block) block.spans.forEach(s => s.classList.add('edit-text-block-hover'));
+        const block = spanToBlock.get(span) || ownedEditOutlineBlock(span, layer);
+        if (block) showParagraphOutline(layer, block);
       };
-      const leaveHandler = () => {
+      const leaveHandler = (event) => {
+        const next = event.relatedTarget instanceof Element ? event.relatedTarget.closest('span') : null;
         const block = spanToBlock.get(span);
-        if (block) block.spans.forEach(s => s.classList.remove('edit-text-block-hover'));
+        if ((block && next && spanToBlock.get(next) === block)
+            || (span.dataset.editId && next?.dataset.editId === span.dataset.editId)) return;
+        hideParagraphOutline();
       };
       const clickHandler = async (e) => {
         e.preventDefault();
@@ -591,12 +892,22 @@ function enableTextLayerHover() {
           const ownedCanvas = layer.parentElement?.querySelector('canvas.pdf-canvas')
             || pdfCanvas || document.getElementById('pdf-canvas');
           if (ownedRecord && ownedCanvas) {
+            if (e.shiftKey) {
+              toggleTextBoxSelection(selectionItemForRecord(ownedRecord, pageNum, layer));
+              return;
+            }
+            clearTextBoxSelection();
             startTextEditEditing(ownedRecord, pageNum, ownedCanvas);
             return;
           }
         }
         const ownedHit = ownedTextEditAtClientPoint(e.clientX, e.clientY, pageNum, layer);
         if (ownedHit) {
+          if (e.shiftKey) {
+            toggleTextBoxSelection(selectionItemForRecord(ownedHit.record, pageNum, layer));
+            return;
+          }
+          clearTextBoxSelection();
           startTextEditEditing(ownedHit.record, pageNum, ownedHit.canvasEl);
           return;
         }
@@ -620,7 +931,15 @@ function enableTextLayerHover() {
             || (markerIds && candidate.dataset.nativeTextMarkerIds === markerIds)
           ));
         }
-        if (liveSpan) startPdfTextEditing(liveSpan, pageNum);
+        if (liveSpan) {
+          if (e.shiftKey) {
+            const block = spanToBlock.get(liveSpan);
+            if (block) toggleTextBoxSelection(selectionItemForBlock(block, pageNum, layer));
+          } else {
+            clearTextBoxSelection();
+            startPdfTextEditing(liveSpan, pageNum);
+          }
+        }
       };
       span.addEventListener('mouseenter', enterHandler);
       span.addEventListener('mouseleave', leaveHandler);
@@ -682,6 +1001,7 @@ function disableTextLayerHover() {
     h.span.style.cursor = keepTextAccess ? 'text' : '';
   }
   hoverListeners = [];
+  hideParagraphOutline();
   for (const entry of layerOwnedEditListeners) {
     entry.layer.removeEventListener('click', entry.click);
   }
@@ -1050,9 +1370,9 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
   editor._finishEditing = finish;
   editor._cancelEditing = cancel;
   activeEditor = editor;
-  state.pdfTextEditState = editor;
+  publishPdfTextEditState(editor);
 
-  showTextEditProperties({
+  showTextEditPropertiesSafely({
     text: initialText,
     fontSize: estimate.fontSize.value,
     fontFamily: font.name,
@@ -1131,6 +1451,7 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
 }
 
 function startPdfTextEditing(span, pageNum) {
+  if (rejectInvalidOwnedTextState()) return;
   finishPdfTextEditing();
 
   const textLayer = span.closest('.textLayer');
@@ -1153,14 +1474,13 @@ function startPdfTextEditing(span, pageNum) {
   const block = spanToBlock.get(span);
   if (!block || block.spans.length === 0) return;
 
-  // Remove block hover highlight (we're now editing)
-  block.spans.forEach(s => s.classList.remove('edit-text-block-hover'));
+  hideParagraphOutline();
 
   const { lineData, lineSpacing } = block;
 
   const sourceProvenance = provenanceForSpans(block.spans);
   if (!sourceProvenance) {
-    showMessage('This native PDF text cannot be changed safely because its exact source operators are ambiguous. The document was left untouched.');
+    showMessage('This paragraph contains visible text that could not be linked to eligible source operators. The document was left untouched.');
     return;
   }
 
@@ -1315,10 +1635,10 @@ function startPdfTextEditing(span, pageNum) {
     substitution,
   };
 
-  state.pdfTextEditState = activeEditor;
+  publishPdfTextEditState(activeEditor);
 
   // Show text properties in the right panel
-  showTextEditProperties({
+  showTextEditPropertiesSafely({
     text: combinedText,
     fontSize,
     fontFamily: displayFontName,
@@ -1414,7 +1734,7 @@ function finishPdfTextEditing() {
   // existing PDF text must be saveable too).
   const nativeChanged = newText !== originalText || styleChanged;
   if (nativeChanged && !activeEditor.sourceProvenance) {
-    showMessage('This native PDF text cannot be changed safely because its exact source operators are ambiguous. The document was left untouched.');
+    showMessage('This paragraph contains visible text that could not be linked to eligible source operators. The document was left untouched.');
   } else if (nativeChanged) {
     const { lineData } = block;
     const pdfFontName = lineData[0].pdfFontName || '';
@@ -1483,14 +1803,9 @@ function finishPdfTextEditing() {
         }
       }
 
-      execute({ type: 'addTextEdit', textEdit: structuredClone(editRecord) });
+      execute({ type: 'addTextEdit', textEdit: cloneTextEditRecord(editRecord) });
       markDocumentModified();
-
-      if (getActiveDocument()?.viewMode === 'continuous') {
-        redrawContinuous();
-      } else {
-        redrawAnnotations();
-      }
+      reRenderAddedText(pageNum);
     }
   }
 
@@ -1574,7 +1889,30 @@ export function findTextEditAtPosition(x, y, pageNum, canvasEl) {
   );
   const pageHeight = geometry.pageHeight;
 
+  const canonicalHits = [];
   for (const rawEdit of pageEdits) {
+    try {
+      const record = projectTextEditRecord(rawEdit).record;
+      for (const target of ownedTextEditLineTargets(record)) {
+        const top = pageHeight - target.baseline - target.fontSize * 0.85;
+        if (unrotatedPoint.x >= target.x && unrotatedPoint.x <= target.x + target.width
+            && unrotatedPoint.y >= top && unrotatedPoint.y <= top + target.height) {
+          canonicalHits.push({ rawEdit, area: target.width * target.height });
+        }
+      }
+    } catch (_) {
+      // Invalid records are not eligible for geometry fallback.
+    }
+  }
+  if (canonicalHits.length > 0) {
+    canonicalHits.sort((left, right) => left.area - right.area);
+    return canonicalHits[0].rawEdit;
+  }
+
+  // Backward-compatible fallback for legacy records lacking usable canonical
+  // line geometry. V2 records rely on their exact rich-text line regions.
+  for (const rawEdit of pageEdits) {
+    if (rawEdit?.schema === 'open-pdf-studio.text-edit-record' && rawEdit.version === 2) continue;
     const edit = projectTextEditRecord(rawEdit);
     const fontSize = edit.fontSize;
     const ls = edit.lineSpacing || fontSize * 1.2;
@@ -1596,7 +1934,8 @@ export function findTextEditAtPosition(x, y, pageNum, canvasEl) {
   return null;
 }
 
-export function startTextEditEditing(textEdit, pageNum, canvasEl) {
+export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = null) {
+  if (rejectInvalidOwnedTextState()) return;
   finishPdfTextEditing();
 
   const view = projectTextEditRecord(textEdit);
@@ -1613,7 +1952,9 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
 
   const firstBaseY = pageHeight - view.pdfY;
   const maxCharCount = Math.max(...newLines.map(l => l.length), 1);
-  const editWidth = Math.max(view.pdfWidth || 0, fontSize * 0.6 * maxCharCount) + fontSize * 0.5;
+  const editWidth = transaction
+    ? Math.max(view.pdfWidth || 0, fontSize)
+    : Math.max(view.pdfWidth || 0, fontSize * 0.6 * maxCharCount) + fontSize * 0.5;
 
   // Find the container to place the editor in
   const container = canvasEl.parentElement;
@@ -1691,7 +2032,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
   styleObj['text-decoration-thickness'] = '0.06em';
   styleObj['text-underline-offset'] = '0.08em';
 
-  const oldTextEdit = structuredClone(textEdit);
+  const oldTextEdit = cloneTextEditRecord(textEdit);
   const isAddedText = view.originalText === '';
 
   const finishEditing = () => {
@@ -1702,6 +2043,13 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
     // Clearing all the text of an INSERTED edit deletes it entirely — this is
     // how the user removes inserted text (issue #264).
     if (isAddedText && newText.trim() === '') {
+      if (transaction) {
+        hidePdfTextEditor();
+        activeEditor = null;
+        state.pdfTextEditState = null;
+        hideProperties();
+        return;
+      }
       removeTextEditRecord(textEdit);
       activeEditor = null;
       state.pdfTextEditState = null;
@@ -1711,8 +2059,10 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
 
     if (newText.trim() !== '') {
       if (textEdit.schema === 'open-pdf-studio.text-edit-record' && textEdit.version === 2 && richTextDraft) {
-        textEdit.richText = richTextDraft;
-        textEdit.revision += 1;
+        textEdit.richText = transaction
+          ? reflowRichTextToWidth(richTextDraft, Math.max(textEdit.richText.region.width, 1))
+          : richTextDraft;
+        if (!transaction) textEdit.revision += 1;
       } else {
         textEdit.newText = newText;
       }
@@ -1720,8 +2070,10 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
     // Persist when content, style, or position changed. Style/position edits
     // were applied live to `textEdit`, so compare the whole record.
     const changed = JSON.stringify(textEdit) !== JSON.stringify(oldTextEdit);
-    if (changed) {
-      execute({ type: 'modifyTextEdit', oldTextEdit, newTextEdit: structuredClone(textEdit) });
+    if (transaction && (changed || transaction.forceCommit)) {
+      transaction.commit(cloneTextEditRecord(textEdit));
+    } else if (changed) {
+      execute({ type: 'modifyTextEdit', oldTextEdit, newTextEdit: cloneTextEditRecord(textEdit) });
       markDocumentModified();
       reRenderAddedText(pageNum);
     }
@@ -1732,7 +2084,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
   };
 
   const cancelEditing = () => {
-    restoreTextEditSnapshot(textEdit, oldTextEdit);
+    if (!transaction) restoreTextEditSnapshot(textEdit, oldTextEdit);
     hidePdfTextEditor();
     reRenderAddedText(pageNum);
     activeEditor = null;
@@ -1774,11 +2126,11 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
     _finishEditing: finishEditing,
     _cancelEditing: cancelEditing
   };
-  state.pdfTextEditState = activeEditor;
+  publishPdfTextEditState(activeEditor);
 
   // Show text properties in the right panel
   const ffLower = (view.fontFamily || 'LiberationSans').toLowerCase();
-  showTextEditProperties({
+  showTextEditPropertiesSafely({
     text: view.newText,
     fontSize: view.fontSize,
     fontFamily: view.fontFamily || 'Liberation Sans',
@@ -1842,6 +2194,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
     options: {
       richTextDocument: view.richText,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+      reflowWidth: Boolean(transaction),
       ariaLabel: `Edit formatted PDF text region: ${view.newText}`,
     },
   });

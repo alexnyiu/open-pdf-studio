@@ -15,7 +15,7 @@ pub mod native_text;
 pub use parser::DocumentHandle;
 pub use native_text::{
     NativeTextApplyReportV1, NativeTextApplyResultV1, NativeTextSourceMapV1,
-    NativeTextSourceProvenanceV1,
+    NativeTextSourceProvenanceV1, inspect_native_text_sources_batch,
 };
 pub use draw_commands::DrawCommandBuffer;
 

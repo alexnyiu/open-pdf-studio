@@ -2879,6 +2879,8 @@ export async function savePDF(saveAsPath = null) {
       activeDoc.scannedTextEditRemovalPending = false;
     }
     if (activeDoc) {
+      const { clearEditableMetadataPreload } = await import('./editable-metadata-preload.js');
+      clearEditableMetadataPreload(activeDoc);
       await installValidatedSavedPdfDocument(activeDoc, outputPath, savedBytes, preparedPdfJsDocument);
       preparedPdfJsDocument = null;
       if (textEditManifestCandidate) {

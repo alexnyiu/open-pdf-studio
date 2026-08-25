@@ -5,6 +5,7 @@ import { resolveTextEditPageGeometry } from './text-edit-appearance.js';
 import { assessPdfJsTextContent } from '../ocr/existing-text.js';
 import { projectTextEditRecord } from './rich-text.js';
 import { matchOwnedReplacementTextItems } from './native-text-matching.js';
+import { ownedTextEditLineTargets } from './owned-text-edit-targets.js';
 import {
   attachNativeTextProvenance,
   clearNativeTextSourceCache,
@@ -534,8 +535,10 @@ export function ensureEndOfContent(textLayerDiv) {
  * @returns {Promise<HTMLElement>} The created text layer element
  */
 export async function createTextLayer(page, viewport, container, pageNum) {
-  const textContent = await page.getTextContent();
   const activeDocument = getActiveDocument();
+  const { getPrefetchedEditableMetadata } = await import('../pdf/editable-metadata-preload.js');
+  const prefetched = getPrefetchedEditableMetadata(pageNum, activeDocument);
+  const textContent = prefetched?.textContent || await page.getTextContent();
   if (activeDocument) {
     recordOcrExistingTextAssessment(
       activeDocument,
@@ -614,7 +617,7 @@ export async function createTextLayer(page, viewport, container, pageNum) {
   // Desktop-only: bind rendered PDF.js spans to exact source operators.
   // The matcher is ordered and atomic; any partial/ambiguous span remains
   // without provenance and therefore read-only in the Edit Text tool.
-  await attachNativeTextProvenance(textItems, textDivs, pageNum);
+  await attachNativeTextProvenance(textItems, textDivs, pageNum, prefetched?.sourceMap || null);
   const ownedNativeEdits = (activeDocument?.textEdits || [])
     .filter((record) => record.page === pageNum && record.original)
     .map(projectTextEditRecord);
@@ -671,6 +674,11 @@ export async function createTextLayer(page, viewport, container, pageNum) {
  */
 export function injectSyntheticTextSpans(textLayerDiv, pageNum, pageWidth, pageHeight) {
   const doc = getActiveDocument();
+
+  // Rebuild only application-owned projections. Native PDF.js spans and OCR
+  // targets are outside this cleanup boundary.
+  textLayerDiv.querySelectorAll('span[data-synthetic]').forEach(s => s.remove());
+  textLayerDiv.querySelectorAll('span[data-owned-text-edit-hit]').forEach(s => s.remove());
   if (!doc || !doc.textEdits || doc.textEdits.length === 0) return;
 
   const geometry = resolveTextEditPageGeometry(
@@ -680,14 +688,14 @@ export function injectSyntheticTextSpans(textLayerDiv, pageNum, pageWidth, pageH
     getPageRotation(pageNum),
   );
 
-  // Remove previously injected synthetic spans
-  textLayerDiv.querySelectorAll('span[data-synthetic]').forEach(s => s.remove());
-
   const addedEdits = doc.textEdits
     .filter((entry) => entry.page === pageNum)
     .map(projectTextEditRecord)
     .filter((entry) => entry.originalText === '');
-  if (addedEdits.length === 0) return;
+  if (addedEdits.length === 0) {
+    injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry);
+    return;
+  }
 
   // Create a temporary canvas for text measurement (--scale-x computation)
   const measureCanvas = document.createElement('canvas');
@@ -772,6 +780,37 @@ export function injectSyntheticTextSpans(textLayerDiv, pageNum, pageWidth, pageH
       // re-opens/updates THAT record instead of creating a duplicate edit.
       span.dataset.editId = String(edit.id);
 
+      textLayerDiv.appendChild(span);
+    }
+  }
+  injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry);
+}
+
+function injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry) {
+  const doc = getActiveDocument();
+  const needsTextAccess = state.currentTool === 'select' || state.currentTool === 'editText';
+  for (const rawRecord of doc?.textEdits || []) {
+    if (rawRecord.page !== pageNum) continue;
+    let record;
+    try { record = projectTextEditRecord(rawRecord).record; }
+    catch (error) {
+      console.warn('[native-text] Invalid owned edit omitted from hit targets:', error);
+      continue;
+    }
+    for (const target of ownedTextEditLineTargets(record)) {
+      const top = geometry.pageHeight - target.baseline - target.fontSize * 0.85;
+      const span = document.createElement('span');
+      span.className = 'owned-text-edit-hit';
+      span.setAttribute('aria-label', `Re-edit paragraph: ${target.text}`);
+      span.dataset.editId = target.recordId;
+      span.dataset.ownedTextEditHit = 'true';
+      span.dataset.ownedTextEditLineId = target.lineId;
+      span.style.left = `${(100 * target.x / geometry.pageWidth).toFixed(4)}%`;
+      span.style.top = `${(100 * top / geometry.pageHeight).toFixed(4)}%`;
+      span.style.width = `${(100 * target.width / geometry.pageWidth).toFixed(4)}%`;
+      span.style.height = `${(100 * target.height / geometry.pageHeight).toFixed(4)}%`;
+      span.style.pointerEvents = needsTextAccess ? 'auto' : 'none';
+      span.style.cursor = needsTextAccess ? 'text' : 'default';
       textLayerDiv.appendChild(span);
     }
   }

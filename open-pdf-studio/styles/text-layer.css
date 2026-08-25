@@ -60,6 +60,16 @@
   display: contents;
 }
 
+.textLayer > .owned-text-edit-hit {
+  display: block;
+  z-index: 2;
+  box-sizing: border-box;
+  font-size: 0;
+  transform: none;
+  background: transparent;
+  color: transparent;
+}
+
 /* Hidden canvas used by PDF.js TextLayer for text width measurement */
 .hiddenCanvasElement {
   position: absolute;

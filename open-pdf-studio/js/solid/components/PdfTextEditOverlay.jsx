@@ -187,10 +187,16 @@ export default function PdfTextEditOverlay() {
         baseline: oldLine?.baseline + baselineSign * addedLineCount * oldLine.baselineAdvance,
         baselineAdvance: oldLine?.baselineAdvance,
         alignment: oldLine?.alignment,
+        breakAfter: plainLines ? 'hard' : (lineElement?.dataset.breakAfter || oldLine?.breakAfter),
       });
     });
     const next = createRichTextDocument(lines, current.region);
     updateRichTextDraft(next, { preserveDom: true });
+    if (editorOptions().reflowWidth) {
+      queueMicrotask(() => {
+        if (richEditorRef) richEditorRef.style.height = `${Math.max(24, richEditorRef.scrollHeight)}px`;
+      });
+    }
     queueMicrotask(syncRichSelection);
   };
 
@@ -272,7 +278,7 @@ export default function PdfTextEditOverlay() {
         }>
           <div
             ref={richEditorRef}
-            class="pdf-text-editor rich-text-editor"
+            class={`pdf-text-editor rich-text-editor${editorOptions().reflowWidth ? ' rich-text-editor-reflow' : ''}`}
             contentEditable={true}
             role="textbox"
             aria-label={editorOptions().ariaLabel || 'Edit formatted PDF text'}
@@ -302,7 +308,7 @@ export default function PdfTextEditOverlay() {
             onBlur={handleBlur}
           >
             <For each={richTextDocument().lines}>{(line, lineIndex) =>
-              <div data-rich-line-index={lineIndex()} style={{ 'text-align': line.alignment }}>
+              <div data-rich-line-index={lineIndex()} data-break-after={line.breakAfter || 'hard'} style={{ 'text-align': line.alignment }}>
                 <For each={line.runs}>{(run) =>
                   <span
                     data-rich-run="true"

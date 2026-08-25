@@ -2186,12 +2186,79 @@ fn inspect_native_text_sources(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn inspect_native_text_sources_batch(
+    document_bytes: Vec<u8>,
+    page_indices: Vec<u32>,
+) -> Result<Vec<open_pdf_render::NativeTextSourceMapV1>, String> {
+    let indices: Vec<usize> = page_indices.into_iter().map(|index| index as usize).collect();
+    open_pdf_render::native_text::inspect_native_text_sources_batch(&document_bytes, &indices)
+        .map_err(|error| error.to_string())
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeTextDesktopApplyResult {
     pdf_bytes: Vec<u8>,
     updated_records: serde_json::Value,
     report: open_pdf_render::NativeTextApplyReportV1,
+}
+
+fn current_native_marker_ids(records: &[serde_json::Value]) -> std::collections::HashSet<String> {
+    records.iter()
+        .filter_map(|record| record.get("sourceProvenance"))
+        .flat_map(|provenance| provenance.as_array().into_iter().flatten())
+        .filter_map(|source| source.get("markerId").and_then(serde_json::Value::as_str))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn restoration_provenance_values(
+    previous_manifest: Option<&serde_json::Value>,
+    current_ids: &std::collections::HashSet<String>,
+    current_marker_ids: &std::collections::HashSet<String>,
+) -> Vec<serde_json::Value> {
+    let mut restore = Vec::new();
+    let Some(pages) = previous_manifest.and_then(|previous| previous.get("pages"))
+        .and_then(serde_json::Value::as_array) else { return restore };
+    for page in pages {
+        let Some(edits) = page.get("edits").and_then(serde_json::Value::as_array) else { continue };
+        for edit in edits {
+            let Some(id) = edit.get("id").and_then(serde_json::Value::as_str) else { continue };
+            if current_ids.contains(id) { continue; }
+            let Some(provenance) = edit.get("sourceProvenance").and_then(serde_json::Value::as_array) else { continue };
+            for source in provenance {
+                if source.get("markerId").and_then(serde_json::Value::as_str)
+                    .is_some_and(|marker| current_marker_ids.contains(marker)) {
+                    continue;
+                }
+                restore.push(source.clone());
+            }
+        }
+    }
+    restore
+}
+
+#[cfg(test)]
+mod native_text_merge_tests {
+    use super::{current_native_marker_ids, restoration_provenance_values};
+    use std::collections::HashSet;
+
+    #[test]
+    fn transferred_marker_is_not_restored_when_consumed_record_disappears() {
+        let current = vec![serde_json::json!({
+            "id": "primary",
+            "sourceProvenance": [{ "markerId": "kept" }, { "markerId": "new" }]
+        })];
+        let previous = serde_json::json!({ "pages": [{ "edits": [{
+            "id": "consumed",
+            "sourceProvenance": [{ "markerId": "kept" }, { "markerId": "removed" }]
+        }] }] });
+        let current_ids = HashSet::from(["primary".to_owned()]);
+        let markers = current_native_marker_ids(&current);
+        let restore = restoration_provenance_values(Some(&previous), &current_ids, &markers);
+        assert_eq!(restore, vec![serde_json::json!({ "markerId": "removed" })]);
+    }
 }
 
 /// Hash-verify and neutralize provenance-linked native source operators.
@@ -2224,23 +2291,16 @@ fn apply_native_text_edit_plan(
     let current_ids: std::collections::HashSet<String> = record_array.iter()
         .filter_map(|record| record.get("id").and_then(serde_json::Value::as_str).map(str::to_owned))
         .collect();
-    let mut restore_sources = Vec::new();
-    if let Some(previous) = previous_manifest.as_ref() {
-        if let Some(pages) = previous.get("pages").and_then(serde_json::Value::as_array) {
-            for page in pages {
-                let Some(edits) = page.get("edits").and_then(serde_json::Value::as_array) else { continue };
-                for edit in edits {
-                    let Some(id) = edit.get("id").and_then(serde_json::Value::as_str) else { continue };
-                    if current_ids.contains(id) { continue; }
-                    let Some(provenance) = edit.get("sourceProvenance") else { continue };
-                    for source in provenance.as_array().cloned().unwrap_or_default() {
-                        restore_sources.push(serde_json::from_value::<open_pdf_render::NativeTextSourceProvenanceV1>(source)
-                            .map_err(|error| format!("Malformed restoration provenance: {error}"))?);
-                    }
-                }
-            }
-        }
-    }
+    // A merge deliberately transfers exact native ownership from consumed
+    // records to the surviving primary record. Record disappearance alone is
+    // therefore not evidence that its source operator should be restored.
+    let current_marker_ids = current_native_marker_ids(record_array);
+    let restore_sources = restoration_provenance_values(
+        previous_manifest.as_ref(), &current_ids, &current_marker_ids,
+    ).into_iter().map(|source| {
+        serde_json::from_value::<open_pdf_render::NativeTextSourceProvenanceV1>(source)
+            .map_err(|error| format!("Malformed restoration provenance: {error}"))
+    }).collect::<Result<Vec<_>, _>>()?;
     let applied = open_pdf_render::native_text::apply_native_text_edit_plan(&document_bytes, &sources)
         .map_err(|error| error.to_string())?;
     let restored = open_pdf_render::native_text::restore_native_text_sources(&applied.pdf_bytes, &restore_sources)
@@ -2854,6 +2914,7 @@ pub fn run(opts: StartupOpts) {
             extract_draw_commands_batch,
             extract_page_text,
             inspect_native_text_sources,
+            inspect_native_text_sources_batch,
             apply_native_text_edit_plan,
             render_thumbnail,
             render_to_png::render_page_to_png,

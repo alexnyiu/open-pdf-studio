@@ -1,4 +1,5 @@
 import {
+  PDFArray,
   PDFDict,
   PDFDocument,
   PDFName,
@@ -16,6 +17,7 @@ import {
 } from './rich-text.js';
 
 const OWNER_KEY = PDFName.of('OpenPDFStudioTextEdit');
+const OWNED_LAYER_KEY = PDFName.of('OPDSOwnedTextLayer');
 
 async function sha256(value) {
   const bytes = new TextEncoder().encode(value);
@@ -39,6 +41,9 @@ function validateRecord(record) {
   }
   if (!record.id || !Number.isInteger(record.page) || record.page < 1 || !(record.revision > 0)) {
     throw new Error('Malformed owned text edit record identity');
+  }
+  if (record.ownedLayerId !== `OpenPDFStudioTextEdit-${record.id}`) {
+    throw new Error(`Owned text edit ${record.id} has an invalid layer identity`);
   }
   assertRichTextDocumentV2(record.richText);
   if (record.original) assertRichTextDocumentV2(record.original);
@@ -156,10 +161,32 @@ export async function hydrateOwnedTextEditManifest(documentState, pdfBytes) {
   const manifest = await readOwnedTextEditManifest(pdfDocument);
   if (!manifest) {
     documentState.textEditManifest = null;
+    documentState.textEditReadOnlyReason = null;
     return null;
+  }
+  const pages = pdfDocument.getPages();
+  for (const manifestPage of manifest.pages) {
+    const expectedLayerId = `OpenPDFStudioTextEditPage-${manifestPage.page}`;
+    if (manifestPage.layerId !== expectedLayerId) {
+      throw new Error(`Owned text edit page ${manifestPage.page} has an invalid layer identity`);
+    }
+    const page = pages[manifestPage.page - 1];
+    if (!page) throw new Error(`Owned text edit page ${manifestPage.page} is outside the PDF`);
+    const contents = page.node.lookup(PDFName.of('Contents'));
+    const streams = contents instanceof PDFArray
+      ? Array.from({ length: contents.size() }, (_, index) => pdfDocument.context.lookup(contents.get(index)))
+      : [contents];
+    const ownsLayer = streams.some((stream) => (
+      stream instanceof PDFRawStream
+        && stream.dict.get(OWNED_LAYER_KEY)?.decodeText?.() === expectedLayerId
+    ));
+    if (!ownsLayer) {
+      throw new Error(`Owned text edit layer marker is missing or externally modified on page ${manifestPage.page}`);
+    }
   }
   documentState.textEditManifest = manifest;
   documentState.textEdits = manifest.pages.flatMap((page) => page.edits);
+  documentState.textEditReadOnlyReason = null;
   return manifest;
 }
 

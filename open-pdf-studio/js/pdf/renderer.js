@@ -13,6 +13,7 @@ import { createSinglePageLinkLayer, clearSinglePageLinkLayer, createLinkLayer, c
 import { createSinglePageFormLayer, clearSinglePageFormLayer, createFormLayer, clearFormLayers, hideFormFieldsBar } from './form-layer.js';
 import { clearPdfVectorCache, prefetchPdfVectorGeometry } from '../tools/pdf-snap-extractor.js';
 import { clearDetectionCache } from '../tools/pdf-element-detector.js';
+import { clearEditableMetadataPreload, scheduleEditableMetadataPreload } from './editable-metadata-preload.js';
 import { onPageRendered, clearHighlights } from '../search/find-bar.js';
 import { showPagePlaceholder, hidePagePlaceholderWhenReady } from './page-transition.js';
 import { rawPdfTextLayerViewportOptions } from '../text/text-edit-appearance.js';
@@ -694,6 +695,8 @@ const _continuousRenderTasks = new Map(); // pageNum -> RenderTask
 // Low-res preview cache for fast initial display
 const _lowResCache = new Map(); // `${filePath}|${pageNum}` -> { canvas, scale }
 const LOW_RES_SCALE = 0.5; // Render at 50% for fast preview
+const LOW_RES_CACHE_LIMIT = 12;
+let _lowResPreloadGeneration = 0;
 
 // Cache-key MUST include the document — a bare pageNum key served page N of
 // whichever document happened to fill the cache first (wrong preview after a
@@ -708,7 +711,12 @@ function _lowResKey(pageNum) {
 // Render a quick low-res preview of a page (fast, <50ms per page)
 async function renderLowResPreview(pdfDoc, pageNum, targetWidth, targetHeight) {
   const cacheKey = _lowResKey(pageNum);
-  if (_lowResCache.has(cacheKey)) return _lowResCache.get(cacheKey).canvas;
+  if (_lowResCache.has(cacheKey)) {
+    const entry = _lowResCache.get(cacheKey);
+    _lowResCache.delete(cacheKey);
+    _lowResCache.set(cacheKey, entry);
+    return entry.canvas;
+  }
 
   const page = await pdfDoc.getPage(pageNum);
   const extraRotation = getPageRotation(pageNum);
@@ -733,7 +741,35 @@ async function renderLowResPreview(pdfDoc, pageNum, targetWidth, targetHeight) {
   }
 
   _lowResCache.set(cacheKey, { canvas, scale: LOW_RES_SCALE });
+  while (_lowResCache.size > LOW_RES_CACHE_LIMIT) {
+    const protectedKeys = new Set([_lowResKey(getActiveDocument()?.currentPage || pageNum)]);
+    document.querySelectorAll('#continuous-container .page-wrapper').forEach((wrapper) => {
+      const rect = wrapper.getBoundingClientRect();
+      if (rect.bottom >= 0 && rect.top <= window.innerHeight) {
+        protectedKeys.add(_lowResKey(parseInt(wrapper.dataset.page, 10)));
+      }
+    });
+    const candidate = [..._lowResCache.keys()].find((key) => !protectedKeys.has(key));
+    if (!candidate) break;
+    _lowResCache.delete(candidate);
+  }
   return canvas;
+}
+
+function scheduleNearbyLowResPreviews(pdfDoc, centerPage, direction = 1) {
+  const generation = ++_lowResPreloadGeneration;
+  const forward = direction < 0 ? -1 : 1;
+  const pages = [centerPage, centerPage + forward, centerPage + 2 * forward,
+    centerPage + 3 * forward, centerPage - forward]
+    .filter((page, index, values) => page >= 1 && page <= pdfDoc.numPages && values.indexOf(page) === index);
+  void (async () => {
+    for (const page of pages) {
+      if (generation !== _lowResPreloadGeneration || (window.__pdfRenderInFlight || 0) > 0) return;
+      if (_lowResCache.has(_lowResKey(page))) continue;
+      try { await renderLowResPreview(pdfDoc, page, 0, 0); } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  })();
 }
 
 // Clear low-res cache (on document close)
@@ -1152,9 +1188,12 @@ function _syncCurrentPageFromScroll(container) {
     }
   });
   if (bestPage && doc.currentPage !== bestPage) {
+    const direction = bestPage > doc.currentPage ? 1 : -1;
     doc.currentPage = bestPage;
     updateActiveThumbnail();
     updateAllStatus();
+    scheduleEditableMetadataPreload(bestPage, direction, { editTextActive: state.currentTool === 'editText' });
+    scheduleNearbyLowResPreviews(doc.pdfDoc, bestPage, direction);
   }
 }
 
@@ -1310,21 +1349,9 @@ export async function renderContinuous(forceRebuild) {
   // Keep doc.currentPage in sync with free scrolling (status bar, thumbnails).
   _bindContinuousScrollSync();
 
-  // Fire-and-forget: pre-render low-res previews in background for fast scroll
-  // This runs without blocking — pages that scroll into view get full render via observer.
-  // Facing toont maar één spread (geen scroll), dus geen zin om alle pagina's te primen.
-  if (pdfDoc.numPages > 1 && !doc.facingSpread) {
-    (async () => {
-      for (let p = 1; p <= Math.min(pdfDoc.numPages, 200); p++) {
-        if (_lowResCache.has(_lowResKey(p))) continue;
-        try {
-          await renderLowResPreview(pdfDoc, p, 0, 0);
-        } catch {}
-        // Yield to main thread every 5 pages
-        if (p % 5 === 0) await new Promise(r => setTimeout(r, 0));
-      }
-    })();
-  }
+  // Direction-aware bounded preview warming replaces the former first-200-page
+  // sweep. It reuses the existing preview path and its 12-page LRU.
+  if (pdfDoc.numPages > 1 && !doc.facingSpread) scheduleNearbyLowResPreviews(pdfDoc, doc.currentPage, 1);
 }
 
 // Setup pointer events for continuous mode pages
@@ -1422,6 +1449,7 @@ export async function setViewMode(mode) {
     const wrapper = continuousContainer.querySelector(`.page-wrapper[data-page="${doc.currentPage}"]`);
     if (wrapper) wrapper.scrollIntoView({ block: 'start' });
   }
+  scheduleEditableMetadataPreload(doc.currentPage, 1, { editTextActive: state.currentTool === 'editText' });
 }
 
 // ─── Adjacent-page prefetch (idle-gated) ────────────────────────────────────
@@ -1440,6 +1468,7 @@ const PREFETCH_MAX_WAIT_MS = 4000;   // give up after this — never busy-loop
 export function schedulePrefetch(centerPage) {
   if (_prefetchTimer) clearTimeout(_prefetchTimer);
   _prefetchTimer = setTimeout(() => { _prefetchTimer = null; _runPrefetch(centerPage, 0); }, PREFETCH_DELAY_MS);
+  void scheduleEditableMetadataPreload(centerPage, 1, { editTextActive: state.currentTool === 'editText' });
 }
 
 // The active doc IFF the user is still parked on `centerPage` (else navigation
@@ -1530,6 +1559,7 @@ export async function goToPage(pageNum) {
     return;
   }
 
+  const direction = pageNum >= doc.currentPage ? 1 : -1;
   if (doc) doc.currentPage = pageNum;
   hideProperties();
 
@@ -1561,6 +1591,8 @@ export async function goToPage(pageNum) {
       pageWrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }
+  void scheduleEditableMetadataPreload(pageNum, direction, { editTextActive: state.currentTool === 'editText' });
+  if (doc.viewMode === 'continuous') scheduleNearbyLowResPreviews(doc.pdfDoc, pageNum, direction);
 
   // Update active thumbnail in left panel
   updateActiveThumbnail();
@@ -1982,6 +2014,8 @@ export function clearPdfView() {
 
   // Clear caches
   _lowResCache.clear();
+  _lowResPreloadGeneration += 1;
+  clearEditableMetadataPreload(getActiveDocument());
   _renderedPages.clear();
   _renderedPagesScale = null;
 

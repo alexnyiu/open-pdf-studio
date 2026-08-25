@@ -198,6 +198,8 @@ export async function undo() {
   scheduleThumbnailRefresh(cmd);
 
   if (cmd.type === 'pageStructure') {
+    const { clearEditableMetadataPreload } = await import('../pdf/editable-metadata-preload.js');
+    clearEditableMetadataPreload(getActiveDocument());
     const { restorePageState } = await import('../pdf/page-manager.js');
     await restorePageState(cmd.oldBytes, cmd.oldAnnotations, cmd.oldRotations, cmd.oldPage);
     syncModifiedState();
@@ -252,6 +254,8 @@ export async function redo() {
   scheduleThumbnailRefresh(cmd);
 
   if (cmd.type === 'pageStructure') {
+    const { clearEditableMetadataPreload } = await import('../pdf/editable-metadata-preload.js');
+    clearEditableMetadataPreload(getActiveDocument());
     const { restorePageState } = await import('../pdf/page-manager.js');
     await restorePageState(cmd.newBytes, cmd.newAnnotations, cmd.newRotations, cmd.newPage);
     syncModifiedState();
@@ -329,6 +333,17 @@ function restoreSelectionByIds(doc, ids) {
   const byId = new Map(doc.annotations.map(annotation => [annotation.id, annotation]));
   doc.selectedAnnotations = (ids || []).map(id => byId.get(id)).filter(Boolean);
   doc.selectedAnnotation = doc.selectedAnnotations[0] || null;
+}
+
+function replaceTextEditSet(doc, removeIds, insertedRecords) {
+  if (!doc.textEdits) doc.textEdits = [];
+  const ids = new Set((removeIds || []).map(String));
+  doc.textEdits = doc.textEdits.filter((record) => !ids.has(String(record.id)));
+  const ordered = [...(insertedRecords || [])].sort((left, right) => left.index - right.index);
+  for (const item of ordered) {
+    const index = Math.max(0, Math.min(Number(item.index) || 0, doc.textEdits.length));
+    doc.textEdits.splice(index, 0, clonePlainValue(item.record));
+  }
 }
 
 // Apply undo for a command
@@ -487,6 +502,10 @@ function applyUndo(cmd) {
       if (idx !== -1) doc.textEdits[idx] = clonePlainValue(cmd.oldTextEdit);
       break;
     }
+    case 'replaceTextEditSet': {
+      replaceTextEditSet(doc, [cmd.mergedRecord.id], cmd.originalRecords);
+      break;
+    }
     case 'addWatermark': {
       const idx = doc.watermarks.findIndex(w => w.id === cmd.watermark.id);
       if (idx !== -1) doc.watermarks.splice(idx, 1);
@@ -618,6 +637,13 @@ function applyRedo(cmd) {
       if (!doc.textEdits) doc.textEdits = [];
       const idx = doc.textEdits.findIndex(e => e.id === cmd.oldTextEdit.id);
       if (idx !== -1) doc.textEdits[idx] = clonePlainValue(cmd.newTextEdit);
+      break;
+    }
+    case 'replaceTextEditSet': {
+      replaceTextEditSet(doc, cmd.originalRecords.map((item) => item.record.id), [{
+        index: cmd.mergedIndex,
+        record: cmd.mergedRecord,
+      }]);
       break;
     }
     case 'addWatermark': {
@@ -916,6 +942,9 @@ export function recordModifyBookmark(id, oldState, newState) {
 
 // Record a page structure change (insert, delete, reorder) for undo/redo
 export function recordPageStructure(oldBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, newPage) {
+  void import('../pdf/editable-metadata-preload.js').then(({ clearEditableMetadataPreload }) => (
+    clearEditableMetadataPreload(getActiveDocument())
+  ));
   execute({
     type: 'pageStructure',
     oldBytes: oldBytes,

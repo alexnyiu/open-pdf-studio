@@ -26,6 +26,7 @@ import { tryStartGMove, isGMoveModeActive } from './g-move-mode.js';
 import { tryStartGRotate, isGRotateModeActive } from './g-rotate-mode.js';
 import { toggleFullscreen, exitFullscreen, getFullscreenState } from '../ui/chrome/fullscreen.js';
 import { typeLengthActive, consumeKey as typeLengthConsumeKey, typeLengthCursor } from './type-length-input.js';
+import { clearSelectedTextBoxes } from './text-edit-tool.js';
 
 function redraw() {
   if (getActiveDocument()?.viewMode === 'continuous') redrawContinuous();
@@ -651,6 +652,13 @@ export async function handleKeydown(e) {
   // 3. Teken-tool actief zonder actieve tekening → selectietool.
   // 4. Selectietool actief → selectie legen (bestaand gedrag).
   else if (e.key === 'Escape') {
+    if (state.currentTool === 'editText') {
+      if (clearSelectedTextBoxes()) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
     // Trede 1: modale dialogen (vanilla overlays + Solid dialogStore), de
     // Edit-Type-editor en de crop-modus handelen Escape volledig zelf af.
     if (isModalOpen()

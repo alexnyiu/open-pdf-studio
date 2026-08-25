@@ -916,6 +916,14 @@ pub fn inspect_native_text_sources(
             "Encrypted PDFs are not eligible for native text editing".into(),
         ));
     }
+    inspect_native_text_sources_in_document(&doc, &sha256(bytes), page_index)
+}
+
+fn inspect_native_text_sources_in_document(
+    doc: &Document,
+    document_hash: &str,
+    page_index: usize,
+) -> Result<NativeTextSourceMapV1, RenderError> {
     let pages = doc.get_pages();
     let page_id = pages
         .iter()
@@ -923,11 +931,10 @@ pub fn inspect_native_text_sources(
         .map(|(_, id)| *id)
         .ok_or_else(|| RenderError::ParseError(format!("Page {page_index} not found")))?;
     let resources = inherited_resources(&doc, page_id);
-    let document_hash = sha256(bytes);
     let mut fonts = FontRegistry::new();
     let mut context = InspectContext {
         doc: &doc,
-        document_hash: &document_hash,
+        document_hash,
         page_index,
         page_id,
         fonts: &mut fonts,
@@ -956,12 +963,31 @@ pub fn inspect_native_text_sources(
     Ok(NativeTextSourceMapV1 {
         schema: "open-pdf-studio.native-text-source-map".into(),
         version: 1,
-        document_sha256: document_hash.clone(),
+        document_sha256: document_hash.to_owned(),
         page_index,
         page_object_id: object_id(page_id),
         runs: context.runs,
         rejected_count,
     })
+}
+
+/// Parse once and inspect a bounded set of pages. The desktop preload path uses
+/// this to avoid copying and reparsing the complete PDF for every adjacent page.
+pub fn inspect_native_text_sources_batch(
+    bytes: &[u8],
+    page_indices: &[usize],
+) -> Result<Vec<NativeTextSourceMapV1>, RenderError> {
+    let doc = Document::load_from(Cursor::new(bytes))
+        .map_err(|e| RenderError::ParseError(e.to_string()))?;
+    if doc.is_encrypted() {
+        return Err(RenderError::UnsupportedFeature(
+            "Encrypted PDFs are not eligible for native text editing".into(),
+        ));
+    }
+    let document_hash = sha256(bytes);
+    page_indices.iter().map(|page_index| {
+        inspect_native_text_sources_in_document(&doc, &document_hash, *page_index)
+    }).collect()
 }
 
 fn neutral_operation(source: &NativeTextSourceProvenanceV1) -> Result<Vec<u8>, RenderError> {
@@ -1526,6 +1552,16 @@ mod tests {
             .to_string()
             .to_ascii_lowercase()
             .contains("stale native text stream hash"));
+    }
+
+    #[test]
+    fn batch_inspection_reuses_one_parsed_document() {
+        let bytes = fixture("(Hello) Tj");
+        let maps = inspect_native_text_sources_batch(&bytes, &[0]).unwrap();
+        assert_eq!(maps.len(), 1);
+        assert_eq!(maps[0].runs.len(), 1);
+        assert_eq!(maps[0].runs[0].decoded_text, "Hello");
+        assert_eq!(maps[0].document_sha256, sha256(&bytes));
     }
 
     #[test]
