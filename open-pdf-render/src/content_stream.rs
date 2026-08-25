@@ -19,6 +19,8 @@ use lopdf::{Dictionary, Object, StringFormat};
 pub struct ContentStreamIter<'a> {
     bytes: &'a [u8],
     pos: usize,
+    operation_start: usize,
+    last_operation: Option<(usize, usize)>,
     /// Byte-span (start, eind) van de rauwe data van de laatst gelexte
     /// inline image (tussen `ID` en `EI`), zodat de interpreter hem als
     /// DrawImage kan emitten. Overschreven bij elke volgende `ID`.
@@ -37,7 +39,13 @@ fn is_delim(b: u8) -> bool {
 
 impl<'a> ContentStreamIter<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        ContentStreamIter { bytes, pos: 0, last_inline: None }
+        ContentStreamIter {
+            bytes,
+            pos: 0,
+            operation_start: 0,
+            last_operation: None,
+            last_inline: None,
+        }
     }
 
     /// Byte-span (start, eind — exclusief) in de invoer-slice van de rauwe
@@ -45,6 +53,14 @@ impl<'a> ContentStreamIter<'a> {
     /// slicet zelf: de span verwijst naar dezelfde bytes als `new()` kreeg.
     pub fn inline_image_span(&self) -> Option<(usize, usize)> {
         self.last_inline
+    }
+
+    /// Byte range (start, end-exclusive) of the last complete operation,
+    /// including its operands and operator token but excluding leading and
+    /// trailing whitespace/comments. Native text editing uses this to bind a
+    /// visible run to the exact bytes that must later be hash-verified.
+    pub fn operation_span(&self) -> Option<(usize, usize)> {
+        self.last_operation
     }
 
     #[inline(always)]
@@ -387,6 +403,9 @@ impl<'a> ContentStreamIter<'a> {
     /// De operand-Vec en operator-String van `op` worden hergebruikt.
     pub fn next_into(&mut self, op: &mut Operation) -> bool {
         op.operands.clear();
+        self.last_operation = None;
+        self.skip_ws_and_comments();
+        self.operation_start = self.pos;
         loop {
             self.skip_ws_and_comments();
             if self.peek().is_none() {
@@ -413,6 +432,7 @@ impl<'a> ContentStreamIter<'a> {
                 // operanden binnenkwamen); de interpreter negeert hem.
                 self.skip_inline_image_data();
             }
+            self.last_operation = Some((self.operation_start, self.pos));
             return true;
         }
     }
@@ -456,6 +476,19 @@ mod tests {
         assert_eq!(v[1].0, "w");
         assert_eq!(v[2].0, "q");
         assert_eq!(v[3].0, "Q");
+    }
+
+    #[test]
+    fn reports_exact_operation_ranges() {
+        let src = b"  % lead\n/F1 12 Tf\n(Hello\\) world) Tj  \n";
+        let mut it = ContentStreamIter::new(src);
+        let mut op = Operation { operator: String::new(), operands: Vec::new() };
+        assert!(it.next_into(&mut op));
+        let (start, end) = it.operation_span().expect("Tf range");
+        assert_eq!(&src[start..end], b"/F1 12 Tf");
+        assert!(it.next_into(&mut op));
+        let (start, end) = it.operation_span().expect("Tj range");
+        assert_eq!(&src[start..end], b"(Hello\\) world) Tj");
     }
 
     #[test]

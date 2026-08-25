@@ -17,6 +17,20 @@ export function rawPdfTextLayerViewportOptions(userUnit = 1) {
   return { scale: 1 / pointsPerUserUnit, rotation: 0 };
 }
 
+/**
+ * Return the occupied horizontal source interval for one PDF text line.
+ * PDF.js may split one show-text operator into word spans. Summing their
+ * widths drops the explicit gaps, while DOM bounds can be distorted by a
+ * fallback font's scaleX.
+ */
+export function sourceTextLineExtent(items) {
+  if (!Array.isArray(items) || items.length === 0) return { x: 0, width: 0 };
+  const left = Math.min(...items.map((item) => Number(item.pdfX) || 0));
+  const right = Math.max(...items.map((item) =>
+    (Number(item.pdfX) || 0) + Math.max(0, Number(item.pdfWidth) || 0)));
+  return { x: left, width: Math.max(0, right - left) };
+}
+
 export function getPageRotationMatrix(pageWidth, pageHeight, rotation) {
   switch (normalizePageRotation(rotation)) {
     case 90:
@@ -168,6 +182,38 @@ export function selectTextColor(pixels, fallback = '#000000', width = 0, height 
     return '#000000';
   }
   return `#${componentHex(r)}${componentHex(g)}${componentHex(b)}`;
+}
+
+/**
+ * Find a sufficiently uniform dominant background in an RGBA sample. This is
+ * used only for the disposable live preview layer: if the source region has a
+ * complex background, returning null leaves the saved-PDF source untouched
+ * rather than painting an unsafe cover.
+ */
+export function dominantBackgroundColor(pixels, minimumShare = 0.65) {
+  if (!pixels || pixels.length < 4) return null;
+  const clusters = new Map();
+  let opaque = 0;
+  for (let index = 0; index + 3 < pixels.length; index += 4) {
+    if (pixels[index + 3] < 224) continue;
+    opaque += 1;
+    const key = `${pixels[index] >> 4},${pixels[index + 1] >> 4},${pixels[index + 2] >> 4}`;
+    const cluster = clusters.get(key) || { count: 0, r: 0, g: 0, b: 0 };
+    cluster.count += 1;
+    cluster.r += pixels[index];
+    cluster.g += pixels[index + 1];
+    cluster.b += pixels[index + 2];
+    clusters.set(key, cluster);
+  }
+  if (opaque === 0 || clusters.size === 0) return null;
+  const dominant = [...clusters.values()].reduce((best, candidate) =>
+    !best || candidate.count > best.count ? candidate : best, null);
+  if (dominant.count / opaque < minimumShare) return null;
+  return {
+    r: Math.round(dominant.r / dominant.count),
+    g: Math.round(dominant.g / dominant.count),
+    b: Math.round(dominant.b / dominant.count),
+  };
 }
 
 export function restoreTextEditSnapshot(record, snapshot) {

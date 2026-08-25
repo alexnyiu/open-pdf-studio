@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   applyPageRotation,
+  dominantBackgroundColor,
   elementRectToCanvasPixels,
   getPageRotationMatrix,
   getTextLayerCssMatrix,
@@ -11,6 +12,7 @@ import {
   rawPdfTextLayerViewportOptions,
   resolveTextEditPageGeometry,
   selectTextColor,
+  sourceTextLineExtent,
 } from './text-edit-appearance.js';
 
 test('page rotation matrix keeps PDF text attached for every quarter turn', () => {
@@ -118,4 +120,30 @@ test('unified text layers stay in unrotated raw PDF user space', () => {
   assert.deepEqual(rawPdfTextLayerViewportOptions(1.25), { scale: 0.8, rotation: 0 });
   assert.deepEqual(rawPdfTextLayerViewportOptions(1), { scale: 1, rotation: 0 });
   assert.deepEqual(rawPdfTextLayerViewportOptions(0), { scale: 1, rotation: 0 });
+});
+
+test('source text line extent preserves gaps between PDF.js word spans', () => {
+  assert.deepEqual(sourceTextLineExtent([
+    { pdfX: 54, pdfWidth: 27 },
+    { pdfX: 90, pdfWidth: 45 },
+    { pdfX: 459, pdfWidth: 90 },
+  ]), { x: 54, width: 495 });
+});
+
+test('live text preview covers only a dominant uniform background', () => {
+  const mostlyWhite = new Uint8ClampedArray([
+    255, 255, 255, 255,
+    252, 252, 252, 255,
+    250, 250, 250, 255,
+    10, 10, 10, 255,
+  ]);
+  assert.deepEqual(dominantBackgroundColor(mostlyWhite), { r: 252, g: 252, b: 252 });
+
+  const complex = new Uint8ClampedArray([
+    255, 255, 255, 255,
+    0, 0, 0, 255,
+    220, 20, 60, 255,
+    20, 90, 220, 255,
+  ]);
+  assert.equal(dominantBackgroundColor(complex), null);
 });

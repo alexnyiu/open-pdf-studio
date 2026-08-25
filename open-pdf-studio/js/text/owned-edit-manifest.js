@@ -45,7 +45,13 @@ function validateRecord(record) {
   if (record.original && !record.sourceProvenance) {
     throw new Error('Native text edit lacks trustworthy source provenance');
   }
-  if (record.sourceProvenance?.shared) throw new Error('Shared native text operators are not editable');
+  if (record.sourceProvenance && (!Array.isArray(record.sourceProvenance)
+      || record.sourceProvenance.length === 0
+      || record.sourceProvenance.some((source) => source?.schema !== 'open-pdf-studio.native-text-source'
+        || source?.version !== 1
+        || source?.eligibility?.eligible !== true))) {
+    throw new Error('Native text edit has malformed or ineligible source provenance');
+  }
   if (record.substitution && record.substitution.approved !== true) {
     throw new Error('Font substitution was not explicitly approved');
   }
@@ -123,7 +129,7 @@ export async function readOwnedTextEditManifest(pdfDocument) {
   if (!entry) return null;
   const schema = entry.get(PDFName.of('Schema'))?.decodeText?.();
   const version = entry.get(PDFName.of('Version'))?.asNumber?.();
-  if (schema !== OWNED_TEXT_EDIT_MANIFEST_SCHEMA || version !== OWNED_TEXT_EDIT_MANIFEST_VERSION) {
+  if (schema !== OWNED_TEXT_EDIT_MANIFEST_SCHEMA || ![2, OWNED_TEXT_EDIT_MANIFEST_VERSION].includes(version)) {
     throw new Error(`Unknown owned text edit manifest version: ${schema || 'missing'} v${version ?? 'missing'}`);
   }
   const stream = entry.lookup(PDFName.of('Private'));
@@ -135,6 +141,13 @@ export async function readOwnedTextEditManifest(pdfDocument) {
   const actualHash = await sha256(canonicalPayload(payload));
   if (actualHash !== payload.integrityHash) throw new Error('Owned text edit manifest integrity check failed');
   for (const page of payload.pages) for (const edit of page.edits || []) validateRecord(edit);
+  if (version === 2) {
+    const nativeV2 = payload.pages.some((page) => (page.edits || [])
+      .some((edit) => edit.original || edit.sourceProvenance));
+    if (nativeV2) throw new Error('Persisted native V2 text edits cannot be migrated safely');
+    payload.version = OWNED_TEXT_EDIT_MANIFEST_VERSION;
+    payload.integrityHash = await sha256(canonicalPayload(payload));
+  }
   return payload;
 }
 

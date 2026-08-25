@@ -55,6 +55,7 @@ fn run(path: &str) -> (usize, usize) {
 }
 
 #[test]
+#[ignore = "requires the external AC294 Type1 PDF fixture"]
 fn ac294_emits_glyph_fills() {
     let (fills, transforms) = run("../test pdf-bestanden/AC294_offerte_stalen_bak_Vincent_Christe.pdf");
     eprintln!("AC294 page0: fills={} transforms={}", fills, transforms);
@@ -62,6 +63,7 @@ fn ac294_emits_glyph_fills() {
 }
 
 #[test]
+#[ignore = "requires the external Vloerverwarming Type1 PDF fixture"]
 fn vloerverwarming_still_renders() {
     let (fills, transforms) = run("../test pdf-bestanden/Vloerverwarming Woning Bert van Dorp - opm BvD.pdf");
     eprintln!("Vloerverwarming page0: fills={} transforms={}", fills, transforms);

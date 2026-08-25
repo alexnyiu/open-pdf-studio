@@ -1,6 +1,7 @@
 use std::fs;
 
 #[test]
+#[ignore = "requires the external 2459-TO_Fragmenten.pdf fixture"]
 fn test_count_text_commands() {
     let path = r"C:\Users\rickd\Documents\GitHub\open-pdf-studio\2459-TO_Fragmenten.pdf";
     let bytes = fs::read(path).unwrap();

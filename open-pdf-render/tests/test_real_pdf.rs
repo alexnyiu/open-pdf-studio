@@ -2,6 +2,7 @@ use open_pdf_render::PdfRenderer;
 use std::fs;
 
 #[test]
+#[ignore = "requires an external construction PDF fixture"]
 fn test_real_bouwtekening() {
     let path = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3059 Woonhuis Benedenkerkseweg 87 Stolwijk\20_post_IN\01 27-03-2026 beginstukken\begane grond do 3 constructie verwerkt_50.pdf";
     let bytes = fs::read(path).expect("Could not read test PDF");
@@ -16,7 +17,7 @@ fn test_real_bouwtekening() {
     println!("Page 0 dimensions: {}x{} points", w, h);
 
     let start = std::time::Instant::now();
-    let page = doc.render_page(0, 1.0).expect("Failed to render page");
+    let page = doc.render_page(0, 1.0, 0).expect("Failed to render page");
     let elapsed = start.elapsed();
 
     println!("Rendered: {}x{} pixels in {:?}", page.width, page.height, elapsed);
@@ -41,6 +42,7 @@ fn test_real_bouwtekening() {
 }
 
 #[test]
+#[ignore = "requires an external construction PDF fixture"]
 fn test_analyze_page_type() {
     let path = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3059 Woonhuis Benedenkerkseweg 87 Stolwijk\20_post_IN\01 27-03-2026 beginstukken\begane grond do 3 constructie verwerkt_50.pdf";
     let bytes = std::fs::read(path).unwrap();
@@ -51,6 +53,7 @@ fn test_analyze_page_type() {
 }
 
 #[test]
+#[ignore = "requires an external construction PDF fixture"]
 fn test_extract_draw_commands() {
     let path = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3059 Woonhuis Benedenkerkseweg 87 Stolwijk\20_post_IN\01 27-03-2026 beginstukken\begane grond do 3 constructie verwerkt_50.pdf";
     let bytes = std::fs::read(path).unwrap();
@@ -58,7 +61,7 @@ fn test_extract_draw_commands() {
     let doc = renderer.load_document(&bytes).unwrap();
 
     let t0 = std::time::Instant::now();
-    let cmds = doc.extract_draw_commands(0).unwrap();
+    let cmds = doc.extract_draw_commands(0, 0).unwrap();
     let elapsed = t0.elapsed();
 
     let data = cmds.into_bytes();

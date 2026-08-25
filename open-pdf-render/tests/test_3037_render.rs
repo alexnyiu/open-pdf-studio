@@ -42,16 +42,16 @@ fn test_3037_content_stream_operators() {
 
     println!("\nContent stream operators:");
     let mut sorted: Vec<_> = op_counts.iter().collect();
-    sorted.sort_by_key(|(k, _)| k.clone());
+    sorted.sort_by_key(|(k, _)| *k);
     for (op, count) in &sorted {
         println!("  {}: {}", op, count);
     }
 
     // Check: are text operators present?
     let tj_count = op_counts.get("Tj").unwrap_or(&0);
-    let tJ_count = op_counts.get("TJ").unwrap_or(&0);
+    let tj_array_count = op_counts.get("TJ").unwrap_or(&0);
     let bt_count = op_counts.get("BT").unwrap_or(&0);
-    println!("\nText: BT={}, Tj={}, TJ={}", bt_count, tj_count, tJ_count);
+    println!("\nText: BT={}, Tj={}, TJ={}", bt_count, tj_count, tj_array_count);
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn test_3037_draw_commands() {
 
     let renderer = open_pdf_render::PdfRenderer::new();
     let doc = renderer.load_document(&bytes).unwrap();
-    let cmds = doc.extract_draw_commands(0).unwrap();
+    let cmds = doc.extract_draw_commands(0, 0).unwrap();
     let cmd_bytes = cmds.into_bytes();
     println!("Total draw command bytes: {}", cmd_bytes.len());
 

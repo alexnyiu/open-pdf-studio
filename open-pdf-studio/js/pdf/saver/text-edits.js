@@ -5,6 +5,7 @@ import { loadPackagedFaceBytes, shapeRichTextDocument } from '../../text/font-ca
 import { isTextEditRecordV2, migrateTextEditRecords } from '../../text/rich-text.js';
 import { assertOwnedTextEditStable, writeOwnedTextEditManifest } from '../../text/owned-edit-manifest.js';
 import { hexToRgb } from './utils.js';
+import { isTauri, invoke } from '../../core/platform.js';
 
 const OWNED_LAYER_KEY = PDFName.of('OPDSOwnedTextLayer');
 
@@ -44,9 +45,6 @@ async function prepareRecords(records) {
     if (record.original && !record.sourceProvenance) {
       throw new Error(`Native text edit ${record.id} cannot be saved because its source operators are not provenance-linked`);
     }
-    if (record.original) {
-      throw new Error(`Native text edit ${record.id} is read-only because exact source-operator neutralization is unavailable`);
-    }
     const layout = await shapeRichTextDocument(record.richText);
     if (layout.overflow) {
       throw new Error(`Text edit ${record.id} rejected: ${layout.rejectionReasons.join('; ')}`);
@@ -57,13 +55,43 @@ async function prepareRecords(records) {
   return migration.migrated;
 }
 
+/** Neutralize provenance-linked native operators before pdf-lib mutates the document. */
+export async function applyNativeTextEditsToBytes(documentBytes, documentState) {
+  const records = documentState?.textEdits || [];
+  const nativeRecords = records.filter((record) => record.original && record.sourceProvenance);
+  const currentIds = new Set(records.map((record) => String(record.id)));
+  const removedNativeRecords = (documentState?.textEditManifest?.pages || [])
+    .flatMap((page) => page.edits || [])
+    .filter((record) => record.original && record.sourceProvenance && !currentIds.has(String(record.id)));
+  if (nativeRecords.length === 0 && removedNativeRecords.length === 0) {
+    return { pdfBytes: new Uint8Array(documentBytes), updatedRecords: records, report: null };
+  }
+  if (!isTauri()) {
+    throw new Error('Native source text is read-only in browser preview');
+  }
+  const result = await invoke('apply_native_text_edit_plan', {
+    documentBytes: Array.from(documentBytes),
+    records,
+    previousManifest: documentState.textEditManifest || null,
+  });
+  if (!result?.pdfBytes?.length || !Array.isArray(result.updatedRecords)) {
+    throw new Error('Native text edit plan returned an invalid desktop result');
+  }
+  return {
+    pdfBytes: Uint8Array.from(result.pdfBytes),
+    updatedRecords: result.updatedRecords,
+    report: result.report || null,
+  };
+}
+
 // Persist V2 rich text as one replaceable application-owned content layer per page.
 // Every face is embedded/subsetted; the Standard 14 fabricated-font path is not used.
-export async function saveTextEditsToPages(pdfDocument, pages) {
+export async function saveTextEditsToPages(pdfDocument, pages, recordsOverride = null) {
   const documentState = getActiveDocument();
-  if (!documentState?.textEdits?.length) return null;
+  const sourceRecords = recordsOverride || documentState?.textEdits || [];
+  if (!sourceRecords.length && !documentState?.textEditManifest) return null;
 
-  const records = await prepareRecords(documentState.textEdits);
+  const records = await prepareRecords(sourceRecords);
   pdfDocument.registerFontkit(fontkit);
 
   const usedFaceIds = new Set(records.flatMap((record) => record.richText.lines
@@ -80,6 +108,14 @@ export async function saveTextEditsToPages(pdfDocument, pages) {
   for (const record of records) {
     if (!recordsByPage.has(record.page)) recordsByPage.set(record.page, []);
     recordsByPage.get(record.page).push(record);
+  }
+
+  // Removing the last persisted edit must also remove its previously owned
+  // replacement stream; restoration of the source operator happens in Rust.
+  for (const manifestPage of documentState?.textEditManifest?.pages || []) {
+    if (recordsByPage.has(manifestPage.page)) continue;
+    const page = pages[manifestPage.page - 1];
+    if (page) removePreviouslyOwnedLayer(pdfDocument, page, manifestPage.layerId);
   }
 
   for (const [pageNumber, pageRecords] of recordsByPage) {

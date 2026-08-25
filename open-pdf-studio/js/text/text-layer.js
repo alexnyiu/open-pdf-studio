@@ -4,6 +4,12 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { resolveTextEditPageGeometry } from './text-edit-appearance.js';
 import { assessPdfJsTextContent } from '../ocr/existing-text.js';
 import { projectTextEditRecord } from './rich-text.js';
+import { matchOwnedReplacementTextItems } from './native-text-matching.js';
+import {
+  attachNativeTextProvenance,
+  clearNativeTextSourceCache,
+  inspectNativeTextSourcesForPage,
+} from './native-text-provenance.js';
 import {
   getPendingOcrTextItems,
   OPEN_PDF_STUDIO_OCR_OWNER,
@@ -605,6 +611,16 @@ export async function createTextLayer(page, viewport, container, pageNum) {
     span.dataset.pdfBold = isBold;
     span.dataset.pdfItalic = isItalic;
   }
+  // Desktop-only: bind rendered PDF.js spans to exact source operators.
+  // The matcher is ordered and atomic; any partial/ambiguous span remains
+  // without provenance and therefore read-only in the Edit Text tool.
+  await attachNativeTextProvenance(textItems, textDivs, pageNum);
+  const ownedNativeEdits = (activeDocument?.textEdits || [])
+    .filter((record) => record.page === pageNum && record.original)
+    .map(projectTextEditRecord);
+  for (const [itemIndex, editId] of matchOwnedReplacementTextItems(textItems, ownedNativeEdits)) {
+    if (textDivs[itemIndex]) textDivs[itemIndex].dataset.editId = editId;
+  }
 
   // Insert <br> between horizontally-distant spans on the same baseline so the
   // browser doesn't merge separate columns/labels into one selection range
@@ -803,6 +819,7 @@ export function clearTextLayers() {
   });
 
   textLayers.clear();
+  clearNativeTextSourceCache(getActiveDocument());
 }
 
 /**
@@ -833,11 +850,8 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
     const doc = getActiveDocument();
     if (!doc || !doc.filePath) return false;
 
-    const jsonStr = await invoke('extract_page_text', {
-      path: doc.filePath,
-      pageIndex: pageNum - 1,
-    });
-    const spans = JSON.parse(jsonStr);
+    const sourceMap = await inspectNativeTextSourcesForPage(pageNum);
+    const spans = (sourceMap?.runs || []).filter((span) => span.decodedText);
     if (!spans || spans.length === 0) {
       // Rust returned no text for this page → drop any stale textLayer
       // (e.g. left over from a previous page in vector mode) so the caller's
@@ -893,17 +907,19 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
 
     // Text spans are in PDF user space (origin bottom-left, Y up).
     for (const span of spans) {
-      if (!span.text || !span.text.trim()) continue;
+      const spanText = span.decodedText || span.text;
+      if (!spanText || !spanText.trim()) continue;
 
       const el = document.createElement('span');
-      el.textContent = span.text;
+      el.textContent = spanText;
       el.setAttribute('role', 'presentation');
       el.setAttribute('dir', 'ltr');
 
       // Convert PDF coordinates (Y-up, baseline) to text layer (Y-down, top of glyph).
       const ascentRatio = 0.8;
-      const left = span.x;
-      const top = pageHeight - span.y - span.fontSize * ascentRatio;
+      const [sourceX, sourceY, sourceWidth, sourceHeight] = span.geometry || [span.x, span.y, span.width, span.fontSize];
+      const left = sourceX;
+      const top = pageHeight - sourceY - span.fontSize * ascentRatio;
 
       el.style.position = 'absolute';
       el.style.left = `${left.toFixed(2)}px`;
@@ -918,25 +934,29 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
       // glyph run width. Without this the spans are too wide/narrow and
       // either clip the rendered text on selection or leave gaps that the
       // browser refuses to extend selection across.
-      if (span.width > 0 && span.fontSize > 0) {
+      if (sourceWidth > 0 && span.fontSize > 0) {
         measureCtx.font = `${span.fontSize}px sans-serif`;
-        const measured = measureCtx.measureText(span.text).width;
+        const measured = measureCtx.measureText(spanText).width;
         if (measured > 0) {
-          const scaleX = span.width / measured;
+          const scaleX = sourceWidth / measured;
           el.style.setProperty('--scale-x', `${scaleX.toFixed(4)}`);
         }
       }
 
       // Store PDF transform data for compatibility with edit text tool
-      const transform = [span.fontSize, 0, 0, span.fontSize, span.x, span.y];
+      const transform = span.textMatrix || [span.fontSize, 0, 0, span.fontSize, sourceX, sourceY];
       el.dataset.pdfTransform = JSON.stringify(transform);
-      el.dataset.pdfWidth = String(span.width);
+      el.dataset.pdfWidth = String(sourceWidth);
       el.dataset.pdfFontFamily = 'sans-serif';
       el.dataset.pdfFontName = '';
       el.dataset.pdfActualFontName = '';
       el.dataset.pdfLoadedFontName = '';
       el.dataset.pdfBold = 'false';
       el.dataset.pdfItalic = 'false';
+      if (span.eligibility?.eligible && span.ownershipState === 'source') {
+        el.dataset.nativeTextProvenance = JSON.stringify([span]);
+        el.dataset.nativeTextMarkerIds = span.markerId;
+      }
 
       textLayerDiv.appendChild(el);
     }

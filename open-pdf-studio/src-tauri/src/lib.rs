@@ -2174,6 +2174,106 @@ fn extract_page_text(
     doc.extract_text_positions(page_index as usize).map_err(|e| format!("{}", e))
 }
 
+/// Inspect native show-text operators using the Rust interpreter's exact
+/// decoded stream bytes. Browser builds intentionally have no equivalent
+/// mutating API; native source editing remains desktop-only.
+#[tauri::command]
+fn inspect_native_text_sources(
+    document_bytes: Vec<u8>,
+    page_index: u32,
+) -> Result<open_pdf_render::NativeTextSourceMapV1, String> {
+    open_pdf_render::native_text::inspect_native_text_sources(&document_bytes, page_index as usize)
+        .map_err(|error| error.to_string())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTextDesktopApplyResult {
+    pdf_bytes: Vec<u8>,
+    updated_records: serde_json::Value,
+    report: open_pdf_render::NativeTextApplyReportV1,
+}
+
+/// Hash-verify and neutralize provenance-linked native source operators.
+/// Records without native provenance pass through unchanged. Provenance that
+/// is already marked neutralized is idempotently skipped; the owned rich-text
+/// layer is updated by the existing JS saver after this command returns.
+#[tauri::command]
+fn apply_native_text_edit_plan(
+    document_bytes: Vec<u8>,
+    records: serde_json::Value,
+    previous_manifest: Option<serde_json::Value>,
+) -> Result<NativeTextDesktopApplyResult, String> {
+    let mut updated_records = records;
+    let record_array = updated_records.as_array_mut()
+        .ok_or_else(|| "Native text edit records must be an array".to_string())?;
+    let mut sources = Vec::new();
+    for record in record_array.iter() {
+        let Some(provenance) = record.get("sourceProvenance") else { continue };
+        if provenance.is_null() { continue; }
+        let source_values = provenance.as_array().cloned().unwrap_or_else(|| vec![provenance.clone()]);
+        for source in source_values {
+            if source.get("ownershipState").and_then(serde_json::Value::as_str) == Some("neutralized") {
+                continue;
+            }
+            sources.push(serde_json::from_value::<open_pdf_render::NativeTextSourceProvenanceV1>(source)
+                .map_err(|error| format!("Malformed native text provenance: {error}"))?);
+        }
+    }
+
+    let current_ids: std::collections::HashSet<String> = record_array.iter()
+        .filter_map(|record| record.get("id").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .collect();
+    let mut restore_sources = Vec::new();
+    if let Some(previous) = previous_manifest.as_ref() {
+        if let Some(pages) = previous.get("pages").and_then(serde_json::Value::as_array) {
+            for page in pages {
+                let Some(edits) = page.get("edits").and_then(serde_json::Value::as_array) else { continue };
+                for edit in edits {
+                    let Some(id) = edit.get("id").and_then(serde_json::Value::as_str) else { continue };
+                    if current_ids.contains(id) { continue; }
+                    let Some(provenance) = edit.get("sourceProvenance") else { continue };
+                    for source in provenance.as_array().cloned().unwrap_or_default() {
+                        restore_sources.push(serde_json::from_value::<open_pdf_render::NativeTextSourceProvenanceV1>(source)
+                            .map_err(|error| format!("Malformed restoration provenance: {error}"))?);
+                    }
+                }
+            }
+        }
+    }
+    let applied = open_pdf_render::native_text::apply_native_text_edit_plan(&document_bytes, &sources)
+        .map_err(|error| error.to_string())?;
+    let restored = open_pdf_render::native_text::restore_native_text_sources(&applied.pdf_bytes, &restore_sources)
+        .map_err(|error| error.to_string())?;
+    let mut combined_report = applied.report;
+    combined_report.restored += restored.report.restored;
+    combined_report.cloned_streams += restored.report.cloned_streams;
+    combined_report.cloned_forms += restored.report.cloned_forms;
+    combined_report.marker_ids.extend(restored.report.marker_ids);
+    let neutralized_markers: std::collections::HashSet<&str> = combined_report.marker_ids.iter().map(String::as_str).collect();
+    for record in record_array.iter_mut() {
+        let Some(provenance) = record.get_mut("sourceProvenance") else { continue };
+        if let Some(source_array) = provenance.as_array_mut() {
+            for source in source_array {
+                let marker = source.get("markerId").and_then(serde_json::Value::as_str).map(str::to_owned);
+                if marker.as_deref().is_some_and(|value| neutralized_markers.contains(value)) {
+                    source["ownershipState"] = serde_json::Value::String("neutralized".into());
+                }
+            }
+        } else {
+            let marker = provenance.get("markerId").and_then(serde_json::Value::as_str).map(str::to_owned);
+            if marker.as_deref().is_some_and(|value| neutralized_markers.contains(value)) {
+                provenance["ownershipState"] = serde_json::Value::String("neutralized".into());
+            }
+        }
+    }
+    Ok(NativeTextDesktopApplyResult {
+        pdf_bytes: restored.pdf_bytes,
+        updated_records,
+        report: combined_report,
+    })
+}
+
 /// Batch extract draw commands for multiple pages in parallel using rayon.
 /// Returns one Vec<u8> per requested page in the same order. Used for
 /// adjacent-page prefetch (warm pages 2..N in the background after page 1
@@ -2753,6 +2853,8 @@ pub fn run(opts: StartupOpts) {
             extract_draw_commands,
             extract_draw_commands_batch,
             extract_page_text,
+            inspect_native_text_sources,
+            apply_native_text_edit_plan,
             render_thumbnail,
             render_to_png::render_page_to_png,
             allow_fs_scope,

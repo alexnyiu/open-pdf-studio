@@ -134,7 +134,9 @@ function openFiles(filePaths) {
 // Disable default browser context menu
 function disableDefaultContextMenu() {
   document.addEventListener('contextmenu', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA'
+        || e.target.isContentEditable
+        || e.target.closest?.('[contenteditable="true"], [contenteditable="plaintext-only"]')) {
       return;
     }
     e.preventDefault();
@@ -146,17 +148,20 @@ function disableBrowserShortcuts() {
   document.addEventListener('keydown', (e) => {
     const ctrl = e.ctrlKey || e.metaKey;
     if (!ctrl) return;
+    const editable = e.target.matches?.('input, textarea, select')
+      || e.target.isContentEditable
+      || e.target.closest?.('[contenteditable="true"], [contenteditable="plaintext-only"]');
 
     // Browser shortcuts to block: inspect (I/Shift+I), view source (U), find (G/Shift+G), console (J)
     const blocked = ['i', 'u', 'g', 'j'];
-    if (blocked.includes(e.key.toLowerCase()) && !e.target.matches('input, textarea')) {
+    if (blocked.includes(e.key.toLowerCase()) && !editable) {
       e.preventDefault();
     }
     // Ctrl+P: suppress the WebView2 NATIVE print dialog (it fires as a
     // browser accelerator that the app's bubble-phase handler is too late to
     // stop) and open OUR print dialog instead. Same capture-phase
     // preventDefault that already suppresses the other accelerators above.
-    if (e.key.toLowerCase() === 'p' && !e.shiftKey && !e.altKey && !e.target.matches('input, textarea')) {
+    if (e.key.toLowerCase() === 'p' && !e.shiftKey && !e.altKey && !editable) {
       e.preventDefault();
       e.stopImmediatePropagation();
       import('./ui/chrome/dialogs.js').then(({ showPrintDialog }) => showPrintDialog());

@@ -74,7 +74,7 @@ export function getEditorFormatState() {
   return mixedFormatState();
 }
 
-export function updateRichTextDraft(document, { recordHistory = true } = {}) {
+export function updateRichTextDraft(document, { recordHistory = true, preserveDom = false } = {}) {
   if (recordHistory) {
     const previous = richTextHistory[richTextHistoryIndex];
     if (!previous || JSON.stringify(previous) !== JSON.stringify(document)) {
@@ -83,7 +83,24 @@ export function updateRichTextDraft(document, { recordHistory = true } = {}) {
       richTextHistoryIndex = richTextHistory.length - 1;
     }
   }
-  setRichTextDocument(document);
+  if (preserveDom) {
+    // contentEditable owns the live DOM while the user is typing. Replacing
+    // the signal value on every input makes Solid reconcile the keyed line/run
+    // nodes, which destroys the native caret and can turn a select-all
+    // replacement into an empty document.
+    const current = richTextDocument();
+    if (current) {
+      const snapshot = structuredClone(document);
+      for (const key of Object.keys(current)) {
+        if (!Object.hasOwn(snapshot, key)) delete current[key];
+      }
+      Object.assign(current, snapshot);
+    } else {
+      setRichTextDocument(document);
+    }
+  } else {
+    setRichTextDocument(document);
+  }
   setText(richTextToPlainText(document));
   if (richTextSelection()) setMixedFormatState(textFormatState(document, richTextSelection()));
 }

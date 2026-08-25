@@ -155,12 +155,7 @@ export default function AssistantPanel() {
   const providerLabel = () => (apiKey() ? 'via Claude' : 'niet verbonden');
 
   return (
-    <Show
-      when={open()}
-      fallback={
-        <button class="chat-fab" title={t('assistantTitle') || 'OpenAEC-assistent'} onClick={() => setOpen(true)}>💬</button>
-      }
-    >
+    <Show when={open()}>
       <div class="chat-floating">
         <div class="chat-panel">
           <div class="chat-header">

@@ -9,6 +9,7 @@ fn obj_f32(o: &lopdf::Object) -> f32 {
 }
 
 #[test]
+#[ignore = "requires the external 2459-TO_Fragmenten.pdf fixture"]
 fn test_xobj_text_detail() {
     let path = r"C:\Users\rickd\Documents\GitHub\open-pdf-studio\2459-TO_Fragmenten.pdf";
     let bytes = fs::read(path).unwrap();

@@ -3,7 +3,7 @@ export const RICH_TEXT_VERSION = 2;
 export const TEXT_EDIT_SCHEMA = 'open-pdf-studio.text-edit-record';
 export const TEXT_EDIT_VERSION = 2;
 export const OWNED_TEXT_EDIT_MANIFEST_SCHEMA = 'open-pdf-studio.owned-text-edit-manifest';
-export const OWNED_TEXT_EDIT_MANIFEST_VERSION = 2;
+export const OWNED_TEXT_EDIT_MANIFEST_VERSION = 3;
 
 export const DEFAULT_TEXT_FORMAT_CAPABILITIES = Object.freeze({
   family: true,
@@ -475,7 +475,9 @@ export function createTextEditRecordV2({
   if (original) assertRichTextDocumentV2(original);
   const editId = String(id || stableId('edit', `${page}|${canonicalRichTextHash(richText)}`));
   if (!Number.isInteger(page) || page < 1) throw new TypeError('Text edit page must be a positive integer');
-  if (sourceProvenance?.shared) throw new TypeError('Shared source text operators cannot be edited safely');
+  if (sourceProvenance != null && (!Array.isArray(sourceProvenance) || sourceProvenance.length === 0)) {
+    throw new TypeError('Native source provenance must contain complete source operators');
+  }
   return {
     schema: TEXT_EDIT_SCHEMA,
     version: TEXT_EDIT_VERSION,

@@ -242,7 +242,12 @@ export async function handleKeydown(e) {
   const shortcutKey = typeof e.key === 'string' ? e.key.toLowerCase() : '';
 
   // Allow certain shortcuts even when in input fields
-  const isInInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
+  const keyboardTarget = e.target;
+  const isInInput = keyboardTarget?.tagName === 'INPUT'
+    || keyboardTarget?.tagName === 'TEXTAREA'
+    || keyboardTarget?.tagName === 'SELECT'
+    || keyboardTarget?.isContentEditable === true
+    || keyboardTarget?.closest?.('[contenteditable="true"], [contenteditable="plaintext-only"]') != null;
   const isFindInput = e.target.id === 'find-input';
 
   // Keep Select All scoped to an active text-edit session, even when focus

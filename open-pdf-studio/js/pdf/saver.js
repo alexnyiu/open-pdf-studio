@@ -39,7 +39,7 @@ import { richTextToPlainText } from '../text/rich-text.js';
 // Sub-modules
 import { hexToRgb, buildBorderStyle, computeAnnotFlags, mapFontToPdfName,
   ensureAcroFormFonts, ensureAcroFormEmbeddedFont, stripPdfAMetadata, generateAppearanceStream } from './saver/utils.js';
-import { saveTextEditsToPages } from './saver/text-edits.js';
+import { applyNativeTextEditsToBytes, saveTextEditsToPages } from './saver/text-edits.js';
 import { saveWatermarksToPages } from './saver/watermarks.js';
 import { saveBookmarksToOutline } from './saver/bookmarks.js';
 import { saveStylePresetsToCatalog } from './saver/style-presets.js';
@@ -176,6 +176,8 @@ export async function savePDF(saveAsPath = null) {
   let stagedToken = null;
   let replacementSucceeded = false;
   let textEditManifestCandidate = null;
+  let textEditRecordsCandidate = null;
+  let nativeTextEditReportCandidate = null;
   // Redirect to "Save As" for untitled docs. These now have a temp-file
   // `filePath` (so they render via the real pipeline), so we ALSO check the
   // `isUntitled` flag — otherwise "Save" would silently overwrite the temp
@@ -229,6 +231,14 @@ export async function savePDF(saveAsPath = null) {
     if (savePolicy.protectedOriginal) {
       showMessage(savePolicy.warning);
     }
+
+    // Native source operators are neutralized first, with exact Rust-created
+    // provenance and hash verification. The existing owned rich-text layer is
+    // then built on top of those bytes by pdf-lib below.
+    const nativeTextCandidate = await applyNativeTextEditsToBytes(existingPdfBytes, activeDoc);
+    existingPdfBytes = nativeTextCandidate.pdfBytes;
+    textEditRecordsCandidate = nativeTextCandidate.updatedRecords;
+    nativeTextEditReportCandidate = nativeTextCandidate.report;
 
     const pdfDocLib = await PDFDocument.load(existingPdfBytes, { updateMetadata: false });
 
@@ -2727,7 +2737,7 @@ export async function savePDF(saveAsPath = null) {
 
     // Build one replaceable, application-owned rich-text layer per page.
     // The active state is rebased only after the completed PDF passes validation.
-    textEditManifestCandidate = await saveTextEditsToPages(pdfDocLib, pages);
+    textEditManifestCandidate = await saveTextEditsToPages(pdfDocLib, pages, textEditRecordsCandidate);
 
     // Burn watermarks into the PDF
     await saveWatermarksToPages(pdfDocLib, pages);
@@ -2875,6 +2885,7 @@ export async function savePDF(saveAsPath = null) {
         activeDoc.textEditManifest = textEditManifestCandidate;
         activeDoc.textEdits = textEditManifestCandidate.pages.flatMap((page) => page.edits);
       }
+      activeDoc.nativeTextEditReport = nativeTextEditReportCandidate;
     }
     if (convertsPdfA && activeDoc) {
       activeDoc.pdfaCompliance = null;

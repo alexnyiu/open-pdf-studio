@@ -58,7 +58,7 @@ fn test_page_dimensions() {
 fn test_render_returns_rgba() {
     let renderer = PdfRenderer::new();
     let doc = renderer.load_document(&minimal_pdf_bytes()).unwrap();
-    let page = doc.render_page(0, 1.0).unwrap();
+    let page = doc.render_page(0, 1.0, 0).unwrap();
     assert!(page.width > 0);
     assert!(page.height > 0);
     assert_eq!(page.rgba.len(), (page.width * page.height * 4) as usize);

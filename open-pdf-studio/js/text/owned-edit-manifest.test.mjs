@@ -37,12 +37,13 @@ function manifestPrivateRef(document) {
   return ref.toString();
 }
 
-test('owned V2 manifest survives reopen and replaces its private stream by identity', async () => {
+test('owned V3 manifest survives reopen and replaces its private stream by identity', async () => {
   const document = await PDFDocument.create();
   document.addPage([300, 300]);
   const record = insertedRecord();
 
   const first = await writeOwnedTextEditManifest(document, 'document-1', [record]);
+  assert.equal(first.version, 3);
   const firstRef = manifestPrivateRef(document);
   const firstBytes = await document.save({ useObjectStreams: false });
 

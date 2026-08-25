@@ -147,13 +147,26 @@ export default function PdfTextEditOverlay() {
     const current = richTextDocument();
     if (!current || !richEditorRef) return;
     const fallback = typingStyle() || current.lines[0]?.runs[0] || {};
+    const rootHasTextNode = [...richEditorRef.childNodes].some((node) =>
+      node.nodeType === Node.TEXT_NODE && node.textContent.replaceAll('\u200b', '') !== '');
     const lineElements = [...richEditorRef.children];
-    const lines = lineElements.map((lineElement, lineIndex) => {
+    // Selecting the whole editor and typing is the normal first-edit path.
+    // Browsers may replace all structural line/run elements with one root text
+    // node. Parse that text explicitly instead of silently producing no lines.
+    const plainLines = rootHasTextNode || lineElements.length === 0
+      ? (richEditorRef.innerText || richEditorRef.textContent || '')
+        .replaceAll('\u200b', '').replaceAll('\r', '').split('\n')
+      : null;
+    const editableLines = plainLines || lineElements;
+    const lines = editableLines.map((lineSource, lineIndex) => {
       const oldLine = current.lines[Math.min(lineIndex, current.lines.length - 1)] || current.lines[0];
       const baselineSign = current.region.baselineDirection === 'increasing-y' ? 1 : -1;
       const addedLineCount = Math.max(0, lineIndex - current.lines.length + 1);
-      const runElements = [...lineElement.querySelectorAll('[data-rich-run]')];
-      const runs = runElements.length > 0
+      const lineElement = typeof lineSource === 'string' ? null : lineSource;
+      const runElements = lineElement ? [...lineElement.querySelectorAll('[data-rich-run]')] : [];
+      const runs = typeof lineSource === 'string'
+        ? [createTextRun(lineSource, fallback)]
+        : runElements.length > 0
         ? runElements.map((runElement) => createTextRun(
             runElement.textContent.replaceAll('\u200b', ''),
             {
@@ -177,7 +190,7 @@ export default function PdfTextEditOverlay() {
       });
     });
     const next = createRichTextDocument(lines, current.region);
-    updateRichTextDraft(next);
+    updateRichTextDraft(next, { preserveDom: true });
     queueMicrotask(syncRichSelection);
   };
 

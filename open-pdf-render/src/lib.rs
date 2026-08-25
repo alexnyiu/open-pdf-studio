@@ -10,8 +10,13 @@ pub mod encoding;
 pub mod font_parser;
 pub mod fonts;
 pub mod text_renderer;
+pub mod native_text;
 
 pub use parser::DocumentHandle;
+pub use native_text::{
+    NativeTextApplyReportV1, NativeTextApplyResultV1, NativeTextSourceMapV1,
+    NativeTextSourceProvenanceV1,
+};
 pub use draw_commands::DrawCommandBuffer;
 
 #[derive(Debug, PartialEq)]
@@ -36,6 +41,8 @@ impl std::fmt::Display for RenderError {
         }
     }
 }
+
+impl std::error::Error for RenderError {}
 
 pub struct RenderedPage {
     pub width: u32,

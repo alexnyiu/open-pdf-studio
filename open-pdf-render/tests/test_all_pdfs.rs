@@ -11,7 +11,7 @@ fn test_pdf(path: &str, name: &str) {
 
     let (w, h) = doc.page_dimensions(0).unwrap_or((0.0, 0.0));
     let start = std::time::Instant::now();
-    match doc.render_page(0, 1.0) {
+    match doc.render_page(0, 1.0, 0) {
         Ok(page) => {
             let elapsed = start.elapsed();
             let non_white = page.rgba.chunks(4)
@@ -36,6 +36,7 @@ fn test_pdf(path: &str, name: &str) {
 }
 
 #[test]
+#[ignore = "requires an external directory of construction PDFs"]
 fn test_all_bouwtekeningen() {
     let dir = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3059 Woonhuis Benedenkerkseweg 87 Stolwijk\20_post_IN\01 27-03-2026 beginstukken";
 

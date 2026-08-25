@@ -5,7 +5,16 @@
  */
 
 import { state, getActiveDocument } from '../core/state.js';
-import { projectTextEditRecord, replaceFirstRichTextMatch } from '../text/rich-text.js';
+import {
+  createTextEditRecordV2,
+  projectTextEditRecord,
+  replaceFirstRichTextMatch,
+  richTextFromPlainText,
+} from '../text/rich-text.js';
+import { proposeFontSubstitution, resolvePackagedFace } from '../text/font-catalog.js';
+import { inspectNativeTextSourcesForPage, matchNativeTextSources } from '../text/native-text-provenance.js';
+import { execute } from '../core/undo-manager.js';
+import { markDocumentModified } from '../ui/chrome/tabs.js';
 import { invalidateTextCache } from './text-cache.js';
 import { extractPageText } from './text-extraction.js';
 
@@ -333,79 +342,70 @@ function replaceInTextEdit(doc, result, replaceText) {
   return { type: 'textEdit', id: edit.id, oldText, newText: edit.newText };
 }
 
-/**
- * Replace a match in base PDF content.
- *
- * Strategy: find the DOM span via dataset.itemIndex, read all PDF metadata
- * from span data attributes, and create a text edit that covers exactly
- * the span's area with the replaced text.
- */
-/**
- * Replace text directly in the PDF content stream using pdf-lib.
- * This modifies the actual PDF data — no overlays, no white rectangles.
- */
 let _replacing = false;
 
 async function replaceInPdfContent(doc, result, replaceText) {
   if (_replacing) return null;
   _replacing = true;
   try {
-    if (!doc.filePath) return null;
+    const page = await doc.pdfDoc?.getPage(result.pageNum);
+    const textContent = await page?.getTextContent();
+    const sourceMap = await inspectNativeTextSourcesForPage(result.pageNum);
+    if (!textContent || !sourceMap?.runs?.length) return null;
+    const textItems = textContent.items.filter((item) => item.str !== undefined);
+    const mappings = matchNativeTextSources(textItems, sourceMap.runs);
+    const itemIndexes = [...new Set((result.items || [])
+      .filter((item) => item.source === 'native')
+      .map((item) => item.itemIndex))];
+    if (itemIndexes.length === 0 || itemIndexes.some((index) => !mappings.has(index))) return null;
 
-    const loaderMod = await import('../pdf/loader.js');
-    const pdfBytes = loaderMod.getCachedPdfBytes(doc.filePath);
-    if (!pdfBytes) return null;
+    const sources = itemIndexes.flatMap((index) => mappings.get(index));
+    const sourceOwners = new Set(sources.map((source) => `${source.streamObjectId}:${source.operatorIndex}`));
+    if (sourceOwners.size !== sources.length) return null;
+    const overlaps = (doc.textEdits || []).some((record) => (record.sourceProvenance || [])
+      .some((source) => sourceOwners.has(`${source.streamObjectId}:${source.operatorIndex}`)));
+    if (overlaps) return null;
 
-    const pdfLib = await import('pdf-lib');
-    const pdfLibDoc = await pdfLib.PDFDocument.load(pdfBytes, { ignoreEncryption: true });
-    const matchText = result.matchText;
-    let replaced = false;
+    const sourceText = sources.map((source) => source.decodedText).join('');
+    const haystack = state.search.matchCase ? sourceText : sourceText.toLowerCase();
+    const needle = state.search.matchCase ? result.matchText : result.matchText.toLowerCase();
+    const matchIndex = haystack.indexOf(needle);
+    if (matchIndex < 0) return null;
+    const replacementText = sourceText.slice(0, matchIndex)
+      + replaceText + sourceText.slice(matchIndex + result.matchText.length);
 
-    for (const [ref, obj] of pdfLibDoc.context.enumerateIndirectObjects()) {
-      if (replaced) break;
-      if (!(obj instanceof pdfLib.PDFRawStream)) continue;
-
-      try {
-        const sub = obj.dict?.get(pdfLib.PDFName.of('Subtype'));
-        if (sub === pdfLib.PDFName.of('Image')) continue;
-      } catch (_) { continue; }
-
-      try {
-        const decoded = pdfLib.decodePDFRawStream(obj).decode();
-        const content = pdfLib.arrayAsString(decoded);
-
-        if (content.includes(matchText)) {
-          const newContent = content.replace(matchText, replaceText);
-          if (newContent !== content) {
-            const newStream = pdfLibDoc.context.flateStream(newContent);
-            pdfLibDoc.context.assign(ref, newStream);
-            replaced = true;
-          }
-        }
-      } catch (_) {}
-    }
-
-    if (!replaced) return null;
-
-    const newBytes = await pdfLibDoc.save();
-    const newBytesArr = new Uint8Array(newBytes);
-    loaderMod.setCachedPdfBytes(doc.filePath, newBytesArr);
-
-    // Reload pdf.js document
-    const pdfjsLib = await import('pdfjs-dist');
-    doc.pdfDoc = await pdfjsLib.getDocument({
-      data: newBytesArr.slice(),
-      cMapUrl: '/pdfjs/web/cmaps/',
-      cMapPacked: true,
-      standardFontDataUrl: '/pdfjs/web/standard_fonts/',
-      isEvalSupported: false,
-      verbosity: 0,
-    }).promise;
-    doc._sharedPdfLibDoc = null;
-    doc._sharedPdfLibDocPromise = null;
-    doc.modified = true;
-
-    return { type: 'pdfContent', oldText: matchText, newText: replaceText };
+    const baselines = sources.map((source) => Number(source.geometry?.[1]));
+    const fontSize = Math.max(Number(sources[0].fontSize) || 12, 1);
+    if (baselines.some((baseline) => Math.abs(baseline - baselines[0]) > fontSize * 0.5)) return null;
+    const x = Math.min(...sources.map((source) => Number(source.geometry?.[0]) || 0));
+    const right = Math.max(...sources.map((source) => (Number(source.geometry?.[0]) || 0) + (Number(source.geometry?.[2]) || 0)));
+    const sourceFont = sources[0].fontName || 'Unknown font';
+    const face = resolvePackagedFace(sourceFont, false, false);
+    const approved = window.confirm(
+      `This PDF uses ${sourceFont}. Find/Replace will embed the packaged substitute ${face.family}. Continue?`,
+    );
+    if (!approved) return null;
+    const substitution = { ...proposeFontSubstitution(sourceFont, false, false), approved: true, approvedAt: new Date().toISOString() };
+    const style = {
+      faceId: face.id, size: fontSize, color: '#000000', bold: false, italic: false,
+      underline: false, strikeout: false, baselineAdvance: fontSize * 1.2,
+    };
+    const region = { x, y: baselines[0] - fontSize, baseline: baselines[0], width: right - x, height: fontSize * 1.3, rotation: 0 };
+    const original = richTextFromPlainText(sourceText, style, region);
+    const richText = richTextFromPlainText(replacementText, style, region);
+    const record = createTextEditRecordV2({
+      id: `native-replace-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      page: result.pageNum,
+      richText,
+      original,
+      sourceProvenance: sources,
+      substitution,
+    });
+    if (!doc.textEdits) doc.textEdits = [];
+    doc.textEdits.push(record);
+    execute({ type: 'addTextEdit', textEdit: structuredClone(record) });
+    markDocumentModified();
+    return { type: 'textEdit', id: record.id, oldText: sourceText, newText: replacementText };
   } catch (err) {
     console.error('[replaceInPdfContent]', err);
     return null;

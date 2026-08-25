@@ -3326,12 +3326,16 @@ dependencies = [
 name = "open-pdf-render"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "flate2",
  "hayro-font",
  "image",
  "libloading 0.8.9",
  "lopdf",
  "rayon",
+ "serde",
+ "serde_json",
+ "sha2",
  "tiny-skia",
  "ttf-parser",
  "turbojpeg",

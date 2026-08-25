@@ -4,7 +4,7 @@ fn test_3037_char_mapping_trace() {
     let bytes = match std::fs::read(path) { Ok(b) => b, Err(_) => return };
 
     let renderer = open_pdf_render::PdfRenderer::new();
-    let doc = renderer.load_document(&bytes).unwrap();
+    let _doc = renderer.load_document(&bytes).unwrap();
 
     // Use the actual font registry to test char_to_glyph_id
     let pdf_doc = lopdf::Document::load_mem(&bytes).unwrap();
@@ -35,7 +35,7 @@ fn test_3037_char_mapping_trace() {
     let mut entries: Vec<_> = font_entry.to_unicode.iter().collect();
     entries.sort_by_key(|(k, _)| **k);
     for (&code, &ch) in &entries {
-        let gid = open_pdf_render::fonts::FontRegistry::char_to_glyph_id(font_entry, code);
+        let gid = open_pdf_render::fonts::FontRegistry::char_to_glyph_id(&font_entry, code);
         let has_outline = if let (Some(gid_val), Some(ref parsed)) = (gid, &font_entry.parsed) {
             parsed.glyphs.get(&gid_val).map(|g| !g.commands.is_empty()).unwrap_or(false)
         } else { false };
@@ -49,7 +49,7 @@ fn test_3037_char_mapping_trace() {
         // Find code in ToUnicode that maps to this char
         let code = font_entry.to_unicode.iter().find(|(_, &v)| v == ch).map(|(&k, _)| k);
         if let Some(c) = code {
-            let gid = open_pdf_render::fonts::FontRegistry::char_to_glyph_id(font_entry, c);
+            let gid = open_pdf_render::fonts::FontRegistry::char_to_glyph_id(&font_entry, c);
             println!("  '{}' -> code 0x{:02X} -> glyph {:?}", ch, c, gid);
         } else {
             println!("  '{}' -> NOT IN ToUnicode!", ch);

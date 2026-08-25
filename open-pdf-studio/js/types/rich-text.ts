@@ -78,12 +78,25 @@ export interface RichTextDocumentV2 {
   lines: TextLine[];
 }
 
-export interface TextSourceProvenance {
+export interface NativeTextSourceProvenanceV1 {
+  schema: 'open-pdf-studio.native-text-source';
+  version: 1;
+  documentSha256: string;
+  pageIndex: number;
   pageObjectId: string;
-  contentStreamObjectId: string;
-  operatorIndexes: number[];
-  operatorHash: string;
-  shared: boolean;
+  streamObjectId: string;
+  streamSha256: string;
+  invocationPath: Array<Record<string, unknown>>;
+  operatorKind: 'Tj' | 'TJ' | "'" | '"';
+  operatorIndex: number;
+  operatorRange: [number, number];
+  operatorSha256: string;
+  originalOperatorBase64: string;
+  decodedText: string;
+  totalAdvance: number;
+  markerId: string;
+  ownershipState: 'source' | 'neutralized' | 'restored';
+  eligibility: { eligible: boolean; code: string; reason: string };
 }
 
 export interface FontSubstitution {
@@ -101,7 +114,7 @@ export interface TextEditRecordV2 {
   revision: number;
   richText: RichTextDocumentV2;
   original: RichTextDocumentV2 | null;
-  sourceProvenance: TextSourceProvenance | null;
+  sourceProvenance: NativeTextSourceProvenanceV1[] | null;
   substitution: FontSubstitution | null;
   originalSnapshotHash: string;
   ownedLayerId: string;

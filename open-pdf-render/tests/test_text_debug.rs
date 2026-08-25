@@ -1,6 +1,7 @@
 use std::fs;
 
 #[test]
+#[ignore = "requires the external 2459-TO_Fragmenten.pdf fixture"]
 fn test_text_operators_detail() {
     let path = r"C:\Users\rickd\Documents\GitHub\open-pdf-studio\2459-TO_Fragmenten.pdf";
     let bytes = fs::read(path).unwrap();
@@ -24,7 +25,6 @@ fn test_text_operators_detail() {
 
     let content = lopdf::content::Content::decode(&all_bytes).unwrap();
 
-    let mut in_text = false;
     let mut current_font = String::new();
     let mut font_size = 0.0f32;
     let mut tm = [1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -32,8 +32,7 @@ fn test_text_operators_detail() {
 
     for op in &content.operations {
         match op.operator.as_str() {
-            "BT" => { in_text = true; tm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]; }
-            "ET" => { in_text = false; }
+            "BT" => { tm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]; }
             "Tf" => {
                 if op.operands.len() >= 2 {
                     if let lopdf::Object::Name(ref name) = op.operands[0] {

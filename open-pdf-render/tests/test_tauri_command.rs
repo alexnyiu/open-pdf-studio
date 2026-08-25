@@ -7,7 +7,9 @@ fn simulate_tauri_render(path: &str, page_index: u32, scale: f32) -> Result<Vec<
     let bytes = fs::read(path).map_err(|e| format!("Read: {}", e))?;
     let renderer = PdfRenderer::new();
     let doc = renderer.load_document(&bytes).map_err(|e| format!("{}", e))?;
-    let page = doc.render_page(page_index as usize, scale).map_err(|e| format!("{}", e))?;
+    let page = doc
+        .render_page(page_index as usize, scale, 0)
+        .map_err(|e| format!("{}", e))?;
     Ok(page.rgba)
 }
 
@@ -21,6 +23,7 @@ fn simulate_tauri_dimensions(path: &str) -> Result<Vec<(f32, f32)>, String> {
 }
 
 #[test]
+#[ignore = "requires an external construction PDF fixture"]
 fn test_tauri_command_simulation() {
     let path = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3059 Woonhuis Benedenkerkseweg 87 Stolwijk\20_post_IN\01 27-03-2026 beginstukken\begane grond do 3 constructie verwerkt_50.pdf";
 

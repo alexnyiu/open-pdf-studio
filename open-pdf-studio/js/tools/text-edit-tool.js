@@ -20,6 +20,8 @@ import {
 import { proposeFontSubstitution, resolvePackagedFace } from '../text/font-catalog.js';
 import { showMessage } from '../solid/stores/dialogStore.js';
 import { injectSyntheticTextSpans, refreshPendingOcrTextLayer, resolveTextLayerFonts } from '../text/text-layer.js';
+import { provenanceForSpans } from '../text/native-text-provenance.js';
+import { sameNativeTextOwnership } from '../text/native-text-matching.js';
 import { evaluateScannedTextEdit } from '../ocr/editing/edit-state.js';
 import { fixedRegionTargetFromLineIds } from '../ocr/editing/fixed-region.js';
 import {
@@ -40,10 +42,13 @@ import {
   restoreTextEditSnapshot,
   resolveTextEditPageGeometry,
   sampleTextColor,
+  sourceTextLineExtent,
 } from '../text/text-edit-appearance.js';
 
 let activeEditor = null;
 let hoverListeners = [];
+let layerOwnedEditListeners = [];
+let ownedEditCaptureHandler = null;
 let textLayerObserver = null;
 let blockGroupsCache = new Map();
 const stagedScannedLineSelections = new WeakMap();
@@ -230,6 +235,26 @@ function getTextEditGeometry(pageNum, canvasEl) {
 
 export function activateEditTextTool() {
   state.isEditingPdfText = true;
+  if (!ownedEditCaptureHandler) {
+    ownedEditCaptureHandler = (event) => {
+      if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
+      const span = event.target instanceof Element ? event.target.closest('span[data-edit-id]') : null;
+      if (!span) return;
+      const layer = span.closest('.textLayer');
+      const pageNum = parseInt(layer?.dataset.page || '', 10)
+        || getActiveDocument()?.currentPage || 1;
+      const record = getActiveDocument()?.textEdits?.find(
+        (entry) => String(entry.id) === span.dataset.editId,
+      );
+      const canvasEl = layer?.parentElement?.querySelector('canvas.pdf-canvas')
+        || pdfCanvas || document.getElementById('pdf-canvas');
+      if (!record || !canvasEl) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      startTextEditEditing(record, pageNum, canvasEl);
+    };
+    document.addEventListener('click', ownedEditCaptureHandler, true);
+  }
   // Overlay layers (annotation canvas z-index, form/link pointer-events) are
   // managed centrally by setAnnotationCanvasForTextAccess() in manager.js.
   enableTextLayerHover();
@@ -238,6 +263,10 @@ export function activateEditTextTool() {
 
 export function deactivateEditTextTool() {
   finishPdfTextEditing();
+  if (ownedEditCaptureHandler) {
+    document.removeEventListener('click', ownedEditCaptureHandler, true);
+    ownedEditCaptureHandler = null;
+  }
   disableTextLayerHover();
   stopObservingTextLayers();
   blockGroupsCache.clear();
@@ -406,6 +435,7 @@ function getBlockGroups(layer) {
     const maxBottom = Math.max(...allItems.map(it => it.domBottom));
 
     const lineData = block.map(lineItems => {
+      const sourceExtent = sourceTextLineExtent(lineItems);
       const firstSpan = lineItems[0].span;
       // Use actual font name from commonObjs (stored on dataset by text-layer.js)
       const pdfFontFamily = firstSpan.dataset.pdfFontFamily || 'sans-serif';
@@ -448,9 +478,9 @@ function getBlockGroups(layer) {
         text: lineItems.map(it => it.span.textContent).join(''),
         domTop: Math.min(...lineItems.map(it => it.domTop)),
         domBottom: Math.max(...lineItems.map(it => it.domBottom)),
-        pdfX: lineItems[0].pdfX,
+        pdfX: sourceExtent.x,
         pdfY: lineItems[0].pdfY,
-        pdfWidth: lineItems.reduce((s, it) => s + it.pdfWidth, 0),
+        pdfWidth: sourceExtent.width,
         fontSize: lineItems[0].fontSize,
         spans: lineItems.map(it => it.span),
         fontFamily: pdfFontFamily,
@@ -491,6 +521,24 @@ function getBlockGroups(layer) {
 
 // ── Hover & click wiring ──
 
+function ownedTextEditAtClientPoint(clientX, clientY, pageNum, layer) {
+  const canvasEl = layer.parentElement?.querySelector('canvas.pdf-canvas')
+    || pdfCanvas || document.getElementById('pdf-canvas');
+  if (!canvasEl) return null;
+  const canvasRect = canvasEl.getBoundingClientRect();
+  const documentState = getActiveDocument();
+  const viewGeometry = getTextEditViewGeometry(canvasEl, documentState);
+  const viewScale = viewGeometry.visualScale;
+  if (!(viewScale > 0)) return null;
+  const record = findTextEditAtPosition(
+    (clientX - canvasRect.left - viewGeometry.offsetX) / viewScale,
+    (clientY - canvasRect.top - viewGeometry.offsetY) / viewScale,
+    pageNum,
+    canvasEl,
+  );
+  return record ? { record, canvasEl } : null;
+}
+
 function enableTextLayerHover() {
   const textLayers = document.querySelectorAll('.textLayer');
   const alreadyAttached = new Set(hoverListeners.map(h => h.span));
@@ -501,6 +549,20 @@ function enableTextLayerHover() {
     getBlockGroups(layer);
 
     const pageNum = parseInt(layer.dataset.page) || (getActiveDocument()?.currentPage || 1);
+    if (!layerOwnedEditListeners.some((entry) => entry.layer === layer)) {
+      const ownedEditClickHandler = (event) => {
+        if (event.target !== layer
+            || !state.isEditingPdfText
+            || state.currentTool !== 'editText') return;
+        const hit = ownedTextEditAtClientPoint(event.clientX, event.clientY, pageNum, layer);
+        if (!hit) return;
+        event.preventDefault();
+        event.stopPropagation();
+        startTextEditEditing(hit.record, pageNum, hit.canvasEl);
+      };
+      layer.addEventListener('click', ownedEditClickHandler);
+      layerOwnedEditListeners.push({ layer, click: ownedEditClickHandler });
+    }
     // Pending OCR uses immutable engine results plus separate review
     // corrections. It must not enter the legacy PDF-content edit path.
     const spans = layer.querySelectorAll('span:not([data-ocr-owner])');
@@ -521,7 +583,23 @@ function enableTextLayerHover() {
       const clickHandler = async (e) => {
         e.preventDefault();
         e.stopPropagation();
+        const editId = span.dataset.editId || '';
+        const markerIds = span.dataset.nativeTextMarkerIds || '';
         const doc = getActiveDocument();
+        if (editId) {
+          const ownedRecord = doc?.textEdits?.find((record) => String(record.id) === editId);
+          const ownedCanvas = layer.parentElement?.querySelector('canvas.pdf-canvas')
+            || pdfCanvas || document.getElementById('pdf-canvas');
+          if (ownedRecord && ownedCanvas) {
+            startTextEditEditing(ownedRecord, pageNum, ownedCanvas);
+            return;
+          }
+        }
+        const ownedHit = ownedTextEditAtClientPoint(e.clientX, e.clientY, pageNum, layer);
+        if (ownedHit) {
+          startTextEditEditing(ownedHit.record, pageNum, ownedHit.canvasEl);
+          return;
+        }
         try {
           const page = await doc?.pdfDoc?.getPage(pageNum);
           if (page) await resolveTextLayerFonts(page, layer);
@@ -532,7 +610,17 @@ function enableTextLayerHover() {
         if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
         blockGroupsCache.delete(layer);
         getBlockGroups(layer);
-        startPdfTextEditing(span, pageNum);
+        // Font resolution can recreate PDF.js spans. Retarget the live span by
+        // owned edit id (or exact native marker set) after that await instead
+        // of trying to edit a detached pre-resolution node.
+        let liveSpan = span;
+        if (!liveSpan.isConnected || liveSpan.closest('.textLayer') !== layer) {
+          liveSpan = [...layer.querySelectorAll('span:not([data-ocr-owner])')].find((candidate) => (
+            (editId && candidate.dataset.editId === editId)
+            || (markerIds && candidate.dataset.nativeTextMarkerIds === markerIds)
+          ));
+        }
+        if (liveSpan) startPdfTextEditing(liveSpan, pageNum);
       };
       span.addEventListener('mouseenter', enterHandler);
       span.addEventListener('mouseleave', leaveHandler);
@@ -594,6 +682,10 @@ function disableTextLayerHover() {
     h.span.style.cursor = keepTextAccess ? 'text' : '';
   }
   hoverListeners = [];
+  for (const entry of layerOwnedEditListeners) {
+    entry.layer.removeEventListener('click', entry.click);
+  }
+  layerOwnedEditListeners = [];
 
   document.querySelectorAll('.textLayer').forEach(layer => {
     layer.style.pointerEvents = keepTextAccess ? 'auto' : '';
@@ -1066,6 +1158,26 @@ function startPdfTextEditing(span, pageNum) {
 
   const { lineData, lineSpacing } = block;
 
+  const sourceProvenance = provenanceForSpans(block.spans);
+  if (!sourceProvenance) {
+    showMessage('This native PDF text cannot be changed safely because its exact source operators are ambiguous. The document was left untouched.');
+    return;
+  }
+
+  // An unsaved native edit still sits above the original PDF.js spans. Match
+  // those exact operators back to the existing owned record so clicking the
+  // line again revises that record instead of creating overlapping ownership.
+  const existingNativeEdit = getActiveDocument()?.textEdits?.find((record) => (
+    record.page === pageNum
+    && sameNativeTextOwnership(record.sourceProvenance, sourceProvenance)
+  ));
+  if (existingNativeEdit) {
+    const canvasEl = textLayer.parentElement?.querySelector('canvas.pdf-canvas')
+      || pdfCanvas || document.getElementById('pdf-canvas');
+    if (canvasEl) startTextEditEditing(existingNativeEdit, pageNum, canvasEl);
+    return;
+  }
+
   // Combined text with line breaks
   const combinedText = lineData.map(l => l.text).join('\n');
   const unsupportedFonts = [...new Set(lineData.flatMap((line) => line.spans.map((sourceSpan) => (
@@ -1154,7 +1266,10 @@ function startPdfTextEditing(span, pageNum) {
     position: 'fixed',
     left: `${containerRect.left + groupRect.left + offsetX}px`,
     top: `${editorTop}px`,
-    width: `${Math.max(groupRect.width + 4, 80)}px`,
+    // PDF.js fallback-font scaleX can make DOM word bounds far wider than
+    // their source operator. Size from PDF geometry so editing does not
+    // stretch or jump as soon as the inline editor opens.
+    width: `${Math.max(pdfWidth * (editorFontSize / fontSize) + 4, 80)}px`,
     height: `${Math.max(numLines * visualLineHeight, 24)}px`,
     'font-size': `${editorFontSize}px`,
     'line-height': `${visualLineHeight}px`,
@@ -1196,6 +1311,7 @@ function startPdfTextEditing(span, pageNum) {
       strikethrough: false,
     },
     richTextDocument: originalRichText,
+    sourceProvenance,
     substitution,
   };
 
@@ -1299,7 +1415,7 @@ function finishPdfTextEditing() {
   const nativeChanged = newText !== originalText || styleChanged;
   if (nativeChanged && !activeEditor.sourceProvenance) {
     showMessage('This native PDF text cannot be changed safely because its exact source operators are ambiguous. The document was left untouched.');
-  } else if (nativeChanged && newText.trim() !== '') {
+  } else if (nativeChanged) {
     const { lineData } = block;
     const pdfFontName = lineData[0].pdfFontName || '';
 
@@ -1342,7 +1458,7 @@ function finishPdfTextEditing() {
       page: pageNum,
       richText: finalRichText,
       original: originalRichText,
-      sourceProvenance: null,
+      sourceProvenance: activeEditor.sourceProvenance,
       substitution: activeEditor.substitution,
     });
 
@@ -1350,6 +1466,10 @@ function finishPdfTextEditing() {
     if (doc) {
       if (!doc.textEdits) doc.textEdits = [];
       doc.textEdits.push(editRecord);
+
+      for (const sourceSpan of block.spans) {
+        sourceSpan.dataset.editId = String(editRecord.id);
+      }
 
       // Update span text visually: put all new text in first span, blank the rest
       const newLines = newText.split('\n');

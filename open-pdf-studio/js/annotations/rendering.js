@@ -39,7 +39,7 @@ import { EDITABLE_NUMBER_COLOR, shouldHighlightNumbers } from './editable-number
 // (stavenreeks, betonbalk, parametricSymbol).
 import { labelHasNumericField } from './editable-numbers-providers.js';
 import { hiddenTypes as evHiddenTypes, halftoneTypes as evHalftoneTypes } from '../solid/stores/elementVisibilityStore.js';
-import { getPageRotationMatrix } from '../text/text-edit-appearance.js';
+import { dominantBackgroundColor, getPageRotationMatrix } from '../text/text-edit-appearance.js';
 import { rotatedRectAabb } from '../utils/math.js';
 import { overlayCanvasTransform, overlayVisibleBounds } from '../pdf/canvas-dpr.js';
 
@@ -2384,6 +2384,43 @@ function richRunAdvance(ctx, run) {
   return run.shaped?.advance ?? ctx.measureText(run.text).width;
 }
 
+function coverNativeSourceForLivePreview(ctx, richText, pageHeight) {
+  const sourceCanvas = document.getElementById('pdf-canvas');
+  if (!sourceCanvas || !richText?.region) return false;
+  const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
+  if (!sourceContext) return false;
+
+  const region = richText.region;
+  const top = pageHeight - region.y - region.height;
+  const matrix = ctx.getTransform();
+  const corners = [
+    [region.x, top],
+    [region.x + region.width, top],
+    [region.x + region.width, top + region.height],
+    [region.x, top + region.height],
+  ].map(([x, y]) => ({
+    x: matrix.a * x + matrix.c * y + matrix.e,
+    y: matrix.b * x + matrix.d * y + matrix.f,
+  }));
+  const left = Math.max(0, Math.floor(Math.min(...corners.map((point) => point.x))));
+  const upper = Math.max(0, Math.floor(Math.min(...corners.map((point) => point.y))));
+  const right = Math.min(sourceCanvas.width, Math.ceil(Math.max(...corners.map((point) => point.x))));
+  const lower = Math.min(sourceCanvas.height, Math.ceil(Math.max(...corners.map((point) => point.y))));
+  if (right <= left || lower <= upper) return false;
+
+  let sample;
+  try {
+    sample = sourceContext.getImageData(left, upper, right - left, lower - upper).data;
+  } catch (_) {
+    return false;
+  }
+  const background = dominantBackgroundColor(sample);
+  if (!background) return false;
+  ctx.fillStyle = `rgb(${background.r}, ${background.g}, ${background.b})`;
+  ctx.fillRect(region.x, top, region.width, region.height);
+  return true;
+}
+
 function drawRichTextEdit(ctx, edit, pageHeight) {
   const richText = edit.richText;
   for (const line of richText.lines) {
@@ -2456,6 +2493,13 @@ function drawTextEdits(ctx, pageNum) {
 
   for (const edit of pageEdits) {
     if (edit.record) {
+      // Until save, the PDF canvas still contains the native source operator.
+      // Cover it only when the sampled source region has a uniform background;
+      // otherwise fail closed and leave the original preview visible. The
+      // actual PDF save always uses exact Rust operator neutralization.
+      if (edit.originalText && !coverNativeSourceForLivePreview(ctx, edit.richText, pageHeight)) {
+        continue;
+      }
       drawRichTextEdit(ctx, edit, pageHeight);
       continue;
     }
