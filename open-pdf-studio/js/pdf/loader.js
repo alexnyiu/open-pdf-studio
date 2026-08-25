@@ -5,7 +5,7 @@ import { setViewMode, fitPage } from './renderer.js';
 import { generateThumbnails, refreshActiveTab } from '../ui/panels/left-panel.js';
 import { createTab, updateWindowTitle, markDocumentModified } from '../ui/chrome/tabs.js';
 import * as pdfjsLib from 'pdfjs-dist';
-import { isTauri, readBinaryFile, openFileDialog, lockFile, invoke } from '../core/platform.js';
+import { isTauri, readBinaryFile, openFileDialog, lockFile, unlockFile, invoke } from '../core/platform.js';
 import { PDFDocument } from 'pdf-lib';
 import { resetAnnotationStorage } from './form-layer.js';
 import { addRecentFile, getRecentFiles } from '../mobile/recent-files.js';
@@ -18,6 +18,7 @@ import { extractAnnotationColors } from './loader/color-extraction.js';
 import { extractStampImagesHybrid } from './loader/image-extraction.js';
 import { convertPdfAnnotation } from './loader/annotation-converter.js';
 import { statusReplyFromPdfAnnotation, applyStatusReplies } from './loader/status-replies.js';
+import { assertPdfDocumentResourceLimits } from './resource-limits.js';
 
 
 // Convert one batch of pdf.js annotations and push them to doc.annotations,
@@ -89,7 +90,7 @@ export async function reloadDocumentFromBytes(doc, bytes) {
   doc._sharedPdfLibDocPromise = null;
 
   // Replace the pdf.js document with one loaded from the new bytes
-  doc.pdfDoc = await pdfjsLib.getDocument({
+  const reloadedPdfDocument = await pdfjsLib.getDocument({
     data: bytes.slice(), // copy — pdf.js transfers the buffer
     cMapUrl: '/pdfjs/web/cmaps/',
     cMapPacked: true,
@@ -97,6 +98,13 @@ export async function reloadDocumentFromBytes(doc, bytes) {
     isEvalSupported: false,
     verbosity: 0,
   }).promise;
+  try {
+    assertPdfDocumentResourceLimits(reloadedPdfDocument);
+  } catch (error) {
+    try { await reloadedPdfDocument.destroy(); } catch {}
+    throw error;
+  }
+  doc.pdfDoc = reloadedPdfDocument;
 
   doc.modified = true;
 }
@@ -186,6 +194,12 @@ function _attachPdfDocGetPageRecovery(doc, filePath) {
           isEvalSupported: false,
           verbosity: 0,
         }).promise;
+        try {
+          assertPdfDocumentResourceLimits(fresh);
+        } catch (error) {
+          try { await fresh.destroy(); } catch {}
+          throw error;
+        }
         doc.pdfDoc = fresh;
         _attachPdfDocGetPageRecovery(doc, filePath); // protect future calls
         return await doc.pdfDoc.getPage(pageNum);
@@ -256,6 +270,10 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
   // Guard against loading into a document that's already loading
   if (doc._isLoading) return;
   doc._isLoading = true;
+  doc._loadRejected = false;
+  doc._loadErrorCode = null;
+  doc._loadErrorMessage = null;
+  let fileLocked = false;
 
   // Helper: check if this document is the currently active one
   const isActive = () => state.documents[state.activeDocumentIndex] === doc;
@@ -323,7 +341,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
         scale: 1.0,
         rotation: 0,
       }).then(async (rgbaData) => {
-        if (!rgbaData || isClosed() || doc.pdfDoc || !isActive()) return;
+        if (!rgbaData || isClosed() || doc._loadRejected || doc.pdfDoc || !isActive()) return;
         try {
           const bytes = rgbaData instanceof Uint8Array ? rgbaData : new Uint8Array(rgbaData);
           if (bytes.length <= 8) return;
@@ -333,7 +351,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
           const rgba = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + 8, bytes.length - 8);
           const imageData = new ImageData(rgba, w, h);
           const bitmap = await createImageBitmap(imageData);
-          if (isClosed() || doc.pdfDoc || !isActive()) { bitmap.close(); return; }
+          if (isClosed() || doc._loadRejected || doc.pdfDoc || !isActive()) { bitmap.close(); return; }
           const vp = await import('./pdf-viewport.js');
           vp.setPage(filePath, 1, w, h, 0, 0, 0);
           window.__pdfViewport.currentBitmap = bitmap;
@@ -362,6 +380,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
         if (isClosed()) return;
         if (!isMobile()) {
           await lockFile(filePath);
+          fileLocked = true;
           if (isClosed()) return;
         }
       }
@@ -389,6 +408,18 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
       console.warn('[scanned-text-edit] Owned state was not hydrated:', error?.message || error);
     }
 
+    // Rich native/annotation text state is restored only from the validated,
+    // application-owned V2 manifest. Unknown versions and corrupt hashes are
+    // fail-closed and never become editable state.
+    try {
+      const { hydrateOwnedTextEditManifest } = await import('../text/owned-edit-manifest.js');
+      await hydrateOwnedTextEditManifest(doc, typedArray);
+    } catch (error) {
+      doc.textEdits = [];
+      doc.textEditManifest = null;
+      console.warn('[rich-text-edit] Owned manifest was not hydrated:', error?.message || error);
+    }
+
     // Load PDF using pdf.js (this transfers the buffer to a worker)
     doc.pdfDoc = await pdfjsLib.getDocument({
       data: typedArray,
@@ -399,6 +430,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
       verbosity: 0,
     }).promise;
     if (isClosed()) return;
+    assertPdfDocumentResourceLimits(doc.pdfDoc);
     console.log(`[PERF] PDF.js getDocument done: ${(performance.now() - _t0).toFixed(0)}ms, pages: ${doc.pdfDoc.numPages}`);
 
     // ─── PDF.js v5.4 multi-doc pagesMapper RECOVERY PATCH ─────────────────
@@ -706,6 +738,16 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     // Suppress errors from document being closed during background loading
     if (isClosed()) return;
     console.error('Error loading PDF:', error);
+    doc._loadRejected = true;
+    doc._loadErrorCode = error?.code ?? 'PDF_LOAD_FAILED';
+    doc._loadErrorMessage = error?.message ?? String(error);
+    try { await doc.pdfDoc?.destroy?.(); } catch {}
+    doc.pdfDoc = null;
+    originalBytesCache.delete(filePath);
+    if (fileLocked && filePath) {
+      try { await unlockFile(filePath); } catch {}
+      fileLocked = false;
+    }
     if (isActive()) {
       showMessage(i18next.t('failedToLoadPdf', { error: error.message }));
     }

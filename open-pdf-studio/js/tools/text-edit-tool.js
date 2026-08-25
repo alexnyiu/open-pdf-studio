@@ -5,7 +5,19 @@ import { showTextEditProperties, hideProperties } from '../ui/panels/properties-
 import { markDocumentModified } from '../ui/chrome/tabs.js';
 import { canvasContainer, continuousContainer, pdfCanvas } from '../ui/dom-elements.js';
 import { showPdfTextEditor, hidePdfTextEditor, getPdfEditorText as getEditorText,
-  updatePdfEditorStyle, shiftPdfEditorPosition, setPdfEditorStatus } from '../bridge.js';
+  updatePdfEditorStyle, shiftPdfEditorPosition, setPdfEditorStatus,
+  getPdfEditorRichText, applyPdfEditorRichTextFormat } from '../bridge.js';
+import {
+  DEFAULT_TEXT_FORMAT_CAPABILITIES,
+  createRichTextDocument,
+  createTextEditRecordV2,
+  createTextLine,
+  createTextRun,
+  projectTextEditRecord,
+  richTextFromPlainText,
+  richTextToPlainText,
+} from '../text/rich-text.js';
+import { proposeFontSubstitution, resolvePackagedFace } from '../text/font-catalog.js';
 import { showMessage } from '../solid/stores/dialogStore.js';
 import { injectSyntheticTextSpans, refreshPendingOcrTextLayer, resolveTextLayerFonts } from '../text/text-layer.js';
 import { evaluateScannedTextEdit } from '../ocr/editing/edit-state.js';
@@ -20,6 +32,7 @@ import {
   reviseScannedTextEditForDocument,
 } from '../ocr/editing/undo-commands.js';
 import { rasterizePdfPageForOcr } from '../ocr/spike.js';
+import { withScannedRichText } from '../ocr/editing/rich-text-adapter.js';
 import {
   applyPageRotation,
   getPageRotationMatrix,
@@ -132,8 +145,24 @@ function reRenderAddedText(pageNum) {
 // text-edit record. Returns true when any field actually changed.
 function applyStyleStateToRecord(rec, st) {
   if (!rec || !st) return false;
+  if (rec.schema === 'open-pdf-studio.text-edit-record' && rec.version === 2) {
+    const patch = {
+      faceId: resolvePackagedFace(st.family, st.bold, st.italic)?.id,
+      size: st.size,
+      color: st.color,
+      bold: st.bold,
+      italic: st.italic,
+      underline: st.underline,
+      strikeout: st.strikethrough,
+    };
+    for (const line of rec.richText.lines) {
+      for (const run of line.runs) Object.assign(run, Object.fromEntries(Object.entries(patch).filter(([, value]) => value != null)));
+    }
+    rec.revision += 1;
+    return true;
+  }
   let changed = false;
-  if (st.size != null && rec.fontSize !== st.size) { rec.fontSize = st.size; rec.lineSpacing = st.size * 1.2; changed = true; }
+  if (st.size != null && rec.fontSize !== st.size) { rec.fontSize = st.size; changed = true; }
   if (st.color != null && rec.color !== st.color) { rec.color = st.color; changed = true; }
   if (st.underline != null && rec.fontUnderline !== st.underline) { rec.fontUnderline = st.underline; changed = true; }
   if (st.strikethrough != null && rec.fontStrikethrough !== st.strikethrough) { rec.fontStrikethrough = st.strikethrough; changed = true; }
@@ -388,6 +417,33 @@ function getBlockGroups(layer) {
 
       const color = sampleTextColor(pdfCanvasEl, firstSpan.getBoundingClientRect());
 
+      const runs = lineItems.map((item, runIndex) => {
+        const runSpan = item.span;
+        const actual = runSpan.dataset.pdfActualFontName || runSpan.dataset.pdfFontFamily || '';
+        const bold = runSpan.dataset.pdfBold === 'true';
+        const italic = runSpan.dataset.pdfItalic === 'true';
+        const face = resolvePackagedFace(actual, bold, italic);
+        return createTextRun(runSpan.textContent || '', {
+          faceId: face?.id,
+          size: item.fontSize,
+          color: sampleTextColor(pdfCanvasEl, runSpan.getBoundingClientRect()),
+          bold,
+          italic,
+          underline: false,
+          strikeout: false,
+          direction: 'ltr',
+        }, {
+          id: `source-${runSpan.dataset.pdfFontName || 'font'}-${runIndex}`,
+          sourceConfidence: actual ? 0.9 : 0.5,
+          geometry: {
+            x: item.pdfX,
+            baseline: item.pdfY,
+            width: item.pdfWidth,
+            height: item.fontSize,
+          },
+        });
+      });
+
       return {
         text: lineItems.map(it => it.span.textContent).join(''),
         domTop: Math.min(...lineItems.map(it => it.domTop)),
@@ -403,7 +459,8 @@ function getBlockGroups(layer) {
         loadedFontName,
         isBold,
         isItalic,
-        color
+        color,
+        runs,
       };
     });
 
@@ -772,6 +829,8 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     ? Math.min(rect.firstLineHeight || fixedRegionLineHeight, fixedRegionLineHeight)
     : rect.firstLineHeight || estimate.fontSize.value * (doc.scale || 1));
   const initialText = selection.content.replacementText;
+  const scannedRichText = selection.content.richText
+    || withScannedRichText(selection.content).richText;
   const preview = createScannedRepairPreview(span, selection, rect);
   const lineHeightPx = fixedRegion
     ? Math.max(fontSizePx, rect.height / Math.max(1, selection.content.source.canonicalBaselines.length))
@@ -844,6 +903,24 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     }
     editor.committing = true;
     try {
+      const richDraft = getPdfEditorRichText();
+      if (richDraft && richTextToPlainText(richDraft) !== replacementText) {
+        throw new Error('The rich-text draft and OCR replacement text are not synchronized');
+      }
+      if (richDraft) {
+        const styleSignatures = new Set(richDraft.lines.flatMap((line) => line.runs.map((run) => JSON.stringify({
+          faceId: run.faceId,
+          size: run.size,
+          color: run.color,
+          bold: run.bold,
+          italic: run.italic,
+          underline: run.underline,
+          strikeout: run.strikeout,
+        }))));
+        if (styleSignatures.size > 1) {
+          throw new Error('Mixed OCR runs require a renderer-qualified fixed region and are not enabled for this selection');
+        }
+      }
       const styleOverrides = scannedStyleOverrides(editor);
       const layoutMode = editor.fixedRegion
         && (editor.paragraphReflow || !/[\r\n\u2028\u2029]/u.test(replacementText))
@@ -932,6 +1009,18 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     onKeyDown: handleKeyDown,
     onBlur: handleBlur,
     options: {
+      // Paragraph reflow keeps soft wrapping in the fixed box; representing
+      // those visual wraps as editable hard lines would change the paragraph.
+      richTextDocument: paragraphReflow ? null : scannedRichText,
+      capabilities: {
+        ...DEFAULT_TEXT_FORMAT_CAPABILITIES,
+        family: !paragraphReflow,
+        bold: !paragraphReflow,
+        italic: !paragraphReflow,
+        underline: false,
+        strikeout: false,
+        spacing: false,
+      },
       singleLine: !fixedRegion,
       fixedRegion,
       direction: 'ltr',
@@ -979,6 +1068,24 @@ function startPdfTextEditing(span, pageNum) {
 
   // Combined text with line breaks
   const combinedText = lineData.map(l => l.text).join('\n');
+  const unsupportedFonts = [...new Set(lineData.flatMap((line) => line.spans.map((sourceSpan) => (
+    sourceSpan.dataset.pdfActualFontName || sourceSpan.dataset.pdfFontName || 'Unknown font'
+  ))).filter((name) => !/^liberation\s*(sans|serif|mono)/iu.test(name)))];
+  let substitution = null;
+  if (unsupportedFonts.length > 0) {
+    const proposed = proposeFontSubstitution(
+      unsupportedFonts[0],
+      lineData[0].isBold,
+      lineData[0].isItalic,
+    );
+    const face = resolvePackagedFace(unsupportedFonts[0], lineData[0].isBold, lineData[0].isItalic);
+    const approved = window.confirm(
+      `This PDF uses an unsupported font (${unsupportedFonts.join(', ')}). `
+      + `Editing requires the packaged substitute ${face.family}. Continue with that substitution?`,
+    );
+    if (!approved) return;
+    substitution = { ...proposed, approved: true, approvedAt: new Date().toISOString() };
+  }
 
   // PDF metadata from first line (top of block in reading order, highest pdfY)
   const pdfX = lineData[0].pdfX;
@@ -994,6 +1101,21 @@ function startPdfTextEditing(span, pageNum) {
   const visualLineHeight = numLines > 1
     ? Math.abs(lineData[1].domTop - lineData[0].domTop)
     : editorFontSize * (lineSpacing / fontSize);
+  const originalRichText = createRichTextDocument(lineData.map((line, index) => createTextLine(
+    line.runs,
+    {
+      id: `source-line-${pageNum}-${index}`,
+      baseline: line.pdfY,
+      baselineAdvance: lineSpacing,
+      alignment: 'left',
+    },
+  )), {
+    x: pdfX,
+    y: pdfY - (numLines - 1) * lineSpacing - fontSize * 0.3,
+    width: pdfWidth,
+    height: (numLines - 1) * lineSpacing + fontSize * 1.3,
+    rotation: getPageRotation(pageNum),
+  });
 
   // Place editor in the textLayer's parent container (not in the textLayer itself)
   // because .textLayer has opacity: 0.25 which makes all children semi-transparent
@@ -1073,6 +1195,8 @@ function startPdfTextEditing(span, pageNum) {
       underline: false,
       strikethrough: false,
     },
+    richTextDocument: originalRichText,
+    substitution,
   };
 
   state.pdfTextEditState = activeEditor;
@@ -1129,7 +1253,12 @@ function startPdfTextEditing(span, pageNum) {
     onCommit: null,
     onCancel: null,
     onKeyDown: handleKeyDown,
-    onBlur: handleBlur
+    onBlur: handleBlur,
+    options: {
+      richTextDocument: originalRichText,
+      capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+      ariaLabel: `Edit formatted PDF text region: ${combinedText}`,
+    },
   });
 }
 
@@ -1147,6 +1276,7 @@ function finishPdfTextEditing() {
     pdfX, pdfY, pdfWidth, fontSize, lineSpacing, numOriginalLines, styleState
   } = activeEditor;
   const newText = getEditorText();
+  const richTextDraft = getPdfEditorRichText();
 
   hidePdfTextEditor();
 
@@ -1166,7 +1296,10 @@ function finishPdfTextEditing() {
 
   // Persist when the text OR the formatting changed (a pure re-style of
   // existing PDF text must be saveable too).
-  if ((newText !== originalText || styleChanged) && newText.trim() !== '') {
+  const nativeChanged = newText !== originalText || styleChanged;
+  if (nativeChanged && !activeEditor.sourceProvenance) {
+    showMessage('This native PDF text cannot be changed safely because its exact source operators are ambiguous. The document was left untouched.');
+  } else if (nativeChanged && newText.trim() !== '') {
     const { lineData } = block;
     const pdfFontName = lineData[0].pdfFontName || '';
 
@@ -1178,7 +1311,7 @@ function finishPdfTextEditing() {
     const finalItalic = st.italic != null ? st.italic : (lineData[0].isItalic || false);
     const finalUnderline = st.underline === true;
     const finalStrikethrough = st.strikethrough === true;
-    const finalLineSpacing = finalSize !== fontSize ? finalSize * 1.2 : lineSpacing;
+    const finalLineSpacing = lineSpacing;
     const fontFamily = toStandardFontName(
       st.family != null ? st.family : (lineData[0].actualFontName || lineData[0].fontFamily),
       finalBold, finalItalic
@@ -1193,25 +1326,25 @@ function finishPdfTextEditing() {
     // new StandardFont is used instead of the stale embedded font.
     const loadedFontName = st.fontFaceChanged ? '' : (lineData[0].loadedFontName || '');
 
-    const editRecord = {
-      id: Date.now() + Math.random().toString(36).substr(2, 9),
-      page: pageNum,
-      originalText,
-      newText,
-      pdfX,
-      pdfY,
-      pdfWidth,
-      fontSize: finalSize,
-      lineSpacing: finalLineSpacing,
-      numOriginalLines,
-      fontFamily,
-      loadedFontName,
-      pdfFontName,
+    const originalRichText = activeEditor.richTextDocument;
+    const finalRichText = richTextDraft || richTextFromPlainText(newText, {
+      faceId: resolvePackagedFace(fontFamily, finalBold, finalItalic)?.id,
+      size: finalSize,
       color: finalColor,
-      fontUnderline: finalUnderline,
-      fontStrikethrough: finalStrikethrough,
-      originalSpanTexts
-    };
+      bold: finalBold,
+      italic: finalItalic,
+      underline: finalUnderline,
+      strikeout: finalStrikethrough,
+      baselineAdvance: finalLineSpacing,
+    }, originalRichText.region);
+    const editRecord = createTextEditRecordV2({
+      id: Date.now() + Math.random().toString(36).slice(2, 11),
+      page: pageNum,
+      richText: finalRichText,
+      original: originalRichText,
+      sourceProvenance: null,
+      substitution: activeEditor.substitution,
+    });
 
     const doc = getActiveDocument();
     if (doc) {
@@ -1230,7 +1363,7 @@ function finishPdfTextEditing() {
         }
       }
 
-      execute({ type: 'addTextEdit', textEdit: { ...editRecord, originalSpanTexts } });
+      execute({ type: 'addTextEdit', textEdit: structuredClone(editRecord) });
       markDocumentModified();
 
       if (getActiveDocument()?.viewMode === 'continuous') {
@@ -1264,9 +1397,10 @@ function cancelPdfTextEditing() {
 }
 
 /**
- * Programmatically replace text within a single span on the current page.
- * Used by Find & Replace. Uses the span's own PDF coordinates and font data
- * so the cover rectangle matches only that span, not the entire text block.
+ * Native Find & Replace remains fail-closed until the matched span carries
+ * exact content-stream/operator provenance. A visual span and bounding box
+ * are not sufficient ownership evidence and must never produce a flat edit
+ * record or mutate the live text layer.
  *
  * @param {number} pageNum - Page number
  * @param {string} originalText - The original span text
@@ -1275,77 +1409,11 @@ function cancelPdfTextEditing() {
  * @returns {{ editRecord: Object } | null}
  */
 export function createReplaceTextEdit(pageNum, originalText, newText, matchSpan) {
-  // Read PDF coordinates directly from the span's data attributes
-  let transform;
-  try {
-    transform = JSON.parse(matchSpan.dataset.pdfTransform);
-  } catch (_) {
-    return null;
-  }
-  if (!transform) return null;
-
-  const fontSize = Math.sqrt(transform[2] ** 2 + transform[3] ** 2) || 12;
-  const pdfX = transform[4];
-  const pdfY = transform[5]; // baseline Y in PDF space
-  const pdfWidth = parseFloat(matchSpan.dataset.pdfWidth) || fontSize * originalText.length * 0.5;
-
-  // Detect font from span data attributes (set by text-layer.js)
-  const pdfFontFamily = matchSpan.dataset.pdfFontFamily || 'sans-serif';
-  const actualFontName = matchSpan.dataset.pdfActualFontName || '';
-  const loadedFontName = matchSpan.dataset.pdfLoadedFontName || '';
-  const pdfFontName = matchSpan.dataset.pdfFontName || '';
-  const isBold = matchSpan.dataset.pdfBold === 'true';
-  const isItalic = matchSpan.dataset.pdfItalic === 'true';
-
-  const an = actualFontName.toLowerCase();
-  const fl = pdfFontFamily.toLowerCase();
-  let fontFamily;
-  if (an.includes('courier') || an.includes('consolas') || an.includes('mono') || fl === 'monospace') {
-    fontFamily = isBold && isItalic ? 'Courier-BoldOblique'
-      : isBold ? 'Courier-Bold'
-      : isItalic ? 'Courier-Oblique'
-      : 'Courier';
-  } else if (an.includes('times') || an.includes('garamond') || an.includes('georgia')
-      || an.includes('palatino') || an.includes('cambria') || an.includes('bookman')
-      || fl === 'serif') {
-    fontFamily = isBold && isItalic ? 'TimesRoman-BoldItalic'
-      : isBold ? 'TimesRoman-Bold'
-      : isItalic ? 'TimesRoman-Italic'
-      : 'TimesRoman';
-  } else {
-    fontFamily = isBold && isItalic ? 'Helvetica-BoldOblique'
-      : isBold ? 'Helvetica-Bold'
-      : isItalic ? 'Helvetica-Oblique'
-      : 'Helvetica';
-  }
-
-  const textLayer = matchSpan.closest('.textLayer');
-  const canvasEl = textLayer?.parentElement?.querySelector('canvas.pdf-canvas')
-    || document.getElementById('pdf-canvas');
-  const color = sampleTextColor(canvasEl, matchSpan.getBoundingClientRect());
-
-  const editRecord = {
-    id: Date.now() + Math.random().toString(36).substr(2, 9),
-    page: pageNum,
-    originalText,
-    newText,
-    pdfX,
-    pdfY,
-    pdfWidth,
-    fontSize: Math.round(fontSize),
-    lineSpacing: fontSize * 1.2,
-    numOriginalLines: 1,
-    fontFamily,
-    loadedFontName,
-    pdfFontName,
-    color,
-    originalSpanTexts: [[originalText]]
-  };
-
-  // Update span text visually
-  matchSpan.textContent = newText;
-
-  return { editRecord };
+  void pageNum;
+  void originalText;
+  void newText;
+  void matchSpan;
+  return null;
 }
 
 function getTextEditViewGeometry(canvasEl, doc) {
@@ -1386,7 +1454,8 @@ export function findTextEditAtPosition(x, y, pageNum, canvasEl) {
   );
   const pageHeight = geometry.pageHeight;
 
-  for (const edit of pageEdits) {
+  for (const rawEdit of pageEdits) {
+    const edit = projectTextEditRecord(rawEdit);
     const fontSize = edit.fontSize;
     const ls = edit.lineSpacing || fontSize * 1.2;
     const newLines = edit.newText.split('\n');
@@ -1401,7 +1470,7 @@ export function findTextEditAtPosition(x, y, pageNum, canvasEl) {
 
     if (unrotatedPoint.x >= editLeft && unrotatedPoint.x <= editLeft + editWidth &&
         unrotatedPoint.y >= editTop && unrotatedPoint.y <= editTop + editHeight) {
-      return edit;
+      return rawEdit;
     }
   }
   return null;
@@ -1410,19 +1479,21 @@ export function findTextEditAtPosition(x, y, pageNum, canvasEl) {
 export function startTextEditEditing(textEdit, pageNum, canvasEl) {
   finishPdfTextEditing();
 
+  const view = projectTextEditRecord(textEdit);
+
   const editDoc = getActiveDocument();
   const geometry = getTextEditGeometry(pageNum, canvasEl);
   const pageHeight = geometry.pageHeight;
   const viewGeometry = getTextEditViewGeometry(canvasEl, editDoc);
   const editScale = viewGeometry.visualScale;
-  const fontSize = textEdit.fontSize;
-  const ls = textEdit.lineSpacing || fontSize * 1.2;
-  const newLines = textEdit.newText.split('\n');
+  const fontSize = view.fontSize;
+  const ls = view.lineSpacing || fontSize * 1.2;
+  const newLines = view.newText.split('\n');
   const numLines = newLines.length;
 
-  const firstBaseY = pageHeight - textEdit.pdfY;
+  const firstBaseY = pageHeight - view.pdfY;
   const maxCharCount = Math.max(...newLines.map(l => l.length), 1);
-  const editWidth = Math.max(textEdit.pdfWidth || 0, fontSize * 0.6 * maxCharCount) + fontSize * 0.5;
+  const editWidth = Math.max(view.pdfWidth || 0, fontSize * 0.6 * maxCharCount) + fontSize * 0.5;
 
   // Find the container to place the editor in
   const container = canvasEl.parentElement;
@@ -1433,7 +1504,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
   const offsetY = canvasRect.top - containerRect.top;
 
   const rotatedBaseline = applyPageRotation(
-    textEdit.pdfX,
+    view.pdfX,
     firstBaseY,
     geometry.pageWidth,
     geometry.pageHeight,
@@ -1448,7 +1519,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
   const pageOffsetY = useViewport ? activeViewport.offsetY : offsetY;
 
   // Map font family to CSS
-  const ff = (textEdit.fontFamily || 'Helvetica').toLowerCase();
+  const ff = (view.fontFamily || 'LiberationSans').toLowerCase();
   let cssFontFamily;
   if (ff.includes('courier')) {
     cssFontFamily = '"Courier New", Courier, monospace';
@@ -1457,8 +1528,8 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
   } else {
     cssFontFamily = 'Helvetica, Arial, sans-serif';
   }
-  const editorFontFamily = textEdit.loadedFontName
-    ? `"${textEdit.loadedFontName}", ${cssFontFamily}`
+  const editorFontFamily = view.loadedFontName
+    ? `"${view.loadedFontName}", ${cssFontFamily}`
     : cssFontFamily;
 
   const editorBold = ff.includes('bold');
@@ -1486,7 +1557,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
     'font-size': `${editorFontSize}px`,
     'line-height': `${visualLineHeight}px`,
     'font-family': editorFontFamily,
-    color: textEdit.color || '#000000',
+    color: view.color || '#000000',
     transform: `rotate(${geometry.rotation}deg)`,
     'transform-origin': '0 0',
     'z-index': '1000'
@@ -1494,17 +1565,18 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
   if (editorBold) styleObj['font-weight'] = 'bold';
   if (editorItalic) styleObj['font-style'] = 'italic';
   const decorations = [];
-  if (textEdit.fontUnderline) decorations.push('underline');
-  if (textEdit.fontStrikethrough) decorations.push('line-through');
+  if (view.fontUnderline) decorations.push('underline');
+  if (view.fontStrikethrough) decorations.push('line-through');
   styleObj['text-decoration-line'] = decorations.length ? decorations.join(' ') : 'none';
   styleObj['text-decoration-thickness'] = '0.06em';
   styleObj['text-underline-offset'] = '0.08em';
 
-  const oldTextEdit = { ...textEdit };
-  const isAddedText = oldTextEdit.originalText === '';
+  const oldTextEdit = structuredClone(textEdit);
+  const isAddedText = view.originalText === '';
 
   const finishEditing = () => {
     const newText = getEditorText();
+    const richTextDraft = getPdfEditorRichText();
     hidePdfTextEditor();
 
     // Clearing all the text of an INSERTED edit deletes it entirely — this is
@@ -1517,12 +1589,19 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
       return;
     }
 
-    if (newText.trim() !== '') textEdit.newText = newText;
+    if (newText.trim() !== '') {
+      if (textEdit.schema === 'open-pdf-studio.text-edit-record' && textEdit.version === 2 && richTextDraft) {
+        textEdit.richText = richTextDraft;
+        textEdit.revision += 1;
+      } else {
+        textEdit.newText = newText;
+      }
+    }
     // Persist when content, style, or position changed. Style/position edits
     // were applied live to `textEdit`, so compare the whole record.
-    const changed = JSON.stringify({ ...textEdit }) !== JSON.stringify(oldTextEdit);
+    const changed = JSON.stringify(textEdit) !== JSON.stringify(oldTextEdit);
     if (changed) {
-      execute({ type: 'modifyTextEdit', oldTextEdit, newTextEdit: { ...textEdit } });
+      execute({ type: 'modifyTextEdit', oldTextEdit, newTextEdit: structuredClone(textEdit) });
       markDocumentModified();
       reRenderAddedText(pageNum);
     }
@@ -1546,10 +1625,10 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
     pageNum,
     kind: 'record',
     _recordRef: textEdit,
-    originalText: textEdit.newText,
-    pdfX: textEdit.pdfX,
-    pdfY: textEdit.pdfY,
-    pdfWidth: textEdit.pdfWidth || 0,
+    originalText: view.newText,
+    pdfX: view.pdfX,
+    pdfY: view.pdfY,
+    pdfWidth: view.pdfWidth || 0,
     fontSize,
     lineSpacing: ls,
     numOriginalLines: numLines,
@@ -1562,15 +1641,15 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
       rotationD,
     },
     styleState: {
-      family: textEdit.fontFamily || 'Helvetica',
+      family: view.fontFamily || 'Liberation Sans',
       cssFamily: editorFontFamily,
       fontFaceChanged: false,
-      size: textEdit.fontSize,
-      color: textEdit.color || '#000000',
+      size: view.fontSize,
+      color: view.color || '#000000',
       bold: ff.includes('bold'),
       italic: ff.includes('italic') || ff.includes('oblique'),
-      underline: textEdit.fontUnderline === true,
-      strikethrough: textEdit.fontStrikethrough === true,
+      underline: view.fontUnderline === true,
+      strikethrough: view.fontStrikethrough === true,
     },
     _finishEditing: finishEditing,
     _cancelEditing: cancelEditing
@@ -1578,16 +1657,16 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
   state.pdfTextEditState = activeEditor;
 
   // Show text properties in the right panel
-  const ffLower = (textEdit.fontFamily || 'Helvetica').toLowerCase();
+  const ffLower = (view.fontFamily || 'LiberationSans').toLowerCase();
   showTextEditProperties({
-    text: textEdit.newText,
-    fontSize: textEdit.fontSize,
-    fontFamily: textEdit.fontFamily || 'Helvetica',
-    color: textEdit.color || '#000000',
+    text: view.newText,
+    fontSize: view.fontSize,
+    fontFamily: view.fontFamily || 'Liberation Sans',
+    color: view.color || '#000000',
     isBold: ffLower.includes('bold'),
     isItalic: ffLower.includes('italic') || ffLower.includes('oblique'),
-    isUnderline: textEdit.fontUnderline === true,
-    isStrikethrough: textEdit.fontStrikethrough === true,
+    isUnderline: view.fontUnderline === true,
+    isStrikethrough: view.fontStrikethrough === true,
     page: pageNum
   });
 
@@ -1635,11 +1714,16 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl) {
     }, 150);
   };
 
-  showPdfTextEditor(styleObj, textEdit.newText, {
+  showPdfTextEditor(styleObj, view.newText, {
     onCommit: null,
     onCancel: null,
     onKeyDown: handleKeyDown,
-    onBlur: handleBlur
+    onBlur: handleBlur,
+    options: {
+      richTextDocument: view.richText,
+      capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+      ariaLabel: `Edit formatted PDF text region: ${view.newText}`,
+    },
   });
 }
 
@@ -1653,52 +1737,65 @@ export function applyActiveTextEditStyle(key, value) {
   const st = activeEditor.styleState;
   if (activeEditor.kind === 'scannedText' && ['fontUnderline', 'fontStrikethrough'].includes(key)) return;
   let scannedTouchedKey = null;
+  let richPatch = null;
   switch (key) {
     case 'fontFamily':
       if (st.family !== value) st.fontFaceChanged = true;
       st.family = value;
       scannedTouchedKey = 'fontClass';
+      richPatch = { faceId: resolvePackagedFace(value, st.bold, st.italic)?.id };
       break;
     case 'textFontSize':
     case 'fontSize': {
       const n = parseInt(value);
       if (!isNaN(n) && n > 0) {
         st.size = n;
-        activeEditor.lineSpacing = n * 1.2;
         scannedTouchedKey = 'fontSize';
+        richPatch = { size: n };
       }
       break;
     }
     case 'textColor':
-    case 'color': st.color = value; scannedTouchedKey = 'textColor'; break;
+    case 'color': st.color = value; scannedTouchedKey = 'textColor'; richPatch = { color: value }; break;
     case 'fontBold':
       if (st.bold !== !!value) st.fontFaceChanged = true;
       st.bold = !!value;
       scannedTouchedKey = 'weight';
+      richPatch = {
+        bold: st.bold,
+        faceId: resolvePackagedFace(st.family, st.bold, st.italic)?.id,
+      };
       break;
     case 'fontItalic':
       if (st.italic !== !!value) st.fontFaceChanged = true;
       st.italic = !!value;
       scannedTouchedKey = 'italic';
+      richPatch = {
+        italic: st.italic,
+        faceId: resolvePackagedFace(st.family, st.bold, st.italic)?.id,
+      };
       break;
     case 'textAlign':
       if (!['left', 'center', 'right'].includes(value)) return;
       st.alignment = value;
       scannedTouchedKey = 'alignment';
       break;
-    case 'fontUnderline': st.underline = !!value; break;
-    case 'fontStrikethrough': st.strikethrough = !!value; break;
+    case 'fontUnderline': st.underline = !!value; richPatch = { underline: st.underline }; break;
+    case 'fontStrikethrough': st.strikethrough = !!value; richPatch = { strikeout: st.strikethrough }; break;
     default: return;
   }
   if (activeEditor.kind === 'scannedText' && scannedTouchedKey) {
     activeEditor.styleTouchedKeys.add(scannedTouchedKey);
   }
+  if (richPatch) applyPdfEditorRichTextFormat(richPatch);
   applyStyleStateToEditor(st);
   // Record sessions (inserted text or an existing edit record) update live so
   // the user sees the restyle immediately.
   if (activeEditor._recordRef) {
-    applyStyleStateToRecord(activeEditor._recordRef, st);
-    if (st.fontFaceChanged) activeEditor._recordRef.loadedFontName = '';
+    if (activeEditor._recordRef.schema !== 'open-pdf-studio.text-edit-record') {
+      applyStyleStateToRecord(activeEditor._recordRef, st);
+      if (st.fontFaceChanged) activeEditor._recordRef.loadedFontName = '';
+    }
     reRenderAddedText(activeEditor._recordRef.page);
   }
 }
@@ -1735,9 +1832,9 @@ export function deleteActiveTextEdit() {
     // Inserted text / existing edit record → drop the record.
     removeTextEditRecord(activeEditor._recordRef);
   } else if (activeEditor.kind === 'existingText' && activeEditor.originalText) {
-    // Existing PDF text with no record yet → cover it (empty replacement) so
-    // the underlying text is removed from the page on save.
-    coverExistingText(activeEditor);
+    // Native source text may be removed only through exact operator ownership;
+    // page-colour cover rectangles are not a safe deletion mechanism.
+    showMessage('This native PDF text cannot be deleted safely because its exact source operators are ambiguous. The document was left untouched.');
   }
   activeEditor = null;
   state.pdfTextEditState = null;
@@ -1767,8 +1864,16 @@ function nudgeActiveTextEdit(dxPdf, dyPdf) {
     activeEditor.editorBaseline.top += shiftY;
   }
   if (activeEditor._recordRef) {
-    activeEditor._recordRef.pdfX += dxPdf;
-    activeEditor._recordRef.pdfY += dyPdf;
+    if (activeEditor._recordRef.schema === 'open-pdf-studio.text-edit-record'
+        && activeEditor._recordRef.version === 2) {
+      activeEditor._recordRef.richText.region.x += dxPdf;
+      activeEditor._recordRef.richText.region.y += dyPdf;
+      for (const line of activeEditor._recordRef.richText.lines) line.baseline += dyPdf;
+      activeEditor._recordRef.revision += 1;
+    } else {
+      activeEditor._recordRef.pdfX += dxPdf;
+      activeEditor._recordRef.pdfY += dyPdf;
+    }
     reRenderAddedText(activeEditor._recordRef.page);
   } else {
     // Existing-text session: coords are read from activeEditor on commit.
@@ -1783,44 +1888,7 @@ function removeTextEditRecord(rec) {
   if (!doc || !doc.textEdits) return;
   const index = doc.textEdits.findIndex(e => e.id === rec.id);
   if (index === -1) return;
-  execute({ type: 'removeTextEdit', textEdit: { ...rec }, index });
+  execute({ type: 'removeTextEdit', textEdit: structuredClone(rec), index });
   markDocumentModified();
   reRenderAddedText(rec.page);
-}
-
-// Cover existing PDF text with an empty replacement edit (deletes the text).
-function coverExistingText(ed) {
-  const { block, pageNum, originalText, pdfX, pdfY, pdfWidth, fontSize, lineSpacing, numOriginalLines, styleState } = ed;
-  if (!originalText) return;
-  const st = styleState || {};
-  const doc = getActiveDocument();
-  if (!doc) return;
-
-  const editRecord = {
-    id: Date.now() + Math.random().toString(36).substr(2, 9),
-    page: pageNum,
-    originalText,
-    newText: '',
-    pdfX, pdfY, pdfWidth,
-    fontSize: st.size != null ? st.size : fontSize,
-    lineSpacing,
-    numOriginalLines,
-    fontFamily: toStandardFontName(
-      st.family != null ? st.family : (block.lineData[0].actualFontName || block.lineData[0].fontFamily),
-      st.bold || false, st.italic || false
-    ),
-    loadedFontName: '',
-    pdfFontName: block.lineData[0].pdfFontName || '',
-    color: st.color != null ? st.color : (block.lineData[0].color || '#000000'),
-    originalSpanTexts: block.lineData.map(ld => ld.spans.map(s => s.textContent)),
-  };
-
-  if (!doc.textEdits) doc.textEdits = [];
-  doc.textEdits.push(editRecord);
-  // Blank the covered spans in the text layer.
-  for (const ld of block.lineData) for (const s of ld.spans) s.textContent = '';
-  execute({ type: 'addTextEdit', textEdit: { ...editRecord } });
-  markDocumentModified();
-  if (getActiveDocument()?.viewMode === 'continuous') redrawContinuous();
-  else redrawAnnotations();
 }

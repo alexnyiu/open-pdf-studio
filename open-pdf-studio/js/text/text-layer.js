@@ -3,6 +3,7 @@ import { isTauri, invoke } from '../core/platform.js';
 import * as pdfjsLib from 'pdfjs-dist';
 import { resolveTextEditPageGeometry } from './text-edit-appearance.js';
 import { assessPdfJsTextContent } from '../ocr/existing-text.js';
+import { projectTextEditRecord } from './rich-text.js';
 import {
   getPendingOcrTextItems,
   OPEN_PDF_STUDIO_OCR_OWNER,
@@ -666,7 +667,10 @@ export function injectSyntheticTextSpans(textLayerDiv, pageNum, pageWidth, pageH
   // Remove previously injected synthetic spans
   textLayerDiv.querySelectorAll('span[data-synthetic]').forEach(s => s.remove());
 
-  const addedEdits = doc.textEdits.filter(e => e.page === pageNum && e.originalText === '');
+  const addedEdits = doc.textEdits
+    .filter((entry) => entry.page === pageNum)
+    .map(projectTextEditRecord)
+    .filter((entry) => entry.originalText === '');
   if (addedEdits.length === 0) return;
 
   // Create a temporary canvas for text measurement (--scale-x computation)

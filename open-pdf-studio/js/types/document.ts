@@ -1,6 +1,7 @@
 import type { Annotation } from './annotation.js';
 import type { DocumentOcrState } from './ocr.js';
 import type { ScannedTextEditStateV1 } from './scanned-text-edit.js';
+import type { OwnedTextEditManifestV2, TextEditRecordV2 } from './rich-text.js';
 
 export interface MeasureScale {
   pixelsPerUnit: number;
@@ -9,10 +10,22 @@ export interface MeasureScale {
   scaleRatio: number;
 }
 
-export interface TextEdit {
+/** Legacy flat text edit. Load boundaries migrate safe records to V2. */
+export interface LegacyTextEdit {
+  id?: string;
   page: number;
-  spans: any[];
-  original: any;
+  originalText?: string;
+  newText?: string;
+  pdfX?: number;
+  pdfY?: number;
+  pdfWidth?: number;
+  fontSize?: number;
+  lineSpacing?: number;
+  fontFamily?: string;
+  color?: string;
+  fontUnderline?: boolean;
+  fontStrikethrough?: boolean;
+  [key: string]: unknown;
 }
 
 export interface Watermark {
@@ -60,7 +73,9 @@ export interface DocumentState {
   /** Boekweergave (issue #201): continuous met 2-pagina-spreads, pagina 1 rechts. */
   bookSpread?: boolean;
   annotations: Annotation[];
-  textEdits: TextEdit[];
+  textEdits: Array<TextEditRecordV2 | LegacyTextEdit>;
+  /** Application-owned rich text manifest. Unknown versions fail closed. */
+  textEditManifest?: OwnedTextEditManifestV2 | null;
   /** Unsaved searchable OCR and review state; never serialized as textEdits. */
   ocr: DocumentOcrState;
   /** Application-owned mutable scan repairs; never written into immutable OCR results. */

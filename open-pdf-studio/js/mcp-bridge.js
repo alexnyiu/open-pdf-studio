@@ -43,7 +43,7 @@ try { window.__consoleRing = CONSOLE_RING; } catch { /* noop */ }
 // Patterns the render pipeline uses: [render], [tile], [wheel-zoom],
 // [PERF], [pre-render], STALE markers. Adjust if more subsystems need
 // capture later.
-const CONSOLE_CAPTURE_RE = /\[render\]|\[tile\]|\[wheel-zoom\]|\[PERF\]|\[pre-render\]|\[thumb\]|\[bitmap-orch\]|\[tile-orch\]|\[prog\]|\[prog-guard\]|\[pbc\]|\[bo\]|STALE|JANK/;
+const CONSOLE_CAPTURE_RE = /\[render\]|\[tile\]|\[wheel-zoom\]|\[PERF\]|\[pre-render\]|\[thumb\]|\[bitmap-orch\]|\[tile-orch\]|\[prog\]|\[prog-guard\]|\[pbc\]|\[bo\]|\[ocr-cache\]|STALE|JANK/;
 
 function _captureConsole(level, args) {
   try {
@@ -160,6 +160,13 @@ async function handleOpenPdf(params) {
     } catch (e) {
       return { ok: false, error: `loadPDF: ${e?.message ?? e}` };
     }
+  }
+  if (!doc.pdfDoc) {
+    return {
+      ok: false,
+      code: doc._loadErrorCode ?? 'PDF_LOAD_FAILED',
+      error: doc._loadErrorMessage ?? 'PDF load failed safely',
+    };
   }
   const ready = await waitForActiveLoad(doc, 30000);
   if (!ready) return { ok: false, error: 'load timed out' };

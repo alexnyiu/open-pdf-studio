@@ -5,6 +5,7 @@
  */
 
 import { state, getActiveDocument } from '../core/state.js';
+import { projectTextEditRecord, replaceFirstRichTextMatch } from '../text/rich-text.js';
 import { invalidateTextCache } from './text-cache.js';
 import { extractPageText } from './text-extraction.js';
 
@@ -280,7 +281,7 @@ function findTextEditForMatch(doc, result) {
   if (!doc.textEdits) return null;
   return doc.textEdits.find(e => {
     if (e.page !== result.pageNum) return false;
-    return (e.newText || '').includes(result.matchText);
+    return projectTextEditRecord(e).newText.includes(result.matchText);
   }) || null;
 }
 
@@ -305,7 +306,19 @@ function replaceInAnnotation(doc, result, replaceText) {
 function replaceInTextEdit(doc, result, replaceText) {
   if (!doc.textEdits) return null;
   const edit = findTextEditForMatch(doc, result);
-  if (!edit || !edit.newText) return null;
+  if (!edit) return null;
+
+  if (edit.schema === 'open-pdf-studio.text-edit-record' && edit.version === 2) {
+    const oldText = projectTextEditRecord(edit).newText;
+    const replacement = replaceFirstRichTextMatch(edit.richText, result.matchText, replaceText, {
+      matchCase: state.search.matchCase,
+    });
+    if (!replacement) return null;
+    edit.richText = replacement;
+    edit.revision += 1;
+    return { type: 'textEdit', id: edit.id, oldText, newText: projectTextEditRecord(edit).newText };
+  }
+  if (!edit.newText) return null;
 
   const oldText = edit.newText;
   const matchText = result.matchText;

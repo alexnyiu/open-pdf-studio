@@ -29,6 +29,9 @@ export default function OcrProgressToast() {
   const collapsed = () => !!job() && !terminal() && ocrWorkflowCollapsed(job().jobId);
   const percentage = () => Math.max(0, Math.min(100, Math.round((job()?.progress ?? 0) * 100)));
   const stateName = () => cancelling() ? 'cancelling' : (job()?.currentPageState ?? 'queued');
+  const currentPageCacheState = () => job()?.pages.find(
+    (page) => page.pageNumber === job()?.currentPageNumber,
+  )?.cache;
   const stateLabel = () => t(`organize.ocrStates.${stateName()}`);
   const pageLabel = () => t('organize.ocrPage', {
     page: job()?.currentPageNumber ?? 1,
@@ -119,6 +122,10 @@ export default function OcrProgressToast() {
         class="ocr-progress-toast"
         classList={{ 'ocr-progress-collapsed': collapsed(), 'ocr-progress-terminal': terminal() }}
         data-job-id={job()?.jobId ?? undefined}
+        data-current-cache-state={currentPageCacheState() ?? undefined}
+        data-cache-states={job()?.pages.map(
+          (page) => `${page.pageNumber}:${page.cache ?? 'missing'}`,
+        ).join(',') ?? undefined}
         aria-labelledby="ocr-progress-title"
       >
         <div id="ocr-progress-title" class="ocr-progress-title">

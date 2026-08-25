@@ -44,7 +44,9 @@ fn packaged_save_and_save_as_reopen_identically_in_pdfium() {
     };
     let dll_dir = std::env::var("OPEN_PDF_STUDIO_TEST_DLL_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("../target/debug"));
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/macos-universal")
+        });
     init_pdfium(&dll_dir).expect("initialize application PDFium runtime");
 
     let baseline = load(&test_dir.join("source-baseline.pdf"));

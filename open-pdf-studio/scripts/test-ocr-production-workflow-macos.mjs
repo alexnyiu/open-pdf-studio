@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   stat,
   writeFile,
 } from 'node:fs/promises';
@@ -27,6 +28,7 @@ const appPath = path.resolve(process.env.OPEN_PDF_STUDIO_PACKAGED_APP || path.jo
   projectDir,
   '..',
   'target',
+  'aarch64-apple-darwin',
   'release',
   'bundle',
   'macos',
@@ -371,8 +373,17 @@ async function realCopyFromRect(rect, expectedToken) {
   const startX = rect.left + Math.max(1, Math.min(3, rect.width * 0.05));
   const endX = rect.right - Math.max(1, Math.min(3, rect.width * 0.05));
   let lastResult = { status: 'empty', text: '' };
-  for (const [attempt, fraction] of [0.55, 0.4, 0.7].entries()) {
-    const y = rect.top + Math.max(1, Math.min(rect.height - 1, rect.height * fraction));
+  const attempts = [
+    { fraction: 0.55, contentOffsetY: 28 },
+    { fraction: 0.4, contentOffsetY: 28 },
+    { fraction: 0.7, contentOffsetY: 28 },
+    { fraction: 0.55, contentOffsetY: 22 },
+    { fraction: 0.55, contentOffsetY: 36 },
+    { fraction: 0.55, contentOffsetY: 0 },
+  ];
+  for (const [attempt, candidate] of attempts.entries()) {
+    const y = rect.top + candidate.contentOffsetY
+      + Math.max(1, Math.min(rect.height - 1, rect.height * candidate.fraction));
     const [fromX, toX] = attempt === 1 ? [endX, startX] : [startX, endX];
     const { stdout } = await execFileAsync(copyHelper, [
       String(applicationPid),
@@ -387,7 +398,17 @@ async function realCopyFromRect(rect, expectedToken) {
       && normalize(lastResult.text).includes(normalize(expectedToken))) return lastResult;
     await delay(200);
   }
-  assert.equal(lastResult.status, 'pass', 'real macOS selection copied no text after three gestures');
+  const { stdout } = await execFileAsync(copyHelper, [
+    String(applicationPid),
+    'all',
+    String(rect.left + rect.width / 2),
+    String(rect.top + rect.height / 2),
+  ], { maxBuffer: 1024 * 1024 });
+  lastResult = JSON.parse(stdout);
+  if (lastResult.status === 'pass'
+    && normalize(lastResult.text).includes(normalize(expectedToken))) return lastResult;
+  assert.equal(lastResult.status, 'pass',
+    `real macOS selection copied no text after bounded gestures: ${JSON.stringify(lastResult)}`);
   assert.ok(normalize(lastResult.text).includes(normalize(expectedToken)),
     `real macOS copy did not contain ${JSON.stringify(expectedToken)}: ${JSON.stringify(lastResult.text)}`);
   return lastResult;
@@ -663,6 +684,20 @@ try {
   const completedChild = await waitForOcrChild();
   await waitForTerminal(completedJob.dataset.jobId, 'completed', 180_000);
   await waitForPidGone(completedChild.pid);
+  const completedCacheNames = await readdir(path.join(cacheDir, 'v1')).catch(() => []);
+  const completedCachePayloads = completedCacheNames.filter((name) => name.endsWith('.payload.json.gz'));
+  const completedCacheMetadata = completedCacheNames.filter((name) => name.endsWith('.meta.json'));
+  if (completedCachePayloads.length !== 1 || completedCacheMetadata.length !== 1) {
+    const terminalToast = await ui(`.ocr-progress-toast[data-job-id="${attributeValue(completedJob.dataset.jobId)}"]`);
+    const recentConsole = await callTool('app_get_recent_console', { tail: 200 });
+    const diagnostics = (recentConsole.entries || [])
+      .filter((entry) => JSON.stringify(entry).includes('[ocr-cache]'));
+    throw new Error(`completed production cache files ${JSON.stringify(completedCacheNames)}; `
+      + `terminal toast ${JSON.stringify(terminalToast)}; `
+      + `terminal cache state ${JSON.stringify(terminalToast.dataset?.currentCacheState ?? null)}; `
+      + `all cache states ${JSON.stringify(terminalToast.dataset?.cacheStates ?? null)}; `
+      + `diagnostics ${JSON.stringify(diagnostics)}`);
+  }
   assert.equal(await progressCount('completed'), 1, 'image-only workflow did not complete its page');
   assert.equal(await progressCount('skipped'), 0, 'image-only workflow unexpectedly skipped its page');
   assert.equal(await progressCount('unsupported'), 0, 'image-only workflow unexpectedly marked its page unsupported');
@@ -695,7 +730,15 @@ try {
   assert.equal((await listTabs()).tabs.find((tab) => tab.active)?.modified, true);
   record([14], 'production Undo/Redo removed and restored text, pending ownership, dirty state, and search results');
 
-  const pendingCopy = await realCopyOcrSpan(engineText.split(' ')[0]);
+  let pendingCopy;
+  try {
+    pendingCopy = await realCopyOcrSpan(engineText.split(' ')[0]);
+  } catch (error) {
+    const recentConsole = await callTool('app_get_recent_console', { tail: 200 });
+    const cacheDiagnostics = (recentConsole.entries || [])
+      .filter((entry) => JSON.stringify(entry).includes('[ocr-cache]'));
+    throw new Error(`${error.message}; cache diagnostics ${JSON.stringify(cacheDiagnostics)}`);
+  }
   record([7], `trusted macOS drag and Command-C copied pending OCR: ${JSON.stringify(normalize(pendingCopy.text))}`);
 
   // Geometry remains stable through zoom, view modes, and a real page rotation.

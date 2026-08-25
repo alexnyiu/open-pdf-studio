@@ -1,0 +1,214 @@
+{
+  "contract": "open-pdf-studio.ocr.release-qualification-corpus",
+  "schemaVersion": 1,
+  "license": "CC0-1.0",
+  "generatedArtifactsCommitted": false,
+  "longRun": {
+    "pageCount": 100,
+    "files": {
+      "complete": "production-100-page-complete.pdf",
+      "cancellation": "production-100-page-cancellation.pdf"
+    },
+    "defaultFixtureId": "lower-resolution",
+    "samplePages": [
+      {
+        "pageNumber": 1,
+        "fixtureId": "clean-300dpi",
+        "searchText": "OPEN PDF STUDIO"
+      },
+      {
+        "pageNumber": 50,
+        "fixtureId": "punctuation-unicode",
+        "searchText": "Café naïve façade"
+      },
+      {
+        "pageNumber": 100,
+        "fixtureId": "forms-numeric",
+        "searchText": "INVOICE FORM 2026-0816"
+      }
+    ],
+    "bounds": {
+      "maxInputBytes": 16777216,
+      "maxPixelsPerPage": 16000000,
+      "maxPages": 100,
+      "maxObjects": 1000,
+      "timeoutMs": 1800000,
+      "settledMemoryDeltaBytes": 33554432
+    },
+    "expectedCleanup": [
+      "no-surviving-ocr-child",
+      "no-partial-owned-stream",
+      "no-temporary-job-files"
+    ]
+  },
+  "adversarialCases": [
+    {
+      "id": "extreme-declared-page-dimensions",
+      "kind": "pdf-production",
+      "file": "extreme-declared-page-dimensions.pdf",
+      "expectedResult": "failed-safely",
+      "bounds": { "maxInputBytes": 65536, "maxPixels": 16000000, "maxPages": 1, "maxObjects": 8, "timeoutMs": 15000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry", "no-temporary-job-files"]
+    },
+    {
+      "id": "excessive-raster-pixel-count",
+      "kind": "pdf-production",
+      "file": "excessive-raster-pixel-count.pdf",
+      "expectedResult": "failed-safely",
+      "bounds": { "maxInputBytes": 65536, "maxPixels": 16000000, "maxPages": 1, "maxObjects": 8, "timeoutMs": 15000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry", "no-temporary-job-files"]
+    },
+    {
+      "id": "oversized-page-side",
+      "kind": "pdf-production",
+      "file": "oversized-page-side.pdf",
+      "expectedResult": "failed-safely",
+      "bounds": { "maxInputBytes": 65536, "maxPixels": 16000000, "maxPages": 1, "maxObjects": 8, "timeoutMs": 15000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry", "no-temporary-job-files"]
+    },
+    {
+      "id": "excessive-declared-page-count",
+      "kind": "pdf-parser",
+      "file": "excessive-declared-page-count.pdf",
+      "expectedResult": "rejected",
+      "bounds": { "maxInputBytes": 1048576, "maxPixels": 0, "maxPages": 100000, "maxObjects": 8, "timeoutMs": 5000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry"]
+    },
+    {
+      "id": "malformed-xref",
+      "kind": "pdf-parser",
+      "file": "malformed-xref.pdf",
+      "expectedResult": "bounded-completion",
+      "bounds": { "maxInputBytes": 65536, "maxPixels": 0, "maxPages": 1, "maxObjects": 8, "timeoutMs": 5000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry"]
+    },
+    {
+      "id": "truncated-pdf",
+      "kind": "pdf-parser",
+      "file": "truncated-pdf.pdf",
+      "expectedResult": "failed-safely",
+      "bounds": { "maxInputBytes": 65536, "maxPixels": 0, "maxPages": 1, "maxObjects": 8, "timeoutMs": 5000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry"]
+    },
+    {
+      "id": "invalid-object-reference",
+      "kind": "pdf-parser",
+      "file": "invalid-object-reference.pdf",
+      "expectedResult": "bounded-completion",
+      "bounds": { "maxInputBytes": 65536, "maxPixels": 0, "maxPages": 1, "maxObjects": 8, "timeoutMs": 5000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry"]
+    },
+    {
+      "id": "malformed-stream",
+      "kind": "pdf-parser",
+      "file": "malformed-stream.pdf",
+      "expectedResult": "bounded-completion",
+      "bounds": { "maxInputBytes": 65536, "maxPixels": 0, "maxPages": 1, "maxObjects": 8, "timeoutMs": 5000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry"]
+    },
+    {
+      "id": "oversized-compressed-content",
+      "kind": "pdf-parser",
+      "file": "oversized-compressed-content.pdf",
+      "expectedResult": "bounded-completion",
+      "bounds": { "maxInputBytes": 2097152, "maxPixels": 0, "maxPages": 1, "maxObjects": 8, "timeoutMs": 5000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry"]
+    },
+    {
+      "id": "high-decompression-expansion",
+      "kind": "pdf-parser",
+      "file": "high-decompression-expansion.pdf",
+      "expectedResult": "bounded-completion",
+      "bounds": { "maxInputBytes": 262144, "maxPixels": 0, "maxPages": 1, "maxObjects": 8, "timeoutMs": 5000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry"]
+    },
+    {
+      "id": "very-large-embedded-image",
+      "kind": "pdf-parser",
+      "file": "very-large-embedded-image.pdf",
+      "expectedResult": "bounded-completion",
+      "bounds": { "maxInputBytes": 2097152, "maxPixels": 16777216, "maxPages": 1, "maxObjects": 16, "timeoutMs": 10000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry"]
+    },
+    {
+      "id": "excessive-detector-candidates",
+      "kind": "ocr-postprocess",
+      "file": null,
+      "expectedResult": "rejected",
+      "bounds": { "maxInputBytes": 0, "maxPixels": 262144, "maxPages": 1, "maxObjects": 1001, "timeoutMs": 5000 },
+      "expectedCleanup": ["no-result", "no-cache-entry"]
+    },
+    {
+      "id": "dense-text-line-budget",
+      "kind": "ocr-result",
+      "file": null,
+      "expectedResult": "rejected",
+      "bounds": { "maxInputBytes": 16777217, "maxPixels": 16000000, "maxPages": 1, "maxObjects": 100001, "timeoutMs": 5000 },
+      "expectedCleanup": ["no-result", "no-cache-entry"]
+    },
+    {
+      "id": "ocr-result-size-limit",
+      "kind": "ocr-result",
+      "file": null,
+      "expectedResult": "rejected",
+      "bounds": { "maxInputBytes": 16777217, "maxPixels": 16000000, "maxPages": 1, "maxObjects": 1, "timeoutMs": 5000 },
+      "expectedCleanup": ["no-result", "no-cache-entry"]
+    },
+    {
+      "id": "oversized-unicode-text",
+      "kind": "ocr-result",
+      "file": null,
+      "expectedResult": "rejected",
+      "bounds": { "maxInputBytes": 8388610, "maxPixels": 16000000, "maxPages": 1, "maxObjects": 1, "timeoutMs": 5000 },
+      "expectedCleanup": ["no-result", "no-cache-entry"]
+    },
+    {
+      "id": "excessive-correction-payload",
+      "kind": "ocr-correction",
+      "file": null,
+      "expectedResult": "rejected",
+      "bounds": { "maxInputBytes": 32770, "maxPixels": 0, "maxPages": 1, "maxObjects": 1, "timeoutMs": 1000 },
+      "expectedCleanup": ["document-state-unchanged", "no-cache-entry"]
+    },
+    {
+      "id": "excessive-scanned-edit-payload",
+      "kind": "scanned-edit-state",
+      "file": null,
+      "expectedResult": "rejected",
+      "bounds": { "maxInputBytes": 67108865, "maxPixels": 16000000, "maxPages": 1, "maxObjects": 1, "timeoutMs": 5000 },
+      "expectedCleanup": ["document-state-unchanged", "no-owned-stream"]
+    },
+    {
+      "id": "repeated-malformed-pages",
+      "kind": "pdf-parser",
+      "file": "repeated-malformed-pages.pdf",
+      "expectedResult": "bounded-completion",
+      "bounds": { "maxInputBytes": 262144, "maxPixels": 0, "maxPages": 32, "maxObjects": 40, "timeoutMs": 5000 },
+      "expectedCleanup": ["original-unchanged", "no-owned-stream", "no-cache-entry"]
+    },
+    {
+      "id": "ocr-child-timeout",
+      "kind": "native-controller",
+      "file": null,
+      "expectedResult": "failed-safely",
+      "bounds": { "maxInputBytes": 0, "maxPixels": 1, "maxPages": 1, "maxObjects": 1, "timeoutMs": 1000 },
+      "expectedCleanup": ["child-reaped", "temporary-job-files-removed"]
+    },
+    {
+      "id": "pathological-input-cancellation",
+      "kind": "pdf-production-cancellation",
+      "file": "pathological-input-cancellation.pdf",
+      "expectedResult": "failed-safely",
+      "bounds": { "maxInputBytes": 8388608, "maxPixels": 16000000, "maxPages": 16, "maxObjects": 128, "timeoutMs": 120000 },
+      "expectedCleanup": ["child-reaped", "no-late-result", "temporary-job-files-removed"]
+    },
+    {
+      "id": "invalid-cache-result",
+      "kind": "ocr-cache",
+      "file": null,
+      "expectedResult": "rejected",
+      "bounds": { "maxInputBytes": 35651584, "maxPixels": 0, "maxPages": 1, "maxObjects": 1, "timeoutMs": 5000 },
+      "expectedCleanup": ["invalid-entry-removed", "no-result-applied"]
+    }
+  ]
+}

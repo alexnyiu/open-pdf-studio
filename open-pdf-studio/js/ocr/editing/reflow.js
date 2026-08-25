@@ -26,7 +26,7 @@ export const SCANNED_TEXT_REFLOW_SCOPE = 'approved-region-paragraph-reflow';
 export const SCANNED_TEXT_REFLOW_LAYOUT_MODE = 'paragraph-reflow';
 export const SCANNED_TEXT_REFLOW_FONT_URL = '/pdfjs/web/standard_fonts/LiberationSans-Regular.ttf';
 export const SCANNED_TEXT_REFLOW_FONT_NAME = 'Liberation Sans';
-export const SCANNED_TEXT_REFLOW_SHAPING = 'fontkit-liberation-sans-ltr-v1';
+export const SCANNED_TEXT_REFLOW_SHAPING = 'fontkit-liberation-ltr-v1';
 
 const VISIBLE_FONT_FAMILY = 'OpenPDFStudioOCRReflow';
 const SUPPORTED_SCRIPT = /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{Script=Common}\p{Script=Inherited}]$/u;

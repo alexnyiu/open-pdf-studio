@@ -159,24 +159,54 @@ jobs:
             --app "$appimage" \
             --report "$RUNNER_TEMP/ocr-phase-a-$RUNNER_OS-$RUNNER_ARCH.json"
 
-      - name: Build ad-hoc signed macOS app
+      - name: Pre-sign macOS PDFium runtime and sidecars for hardened runtime
+        if: matrix.platform == 'macos-26'
+        run: |
+          set -euo pipefail
+          codesign --force --sign - --options runtime --timestamp=none \
+            src-tauri/binaries/macos-universal/libpdfium.dylib
+          for worker in \
+            src-tauri/binaries/pdfium-worker-aarch64-apple-darwin \
+            src-tauri/binaries/pdfium-worker-x86_64-apple-darwin \
+            src-tauri/binaries/pdfium-worker-universal-apple-darwin; do
+            codesign --force --sign - --options runtime --timestamp=none \
+              --entitlements src-tauri/pdfium-worker.entitlements.plist "$worker"
+          done
+
+      - name: Build ad-hoc signed arm64 macOS app
         if: matrix.platform == 'macos-26'
         env:
           APPLE_SIGNING_IDENTITY: '-'
-        run: npm run tauri build -- --target universal-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: npm run tauri build -- --target aarch64-apple-darwin --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Verify and launch macOS app
         if: matrix.platform == 'macos-26'
         run: |
-          APP_PATH="../target/universal-apple-darwin/release/bundle/macos/Open PDF Studio.app"
+          APP_PATH="../target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           bash scripts/macos-startup-smoke.sh "$APP_PATH"
+
+      - name: Run macOS release-hardening artifact gate
+        if: matrix.platform == 'macos-26'
+        run: |
+          APP_PATH="../target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app"
+          node scripts/test-macos-release-hardening.mjs \
+            --app "$APP_PATH" \
+            --output "$RUNNER_TEMP/ocr-release-hardening-artifact.json"
+
+      - name: Run live macOS filesystem edge-case gate
+        if: matrix.platform == 'macos-26'
+        run: |
+          APP_PATH="../target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app"
+          node scripts/test-macos-filesystem-edge-cases.mjs \
+            --app "$APP_PATH" \
+            --output "$RUNNER_TEMP/ocr-release-hardening-filesystem.json"
 
       - name: Run OCR Phase A gate (macOS)
         if: matrix.platform == 'macos-26'
         shell: bash
         run: |
-          APP_BINARY="../target/universal-apple-darwin/release/bundle/macos/Open PDF Studio.app/Contents/MacOS/open-pdf-studio"
+          APP_BINARY="../target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app/Contents/MacOS/open-pdf-studio"
           node scripts/run-ocr-phase-a-gate.mjs \
             --app "$APP_BINARY" \
             --report "$RUNNER_TEMP/ocr-phase-a-$RUNNER_OS-$RUNNER_ARCH.json"
@@ -185,7 +215,7 @@ jobs:
         if: matrix.platform == 'macos-26'
         shell: bash
         run: |
-          APP_PATH="../target/universal-apple-darwin/release/bundle/macos/Open PDF Studio.app"
+          APP_PATH="../target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app"
           node scripts/evaluate-ocr-phase-a-macos-report.mjs \
             "$RUNNER_TEMP/ocr-phase-a-$RUNNER_OS-$RUNNER_ARCH.json" \
             --app "$APP_PATH" \
@@ -205,6 +235,16 @@ jobs:
         with:
           name: ocr-phase-a-macos-production-decision
           path: ${{ runner.temp }}/ocr-phase-a-macos-production-decision.json
+          if-no-files-found: error
+
+      - name: Upload macOS release-hardening evidence
+        if: always() && matrix.platform == 'macos-26'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-release-hardening-macos
+          path: |
+            ${{ runner.temp }}/ocr-release-hardening-artifact.json
+            ${{ runner.temp }}/ocr-release-hardening-filesystem.json
           if-no-files-found: error
 
   ocr-phase-a-production-gate:

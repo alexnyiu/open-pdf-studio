@@ -1,12 +1,12 @@
 import { state, createDocument, getActiveDocument, findDocumentByPath, clearSelection } from '../../core/state.js';
-import { renderPage, renderContinuous, clearPdfView } from '../../pdf/renderer.js';
+import { renderPage, renderContinuous, clearPdfView, clearBitmapJSCacheForFile } from '../../pdf/renderer.js';
 import { hideFormFieldsBar } from '../../pdf/form-layer.js';
 import { redrawAnnotations, redrawContinuous, updateQuickAccessButtons } from '../../annotations/rendering.js';
 import { updateAllStatus } from './status-bar.js';
 import { generateThumbnails, clearThumbnails, clearThumbnailCache, refreshActiveTab, refreshAllTabs, saveThumbnailScrollPosition } from '../panels/left-panel.js';
-import { cancelAnnotationLoading, hidePdfABar } from '../../pdf/loader.js';
+import { cancelAnnotationLoading, hidePdfABar, clearCachedPdfBytes } from '../../pdf/loader.js';
 import { savePDF } from '../../pdf/saver.js';
-import { unlockFile, lockFile, renameFile, fileExists } from '../../core/platform.js';
+import { unlockFile, lockFile, renameFile, fileExists, invoke, isTauri } from '../../core/platform.js';
 import { cancelPendingZoom } from '../setup/navigation-events.js';
 import { closeAllPopups } from '../../bridge.js';
 import { cancelOcrWorkflowDocument } from '../../ocr/workflow-service.js';
@@ -232,6 +232,30 @@ export async function closeTab(index, force = false) {
   // Release file lock so other apps can write to it again
   if (doc.filePath) {
     await unlockFile(doc.filePath);
+  }
+
+  // Release every path-owned PDF representation before dropping the final
+  // document reference. This is required for large-document close/reopen:
+  // otherwise PDF.js plus the native PDF/PDFium and bitmap caches retain the
+  // closed document alongside its replacement.
+  const closedPath = doc.filePath;
+  const closedPdfDocument = doc.pdfDoc;
+  doc.pdfDoc = null;
+  try {
+    await closedPdfDocument?.destroy?.();
+  } catch (error) {
+    console.warn('[tabs] PDF.js cleanup on close failed:', error);
+  }
+  if (closedPath) {
+    clearCachedPdfBytes(closedPath);
+    clearBitmapJSCacheForFile(closedPath);
+    if (isTauri()) {
+      try {
+        await invoke('invalidate_pdf_cache', { path: closedPath });
+      } catch (error) {
+        console.warn('[tabs] Native PDF cache cleanup on close failed:', error);
+      }
+    }
   }
 
   // Delete the temp backing file of an untitled (never-saved) blank doc.

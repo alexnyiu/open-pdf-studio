@@ -95,7 +95,9 @@ fn invisible_unicode_writer_preserves_pdfium_pixels_and_search_state() {
     };
     let dll_dir = std::env::var("OPEN_PDF_STUDIO_TEST_DLL_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("../target/debug"));
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries/macos-universal")
+        });
     init_pdfium(&dll_dir).expect("initialize application PDFium runtime");
 
     let baseline = load(&proof_dir.join("baseline.pdf"));

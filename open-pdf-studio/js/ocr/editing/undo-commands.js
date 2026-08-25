@@ -11,6 +11,7 @@ import {
   SCANNED_TEXT_FIXED_REGION_SCOPE,
   reviseFixedRegionMultilineContent,
 } from './fixed-region.js';
+import { withScannedRichText } from './rich-text-adapter.js';
 import {
   SCANNED_TEXT_REFLOW_LAYOUT_MODE,
   SCANNED_TEXT_REFLOW_SCOPE,
@@ -155,7 +156,7 @@ export async function reviseScannedTextEditForDocument(doc, selectionId, {
     : selection.content.scope === SCANNED_TEXT_FIXED_REGION_SCOPE
       ? reviseFixedRegionMultilineContent
       : reviseIsolatedSingleLineContent;
-  selection.content = await reviseContent({
+  selection.content = withScannedRichText(await reviseContent({
     page,
     selection,
     replacementText,
@@ -164,7 +165,7 @@ export async function reviseScannedTextEditForDocument(doc, selectionId, {
     parentRevision,
     renderVisiblePatch,
     reflowFontBytes,
-  });
+  }));
   selection.revision = revision;
   selection.ownership = {
     ...selection.ownership,

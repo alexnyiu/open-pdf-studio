@@ -844,7 +844,10 @@ async fn handle_tools_call(state: &AppState, params: &Value) -> Result<Value, (i
         "app_switch_tab"         => tool_app_request(state, "mcp:switch-tab",         &arguments, Duration::from_secs(15)).await,
         "app_close_tab"          => tool_app_request(state, "mcp:close-tab",          &arguments, Duration::from_secs(15)).await,
         "app_new_blank_pdf"      => tool_app_request(state, "mcp:new-blank-pdf",      &arguments, Duration::from_secs(60)).await,
-        "app_save_pdf"           => tool_app_request(state, "mcp:save-pdf",           &arguments, Duration::from_secs(120)).await,
+        // Large OCR-qualified documents can spend several minutes in the
+        // production writer and atomic-replacement proof. This is an MCP
+        // observer timeout only; it does not alter product save semantics.
+        "app_save_pdf"           => tool_app_request(state, "mcp:save-pdf",           &arguments, Duration::from_secs(600)).await,
         "app_set_view_mode"      => tool_app_request(state, "mcp:set-view-mode",      &arguments, Duration::from_secs(30)).await,
         "app_fit_page"           => tool_app_request(state, "mcp:fit-page",           &arguments, Duration::from_secs(15)).await,
         "app_fit_width"          => tool_app_request(state, "mcp:fit-width",          &arguments, Duration::from_secs(15)).await,

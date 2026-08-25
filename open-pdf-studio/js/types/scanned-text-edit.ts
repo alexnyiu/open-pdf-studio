@@ -4,6 +4,7 @@ import type {
   OcrFingerprint,
   OcrPageGeometry,
 } from './ocr.js';
+import type { RichTextDocumentV2 } from './rich-text.js';
 
 export interface ScannedTextEstimatedValue<T> {
   value: T;
@@ -35,6 +36,8 @@ export interface ScannedTextSingleLineContent {
     canonicalBaseline: OcrCoordinateBaseline;
   };
   replacementText: string;
+  /** Present on all newly created/revised records; optional only for V1 migration. */
+  richText?: RichTextDocumentV2;
   estimatedStyle: {
     fontClass: ScannedTextEstimatedValue<'serif' | 'sans-serif' | 'monospace'>;
     fontSize: ScannedTextEstimatedValue<number>;
@@ -102,11 +105,15 @@ export interface ScannedTextFixedRegionContent {
     };
   };
   replacementText: string;
+  /** Present on all newly created/revised records; optional only for V1 migration. */
+  richText?: RichTextDocumentV2;
   estimatedStyle: ScannedTextSingleLineContent['estimatedStyle'];
   layout: {
     fontName: string;
     direction: 'ltr';
-    shaping: 'pdf-lib-standard-font-winansi-v1' | 'fontkit-liberation-sans-ltr-v1';
+    shaping: 'pdf-lib-standard-font-winansi-v1'
+      | 'fontkit-liberation-sans-ltr-v1'
+      | 'fontkit-liberation-ltr-v1';
     glyphCoverage: 'complete';
     availableWidthPt: number;
     availableHeightPt: number;

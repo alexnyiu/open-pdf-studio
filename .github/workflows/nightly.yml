@@ -211,7 +211,7 @@ jobs:
 
       # Onderteken de dylib vóór het bundelen — zie release.yml voor de
       # onderbouwing (notarisatie keurt een onondertekende resource-dylib af).
-      - name: Sign libpdfium.dylib (macOS)
+      - name: Sign macOS PDFium runtime and sidecars
         if: matrix.target == 'macos'
         shell: bash
         env:
@@ -234,7 +234,22 @@ jobs:
           codesign --force --options runtime --timestamp \
             --sign "$APPLE_SIGNING_IDENTITY" \
             src-tauri/binaries/macos-universal/libpdfium.dylib
-          codesign -dv --verbose=2 src-tauri/binaries/macos-universal/libpdfium.dylib
+          for worker in \
+            src-tauri/binaries/pdfium-worker-aarch64-apple-darwin \
+            src-tauri/binaries/pdfium-worker-x86_64-apple-darwin \
+            src-tauri/binaries/pdfium-worker-universal-apple-darwin; do
+            codesign --force --options runtime --timestamp \
+              --entitlements src-tauri/pdfium-worker.entitlements.plist \
+              --sign "$APPLE_SIGNING_IDENTITY" "$worker"
+          done
+          codesign --verify --strict --verbose=2 \
+            src-tauri/binaries/macos-universal/libpdfium.dylib
+          for worker in \
+            src-tauri/binaries/pdfium-worker-aarch64-apple-darwin \
+            src-tauri/binaries/pdfium-worker-x86_64-apple-darwin \
+            src-tauri/binaries/pdfium-worker-universal-apple-darwin; do
+            codesign --verify --strict --verbose=2 "$worker"
+          done
           rm -f "$RUNNER_TEMP/dylib-cert.p12"
 
       - name: Write App Store Connect API key (macOS)
@@ -295,6 +310,20 @@ jobs:
           xcrun stapler validate "$APP_PATH"
           xcrun stapler validate "$DMG_PATH"
           bash scripts/macos-startup-smoke.sh "$APP_PATH"
+          node scripts/test-macos-release-hardening.mjs \
+            --app "$APP_PATH" \
+            --dmg "$DMG_PATH" \
+            --expected-app-architecture universal \
+            --require-distribution-trust \
+            --output "$RUNNER_TEMP/ocr-release-hardening-distribution.json"
+
+      - name: Upload macOS release-hardening evidence
+        if: always() && matrix.target == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-release-hardening-nightly
+          path: ${{ runner.temp }}/ocr-release-hardening-distribution.json
+          if-no-files-found: error
 
       - name: Build Tauri app (Windows user installer)
         if: matrix.target == 'windows-user'

@@ -1,4 +1,4 @@
-import { PDFName, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
+import { PDFDict, PDFName, PDFRawStream, decodePDFRawStream } from 'pdf-lib';
 
 // Convert hex color to RGB values (0-1 range)
 export function hexToRgb(hex) {
@@ -151,6 +151,27 @@ export function ensureAcroFormFonts(pdfDoc, context, usedFonts) {
       }
     }
   }
+}
+
+export function ensureAcroFormEmbeddedFont(pdfDoc, context, resourceName, fontRef) {
+  const catalog = context.lookup(context.trailerInfo.Root);
+  if (!catalog || !resourceName || !fontRef) return;
+  let acroForm = catalog.lookupMaybe(PDFName.of('AcroForm'), PDFDict);
+  if (!acroForm) {
+    acroForm = context.obj({ Fields: [] });
+    catalog.set(PDFName.of('AcroForm'), acroForm);
+  }
+  let resources = acroForm.lookupMaybe(PDFName.of('DR'), PDFDict);
+  if (!resources) {
+    resources = context.obj({});
+    acroForm.set(PDFName.of('DR'), resources);
+  }
+  let fonts = resources.lookupMaybe(PDFName.of('Font'), PDFDict);
+  if (!fonts) {
+    fonts = context.obj({});
+    resources.set(PDFName.of('Font'), fonts);
+  }
+  fonts.set(PDFName.of(resourceName), fontRef);
 }
 
 // Strip PDF/A conformance from XMP metadata so the saved file is not falsely

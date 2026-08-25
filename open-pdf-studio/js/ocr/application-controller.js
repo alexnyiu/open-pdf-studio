@@ -622,8 +622,10 @@ export class OcrApplicationController {
             );
             return;
           }
-        } catch {
+        } catch (error) {
           page.cache = 'error';
+          console.warn('[ocr-cache] validated cache lookup failed:',
+            error?.code ?? error?.message ?? 'unknown cache lookup error');
         }
         if (this.cancelCurrentAttempt(job, page, pageBefore)) return;
       } else {
@@ -732,10 +734,17 @@ export class OcrApplicationController {
       if (!await this.applyValidatedPage(job, page, result, pageGeometry, validatingMs, pageBefore)) return;
       if (job.options.useCache) {
         try {
-          await this.cache.put(cacheKey, result, pageGeometry, { documentId: document.id });
+          const cacheWrite = await this.cache.put(cacheKey, result, pageGeometry, { documentId: document.id });
+          if (cacheWrite?.stored !== true) {
+            throw Object.assign(new Error('validated OCR cache entry was not stored'), {
+              code: 'OCR_CACHE_NOT_STORED',
+            });
+          }
           page.cache = 'stored';
-        } catch {
+        } catch (error) {
           page.cache = 'write-failed';
+          console.warn('[ocr-cache] validated result was not stored:',
+            error?.code ?? error?.message ?? 'unknown cache write error');
         }
       }
       return;

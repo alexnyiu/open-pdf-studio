@@ -1,4 +1,5 @@
 // @ts-check
+import { projectTextEditRecord } from '../text/rich-text.js';
 
 /** @typedef {{pdfDoc: object, signature: string, value: unknown}} PageCacheEntry */
 
@@ -22,7 +23,9 @@ function scalar(value) {
 export function pageTextSignature(doc, pageNum) {
   const pageOcr = doc?.ocr?.pages?.[pageNum];
   const edits = (doc?.textEdits || [])
-    .filter((edit) => edit?.page === pageNum && edit?.originalText === '')
+    .filter((edit) => edit?.page === pageNum)
+    .map(projectTextEditRecord)
+    .filter((edit) => edit.originalText === '')
     .map((edit) => [
       scalar(edit.id), scalar(edit.newText), scalar(edit.pdfX), scalar(edit.pdfY),
       scalar(edit.fontSize), scalar(edit.lineSpacing),

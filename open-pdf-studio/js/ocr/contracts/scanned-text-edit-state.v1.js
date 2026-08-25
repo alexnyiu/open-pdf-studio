@@ -23,6 +23,10 @@ import {
   validateCoordinatePolygon,
   validateHomographyInverse,
 } from './geometry.js';
+import {
+  assertRichTextDocumentV2,
+  richTextToPlainText,
+} from '../../text/rich-text.js';
 import { validateOcrPageGeometryV1 } from './page-geometry.v1.js';
 
 export const SCANNED_TEXT_EDIT_STATE_CONTRACT = 'open-pdf-studio.scanned-text-edit-state';
@@ -710,7 +714,9 @@ function validateSingleLineLayout(value, path, issues) {
   ]), path, issues);
   validateString(value.fontName, `${path}.fontName`, issues, { nonEmpty: true, maxCodeUnits: 128 });
   if (value.direction !== 'ltr') issues.push(`${path}.direction must be ltr`);
-  if (value.shaping !== 'pdf-lib-standard-font-winansi-v1') issues.push(`${path}.shaping is unsupported`);
+  if (!['pdf-lib-standard-font-winansi-v1', 'fontkit-liberation-ltr-v1'].includes(value.shaping)) {
+    issues.push(`${path}.shaping is unsupported`);
+  }
   if (value.glyphCoverage !== 'complete') issues.push(`${path}.glyphCoverage must be complete`);
   validatePositiveInteger(value.encodedGlyphCount, `${path}.encodedGlyphCount`, issues);
   validateString(value.encodedText, `${path}.encodedText`, issues, { nonEmpty: true, maxCodeUnits: 16384 });
@@ -872,10 +878,10 @@ function validateFixedRegionLayout(value, path, issues, lineCount, scope) {
   ]), path, issues);
   validateString(value.fontName, `${path}.fontName`, issues, { nonEmpty: true, maxCodeUnits: 128 });
   if (value.direction !== 'ltr') issues.push(`${path}.direction must be ltr`);
-  const expectedShaping = scope === 'approved-region-paragraph-reflow'
-    ? 'fontkit-liberation-sans-ltr-v1'
-    : 'pdf-lib-standard-font-winansi-v1';
-  if (value.shaping !== expectedShaping) issues.push(`${path}.shaping is unsupported for ${scope}`);
+  const acceptedShaping = scope === 'approved-region-paragraph-reflow'
+    ? ['fontkit-liberation-sans-ltr-v1', 'fontkit-liberation-ltr-v1']
+    : ['pdf-lib-standard-font-winansi-v1', 'fontkit-liberation-ltr-v1'];
+  if (!acceptedShaping.includes(value.shaping)) issues.push(`${path}.shaping is unsupported for ${scope}`);
   if (value.glyphCoverage !== 'complete') issues.push(`${path}.glyphCoverage must be complete`);
   validatePositiveNumber(value.availableWidthPt, `${path}.availableWidthPt`, issues);
   validatePositiveNumber(value.availableHeightPt, `${path}.availableHeightPt`, issues);
@@ -895,10 +901,34 @@ function validateFixedRegionLayout(value, path, issues, lineCount, scope) {
   }
 }
 
+function validateScannedRichText(value, path, issues) {
+  // Optional for backward compatibility with already-persisted V1 OCR edit
+  // state. Every newly created/revised edit writes this V2 projection.
+  if (value.richText === undefined) return;
+  try {
+    assertRichTextDocumentV2(value.richText);
+    const richPlainText = value.scope === 'approved-region-paragraph-reflow'
+      ? value.richText.lines.map((line) => line.runs.map((run) => run.text).join('')).join(' ')
+      : richTextToPlainText(value.richText);
+    if (richPlainText !== value.replacementText) {
+      issues.push(`${path}.richText must equal replacementText`);
+    }
+    const layoutLines = Array.isArray(value.layout?.lines)
+      ? value.layout.lines.map((line) => line.text)
+      : [value.replacementText];
+    const richLines = value.richText.lines.map((line) => line.runs.map((run) => run.text).join(''));
+    if (JSON.stringify(richLines) !== JSON.stringify(layoutLines)) {
+      issues.push(`${path}.richText lines must match the visible and searchable layout`);
+    }
+  } catch (error) {
+    issues.push(`${path}.richText is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function validateFixedRegionContent(value, path, issues, selection, lineIds) {
   requireExactKeys(value, new Set([
     'scope', 'source', 'replacementText', 'estimatedStyle', 'layout', 'repairPatch',
-    'visibleReplacement', 'searchableText', 'undo',
+    'visibleReplacement', 'searchableText', 'undo', 'richText',
   ]), path, issues);
   if (!['fixed-region-multiline', 'approved-region-paragraph-reflow'].includes(value.scope)) {
     issues.push(`${path}.scope must be a supported owned region-edit scope`);
@@ -908,6 +938,7 @@ function validateFixedRegionContent(value, path, issues, selection, lineIds) {
   validateString(value.replacementText, `${path}.replacementText`, issues, { nonEmpty: true, maxCodeUnits: 4096 });
   validateEstimatedStyle(value.estimatedStyle, `${path}.estimatedStyle`, issues);
   validateFixedRegionLayout(value.layout, `${path}.layout`, issues, lineIds.size, value.scope);
+  validateScannedRichText(value, path, issues);
   const lineSeparator = value.scope === 'approved-region-paragraph-reflow' ? ' ' : '\n';
   if (Array.isArray(value.layout?.lines)
       && value.layout.lines.map((line) => line.text).join(lineSeparator) !== value.replacementText) {
@@ -992,7 +1023,7 @@ function validateSingleLineContent(value, path, issues, selection, lineIds) {
   }
   requireExactKeys(value, new Set([
     'scope', 'source', 'replacementText', 'estimatedStyle', 'layout', 'repairPatch',
-    'visibleReplacement', 'searchableText', 'undo',
+    'visibleReplacement', 'searchableText', 'undo', 'richText',
   ]), path, issues);
   if (value.scope !== 'isolated-horizontal-line') issues.push(`${path}.scope must be isolated-horizontal-line`);
   if (selection?.target?.kind !== 'line' || lineIds.size !== 1) issues.push(`${path} may exist only for one OCR line target`);
@@ -1003,6 +1034,7 @@ function validateSingleLineContent(value, path, issues, selection, lineIds) {
   }
   validateEstimatedStyle(value.estimatedStyle, `${path}.estimatedStyle`, issues);
   validateSingleLineLayout(value.layout, `${path}.layout`, issues);
+  validateScannedRichText(value, path, issues);
   validatePatch(value.repairPatch, `${path}.repairPatch`, issues);
   if (value.repairPatch?.sha256 !== selection?.repair?.repairedPatch?.sha256) {
     issues.push(`${path}.repairPatch must equal the owned background repair patch`);

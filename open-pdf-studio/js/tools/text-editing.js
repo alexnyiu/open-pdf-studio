@@ -9,11 +9,26 @@ import { injectSyntheticTextSpans } from '../text/text-layer.js';
 import { invertPageRotation, resolveTextEditPageGeometry } from '../text/text-edit-appearance.js';
 import { annotationCanvas } from '../ui/dom-elements.js';
 import { viewport as vpState } from '../pdf/pdf-viewport.js';
+import { showMessage } from '../solid/stores/dialogStore.js';
 import {
-  showTextEditOverlay, hideTextEditOverlay,
-  getTextEditValue as getTextValue, getTextEditHeightGrowth as getHeightGrowth,
+  showPdfTextEditor, hidePdfTextEditor,
+  getPdfEditorText as getTextValue, getPdfEditorRichText,
+  getPdfEditorFormatState,
+  applyPdfEditorRichTextFormat,
+  applyPdfEditorRichTextParagraphFormat,
   openStickyPopup,
 } from '../bridge.js';
+import {
+  DEFAULT_TEXT_FORMAT_CAPABILITIES,
+  createTextEditRecordV2,
+  richTextFromPlainText,
+  richTextToPlainText,
+} from '../text/rich-text.js';
+import {
+  proposeFontSubstitution,
+  resolvePackagedFace,
+  shapeRichTextDocument,
+} from '../text/font-catalog.js';
 
 // Start inline text editing for textbox/callout
 export function startTextEditing(annotation) {
@@ -28,7 +43,22 @@ export function startTextEditing(annotation) {
   }
 
   if (!['textbox', 'callout'].includes(annotation.type)) return;
-  if (annotation.locked) return;
+  if (annotation.locked || annotation.readOnly) return;
+
+  const sourceFamily = annotation.fontFamily || 'Arial';
+  let substitution = annotation.richTextSubstitution || null;
+  if (!annotation.richText && !/^liberation\s*(sans|serif|mono)/iu.test(sourceFamily)) {
+    const face = resolvePackagedFace(sourceFamily, annotation.fontBold, annotation.fontItalic);
+    if (!window.confirm(
+      `This annotation uses an unsupported font (${sourceFamily}). `
+      + `Editing requires the packaged substitute ${face.family}. Continue?`,
+    )) return;
+    substitution = {
+      ...proposeFontSubstitution(sourceFamily, annotation.fontBold, annotation.fontItalic),
+      approved: true,
+      approvedAt: new Date().toISOString(),
+    };
+  }
 
   // In de doorlopende weergave is het enkelpagina-canvas 0x0 op de
   // vensteroorsprong; de overlay moet daar tegen het canvas van de PAGINA
@@ -48,6 +78,7 @@ export function startTextEditing(annotation) {
   state.isEditingText = true;
   state.editingAnnotation = annotation;
   state._textEditSnapshot = cloneAnnotation(annotation);
+  state._textEditSubstitution = substitution;
 
   // Get canvas position
   const canvasRect = canvas.getBoundingClientRect();
@@ -136,39 +167,61 @@ export function startTextEditing(annotation) {
   styleObj['--text-offset'] = `${halfLeading}px`;
 
   const initialText = annotation.text || '';
+  const face = resolvePackagedFace(sourceFamily, annotation.fontBold, annotation.fontItalic);
+  const richTextDocument = annotation.richText || richTextFromPlainText(initialText, {
+    faceId: face.id,
+    size: annotation.fontSize || 14,
+    color: annotation.textColor || annotation.color || '#000000',
+    bold: annotation.fontBold === true,
+    italic: annotation.fontItalic === true,
+    underline: annotation.fontUnderline === true,
+    strikeout: annotation.fontStrikethrough === true,
+    baselineAdvance: (annotation.fontSize || 14) * (annotation.lineSpacing || 1.2),
+    alignment: annotation.textAlign || 'left',
+  }, {
+    x: annotation.x,
+    y: annotation.y,
+    width: annotation.width || 150,
+    height: annotation.height || 50,
+    rotation: annotation.rotation || 0,
+    baseline: annotation.y + (annotation.fontSize || 14),
+    baselineDirection: 'increasing-y',
+  });
 
   // Commit function: update annotation and refresh display
-  const commitFn = (newText) => {
+  const commitFn = () => {
     if (!state.isEditingText || !state.editingAnnotation) return;
 
     const ann = state.editingAnnotation;
-    ann.text = newText;
+    const richDraft = getPdfEditorRichText() || richTextDocument;
+    ann.richText = richDraft;
+    ann.richTextSubstitution = substitution;
+    ann.textFormatCapabilities = DEFAULT_TEXT_FORMAT_CAPABILITIES;
+    ann.text = richTextToPlainText(richDraft);
+    const primary = richDraft.lines[0]?.runs[0];
+    if (primary) {
+      ann.fontFamily = primary.faceId.includes('mono') ? 'Liberation Mono'
+        : primary.faceId.includes('serif') ? 'Liberation Serif' : 'Liberation Sans';
+      ann.fontSize = primary.size;
+      ann.textColor = primary.color;
+      ann.fontBold = primary.bold;
+      ann.fontItalic = primary.italic;
+      ann.fontUnderline = primary.underline;
+      ann.fontStrikethrough = primary.strikeout;
+    }
+    ann.textAlign = richDraft.lines[0]?.alignment || ann.textAlign || 'left';
     ann.modifiedAt = new Date().toISOString();
 
     // Apply auto-grown height back to annotation
-    const growth = getHeightGrowth();
-    if (growth > 0) {
-      const commitDoc = getActiveDocument();
-      const commitScale = commitDoc?.scale || 1.5;
-      ann.height = (ann.height || 50) + growth / commitScale;
-    }
-
     if (state._textEditSnapshot && ann.id) {
-      // Formatting toggles (bold/italic/underline/textColor/fontFamily/fontSize)
-      // are recorded by their own panel-edit recordModify calls. The text-edit
-      // session should only record text + height changes, so align the snapshot's
-      // formatting fields with the current annotation before recording.
-      const snap = state._textEditSnapshot;
-      ['fontBold', 'fontItalic', 'fontUnderline', 'textColor', 'fontFamily', 'fontSize',
-       'fillColor', 'strokeColor', 'lineWidth', 'textAlign', 'lineSpacing', 'rotation', 'opacity']
-        .forEach(k => { if (k in ann) snap[k] = ann[k]; });
-      recordModify(ann.id, snap, ann);
+      recordModify(ann.id, state._textEditSnapshot, ann);
     }
 
     state.isEditingText = false;
     state.editingAnnotation = null;
     state.textEditElement = null;
     state._textEditSnapshot = null;
+    state._textEditSubstitution = null;
 
     if (getActiveDocument()?.viewMode === 'continuous') {
       redrawContinuous();
@@ -192,6 +245,7 @@ export function startTextEditing(annotation) {
     state.editingAnnotation = null;
     state.textEditElement = null;
     state._textEditSnapshot = null;
+    state._textEditSubstitution = null;
 
     if (getActiveDocument()?.viewMode === 'continuous') {
       redrawContinuous();
@@ -205,7 +259,59 @@ export function startTextEditing(annotation) {
     }
   };
 
-  showTextEditOverlay(styleObj, initialText, commitFn, cancelFn);
+  const keyDown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelFn();
+      hidePdfTextEditor();
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && ['b', 'i', 'u'].includes(event.key.toLowerCase())) {
+      event.preventDefault();
+      const key = event.key.toLowerCase();
+      const format = getPdfEditorFormatState();
+      if (key === 'b') {
+        const bold = format.bold !== true;
+        applyPdfEditorRichTextFormat({
+          bold,
+          faceId: resolvePackagedFace(format.faceId, bold, format.italic === true)?.id,
+        });
+      }
+      if (key === 'i') {
+        const italic = format.italic !== true;
+        applyPdfEditorRichTextFormat({
+          italic,
+          faceId: resolvePackagedFace(format.faceId, format.bold === true, italic)?.id,
+        });
+      }
+      if (key === 'u') applyPdfEditorRichTextFormat({ underline: format.underline !== true });
+      return;
+    }
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      commitFn(getTextValue());
+      hidePdfTextEditor();
+    }
+  };
+  const blur = () => setTimeout(() => {
+    const activeElement = document.activeElement;
+    const propertiesRoot = document.getElementById('properties-panel-root');
+    if (activeElement && propertiesRoot?.contains(activeElement)) return;
+    if (state.isEditingText && state.editingAnnotation === annotation) {
+      commitFn();
+      hidePdfTextEditor();
+    }
+  }, 150);
+  showPdfTextEditor(styleObj, initialText, {
+    onKeyDown: keyDown,
+    onBlur: blur,
+    options: {
+      richTextDocument,
+      capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+      ariaLabel: `Edit formatted ${annotation.type} text`,
+    },
+  });
   state.textEditElement = true;
 }
 
@@ -216,36 +322,41 @@ export function finishTextEditing() {
   const annotation = state.editingAnnotation;
 
   // Get the current text value from the Solid store
-  const currentText = getTextValue();
-  annotation.text = currentText;
+  const richDraft = getPdfEditorRichText();
+  if (richDraft) {
+    annotation.richText = richDraft;
+    annotation.richTextSubstitution = state._textEditSubstitution || null;
+    annotation.text = richTextToPlainText(richDraft);
+    annotation.textFormatCapabilities = DEFAULT_TEXT_FORMAT_CAPABILITIES;
+    const primary = richDraft.lines[0]?.runs[0];
+    if (primary) {
+      annotation.fontFamily = primary.faceId.includes('mono') ? 'Liberation Mono'
+        : primary.faceId.includes('serif') ? 'Liberation Serif' : 'Liberation Sans';
+      annotation.fontSize = primary.size;
+      annotation.textColor = primary.color;
+      annotation.fontBold = primary.bold;
+      annotation.fontItalic = primary.italic;
+      annotation.fontUnderline = primary.underline;
+      annotation.fontStrikethrough = primary.strikeout;
+    }
+    annotation.textAlign = richDraft.lines[0]?.alignment || annotation.textAlign || 'left';
+  } else {
+    annotation.text = getTextValue();
+  }
   annotation.modifiedAt = new Date().toISOString();
 
-  // Apply auto-grown height back to annotation
-  const growth = getHeightGrowth();
-  if (growth > 0) {
-    const doc = getActiveDocument();
-    const finishScale = doc?.scale || 1.5;
-    annotation.height = (annotation.height || 50) + growth / finishScale;
-  }
-
   if (state._textEditSnapshot && annotation.id) {
-    // Align formatting fields with the current annotation so this recordModify
-    // only captures text/height changes — formatting toggles have their own
-    // recordModify entries from the property panel/keyboard shortcuts.
-    const snap = state._textEditSnapshot;
-    ['fontBold', 'fontItalic', 'fontUnderline', 'textColor', 'fontFamily', 'fontSize',
-     'fillColor', 'strokeColor', 'lineWidth', 'textAlign', 'lineSpacing', 'rotation', 'opacity']
-      .forEach(k => { if (k in annotation) snap[k] = annotation[k]; });
-    recordModify(annotation.id, snap, annotation);
+    recordModify(annotation.id, state._textEditSnapshot, annotation);
   }
 
-  hideTextEditOverlay();
+  hidePdfTextEditor();
 
   // Reset state
   state.isEditingText = false;
   state.editingAnnotation = null;
   state.textEditElement = null;
   state._textEditSnapshot = null;
+  state._textEditSubstitution = null;
 
   // Refresh display
   if (getActiveDocument()?.viewMode === 'continuous') {
@@ -258,6 +369,37 @@ export function finishTextEditing() {
   const _doc2 = getActiveDocument();
   if (_doc2 && _doc2.selectedAnnotation === annotation) {
     showProperties(annotation);
+  }
+}
+
+export function applyActiveAnnotationTextStyle(key, value) {
+  if (!state.isEditingText || !state.editingAnnotation) return false;
+  const current = getPdfEditorRichText()?.lines?.[0]?.runs?.[0];
+  switch (key) {
+    case 'fontFamily':
+      return applyPdfEditorRichTextFormat({
+        faceId: resolvePackagedFace(value, current?.bold, current?.italic)?.id,
+      });
+    case 'fontSize':
+    case 'textFontSize': return applyPdfEditorRichTextFormat({ size: Number(value) });
+    case 'textColor':
+    case 'color': return applyPdfEditorRichTextFormat({ color: value });
+    case 'fontBold': return applyPdfEditorRichTextFormat({
+      bold: Boolean(value),
+      faceId: resolvePackagedFace(current?.faceId, value, current?.italic)?.id,
+    });
+    case 'fontItalic': return applyPdfEditorRichTextFormat({
+      italic: Boolean(value),
+      faceId: resolvePackagedFace(current?.faceId, current?.bold, value)?.id,
+    });
+    case 'fontUnderline': return applyPdfEditorRichTextFormat({ underline: Boolean(value) });
+    case 'fontStrikethrough': return applyPdfEditorRichTextFormat({ strikeout: Boolean(value) });
+    case 'textAlign': return applyPdfEditorRichTextParagraphFormat('alignment', value);
+    case 'lineSpacing': {
+      const size = current?.size || 14;
+      return applyPdfEditorRichTextParagraphFormat('baselineAdvance', Number(value) * size);
+    }
+    default: return false;
   }
 }
 
@@ -325,29 +467,64 @@ export async function addTextAnnotation(x, y, pageNum, canvasEl) {
   }
 
   const fontSize = result.fontSize || 16;
-
-  const editRecord = {
-    id: Date.now() + Math.random().toString(36).substr(2, 9),
-    page,
-    originalText: '',
-    newText: result.text,
-    pdfX,
-    pdfY,
-    pdfWidth: 0,
-    fontSize,
-    lineSpacing: fontSize * 1.2,
-    numOriginalLines: 0,
-    fontFamily,
-    loadedFontName: '',
-    pdfFontName: '',
+  const sourceFamily = result.fontFamily || fontFamily;
+  const face = resolvePackagedFace(sourceFamily, isBold, isItalic);
+  let substitution = null;
+  if (!/^liberation\s*(sans|serif|mono)/iu.test(sourceFamily)) {
+    if (!window.confirm(
+      `New PDF text supports packaged fonts only. Use ${face.family} instead of ${sourceFamily}?`,
+    )) return;
+    substitution = {
+      ...proposeFontSubstitution(sourceFamily, isBold, isItalic),
+      approved: true,
+      approvedAt: new Date().toISOString(),
+    };
+  }
+  const lineSpacing = fontSize * 1.2;
+  const lines = String(result.text || '').split('\n');
+  const availableRegionWidth = Math.max(0, geometry.pageWidth - pdfX);
+  if (availableRegionWidth <= 0) return;
+  const richText = richTextFromPlainText(result.text, {
+    faceId: face.id,
+    size: fontSize,
     color: result.color || '#000000',
-    originalSpanTexts: []
-  };
+    bold: isBold,
+    italic: isItalic,
+    underline: result.fontUnderline === true,
+    strikeout: result.fontStrikethrough === true,
+    baselineAdvance: lineSpacing,
+  }, {
+    x: pdfX,
+    y: pdfY - (lines.length - 1) * lineSpacing - fontSize * 0.3,
+    width: availableRegionWidth,
+    height: (lines.length - 1) * lineSpacing + fontSize * 1.3,
+    baseline: pdfY,
+    rotation: geometry.rotation,
+  });
+  let shapedLayout;
+  try {
+    shapedLayout = await shapeRichTextDocument(richText);
+  } catch (error) {
+    showMessage(`Text shaping failed: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+  if (shapedLayout.overflow) {
+    showMessage(`Text cannot remain inside the page region: ${shapedLayout.rejectionReasons.join('; ')}`);
+    return;
+  }
+  richText.lines = shapedLayout.lines;
+  richText.region.width = shapedLayout.width;
+  const editRecord = createTextEditRecordV2({
+    id: Date.now() + Math.random().toString(36).slice(2, 11),
+    page,
+    richText,
+    substitution,
+  });
 
   if (doc) {
     if (!doc.textEdits) doc.textEdits = [];
     doc.textEdits.push(editRecord);
-    execute({ type: 'addTextEdit', textEdit: { ...editRecord } });
+    execute({ type: 'addTextEdit', textEdit: structuredClone(editRecord) });
     markDocumentModified();
   }
 

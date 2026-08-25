@@ -13,6 +13,7 @@ import {
   getCachedBitmap,
 } from './page-bitmap-cache.js';
 import { tileCoversViewport } from './tile-coverage.js';
+import { canvasBackingDimensions, normalizedCanvasDpr } from './canvas-dpr.js';
 
 // ─── Viewport State (singleton via window to survive HMR/dynamic imports) ───
 if (!window.__pdfViewport) {
@@ -96,7 +97,7 @@ export function destroyViewport() {
 // is multiplied so the canvas pixel grid matches the screen pixel grid, giving
 // crisp rendering on HiDPI displays. CSS dimensions stay logical-px so all
 // existing coordinate math (mouse, panning, zoom) keeps working unchanged.
-function _getDpr() { return window.devicePixelRatio || 1; }
+function _getDpr() { return normalizedCanvasDpr(window.devicePixelRatio); }
 
 function _resizeCanvas() {
   if (!_canvas) return;
@@ -105,8 +106,7 @@ function _resizeCanvas() {
   const w = container.clientWidth;
   const h = container.clientHeight;
   const dpr = _getDpr();
-  const bw = Math.round(w * dpr);
-  const bh = Math.round(h * dpr);
+  const { width: bw, height: bh } = canvasBackingDimensions(w, h, dpr);
   if (_canvas.width !== bw || _canvas.height !== bh) {
     // Re-anchor: capture the world (PDF-space) point currently at the canvas
     // center BEFORE resizing, then restore it AFTER.
@@ -125,18 +125,22 @@ function _resizeCanvas() {
     _canvas.style.width = w + 'px';
     _canvas.style.height = h + 'px';
 
-    // Annotation + highlight canvases stay in CSS-pixel backing for now (existing
-    // coordinate math uses canvas.width as CSS pixels). The PDF canvas is the only
-    // one that needs HiDPI backing for crisp rendering.
+    // Every visible overlay uses the same device-pixel backing as the PDF.
+    // Layout and hit testing remain in CSS pixels; redrawAnnotations folds DPR
+    // into its transform exactly once.
     const ann = container.querySelector('.annotation-canvas, #annotation-canvas');
-    if (ann && (ann.width !== w || ann.height !== h)) {
-      ann.width = w;
-      ann.height = h;
+    if (ann && (ann.width !== bw || ann.height !== bh)) {
+      ann.width = bw;
+      ann.height = bh;
+      ann.style.width = `${w}px`;
+      ann.style.height = `${h}px`;
     }
     const hl = container.querySelector('#text-highlight-canvas');
-    if (hl && (hl.width !== w || hl.height !== h)) {
-      hl.width = w;
-      hl.height = h;
+    if (hl && (hl.width !== bw || hl.height !== bh)) {
+      hl.width = bw;
+      hl.height = bh;
+      hl.style.width = `${w}px`;
+      hl.style.height = `${h}px`;
     }
 
     // When the user hasn't manually zoomed/panned (_anchorActive=false) the
@@ -851,15 +855,13 @@ function _render() {
   // Annotation overlay — sync with viewport transform
   const annCanvas = document.getElementById('annotation-canvas');
   if (annCanvas) {
-    // Keep annotation canvas same size as pdf canvas
-    if (annCanvas.width !== vpW || annCanvas.height !== vpH) {
-      annCanvas.width = vpW;
-      annCanvas.height = vpH;
+    const { width: overlayWidth, height: overlayHeight } = canvasBackingDimensions(vpW, vpH, dpr);
+    if (annCanvas.width !== overlayWidth || annCanvas.height !== overlayHeight) {
+      annCanvas.width = overlayWidth;
+      annCanvas.height = overlayHeight;
     }
-    // In vector mode: annotation canvas must match PDF canvas exactly (no DPR scaling)
-    // Remove any legacy DPR-based CSS sizing from setupCanvasHiDPI()
-    annCanvas.style.width = '';
-    annCanvas.style.height = '';
+    annCanvas.style.width = `${vpW}px`;
+    annCanvas.style.height = `${vpH}px`;
     // Sync doc.scale so legacy code that reads it gets viewport zoom
     const doc = state.documents?.[state.activeDocumentIndex];
     if (doc) doc.scale = viewport.zoom;
@@ -867,12 +869,13 @@ function _render() {
   // Keep the text-highlight canvas perfectly mirrored to the annotation canvas
   const hlCanvas = document.getElementById('text-highlight-canvas');
   if (hlCanvas) {
-    if (hlCanvas.width !== vpW || hlCanvas.height !== vpH) {
-      hlCanvas.width = vpW;
-      hlCanvas.height = vpH;
+    const { width: overlayWidth, height: overlayHeight } = canvasBackingDimensions(vpW, vpH, dpr);
+    if (hlCanvas.width !== overlayWidth || hlCanvas.height !== overlayHeight) {
+      hlCanvas.width = overlayWidth;
+      hlCanvas.height = overlayHeight;
     }
-    hlCanvas.style.width = '';
-    hlCanvas.style.height = '';
+    hlCanvas.style.width = `${vpW}px`;
+    hlCanvas.style.height = `${vpH}px`;
   }
   if (_annotationRedraw) {
     try { _annotationRedraw(); } catch {}

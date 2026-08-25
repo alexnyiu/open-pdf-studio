@@ -1054,6 +1054,20 @@ export function updateAnnotProp(key, value) {
     return;
   }
 
+  // Textbox/callout formatting is a draft operation while the shared rich
+  // editor is open. It must not mutate the annotation or document undo stack
+  // until the whole edit transaction commits.
+  if (state.isEditingText && state.editingAnnotation === currentAnnotation
+      && ['fontFamily', 'fontSize', 'textFontSize', 'textColor', 'color',
+        'fontBold', 'fontItalic', 'fontUnderline', 'fontStrikethrough',
+        'textAlign', 'lineSpacing'].includes(key)) {
+    setAnnotProps(key, value);
+    import('../../tools/text-editing.js')
+      .then((module) => module.applyActiveAnnotationTextStyle?.(key, value))
+      .catch(() => {});
+    return;
+  }
+
   // Special handling for locked toggle
   if (key === 'locked' && currentAnnotation.locked && value === false) {
     recordPropertyChange(currentAnnotation);

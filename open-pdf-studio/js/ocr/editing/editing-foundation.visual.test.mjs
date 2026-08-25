@@ -559,6 +559,9 @@ test('approved paragraph reflow remains synchronized, pixel-bounded, and idempot
   ]);
   const content = editedInspection.state.pages[0].selections[0].content;
   assert.equal(content.scope, 'approved-region-paragraph-reflow');
+  // The checked-in proof predates the shared 12-face shaper. Loading its
+  // explicit legacy engine tag verifies migration compatibility; newly
+  // generated paragraph records use fontkit-liberation-ltr-v1.
   assert.equal(content.layout.shaping, 'fontkit-liberation-sans-ltr-v1');
   assert.equal(content.layout.direction, 'ltr');
   assert.equal(content.layout.glyphCoverage, 'complete');

@@ -57,7 +57,7 @@ The destination is untouched while the candidate is built and checked.
 | Malformed PDF | Reject during policy inspection, writer load, or PDF.js/PDFium reopen before replacement. |
 | Out of disk space or quota | Return `OUT_OF_DISK_SPACE`, clean private files, and leave the original untouched. |
 
-The current release bundle is not App-Sandboxed, but the user-selected read/write entitlement and Tauri filesystem scope are both present. Live iCloud-provider and removable-volume hardware were not available for this run; their native failure classifications and fail-closed paths are covered by Rust tests, while local packaged Save, Save As, metadata preservation, rollback injection, and read-only failure were exercised directly.
+The current release bundle is not App-Sandboxed, but the user-selected read/write entitlement and Tauri filesystem scope are both present. A live iCloud-provider transaction and a disposable mounted APFS-volume transaction passed, including reopen, repeated save, atomic replacement, and original preservation. A live exFAT transaction remains unverified because this host could not create the disposable exFAT image; no non-atomic fallback or compatibility claim is made. Local packaged Save, Save As, metadata preservation, rollback injection, and read-only failure were also exercised directly.
 
 ## Verification evidence
 
@@ -67,7 +67,7 @@ The following evidence was run on macOS from the packaged production application
 |---|---|
 | Writer proof | Passed write, repeat, targeted removal, full removal, ownership, third-party preservation, Unicode, and deterministic order checks. Two consecutive runs produced the same 167,154-byte artifact with SHA-256 `e7f01dc9255255229929fed98cc3fd97358cfccb7c48c6ef48e309770a36b751`. |
 | `npm run test:ocr` | 123 passed, including production candidate, typed-state baseline, missing glyph, implicit/explicit direction, signed, encrypted, malformed, spoofed ownership, and PDF/A conversion cases. |
-| `npm run test:unit` | 87 passed. |
+| `npm run test:unit` | 90 passed. |
 | `npm run typecheck` | Passed. |
 | Rust safe-save unit tests | 8 passed: permissions/metadata behavior, in-place rollback, Save As rollback, concurrent destination preservation, storage/error classifications, candidate tamper rejection, protected-original alias rejection, and mandatory PDFium validation. |
 | Packaged macOS Save and Save As | Passed in-place Save, Save As, reopen, mode preservation, xattr preservation, candidate cleanup, and read-only original preservation. |
@@ -77,6 +77,6 @@ The following evidence was run on macOS from the packaged production application
 | Visible-pixel regression | PDFium at scale `2` reported zero changed pixels and zero channel delta. Poppler at 144 DPI produced page-identical SHA-256 hashes for source, packaged Save, and packaged Save As. |
 | `git diff --check` | Passed. A separate trailing-whitespace scan covered the untracked production files. |
 
-The release `.app` bundle was produced and used for packaged tests. The verification build was deliberately app-only, unsigned, and created with updater artifacts disabled; distribution signing, notarization, DMG creation, and updater publication are outside this phase.
+The release `.app` bundle was produced and used for packaged tests. The current qualification build is app-only, ad-hoc signed with hardened runtime, bottom-up minimal nested entitlements, and updater artifacts disabled. It is not Developer ID distribution signing evidence: notarization, stapling, Gatekeeper acceptance, and quarantine/download-style launch remain unverified until a credential-backed artifact passes those gates.
 
 MACOS PRODUCTION INVISIBLE WRITER AND SAFE SAVE GO

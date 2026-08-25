@@ -9,6 +9,10 @@ import { ifcCategoryForAnnotationType, ifcCategoryForParametric } from '../../so
 import { nenIfcForStamp } from '../../solid/data/nenIfcMap.js';
 import { STAVENREEKS_DEFAULTS } from '../../annotations/stavenreeks.js';
 import { syncTwoPointGeometry } from '../../symbols/two-point.js';
+import {
+  DEFAULT_TEXT_FORMAT_CAPABILITIES,
+  assertRichTextDocumentV2,
+} from '../../text/rich-text.js';
 
 // Convert PDF annotation to our format
 export async function convertPdfAnnotation(annot, pageNum, viewport, stampImageMap, annotColorMap) {
@@ -1011,6 +1015,15 @@ export async function convertPdfAnnotation(annot, pageNum, viewport, stampImageM
     }
 
     case 'FreeText': {
+      let ownedRichText = null;
+      let ownedRichTextInvalid = extraColors.richTextV2Invalid === true;
+      if (extraColors.richTextV2) {
+        try { ownedRichText = assertRichTextDocumentV2(extraColors.richTextV2); }
+        catch (_) {
+          ownedRichText = null;
+          ownedRichTextInvalid = true;
+        }
+      }
       // Extract font size, font family, bold/italic, and text color
       let fontSize = 14;
       let fontSizeFromPdf = false;
@@ -1259,6 +1272,13 @@ export async function convertPdfAnnotation(annot, pageNum, viewport, stampImageM
           lineSpacing: extraColors.lineSpacing || undefined,
           fontUnderline: fontUnderline,
           fontStrikethrough: fontStrikethrough,
+          ...(ownedRichText ? {
+            richText: ownedRichText,
+            textFormatCapabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+            richTextSubstitutionApproved: true,
+            textAlign: ['left', 'center', 'right'][extraColors.textAlignment] || ownedRichText.lines[0]?.alignment || 'left',
+          } : {}),
+          ...(ownedRichTextInvalid ? { readOnly: true } : {}),
           arrowX: clArrowVx,
           arrowY: clArrowVy,
           kneeX: clKneeVx,
@@ -1296,6 +1316,13 @@ export async function convertPdfAnnotation(annot, pageNum, viewport, stampImageM
         lineSpacing: extraColors.lineSpacing || undefined,
         fontUnderline: fontUnderline,
         fontStrikethrough: fontStrikethrough,
+        ...(ownedRichText ? {
+          richText: ownedRichText,
+          textFormatCapabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+          richTextSubstitutionApproved: true,
+          textAlign: ['left', 'center', 'right'][extraColors.textAlignment] || ownedRichText.lines[0]?.alignment || 'left',
+        } : {}),
+        ...(ownedRichTextInvalid ? { readOnly: true } : {}),
         ...(extraColors.borderCloudy ? {
           borderEffect: 'cloudy',
           ...(extraColors.cloudIntensity !== undefined ? { cloudIntensity: extraColors.cloudIntensity } : {})

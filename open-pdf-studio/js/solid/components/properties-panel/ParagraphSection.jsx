@@ -3,10 +3,13 @@ import { annotProps, sectionVis, updateAnnotProp } from '../../stores/properties
 import CollapsibleSection from './CollapsibleSection.jsx';
 import PrefComboBox from '../preferences/PrefComboBox.jsx';
 import { useTranslation } from '../../../i18n/useTranslation.js';
+import { mixedFormatState, richTextDocument } from '../../stores/pdfTextEditStore.js';
 
 export default function ParagraphSection() {
   const { t } = useTranslation('properties');
   const isLocked = () => annotProps.locked === true || annotProps.locked === 'mixed';
+  const alignment = () => richTextDocument()
+    ? (mixedFormatState().alignment ?? 'mixed') : annotProps.textAlign;
 
   return (
     <Show when={sectionVis.paragraph}>
@@ -15,7 +18,7 @@ export default function ParagraphSection() {
           <label>{t('paragraph.textAlignment')}</label>
           <div class="text-align-buttons">
             <button type="button"
-              class={`text-align-btn${annotProps.textAlign === 'left' ? ' active' : ''}`}
+              class={`text-align-btn${alignment() === 'left' ? ' active' : ''}${alignment() === 'mixed' ? ' mixed' : ''}`}
               title={t('paragraph.alignLeft')} disabled={isLocked()}
               onClick={() => updateAnnotProp('textAlign', 'left')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -23,7 +26,7 @@ export default function ParagraphSection() {
               </svg>
             </button>
             <button type="button"
-              class={`text-align-btn${annotProps.textAlign === 'center' ? ' active' : ''}`}
+              class={`text-align-btn${alignment() === 'center' ? ' active' : ''}${alignment() === 'mixed' ? ' mixed' : ''}`}
               title={t('paragraph.alignCenter')} disabled={isLocked()}
               onClick={() => updateAnnotProp('textAlign', 'center')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -31,7 +34,7 @@ export default function ParagraphSection() {
               </svg>
             </button>
             <button type="button"
-              class={`text-align-btn${annotProps.textAlign === 'right' ? ' active' : ''}`}
+              class={`text-align-btn${alignment() === 'right' ? ' active' : ''}${alignment() === 'mixed' ? ' mixed' : ''}`}
               title={t('paragraph.alignRight')} disabled={isLocked()}
               onClick={() => updateAnnotProp('textAlign', 'right')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

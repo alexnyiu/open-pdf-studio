@@ -1,8 +1,8 @@
 {
   "status": "pass",
   "platform": "darwin",
-  "packagedApp": "/Users/alexander/Personal Projects/open-pdf-studio/target/release/bundle/macos/Open PDF Studio.app",
-  "testDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-edit-single-line-zbQY6P",
+  "packagedApp": "/Users/alexander/Personal Projects/open-pdf-studio/target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app",
+  "testDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-edit-single-line-j9SAuH",
   "productionEntryPath": true,
   "syntheticStateInjection": false,
   "testOnlyEntryPoint": false,
@@ -36,5 +36,5 @@
       "googleChromePdfViewerCopy": "NEW TEXT"
     }
   },
-  "completedAt": "2026-08-21T06:20:06.740Z"
+  "completedAt": "2026-08-25T03:26:35.613Z"
 }

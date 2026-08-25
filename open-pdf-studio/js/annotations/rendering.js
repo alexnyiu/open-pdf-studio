@@ -33,6 +33,7 @@ import { drawSnapIndicator } from '../tools/snap-engine.js';
 import { drawImageAlignGuides } from '../tools/image-align-snap.js';
 import { getTemplate } from '../symbols/registry.js';
 import { hasFill } from './fill-utils.js';
+import { projectTextEditRecord } from '../text/rich-text.js';
 import { EDITABLE_NUMBER_COLOR, shouldHighlightNumbers } from './editable-numbers.js';
 // Side-effect: meldt de providers voor bewerkbare getallen aan
 // (stavenreeks, betonbalk, parametricSymbol).
@@ -40,6 +41,7 @@ import { labelHasNumericField } from './editable-numbers-providers.js';
 import { hiddenTypes as evHiddenTypes, halftoneTypes as evHalftoneTypes } from '../solid/stores/elementVisibilityStore.js';
 import { getPageRotationMatrix } from '../text/text-edit-appearance.js';
 import { rotatedRectAabb } from '../utils/math.js';
+import { overlayCanvasTransform, overlayVisibleBounds } from '../pdf/canvas-dpr.js';
 
 // Re-export everything that external code needs
 export { drawPolygonShape, drawCloudShape, buildPolygonPath, buildCloudPath } from './rendering/shapes.js';
@@ -2371,13 +2373,73 @@ export function drawAnnotation(ctx, annotation) {
   }
 }
 
-// Draw text edits (cover-and-replace) for a specific page
+function canvasFontForRichRun(run) {
+  const family = run.faceId.includes('mono') ? '"Liberation Mono", monospace'
+    : run.faceId.includes('serif') ? '"Liberation Serif", serif'
+      : '"Liberation Sans", sans-serif';
+  return `${run.italic ? 'italic ' : ''}${run.bold ? '700 ' : '400 '}${run.size}px ${family}`;
+}
+
+function richRunAdvance(ctx, run) {
+  return run.shaped?.advance ?? ctx.measureText(run.text).width;
+}
+
+function drawRichTextEdit(ctx, edit, pageHeight) {
+  const richText = edit.richText;
+  for (const line of richText.lines) {
+    const measured = line.runs.map((run) => {
+      ctx.font = canvasFontForRichRun(run);
+      return richRunAdvance(ctx, run);
+    });
+    const lineWidth = measured.reduce((sum, width) => sum + width, 0);
+    const alignmentOffset = line.alignment === 'center'
+      ? Math.max(0, (richText.region.width - lineWidth) / 2)
+      : line.alignment === 'right'
+        ? Math.max(0, richText.region.width - lineWidth)
+        : 0;
+    let cursorX = richText.region.x + alignmentOffset;
+    const baselineY = pageHeight - line.baseline;
+    for (let index = 0; index < line.runs.length; index += 1) {
+      const run = line.runs[index];
+      const advance = measured[index];
+      ctx.font = canvasFontForRichRun(run);
+      ctx.fillStyle = run.color;
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText(run.text, cursorX, baselineY);
+      if (run.text && (run.underline || run.strikeout)) {
+        const metrics = run.shaped?.metrics;
+        ctx.strokeStyle = run.color;
+        ctx.lineCap = 'butt';
+        const decoration = (position, thickness) => {
+          ctx.lineWidth = Math.max(0.25, thickness);
+          ctx.beginPath();
+          ctx.moveTo(cursorX, baselineY - position);
+          ctx.lineTo(cursorX + advance, baselineY - position);
+          ctx.stroke();
+        };
+        if (run.underline) {
+          decoration(metrics?.underlinePosition ?? -run.size * 0.1,
+            metrics?.underlineThickness ?? run.size * 0.06);
+        }
+        if (run.strikeout) {
+          decoration(metrics?.strikeoutPosition ?? run.size * 0.3,
+            metrics?.strikeoutThickness ?? run.size * 0.06);
+        }
+      }
+      cursorX += advance;
+    }
+  }
+}
+
+// Draw text edits for a specific page. V2 inserted records never use
+// page-colour cover rectangles; native source records stay read-only until
+// exact operator neutralization is available.
 // ctx is already scaled by state.scale, so coordinates are in unscaled page space
 function drawTextEdits(ctx, pageNum) {
   const doc = state.documents[state.activeDocumentIndex];
   if (!doc || !doc.textEdits || doc.textEdits.length === 0) return;
 
-  const pageEdits = doc.textEdits.filter(e => e.page === pageNum);
+  const pageEdits = doc.textEdits.filter(e => e.page === pageNum).map(projectTextEditRecord);
   if (pageEdits.length === 0) return;
 
   const canvasEl = ctx.canvas;
@@ -2393,6 +2455,10 @@ function drawTextEdits(ctx, pageNum) {
   ctx.transform(...getPageRotationMatrix(pageWidth, pageHeight, totalRotation));
 
   for (const edit of pageEdits) {
+    if (edit.record) {
+      drawRichTextEdit(ctx, edit, pageHeight);
+      continue;
+    }
     const fontSize = edit.fontSize;
     const ls = edit.lineSpacing || fontSize * 1.2;
     const numOrig = edit.numOriginalLines || 1;
@@ -2516,7 +2582,15 @@ export function redrawAnnotations(lightweight = false) {
   const vp = window.__pdfViewport;
   const _activeDoc = state.documents[state.activeDocumentIndex];
   const useViewport = vp && vp.active && _activeDoc?.filePath;
-  const effectiveScale = useViewport ? vp.zoom : scale * dpr;
+  const overlayTransform = overlayCanvasTransform({
+    viewportActive: useViewport,
+    zoom: vp?.zoom,
+    offsetX: vp?.offsetX,
+    offsetY: vp?.offsetY,
+    legacyScale: scale,
+    dpr,
+  });
+  const effectiveScale = overlayTransform.a;
   annotationCtx.save();
   if (textHighlightCtx) textHighlightCtx.save();
   if (useViewport) {
@@ -2524,8 +2598,16 @@ export function redrawAnnotations(lightweight = false) {
     // Page top-left on screen = (offsetX, offsetY).
     // App coord (ax, ay) → screen (ax*zoom + offsetX, ay*zoom + offsetY).
     // This is a simple scale + translate — no Y-flip needed for annotations.
-    annotationCtx.setTransform(vp.zoom, 0, 0, vp.zoom, vp.offsetX, vp.offsetY);
-    if (textHighlightCtx) textHighlightCtx.setTransform(vp.zoom, 0, 0, vp.zoom, vp.offsetX, vp.offsetY);
+    annotationCtx.setTransform(
+      overlayTransform.a, overlayTransform.b, overlayTransform.c,
+      overlayTransform.d, overlayTransform.e, overlayTransform.f,
+    );
+    if (textHighlightCtx) {
+      textHighlightCtx.setTransform(
+        overlayTransform.a, overlayTransform.b, overlayTransform.c,
+        overlayTransform.d, overlayTransform.e, overlayTransform.f,
+      );
+    }
   } else {
     // Legacy mode: simple scale from origin
     annotationCtx.scale(effectiveScale, effectiveScale);
@@ -2562,10 +2644,20 @@ export function redrawAnnotations(lightweight = false) {
     // Vector mode: visible area in app-coords = screen area mapped through inverse transform
     // Screen (0,0) → app (-offsetX/zoom, -offsetY/zoom)
     // Screen (canvasW, canvasH) → app ((canvasW-offsetX)/zoom, (canvasH-offsetY)/zoom)
-    vpX = -vp.offsetX / vp.zoom;
-    vpY = -vp.offsetY / vp.zoom;
-    vpW = annotationCanvas.width / vp.zoom;
-    vpH = annotationCanvas.height / vp.zoom;
+    const visible = overlayVisibleBounds({
+      backingWidth: annotationCanvas.width,
+      backingHeight: annotationCanvas.height,
+      viewportActive: true,
+      zoom: vp.zoom,
+      offsetX: vp.offsetX,
+      offsetY: vp.offsetY,
+      legacyScale: scale,
+      dpr,
+    });
+    vpX = visible.x;
+    vpY = visible.y;
+    vpW = visible.width;
+    vpH = visible.height;
     // Generous margin
     const margin = 200 / vp.zoom;
     vpX -= margin; vpY -= margin; vpW += margin * 2; vpH += margin * 2;

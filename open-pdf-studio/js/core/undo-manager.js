@@ -478,13 +478,13 @@ function applyUndo(cmd) {
     case 'removeTextEdit': {
       if (!doc.textEdits) doc.textEdits = [];
       const insertIdx = Math.min(cmd.index, doc.textEdits.length);
-      doc.textEdits.splice(insertIdx, 0, { ...cmd.textEdit });
+      doc.textEdits.splice(insertIdx, 0, clonePlainValue(cmd.textEdit));
       break;
     }
     case 'modifyTextEdit': {
       if (!doc.textEdits) doc.textEdits = [];
       const idx = doc.textEdits.findIndex(e => e.id === cmd.newTextEdit.id);
-      if (idx !== -1) doc.textEdits[idx] = { ...cmd.oldTextEdit };
+      if (idx !== -1) doc.textEdits[idx] = clonePlainValue(cmd.oldTextEdit);
       break;
     }
     case 'addWatermark': {
@@ -605,7 +605,7 @@ function applyRedo(cmd) {
     }
     case 'addTextEdit': {
       if (!doc.textEdits) doc.textEdits = [];
-      doc.textEdits.push({ ...cmd.textEdit });
+      doc.textEdits.push(clonePlainValue(cmd.textEdit));
       break;
     }
     case 'removeTextEdit': {
@@ -617,7 +617,7 @@ function applyRedo(cmd) {
     case 'modifyTextEdit': {
       if (!doc.textEdits) doc.textEdits = [];
       const idx = doc.textEdits.findIndex(e => e.id === cmd.oldTextEdit.id);
-      if (idx !== -1) doc.textEdits[idx] = { ...cmd.newTextEdit };
+      if (idx !== -1) doc.textEdits[idx] = clonePlainValue(cmd.newTextEdit);
       break;
     }
     case 'addWatermark': {

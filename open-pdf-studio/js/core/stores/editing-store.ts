@@ -1,12 +1,17 @@
 import { createMutable } from 'solid-js/store';
 import type { Annotation } from '../../types/annotation.js';
+import type { RichTextDocumentV2, TextFormatCapabilities } from '../../types/rich-text.js';
 
 export interface EditingState {
   isEditingText: boolean;
   editingAnnotation: Annotation | null;
   textEditElement: HTMLElement | null;
   isEditingPdfText: boolean;
-  pdfTextEditState: any;
+  pdfTextEditState: {
+    richText?: RichTextDocumentV2;
+    capabilities?: TextFormatCapabilities;
+    [key: string]: unknown;
+  } | null;
 }
 
 export const editingState = createMutable<EditingState>({

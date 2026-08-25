@@ -540,12 +540,11 @@ mod macos {
         })
     }
 
-    pub(super) fn clear(app: &tauri::AppHandle) -> Result<CacheMutationResult, String> {
-        let root = ensure_cache_root(app)?;
+    fn clear_root(root: &Path) -> Result<CacheMutationResult, String> {
         let mut digests = Vec::new();
         let mut temporary_files = Vec::new();
         let directory =
-            fs::read_dir(&root).map_err(|_| "OCR cache directory could not be read".to_string())?;
+            fs::read_dir(root).map_err(|_| "OCR cache directory could not be read".to_string())?;
         for entry in directory.flatten() {
             let name = entry.file_name();
             let Some(name) = name.to_str() else { continue };
@@ -562,7 +561,7 @@ mod macos {
         let mut removed_entries = 0;
         let mut removed_bytes = 0;
         for digest in digests {
-            let (removed, bytes) = remove_entry(&root, &digest);
+            let (removed, bytes) = remove_entry(root, &digest);
             removed_entries += removed;
             removed_bytes += bytes;
         }
@@ -572,8 +571,12 @@ mod macos {
         Ok(CacheMutationResult {
             removed_entries,
             removed_bytes,
-            total_bytes: total_cache_bytes(&root),
+            total_bytes: total_cache_bytes(root),
         })
+    }
+
+    pub(super) fn clear(app: &tauri::AppHandle) -> Result<CacheMutationResult, String> {
+        clear_root(&ensure_cache_root(app)?)
     }
 
     pub(super) fn document_fingerprint(path: String) -> Result<Fingerprint, String> {
@@ -710,6 +713,34 @@ mod macos {
             assert!(!payload_path(&root, &oldest).exists());
             assert!(payload_path(&root, &newest).exists());
             assert!(!payload_path(&root, &orphan).exists());
+            fs::remove_dir_all(&root).unwrap();
+        }
+
+        #[test]
+        fn cache_clear_removes_only_managed_application_data() {
+            let root = std::env::temp_dir().join(format!(
+                "open-pdf-studio-ocr-cache-clear-test-{}-{}",
+                std::process::id(),
+                TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir(&root).unwrap();
+            let digest = "f".repeat(64);
+            fs::write(payload_path(&root, &digest), b"payload").unwrap();
+            fs::write(metadata_path(&root, &digest), b"metadata").unwrap();
+            let temporary = root.join(".ocr-cache-123-456-789.tmp");
+            fs::write(&temporary, b"temporary").unwrap();
+            let unrelated = root.join("keep-user-file.txt");
+            fs::write(&unrelated, b"unrelated").unwrap();
+
+            let result = clear_root(&root).unwrap();
+
+            assert_eq!(result.removed_entries, 1);
+            assert_eq!(result.removed_bytes, 15);
+            assert_eq!(result.total_bytes, 0);
+            assert!(!payload_path(&root, &digest).exists());
+            assert!(!metadata_path(&root, &digest).exists());
+            assert!(!temporary.exists());
+            assert_eq!(fs::read(&unrelated).unwrap(), b"unrelated");
             fs::remove_dir_all(&root).unwrap();
         }
 

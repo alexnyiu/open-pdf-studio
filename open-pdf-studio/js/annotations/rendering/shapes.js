@@ -175,6 +175,9 @@ export function buildCloudPolylinePath(ctx, points, closed = true) {
 const DEFAULT_LINE_SPACING = 1.2;
 
 export function computeTextboxContentHeight(annotation) {
+  if (annotation.richText?.lines?.length) {
+    return Math.max(annotation.height || 0, annotation.richText.region?.height || 0);
+  }
   if (!annotation.text) return annotation.height || 50;
 
   const width = annotation.width || 150;
@@ -287,6 +290,10 @@ export function layoutTextboxForExport(annotation) {
 
 // Draw textbox content with word wrap
 export function drawTextboxContent(ctx, annotation, padding) {
+  if (annotation.richText?.lines?.length) {
+    drawRichTextboxContent(ctx, annotation, padding);
+    return;
+  }
   if (!annotation.text) return;
 
   const width = annotation.width || 150;
@@ -481,4 +488,69 @@ export function drawTextboxContent(ctx, annotation, padding) {
   }
   ctx.textBaseline = 'alphabetic'; // Reset
   ctx.direction = 'ltr'; // Reset base direction for subsequent draws
+}
+
+function richRunCssFamily(faceId) {
+  if (faceId.includes('mono')) return '"Liberation Mono", monospace';
+  if (faceId.includes('serif')) return '"Liberation Serif", serif';
+  return '"Liberation Sans", sans-serif';
+}
+
+export function drawRichTextboxContent(ctx, annotation, padding = annotation.lineWidth ?? 0) {
+  const document = annotation.richText;
+  if (!document?.lines?.length) return;
+  const width = annotation.width || document.region.width;
+  const height = annotation.height || document.region.height;
+  const contentWidth = Math.max(0, width - padding * 2);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(annotation.x, annotation.y, width, height);
+  ctx.clip();
+  ctx.textBaseline = 'alphabetic';
+  ctx.direction = 'ltr';
+
+  for (const line of document.lines) {
+    const measured = line.runs.map((run) => {
+      ctx.font = `${run.italic ? 'italic ' : ''}${run.bold ? '700 ' : '400 '}${run.size}px ${richRunCssFamily(run.faceId)}`;
+      return run.shaped?.advance || ctx.measureText(run.text).width;
+    });
+    const lineWidth = measured.reduce((sum, value) => sum + value, 0);
+    let cursorX = annotation.x + padding;
+    if (line.alignment === 'center') cursorX += (contentWidth - lineWidth) / 2;
+    else if (line.alignment === 'right') cursorX += contentWidth - lineWidth;
+    const baselineY = annotation.y + (line.baseline - document.region.y);
+
+    line.runs.forEach((run, index) => {
+      ctx.font = `${run.italic ? 'italic ' : ''}${run.bold ? '700 ' : '400 '}${run.size}px ${richRunCssFamily(run.faceId)}`;
+      ctx.fillStyle = run.color;
+      ctx.fillText(run.text, cursorX, baselineY);
+      const runWidth = measured[index];
+      const metrics = run.shaped?.metrics;
+      if (run.underline || run.strikeout) {
+        const sample = ctx.measureText('Mg');
+        ctx.strokeStyle = run.color;
+        ctx.lineCap = 'butt';
+        if (run.underline) {
+          ctx.lineWidth = metrics?.underlineThickness || Math.max(0.5, run.size / 16);
+          const y = metrics ? baselineY - metrics.underlinePosition
+            : baselineY + (sample.actualBoundingBoxDescent || run.size * 0.2) * 0.5;
+          ctx.beginPath();
+          ctx.moveTo(cursorX, y);
+          ctx.lineTo(cursorX + runWidth, y);
+          ctx.stroke();
+        }
+        if (run.strikeout) {
+          ctx.lineWidth = metrics?.strikeoutThickness || Math.max(0.5, run.size / 16);
+          const y = metrics ? baselineY - metrics.strikeoutPosition
+            : baselineY - (sample.actualBoundingBoxAscent || run.size * 0.8) * 0.35;
+          ctx.beginPath();
+          ctx.moveTo(cursorX, y);
+          ctx.lineTo(cursorX + runWidth, y);
+          ctx.stroke();
+        }
+      }
+      cursorX += runWidth;
+    });
+  }
+  ctx.restore();
 }

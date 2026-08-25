@@ -1,3 +1,9 @@
+import type {
+  FontSubstitution,
+  RichTextDocumentV2,
+  TextFormatCapabilities,
+} from './rich-text.js';
+
 export type AnnotationType =
   | 'highlight' | 'textHighlight' | 'textStrikethrough' | 'textUnderline'
   | 'draw' | 'line' | 'arrow' | 'box' | 'circle'
@@ -93,6 +99,10 @@ export interface TextboxAnnotation extends RectAnnotation {
   fontSize?: number;
   fontFamily?: string;
   leaders?: Leader[];
+  richText?: RichTextDocumentV2;
+  textFormatCapabilities?: TextFormatCapabilities;
+  richTextSubstitution?: FontSubstitution;
+  richTextSubstitutionApproved?: boolean;
 }
 
 export interface CalloutAnnotation extends RectAnnotation {
@@ -103,6 +113,10 @@ export interface CalloutAnnotation extends RectAnnotation {
   arrowY?: number;
   kneeX?: number;
   kneeY?: number;
+  richText?: RichTextDocumentV2;
+  textFormatCapabilities?: TextFormatCapabilities;
+  richTextSubstitution?: FontSubstitution;
+  richTextSubstitutionApproved?: boolean;
 }
 
 export interface CommentAnnotation extends AnnotationBase {
@@ -155,6 +169,10 @@ export type Annotation = AnnotationBase & {
   fontWeight?: string;
   fontStyle?: string;
   textAlign?: string;
+  richText?: RichTextDocumentV2;
+  textFormatCapabilities?: TextFormatCapabilities;
+  richTextSubstitution?: FontSubstitution;
+  richTextSubstitutionApproved?: boolean;
   // Appearance
   color?: string;
   fillColor?: string;

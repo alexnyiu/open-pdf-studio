@@ -1,4 +1,5 @@
 import { state, getPageRotation, getActiveDocument } from '../core/state.js';
+import fontkit from '@pdf-lib/fontkit';
 import { showLoading, hideLoading } from '../ui/chrome/dialogs.js';
 import { hexToColorArray } from '../utils/colors.js';
 import { hasFill } from '../annotations/fill-utils.js';
@@ -32,10 +33,12 @@ import {
   validateStagedOcrPdfWithPdfium,
 } from './macos-safe-save.js';
 import { evaluatePdfModificationSavePolicy } from './modification-save-policy.js';
+import { loadPackagedFaceBytes, shapeRichTextDocument } from '../text/font-catalog.js';
+import { richTextToPlainText } from '../text/rich-text.js';
 
 // Sub-modules
 import { hexToRgb, buildBorderStyle, computeAnnotFlags, mapFontToPdfName,
-  ensureAcroFormFonts, stripPdfAMetadata, generateAppearanceStream } from './saver/utils.js';
+  ensureAcroFormFonts, ensureAcroFormEmbeddedFont, stripPdfAMetadata, generateAppearanceStream } from './saver/utils.js';
 import { saveTextEditsToPages } from './saver/text-edits.js';
 import { saveWatermarksToPages } from './saver/watermarks.js';
 import { saveBookmarksToOutline } from './saver/bookmarks.js';
@@ -172,6 +175,7 @@ export async function savePDF(saveAsPath = null) {
   let preparedPdfJsDocument = null;
   let stagedToken = null;
   let replacementSucceeded = false;
+  let textEditManifestCandidate = null;
   // Redirect to "Save As" for untitled docs. These now have a temp-file
   // `filePath` (so they render via the real pipeline), so we ALSO check the
   // `isUntitled` flag — otherwise "Save" would silently overwrite the temp
@@ -237,6 +241,17 @@ export async function savePDF(saveAsPath = null) {
     // Get the PDF pages
     const pages = pdfDocLib.getPages();
     const context = pdfDocLib.context;
+    const richAnnotationFontCache = new Map();
+    pdfDocLib.registerFontkit(fontkit);
+    const getRichAnnotationFont = async (faceId) => {
+      if (!richAnnotationFontCache.has(faceId)) {
+        richAnnotationFontCache.set(faceId, pdfDocLib.embedFont(
+          await loadPackagedFaceBytes(faceId),
+          { subset: true },
+        ));
+      }
+      return richAnnotationFontCache.get(faceId);
+    };
 
     // Persist interactive form field values from AnnotationStorage
     const storage = getAnnotationStorage();
@@ -281,9 +296,12 @@ export async function savePDF(saveAsPath = null) {
       // Collect all font names actually used
       const usedFonts = new Set();
       for (const ann of ftAnnotations) {
+        // Rich annotations install actual embedded/subsetted font references
+        // below; never create a fabricated Standard-14 resource for them.
+        if (ann.richText) continue;
         usedFonts.add(mapFontToPdfName(ann.fontFamily, ann.fontBold, ann.fontItalic));
       }
-      ensureAcroFormFonts(pdfDocLib, context, usedFonts);
+      if (usedFonts.size > 0) ensureAcroFormFonts(pdfDocLib, context, usedFonts);
     }
 
     // Group annotations by page
@@ -957,11 +975,37 @@ export async function savePDF(saveAsPath = null) {
               y2 = convertY(ann.y);
             }
 
-            const fontSize = ann.fontSize || 14;
-            const textColorArr = ann.textColor ? hexToColorArray(ann.textColor) : [0, 0, 0];
+            let richLayout = null;
+            let richDocument = null;
+            const richFonts = new Map();
+            if (ann.richText) {
+              if (ann.richTextSubstitution && ann.richTextSubstitution.approved !== true) {
+                throw new Error(`Annotation ${ann.id} has an unapproved font substitution`);
+              }
+              richLayout = await shapeRichTextDocument(ann.richText);
+              if (richLayout.overflow) {
+                throw new Error(`Annotation ${ann.id} text rejected: ${richLayout.rejectionReasons.join('; ')}`);
+              }
+              richDocument = { ...ann.richText, lines: richLayout.lines };
+              for (const faceId of new Set(richLayout.lines.flatMap((line) => line.runs.map((run) => run.faceId)))) {
+                const embeddedFont = await getRichAnnotationFont(faceId);
+                richFonts.set(faceId, embeddedFont);
+                ensureAcroFormEmbeddedFont(
+                  pdfDocLib,
+                  context,
+                  `OPDS_${faceId.replace(/[^A-Za-z0-9]/gu, '_')}`,
+                  embeddedFont.ref,
+                );
+              }
+            }
+            const primaryRun = richLayout?.lines?.[0]?.runs?.[0] || null;
+            const fontSize = primaryRun?.size || ann.fontSize || 14;
+            const primaryTextColor = primaryRun?.color || ann.textColor || '#000000';
+            const textColorArr = hexToColorArray(primaryTextColor);
 
             // Map font family + bold/italic to PDF standard font name
-            const pdfFontName = mapFontToPdfName(ann.fontFamily, ann.fontBold, ann.fontItalic);
+            const pdfFontName = primaryRun ? `OPDS_${primaryRun.faceId.replace(/[^A-Za-z0-9]/gu, '_')}`
+              : mapFontToPdfName(ann.fontFamily, ann.fontBold, ann.fontItalic);
             const da = `${textColorArr[0]} ${textColorArr[1]} ${textColorArr[2]} rg /${pdfFontName} ${fontSize} Tf`;
 
             // FreeText color mapping (must match loader):
@@ -976,8 +1020,11 @@ export async function savePDF(saveAsPath = null) {
               ? hexToColorArray(ann.fillColor) : null;
 
             // Build DS (Default Style) string for better interop with other viewers
-            const textColorCss = ann.textColor || '#000000';
-            const dsFontFamily = ann.fontFamily || 'Arial';
+            const textColorCss = primaryTextColor;
+            const dsFontFamily = primaryRun
+              ? (primaryRun.faceId.includes('mono') ? 'Liberation Mono'
+                : primaryRun.faceId.includes('serif') ? 'Liberation Serif' : 'Liberation Sans')
+              : (ann.fontFamily || 'Arial');
             const dsLineHeight = ann.lineSpacing ? `line-height:${Math.round(fontSize * ann.lineSpacing * 100) / 100};` : '';
             const dsFontWeight = ann.fontBold ? 'font-weight:bold;' : '';
             const dsFontStyle = ann.fontItalic ? 'font-style:italic;' : '';
@@ -988,7 +1035,7 @@ export async function savePDF(saveAsPath = null) {
               Type: 'Annot',
               Subtype: 'FreeText',
               Rect: [x1, y1, x2, y2],
-              Contents: PDFString.of(ann.text || ''),
+              Contents: PDFHexString.fromText(richLayout ? richTextToPlainText(richDocument) : (ann.text || '')),
               DA: PDFString.of(da),
               DS: PDFString.of(dsStr),
               CA: opacity,
@@ -996,6 +1043,16 @@ export async function savePDF(saveAsPath = null) {
               M: PDFString.of(new Date().toISOString()),
               F: computeAnnotFlags(ann)
             };
+            const richAlignment = ann.richText?.lines?.[0]?.alignment || ann.textAlign;
+            annDictObj.Q = richAlignment === 'center' ? 1 : richAlignment === 'right' ? 2 : 0;
+            if (richLayout) {
+              const escapeXml = (value) => String(value).replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;').replace(/"/gu, '&quot;');
+              const rc = richDocument.lines.map((line) => `<p style="text-align:${line.alignment}">${line.runs.map((run) => (
+                `<span style="font-family:${run.faceId.includes('mono') ? 'Liberation Mono' : run.faceId.includes('serif') ? 'Liberation Serif' : 'Liberation Sans'};font-size:${run.size}pt;color:${run.color};font-weight:${run.bold ? 700 : 400};font-style:${run.italic ? 'italic' : 'normal'};text-decoration:${[run.underline && 'underline', run.strikeout && 'line-through'].filter(Boolean).join(' ') || 'none'}">${escapeXml(run.text)}</span>`
+              )).join('')}</p>`).join('');
+              annDictObj.RC = PDFHexString.fromText(`<body xmlns="http://www.w3.org/1999/xhtml">${rc}</body>`);
+              annDictObj.OPS_RichTextV2 = PDFHexString.fromText(JSON.stringify(richDocument));
+            }
 
             // Fill/background color in C (omit when transparent so loader reads no /C → fillColor=null)
             if (ftFillColorArr) {
@@ -1191,7 +1248,43 @@ export async function savePDF(saveAsPath = null) {
               // on-screen layout (same font chain, wrap points, line height and
               // baseline), so other viewers break + place lines identically and
               // long labels no longer overflow the box.
-              if (ann.text) {
+              if (richLayout) {
+                const boxLeft = needsRotationInAP ? 0 : tbX1;
+                const boxTop = needsRotationInAP ? visH : tbY2;
+                const padding = ann.lineWidth ?? 0;
+                const contentWidth = Math.max(0, visW - padding * 2);
+                ftStreamContent += 'BT\n0 Tc 0 Tw 100 Tz 0 Tr\n';
+                for (const line of richLayout.lines) {
+                  const lineWidth = line.runs.reduce((sum, run) => sum + (run.shaped?.advance || 0), 0);
+                  let cursorX = boxLeft + padding;
+                  if (line.alignment === 'center') cursorX += (contentWidth - lineWidth) / 2;
+                  else if (line.alignment === 'right') cursorX += contentWidth - lineWidth;
+                  const sourceTop = richDocument.region.y;
+                  const baselineFromTop = line.baseline - sourceTop;
+                  const baselineY = boxTop - baselineFromTop;
+                  for (const run of line.runs) {
+                    if (!run.text) continue;
+                    const resourceName = `OPDS_${run.faceId.replace(/[^A-Za-z0-9]/gu, '_')}`;
+                    const embeddedFont = richFonts.get(run.faceId);
+                    const [rr, rg, rb] = hexToRgb(run.color);
+                    const encoded = embeddedFont.encodeText(run.text).toString();
+                    ftStreamContent += `${rr} ${rg} ${rb} rg /${resourceName} ${run.size} Tf\n`;
+                    ftStreamContent += `1 0 0 1 ${cursorX} ${baselineY} Tm\n${encoded} Tj\n`;
+                    const width = run.shaped.advance;
+                    const metrics = run.shaped.metrics;
+                    if (run.underline) {
+                      ftStreamContent += 'ET\n';
+                      ftStreamContent += `${rr} ${rg} ${rb} RG ${metrics.underlineThickness} w ${cursorX} ${baselineY + metrics.underlinePosition} m ${cursorX + width} ${baselineY + metrics.underlinePosition} l S\nBT\n`;
+                    }
+                    if (run.strikeout) {
+                      ftStreamContent += 'ET\n';
+                      ftStreamContent += `${rr} ${rg} ${rb} RG ${metrics.strikeoutThickness} w ${cursorX} ${baselineY + metrics.strikeoutPosition} m ${cursorX + width} ${baselineY + metrics.strikeoutPosition} l S\nBT\n`;
+                    }
+                    cursorX += width;
+                  }
+                }
+                ftStreamContent += 'ET\n';
+              } else if (ann.text) {
                 const ftFontSize = ann.fontSize || 14;
                 const [tr, tg, tb] = ann.textColor ? hexToRgb(ann.textColor) : [0, 0, 0];
                 const pdfFont = mapFontToPdfName(ann.fontFamily, ann.fontBold, ann.fontItalic);
@@ -1229,14 +1322,22 @@ export async function savePDF(saveAsPath = null) {
                 ftStreamContent += 'Q\n';
               }
 
-              // Create font dict for resources
+              // Rich text uses the actual embedded/subsetted Type0 font refs.
+              // Legacy untouched annotations retain their former Standard 14 path.
               const pdfFont = mapFontToPdfName(ann.fontFamily, ann.fontBold, ann.fontItalic);
-              const fontDict = context.obj({
-                Type: 'Font',
-                Subtype: 'Type1',
-                BaseFont: pdfFont,
-                Encoding: 'WinAnsiEncoding'
-              });
+              const fontResources = {};
+              if (richLayout) {
+                for (const [faceId, embeddedFont] of richFonts) {
+                  fontResources[`OPDS_${faceId.replace(/[^A-Za-z0-9]/gu, '_')}`] = embeddedFont.ref;
+                }
+              } else {
+                fontResources[pdfFont] = context.obj({
+                  Type: 'Font',
+                  Subtype: 'Type1',
+                  BaseFont: pdfFont,
+                  Encoding: 'WinAnsiEncoding'
+                });
+              }
 
               // Use absolute BBox (same as Rect) with Matrix to translate origin
               const apStreamDict = {
@@ -1245,7 +1346,7 @@ export async function savePDF(saveAsPath = null) {
                 BBox: [x1, y1, x2, y2],
                 Matrix: [1, 0, 0, 1, -x1, -y1],
                 Resources: context.obj({
-                  Font: context.obj({ [pdfFont]: fontDict })
+                  Font: context.obj(fontResources)
                 })
               };
 
@@ -2624,8 +2725,9 @@ export async function savePDF(saveAsPath = null) {
       page.node.set(PDFName.of('Annots'), context.obj(annotsArray));
     }
 
-    // Burn text edits into the PDF (cover-and-replace)
-    await saveTextEditsToPages(pdfDocLib, pages);
+    // Build one replaceable, application-owned rich-text layer per page.
+    // The active state is rebased only after the completed PDF passes validation.
+    textEditManifestCandidate = await saveTextEditsToPages(pdfDocLib, pages);
 
     // Burn watermarks into the PDF
     await saveWatermarksToPages(pdfDocLib, pages);
@@ -2769,6 +2871,10 @@ export async function savePDF(saveAsPath = null) {
     if (activeDoc) {
       await installValidatedSavedPdfDocument(activeDoc, outputPath, savedBytes, preparedPdfJsDocument);
       preparedPdfJsDocument = null;
+      if (textEditManifestCandidate) {
+        activeDoc.textEditManifest = textEditManifestCandidate;
+        activeDoc.textEdits = textEditManifestCandidate.pages.flatMap((page) => page.edits);
+      }
     }
     if (convertsPdfA && activeDoc) {
       activeDoc.pdfaCompliance = null;

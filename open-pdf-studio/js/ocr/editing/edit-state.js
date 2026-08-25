@@ -26,6 +26,7 @@ import {
   buildScannedTextSearchablePageSnapshot,
 } from './single-line.js';
 import { buildFixedRegionMultilineContent } from './fixed-region.js';
+import { withScannedRichText } from './rich-text-adapter.js';
 import {
   SCANNED_TEXT_REFLOW_LAYOUT_MODE,
   buildApprovedRegionParagraphReflowContent,
@@ -243,7 +244,7 @@ export async function evaluateScannedTextEdit({
         ? buildApprovedRegionParagraphReflowContent
         : buildFixedRegionMultilineContent
       : buildIsolatedSingleLineContent;
-    const content = replacementText === null ? null : await buildContent({
+    const content = replacementText === null ? null : withScannedRichText(await buildContent({
       result,
       pageGeometry,
       raster,
@@ -257,7 +258,7 @@ export async function evaluateScannedTextEdit({
       parentRevision,
       renderVisiblePatch,
       reflowFontBytes,
-    });
+    }));
     if (content) {
       await notifyStage(onStage, 'replacement-rendered', {
         selectionId: selected.id,

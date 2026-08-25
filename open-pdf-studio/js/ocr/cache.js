@@ -13,8 +13,17 @@ const MAX_OCR_CACHE_MAX_BYTES = 4 * 1024 * 1024 * 1024;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const registeredDocumentCachePages = new Map();
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function sameJson(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return canonicalJson(left) === canonicalJson(right);
 }
 
 function assertFingerprint(value, name) {
@@ -120,11 +129,20 @@ export function assertOcrCacheEnvelope(value, expectedKey = null) {
     throw new TypeError('OCR cache stores only validated successful or unsupported results');
   }
   assertResultGeometryIdentity(result, pageGeometry);
-  if (!sameJson(result.document.fingerprint, key.documentFingerprint) ||
-      result.page.id !== key.pageIdentity || result.page.revision !== key.pageRevision ||
-      !sameJson(result.engine.modelPack, key.modelPackIdentity) ||
-      !sameJson(result.recognitionConfigurationHash, key.recognitionConfigurationHash)) {
-    throw new TypeError('OCR cache payload does not match its cache key');
+  if (!sameJson(result.document.fingerprint, key.documentFingerprint)) {
+    throw new TypeError('OCR cache payload document fingerprint does not match its cache key');
+  }
+  if (result.page.id !== key.pageIdentity) {
+    throw new TypeError('OCR cache payload page identity does not match its cache key');
+  }
+  if (result.page.revision !== key.pageRevision) {
+    throw new TypeError('OCR cache payload page revision does not match its cache key');
+  }
+  if (!sameJson(result.engine.modelPack, key.modelPackIdentity)) {
+    throw new TypeError('OCR cache payload model pack does not match its cache key');
+  }
+  if (!sameJson(result.recognitionConfigurationHash, key.recognitionConfigurationHash)) {
+    throw new TypeError('OCR cache payload recognition configuration does not match its cache key');
   }
   if (!value.state || typeof value.state !== 'object' || Array.isArray(value.state) ||
       Object.keys(value.state).sort().join('\0') !== ['applicationStatus', 'source'].sort().join('\0') ||

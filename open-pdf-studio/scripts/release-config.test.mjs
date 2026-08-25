@@ -133,6 +133,137 @@ test('release workflows verify macOS signatures and notarization', async () => {
   }
 });
 
+test('macOS release signing includes the hardened PDFium sidecars', async () => {
+  const workerEntitlements = await readFile(
+    path.join(projectDir, 'src-tauri', 'pdfium-worker.entitlements.plist'),
+    'utf8',
+  );
+  assert.match(workerEntitlements, /com\.apple\.security\.cs\.disable-library-validation/);
+  assert.doesNotMatch(workerEntitlements, /network\.client|files\.user-selected|allow-jit/);
+
+  for (const name of ['release.yml', 'nightly.yml']) {
+    const workflow = await readFile(path.join(repoDir, '.github', 'workflows', name), 'utf8');
+    assert.match(workflow, /Sign macOS PDFium runtime and sidecars/);
+    assert.match(workflow, /pdfium-worker-aarch64-apple-darwin/);
+    assert.match(workflow, /pdfium-worker-x86_64-apple-darwin/);
+    assert.match(workflow, /pdfium-worker-universal-apple-darwin/);
+    assert.match(workflow, /pdfium-worker\.entitlements\.plist/);
+    assert.match(workflow, /--options runtime --timestamp/);
+    assert.match(workflow, /test-macos-release-hardening\.mjs/);
+    assert.match(workflow, /--require-distribution-trust/);
+  }
+});
+
+test('macOS production CI packages arm64 and runs live release-hardening gates', async () => {
+  const workflow = await readFile(path.join(repoDir, '.github', 'workflows', 'ci.yml'), 'utf8');
+  assert.match(workflow, /Build ad-hoc signed arm64 macOS app/);
+  assert.match(workflow, /--target aarch64-apple-darwin --bundles app/);
+  assert.match(workflow, /test-macos-release-hardening\.mjs/);
+  assert.match(workflow, /test-macos-filesystem-edge-cases\.mjs/);
+  assert.match(workflow, /ocr-release-hardening-artifact\.json/);
+  assert.match(workflow, /ocr-release-hardening-filesystem\.json/);
+});
+
+test('release-hardening filesystem infrastructure uses disposable real volumes and fail-closed iCloud evidence', async () => {
+  const script = await readFile(
+    path.join(projectDir, 'scripts', 'test-macos-filesystem-edge-cases.mjs'),
+    'utf8',
+  );
+  assert.match(script, /createArgs = \['create'/);
+  assert.match(script, /\/usr\/bin\/hdiutil/);
+  assert.match(script, /fileSystem: 'APFS'/);
+  assert.match(script, /fileSystem: 'ExFAT'/);
+  assert.match(script, /ENOSPC/);
+  assert.match(script, /chflags/);
+  assert.match(script, /macos-hold-file-lock\.swift/);
+  assert.match(script, /isUbiquitous/);
+  assert.match(script, /liveProviderTransactionPerformed: false/);
+  assert.match(script, /status\('UNVERIFIED'/);
+  assert.match(script, /hdiutil', \['detach'/);
+  assert.match(script, /rm\(tempRoot, \{ recursive: true, force: true \}\)/);
+  assert.doesNotMatch(script, /mock.*icloud|fake.*icloud/iu);
+});
+
+test('release-hardening scripts and machine evidence are wired without committing images', async () => {
+  const pkg = await readJson('package.json');
+  assert.equal(pkg.scripts['package:ocr-release-hardening:arm64'], 'node scripts/package-macos-release-arm64.mjs');
+  assert.match(pkg.scripts['test:ocr-release-hardening:macos'], /artifact.*filesystem/);
+  assert.match(pkg.scripts['test:ocr-packaged:macos:stages'], /test:ocr-release-hardening:macos/);
+  assert.match(pkg.scripts['test:ocr-packaged:macos'], /test:ocr-packaged:macos:stages/);
+  assert.match(pkg.scripts['test:ocr-packaged:macos'], /OPEN_PDF_STUDIO_PACKAGED_APP=.*aarch64-apple-darwin/);
+  assert.match(pkg.scripts['test:ocr-packaged:macos'], /OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE=.*aarch64-apple-darwin/);
+  const packager = await readFile(path.join(projectDir, 'scripts', 'package-macos-release-arm64.mjs'), 'utf8');
+  assert.match(packager, /aarch64-apple-darwin/);
+  assert.match(packager, /x86_64-apple-darwin/);
+  assert.match(packager, /lipo/);
+  assert.match(packager, /\/usr\/bin\/codesign/);
+  assert.match(packager, /pdfium-worker\.entitlements\.plist/);
+  assert.match(packager, /--options', 'runtime/);
+  assert.match(packager, /createUpdaterArtifacts/);
+  const ignore = await readFile(path.join(repoDir, '.gitignore'), 'utf8');
+  assert.match(ignore, /open-pdf-studio\/output\/ocr-release-hardening\//);
+  assert.match(ignore, /\*\*\/binaries\/macos-universal\//);
+  assert.match(ignore, /\*\*\/binaries\/pdfium-worker-\*/);
+});
+
+test('100-page and adversarial release qualification stay on the visible production path', async () => {
+  const pkg = await readJson('package.json');
+  assert.equal(
+    pkg.scripts['generate:ocr-release-qualification-fixtures'],
+    'node scripts/generate-ocr-release-qualification-fixtures.mjs',
+  );
+  assert.equal(
+    pkg.scripts['test:ocr-production-100-page:macos'],
+    'node scripts/test-ocr-production-100-page-macos.mjs',
+  );
+  assert.equal(
+    pkg.scripts['test:ocr-adversarial:macos'],
+    'node scripts/test-ocr-adversarial-macos.mjs',
+  );
+  assert.match(pkg.scripts['test:ocr-release-qualification:macos'], /test:ocr-adversarial:unit/);
+  assert.match(pkg.scripts['test:ocr-release-qualification:macos'], /test:ocr-adversarial:macos/);
+  assert.match(pkg.scripts['test:ocr-release-qualification:macos'], /test:ocr-production-100-page:macos/);
+  assert.match(pkg.scripts['test:ocr-packaged:macos:stages'], /test:ocr-release-qualification:macos/);
+
+  const longRun = await readFile(
+    path.join(projectDir, 'scripts', 'test-ocr-production-100-page-macos.mjs'),
+    'utf8',
+  );
+  assert.match(longRun, /#ep-recognize-text/);
+  assert.match(longRun, /#ocr-recognition-form/);
+  assert.match(longRun, /entire-document/);
+  assert.match(longRun, /testOnlyOcrEntryPointUsed: false/);
+  assert.match(longRun, /ocrStateInjectionUsed: false/);
+  assert.doesNotMatch(longRun, /app_ocr_phase_a_spike/);
+
+  const adversarial = await readFile(
+    path.join(projectDir, 'scripts', 'test-ocr-adversarial-macos.mjs'),
+    'utf8',
+  );
+  assert.match(adversarial, /#ep-recognize-text/);
+  assert.match(adversarial, /testOnlyOcrEntryPointUsed: false/);
+  assert.doesNotMatch(adversarial, /app_ocr_phase_a_spike/);
+
+  const corpus = await readJson('tests/fixtures/ocr/release-qualification-v1/corpus.v1.json');
+  assert.equal(corpus.license, 'CC0-1.0');
+  assert.equal(corpus.generatedArtifactsCommitted, false);
+  assert.equal(corpus.longRun.pageCount, 100);
+  assert.equal(corpus.adversarialCases.length, 21);
+  assert.ok(corpus.adversarialCases.every((value) => value.bounds && value.expectedCleanup.length > 0));
+});
+
+test('macOS OCR notices include the PDFium 7834 ICU license addition', async () => {
+  const notices = await readFile(path.join(projectDir, 'docs', 'ocr', 'THIRD_PARTY_NOTICES.md'), 'utf8');
+  const supplement = await readFile(
+    path.join(projectDir, 'docs', 'ocr', 'licenses', 'pdfium-7834-icu4j-sorttable-MIT.txt'),
+    'utf8',
+  );
+  assert.match(notices, /PDFium 7834 archive adds an ICU4J/);
+  assert.match(notices, /pdfium-7834-icu4j-sorttable-MIT\.txt/);
+  assert.match(supplement, /Copyright \(c\) 1997-date Stuart Langridge/);
+  assert.match(supplement, /Permission is hereby granted, free of charge/);
+});
+
 test('macOS bundling retries transient notarization service failures', async () => {
   let retryModule;
   try {

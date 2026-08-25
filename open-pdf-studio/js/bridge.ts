@@ -158,6 +158,10 @@ export {
   updateEditorStyle as updatePdfEditorStyle,
   shiftEditorPosition as shiftPdfEditorPosition,
   setEditorStatus as setPdfEditorStatus,
+  getEditorRichText as getPdfEditorRichText,
+  getEditorFormatState as getPdfEditorFormatState,
+  applyRichTextDraftFormat as applyPdfEditorRichTextFormat,
+  applyRichTextDraftParagraphFormat as applyPdfEditorRichTextParagraphFormat,
 } from './solid/stores/pdfTextEditStore.js';
 
 // ============= SCREENSHOT =============

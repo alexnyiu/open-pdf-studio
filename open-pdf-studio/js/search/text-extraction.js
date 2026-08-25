@@ -9,6 +9,7 @@ import {
   readPageTextCache,
   writePageTextCache,
 } from './text-cache.js';
+import { projectTextEditRecord } from '../text/rich-text.js';
 
 /**
  * Extract merged searchable text for one page.
@@ -46,9 +47,8 @@ export async function extractPageText(pdfDoc, pageNum, doc) {
     pageText += item.str;
   });
 
-  for (const edit of (doc?.textEdits || []).filter(
-    (entry) => entry.page === pageNum && entry.originalText === '',
-  )) {
+  for (const edit of (doc?.textEdits || []).filter((entry) => entry.page === pageNum)
+    .map(projectTextEditRecord).filter((entry) => entry.originalText === '')) {
     for (const line of (edit.newText || '').split('\n')) {
       if (!line) continue;
       if (pageText.length > 0 && !pageText.endsWith(' ') && !pageText.endsWith('\n')) pageText += ' ';

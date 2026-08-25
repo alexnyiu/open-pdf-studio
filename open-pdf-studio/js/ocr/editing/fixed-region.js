@@ -1,5 +1,3 @@
-import { StandardFontEmbedder } from 'pdf-lib';
-
 import {
   OCR_PDF_USER_SPACE,
   OCR_SOURCE_RASTER_SPACE,
@@ -15,8 +13,8 @@ import {
   patchRecord,
   repairHaloMetrics,
   revisedEstimatedStyle,
-  standardFontName,
 } from './single-line.js';
+import { resolvePackagedFace, shapeTextRun } from '../../text/font-catalog.js';
 
 export const SCANNED_TEXT_FIXED_REGION_SCOPE = 'fixed-region-multiline';
 export const SCANNED_TEXT_MIN_REGION_LINES = 2;
@@ -283,10 +281,9 @@ function assertReplacementText(value) {
   return normalized;
 }
 
-function lineWidth(embedder, text, fontSize) {
+async function shapeReplacementLine(face, text, fontSize) {
   try {
-    embedder.encodeText(text);
-    return embedder.widthOfTextAtSize(text, fontSize);
+    return await shapeTextRun({ text, faceId: face.id, size: fontSize, direction: 'ltr' });
   } catch (error) {
     fail('MISSING_GLYPH', 'Replacement text contains a glyph unavailable in the supported font set', {
       message: error instanceof Error ? error.message : String(error),
@@ -294,23 +291,23 @@ function lineWidth(embedder, text, fontSize) {
   }
 }
 
-function wrapReplacement(text, embedder, fontSize, availableWidthPt) {
+async function wrapReplacement(text, face, fontSize, availableWidthPt) {
   const output = [];
   let safeWrapped = false;
   for (const explicitLine of text.split('\n')) {
     if (explicitLine.trim().length === 0) fail('EMPTY_LAYOUT_LINE', 'Every fixed-region line must contain visible text');
-    if (lineWidth(embedder, explicitLine, fontSize) <= availableWidthPt + 0.25) {
+    if ((await shapeReplacementLine(face, explicitLine, fontSize)).advance <= availableWidthPt + 0.25) {
       output.push(explicitLine);
       continue;
     }
     const words = explicitLine.trim().split(/\s+/u);
     let current = '';
     for (const word of words) {
-      if (lineWidth(embedder, word, fontSize) > availableWidthPt + 0.25) {
+      if ((await shapeReplacementLine(face, word, fontSize)).advance > availableWidthPt + 0.25) {
         fail('REPLACEMENT_OVERFLOW', 'An unbreakable word cannot remain inside the fixed region');
       }
       const candidate = current ? `${current} ${word}` : word;
-      if (lineWidth(embedder, candidate, fontSize) <= availableWidthPt + 0.25) {
+      if ((await shapeReplacementLine(face, candidate, fontSize)).advance <= availableWidthPt + 0.25) {
         current = candidate;
       } else {
         output.push(current);
@@ -324,12 +321,12 @@ function wrapReplacement(text, embedder, fontSize, availableWidthPt) {
   return { lines: output, safeWrapped };
 }
 
-function polygonForLine(origin, widthPt, heightPt, angleDegrees) {
+function polygonForLine(origin, widthPt, inkBounds, angleDegrees, antialiasMarginPt = 1) {
   const radians = angleDegrees * Math.PI / 180;
   const along = [Math.cos(radians), Math.sin(radians)];
   const normal = [-Math.sin(radians), Math.cos(radians)];
-  const ascent = heightPt * 0.82;
-  const descent = heightPt * 0.18;
+  const ascent = Math.max(0, -inkBounds.top) + antialiasMarginPt;
+  const descent = Math.max(0, inkBounds.bottom) + antialiasMarginPt;
   const topLeft = [origin[0] + normal[0] * ascent, origin[1] + normal[1] * ascent];
   const topRight = [topLeft[0] + along[0] * widthPt, topLeft[1] + along[1] * widthPt];
   const bottomLeft = [origin[0] - normal[0] * descent, origin[1] - normal[1] * descent];
@@ -340,12 +337,14 @@ function polygonForLine(origin, widthPt, heightPt, angleDegrees) {
   };
 }
 
-function layoutReplacement({ text, style, region, selected, pageGeometry, sourceRaster }) {
+async function layoutReplacement({ text, style, region, selected, pageGeometry, sourceRaster }) {
   const normalizedText = assertReplacementText(text);
-  const fontName = standardFontName(style);
-  const embedder = StandardFontEmbedder.for(fontName);
+  const face = resolvePackagedFace(
+    style.fontClass.value,
+    style.weight.value === 'bold',
+    style.italic.value,
+  );
   const fontSize = style.fontSize.value;
-  const heightPt = embedder.heightOfFontAtSize(fontSize);
   const canonicalRegion = mapPolygonBetweenSpaces(
     pageGeometry.transformChain,
     selected.geometry.selectionPolygon,
@@ -354,27 +353,24 @@ function layoutReplacement({ text, style, region, selected, pageGeometry, source
   const regionBounds = boundsOfPolygon(canonicalRegion);
   const availableWidthPt = regionBounds.width;
   const availableHeightPt = regionBounds.height;
-  const wrapped = wrapReplacement(normalizedText, embedder, fontSize, availableWidthPt);
+  const wrapped = await wrapReplacement(normalizedText, face, fontSize, availableWidthPt);
   if (wrapped.lines.length > region.lines.length) {
     fail('REPLACEMENT_OVERFLOW', 'Replacement text requires more lines than the original fixed region', {
       requiredLines: wrapped.lines.length,
       availableLines: region.lines.length,
     });
   }
-  if (heightPt > median(region.lines.map((entry) => {
-    const bounds = boundsOfPolygon(entry.geometry.canonicalPolygon);
-    return bounds.height;
-  })) + 0.75) {
-    fail('REPLACEMENT_OVERFLOW', 'Replacement glyph height would clip inside the fixed region');
-  }
-
-  const lines = wrapped.lines.map((lineText, index) => {
+  const lines = [];
+  for (let index = 0; index < wrapped.lines.length; index += 1) {
+    const lineText = wrapped.lines[index];
     const source = region.lines[index];
     const sourceBaseline = source.geometry.canonicalBaseline.points;
     const start = sourceBaseline[0];
     const end = sourceBaseline.at(-1);
     const angleDegrees = horizontalAngle(sourceBaseline);
-    const widthPt = lineWidth(embedder, lineText, fontSize);
+    const shaped = await shapeReplacementLine(face, lineText, fontSize);
+    const widthPt = shaped.advance;
+    const heightPt = shaped.inkBounds.bottom - shaped.inkBounds.top + 2;
     const available = regionBounds.width;
     const offset = style.alignment.value === 'center' ? (available - widthPt) / 2
       : style.alignment.value === 'right' ? available - widthPt
@@ -385,7 +381,7 @@ function layoutReplacement({ text, style, region, selected, pageGeometry, source
       leftOnBaseline[0] + Math.cos(radians) * offset,
       leftOnBaseline[1] + Math.sin(radians) * offset,
     ];
-    const polygon = polygonForLine(origin, widthPt, heightPt, angleDegrees);
+    const polygon = polygonForLine(origin, widthPt, shaped.inkBounds, angleDegrees);
     const polygonBounds = boundsOfPolygon(polygon);
     const tolerance = 0.75;
     if (polygonBounds.minX < regionBounds.minX - tolerance
@@ -398,23 +394,15 @@ function layoutReplacement({ text, style, region, selected, pageGeometry, source
         regionBounds,
       });
     }
-    let encoded;
-    try {
-      encoded = embedder.encodeText(lineText);
-    } catch (error) {
-      fail('MISSING_GLYPH', 'Replacement text contains a glyph unavailable in the supported font set', {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
     const baselineEnd = [
       origin[0] + Math.cos(radians) * widthPt,
       origin[1] + Math.sin(radians) * widthPt,
     ];
-    return {
+    lines.push({
       index,
       text: lineText,
-      encodedGlyphCount: Array.from(lineText).length,
-      encodedText: encoded.toString(),
+      encodedGlyphCount: shaped.glyphs.length,
+      encodedText: shaped.glyphs.map((glyph) => glyph.id.toString(16).toUpperCase().padStart(4, '0')).join(''),
       widthPt: round(widthPt),
       heightPt: round(heightPt),
       origin: { coordinateSpace: OCR_PDF_USER_SPACE, point: origin.map((value) => round(value)) },
@@ -427,15 +415,15 @@ function layoutReplacement({ text, style, region, selected, pageGeometry, source
         coordinateSpace: OCR_PDF_USER_SPACE,
         points: [origin, baselineEnd].map((point) => point.map((value) => round(value))),
       },
-    };
-  });
+    });
+  }
   const canonicalText = lines.map((line) => line.text).join('\n');
   return {
     canonicalText,
     layout: {
-      fontName,
+      fontName: face.family,
       direction: 'ltr',
-      shaping: 'pdf-lib-standard-font-winansi-v1',
+      shaping: 'fontkit-liberation-ltr-v1',
       glyphCoverage: 'complete',
       availableWidthPt: round(availableWidthPt),
       availableHeightPt: round(availableHeightPt),
@@ -468,6 +456,7 @@ async function defaultVisiblePatchRenderer({ basePatchBytes, patch, style, geome
   image.data.set(basePatchBytes);
   context.putImageData(image, 0, 0);
   context.font = cssFont(style, sourceRaster);
+  await globalThis.document?.fonts?.load?.(context.font);
   context.textAlign = 'left';
   context.textBaseline = 'alphabetic';
   context.fillStyle = style.textColor.value;
@@ -590,7 +579,7 @@ export async function buildFixedRegionMultilineContent({
     style.alignment.confidence = 0.88;
     style.alignment.method = 'fixed-region-edge-alignment-v1';
   }
-  const { canonicalText, layout } = layoutReplacement({
+  const { canonicalText, layout } = await layoutReplacement({
     text: replacementText,
     style,
     region,
@@ -678,7 +667,7 @@ export async function reviseFixedRegionMultilineContent({
       },
     })),
   };
-  const { canonicalText, layout } = layoutReplacement({
+  const { canonicalText, layout } = await layoutReplacement({
     text: replacementText,
     style,
     region,

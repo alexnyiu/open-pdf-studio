@@ -259,6 +259,22 @@ export async function extractAnnotationColors(pageNum, pdfDoc) {
         else if (ls && typeof ls.decodeText === 'function') colors.opsLeaderStyle = ls.decodeText();
       }
 
+      const richTextRaw = annotDict.get(PDFName.of('OPS_RichTextV2'));
+      if (richTextRaw) {
+        const richTextValue = context.lookup(richTextRaw) || richTextRaw;
+        try {
+          const encoded = richTextValue?.decodeText?.();
+          if (encoded) colors.richTextV2 = JSON.parse(encoded);
+        } catch (_) {
+          colors.richTextV2Invalid = true;
+        }
+      }
+      const alignmentRaw = annotDict.get(PDFName.of('Q'));
+      if (alignmentRaw) {
+        const alignment = pdfNum(context.lookup(alignmentRaw) || alignmentRaw);
+        if (alignment !== null) colors.textAlignment = alignment;
+      }
+
       // Textbox leaders: /OPS_LeaderId + /IRT (in-reply-to parent textbox Rect)
       const opsLidRaw = annotDict.get(PDFName.of('OPS_LeaderId'));
       if (opsLidRaw) {

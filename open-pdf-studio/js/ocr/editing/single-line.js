@@ -12,6 +12,7 @@ import {
   sha256Hex,
   zeroBytes,
 } from './raster.js';
+import { resolvePackagedFace, shapeTextRun } from '../../text/font-catalog.js';
 
 export const SCANNED_TEXT_SINGLE_LINE_SCOPE = 'isolated-horizontal-line';
 export const SCANNED_TEXT_MAX_BASELINE_ANGLE_DEGREES = 3;
@@ -333,21 +334,29 @@ function assertReplacementText(value) {
   }
 }
 
-function layoutReplacement({ text, style, geometry, selected, sourceRaster }) {
+async function layoutReplacement({ text, style, geometry, selected, sourceRaster }) {
   assertReplacementText(text);
-  const fontName = standardFontName(style);
-  const embedder = StandardFontEmbedder.for(fontName);
-  let encoded;
+  const face = resolvePackagedFace(
+    style.fontClass.value,
+    style.weight.value === 'bold',
+    style.italic.value,
+  );
+  let shaped;
   try {
-    encoded = embedder.encodeText(text);
+    shaped = await shapeTextRun({
+      text,
+      faceId: face.id,
+      size: style.fontSize.value,
+      direction: 'ltr',
+    });
   } catch (error) {
     fail('MISSING_GLYPH', 'Replacement text contains a script or glyph unavailable in the supported font set', {
       message: error instanceof Error ? error.message : String(error),
     });
   }
   const fontSize = style.fontSize.value;
-  const widthPt = embedder.widthOfTextAtSize(text, fontSize);
-  const heightPt = embedder.heightOfFontAtSize(fontSize);
+  const widthPt = Math.max(shaped.advance, shaped.inkBounds.right - shaped.inkBounds.left) + 2;
+  const heightPt = shaped.inkBounds.bottom - shaped.inkBounds.top + 2;
   const canonicalBaseline = geometry.canonicalBaseline.points;
   const baselineWidthPt = distance(canonicalBaseline[0], canonicalBaseline[canonicalBaseline.length - 1]);
   const repair = selected.geometry.repairBounds;
@@ -375,12 +384,12 @@ function layoutReplacement({ text, style, geometry, selected, sourceRaster }) {
     start[1] + Math.sin(radians) * offset,
   ];
   return {
-    fontName,
+    fontName: face.family,
     direction: 'ltr',
-    shaping: 'pdf-lib-standard-font-winansi-v1',
+    shaping: 'fontkit-liberation-ltr-v1',
     glyphCoverage: 'complete',
-    encodedGlyphCount: Array.from(text).length,
-    encodedText: encoded.toString(),
+    encodedGlyphCount: shaped.glyphs.length,
+    encodedText: shaped.glyphs.map((glyph) => glyph.id.toString(16).toUpperCase().padStart(4, '0')).join(''),
     widthPt: round(widthPt),
     heightPt: round(heightPt),
     availableWidthPt: round(availableWidthPt),
@@ -393,9 +402,12 @@ function layoutReplacement({ text, style, geometry, selected, sourceRaster }) {
 }
 
 export function cssFont(style, sourceRaster) {
-  const family = style.fontClass.value === 'monospace' ? 'Courier New, Courier, monospace'
-    : style.fontClass.value === 'serif' ? 'Times New Roman, Times, serif'
-      : 'Helvetica, Arial, sans-serif';
+  const face = resolvePackagedFace(
+    style.fontClass.value,
+    style.weight.value === 'bold',
+    style.italic.value,
+  );
+  const family = `"${face.family}", ${style.fontClass.value === 'monospace' ? 'monospace' : style.fontClass.value === 'serif' ? 'serif' : 'sans-serif'}`;
   const sizePx = style.fontSize.value * sourceRaster.dpi / 72;
   return `${style.italic.value ? 'italic ' : ''}${style.weight.value === 'bold' ? '700 ' : '400 '}${sizePx}px ${family}`;
 }
@@ -432,6 +444,7 @@ async function defaultVisiblePatchRenderer({ basePatchBytes, patch, text, style,
   );
   context.rotate(angle);
   context.font = cssFont(style, sourceRaster);
+  await globalThis.document?.fonts?.load?.(context.font);
   context.textAlign = 'left';
   context.textBaseline = 'alphabetic';
   context.fillStyle = style.textColor.value;
@@ -523,7 +536,7 @@ export async function buildIsolatedSingleLineContent({
   }
   const geometry = canonicalGeometry(line, selected, pageGeometry);
   const style = estimateStyle({ line, raster, geometry, pageGeometry, analysis, overrides: styleOverrides });
-  const layout = layoutReplacement({
+  const layout = await layoutReplacement({
     text: replacementText,
     style,
     geometry,
@@ -718,7 +731,7 @@ export async function reviseIsolatedSingleLineContent({
     canonicalBaseline: selection.content.source.canonicalBaseline,
     sourceBaseline,
   };
-  const layout = layoutReplacement({
+  const layout = await layoutReplacement({
     text: replacementText,
     style,
     geometry,

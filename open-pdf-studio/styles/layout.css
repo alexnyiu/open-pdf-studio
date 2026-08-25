@@ -1,3 +1,76 @@
+@font-face {
+  font-family: 'Liberation Sans';
+  src: url('/pdfjs/web/standard_fonts/LiberationSans-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Liberation Sans';
+  src: url('/pdfjs/web/standard_fonts/LiberationSans-Bold.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 700;
+}
+@font-face {
+  font-family: 'Liberation Sans';
+  src: url('/pdfjs/web/standard_fonts/LiberationSans-Italic.ttf') format('truetype');
+  font-style: italic;
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Liberation Sans';
+  src: url('/pdfjs/web/standard_fonts/LiberationSans-BoldItalic.ttf') format('truetype');
+  font-style: italic;
+  font-weight: 700;
+}
+@font-face {
+  font-family: 'Liberation Serif';
+  src: url('/pdfjs/web/standard_fonts/LiberationSerif-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Liberation Serif';
+  src: url('/pdfjs/web/standard_fonts/LiberationSerif-Bold.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 700;
+}
+@font-face {
+  font-family: 'Liberation Serif';
+  src: url('/pdfjs/web/standard_fonts/LiberationSerif-Italic.ttf') format('truetype');
+  font-style: italic;
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Liberation Serif';
+  src: url('/pdfjs/web/standard_fonts/LiberationSerif-BoldItalic.ttf') format('truetype');
+  font-style: italic;
+  font-weight: 700;
+}
+@font-face {
+  font-family: 'Liberation Mono';
+  src: url('/pdfjs/web/standard_fonts/LiberationMono-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Liberation Mono';
+  src: url('/pdfjs/web/standard_fonts/LiberationMono-Bold.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 700;
+}
+@font-face {
+  font-family: 'Liberation Mono';
+  src: url('/pdfjs/web/standard_fonts/LiberationMono-Italic.ttf') format('truetype');
+  font-style: italic;
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Liberation Mono';
+  src: url('/pdfjs/web/standard_fonts/LiberationMono-BoldItalic.ttf') format('truetype');
+  font-style: italic;
+  font-weight: 700;
+}
+
 /* Content Area */
 .content {
   flex: 1;
@@ -738,6 +811,20 @@ body.pdf-cursor-override #canvas-container * {
 .pdf-text-editor:focus-visible {
   outline: 2px solid #0078d7;
   outline-offset: 2px;
+}
+
+.rich-text-editor {
+  min-width: 80px;
+  min-height: 24px;
+  cursor: text;
+  caret-color: currentColor;
+  white-space: pre;
+  user-select: text;
+}
+
+.rich-text-editor > [data-rich-line-index] {
+  min-height: 1em;
+  white-space: pre;
 }
 
 .scanned-text-estimate-note {

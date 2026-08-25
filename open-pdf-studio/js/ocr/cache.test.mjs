@@ -42,6 +42,18 @@ test('cache envelopes contain only validated OCR result/state and no raw raster 
   assert.equal(serialized.includes('/test-only-fixture.pdf'), false);
 });
 
+test('cache identity comparison accepts validated object keys reordered by the native boundary', () => {
+  const { fixture, key } = fixtureAndKey();
+  const result = structuredClone(fixture.result);
+  result.engine.modelPack.assets = Object.fromEntries(
+    Object.entries(result.engine.modelPack.assets).reverse(),
+  );
+
+  const envelope = createOcrCacheEnvelope(key, result, fixture.pageGeometry);
+
+  assert.equal(assertOcrCacheEnvelope(envelope, key), envelope);
+});
+
 test('cache keys bind every document, page, model, configuration, and geometry identity', () => {
   const { key } = fixtureAndKey();
 

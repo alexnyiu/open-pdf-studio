@@ -16,6 +16,7 @@ export function createDocument(filePath: string | null = null): DocumentState {
     viewMode: 'single',
     annotations: [],
     textEdits: [],
+    textEditManifest: null,
     ocr: createDocumentOcrState(id),
     scannedTextEdits: null,
     scannedTextEditPersistedRevision: 0,

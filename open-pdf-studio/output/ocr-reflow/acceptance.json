@@ -1,8 +1,8 @@
 {
   "status": "pass",
   "platform": "darwin",
-  "packagedApp": "/Users/alexander/Personal Projects/open-pdf-studio/target/release/bundle/macos/Open PDF Studio.app",
-  "testDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-reflow-5sstNs",
+  "packagedApp": "/Users/alexander/Personal Projects/open-pdf-studio/target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app",
+  "testDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-reflow-pol9rz",
   "productionEntryPath": true,
   "testOnlyEntryPoint": false,
   "assertions": {
@@ -36,5 +36,5 @@
       "chromePdfiumCopy": "Café Ελληνικά Привет reflows safely"
     }
   },
-  "completedAt": "2026-08-24T10:40:17.615Z"
+  "completedAt": "2026-08-25T03:27:58.817Z"
 }
