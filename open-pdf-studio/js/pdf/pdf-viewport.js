@@ -1143,9 +1143,8 @@ export function zoomStepAtPoint(screenX, screenY, direction) {
   _anchorAt(screenX, screenY, oldZoom, newZoom, true);
 }
 
-// Continuous (multiplicative) zoom. Kept for callers that want non-snapped
-// zoom — e.g. animated keyboard zoom. Wheel zoom uses zoomStepAtPoint.
-// Strict anchor: callers (trackpad pinch, animated keyboard zoom) all
+// Continuous (multiplicative) zoom for wheel, trackpad pinch, and animated
+// keyboard zoom. Strict anchor: callers all
 // expect the cursor world point to stay fixed.
 export function zoomAtPoint(screenX, screenY, factor) {
   const oldZoom = viewport.zoom;

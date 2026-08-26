@@ -67,6 +67,10 @@ import {
   sampleTextColor,
   sourceTextLineExtent,
 } from '../text/text-edit-appearance.js';
+import {
+  canonicalBoundsFromDisplayRect,
+  createPageTextEditPlacement,
+} from '../text/page-text-edit-placement.js';
 
 let activeEditor = null;
 let hoverListeners = [];
@@ -804,6 +808,53 @@ function getTextEditGeometry(pageNum, canvasEl) {
   );
 }
 
+function pagePlacementForViewportStyle({
+  doc,
+  pageNum,
+  geometry,
+  style,
+  containerRect,
+  pageOffsetX = 0,
+  pageOffsetY = 0,
+  sourceScale,
+  mode,
+  canonicalBounds = null,
+  commitBounds = null,
+}) {
+  const sourceLeft = Number.parseFloat(style.left);
+  const sourceTop = Number.parseFloat(style.top);
+  const displayX = (sourceLeft - containerRect.left - pageOffsetX) / sourceScale;
+  const displayY = (sourceTop - containerRect.top - pageOffsetY) / sourceScale;
+  const anchor = canonicalBounds || (() => {
+    const point = invertPageRotation(
+      displayX,
+      displayY,
+      geometry.pageWidth,
+      geometry.pageHeight,
+      geometry.rotation,
+    );
+    return {
+      x: point.x,
+      y: point.y,
+      width: Number.parseFloat(style.width) / sourceScale,
+      height: Number.parseFloat(style.height) / sourceScale,
+    };
+  })();
+  return createPageTextEditPlacement({
+    documentId: doc.id,
+    pageNum,
+    pageWidth: geometry.pageWidth,
+    pageHeight: geometry.pageHeight,
+    canonicalBounds: anchor,
+    commitBounds,
+    sourceScale,
+    sourceStyle: style,
+    sourceClientAnchor: { left: sourceLeft, top: sourceTop },
+    mode,
+    generation: doc.generation || doc.renderGeneration || 0,
+  });
+}
+
 function nativePageContentBounds(pageNum, layer, { block = null, provenance = null, editId = null } = {}) {
   const bounds = [];
   if (layer) {
@@ -831,6 +882,8 @@ function expandableNativeEditorOptions(document, pageNum, canvasEl, layer, optio
   const inkPaddingPx = Math.max(0, Number(options.inkPaddingPx ?? 2) || 0);
   const inkPadding = inkPaddingPx / displayScale;
   return {
+    manualLineBreaks: true,
+    directManipulation: true,
     width: document.region.width,
     contentWidth: Math.max(0.0001, document.region.width - (inkPadding * 2)),
     minimumHeight: options.minimumHeight ?? document.region.height,
@@ -1454,7 +1507,7 @@ function scannedStyleOverrides(editor) {
   return output;
 }
 
-function createScannedRepairPreview(span, selection, editorRect = null) {
+function createScannedRepairPreview(span, selection, editorRect = null, pageContext = null) {
   const patch = selection.repair.repairedPatch;
   const sourcePoints = selection.geometry.lineGeometry
     .flatMap((entry) => entry.sourcePolygon.points);
@@ -1470,11 +1523,17 @@ function createScannedRepairPreview(span, selection, editorRect = null) {
   canvas.height = patch.heightPx;
   canvas.setAttribute('aria-hidden', 'true');
   canvas.dataset.scannedTextEditorPreview = selection.id;
-  canvas.style.position = 'fixed';
-  canvas.style.left = `${rect.left - (minX - patch.originX) * scaleX}px`;
-  canvas.style.top = `${rect.top - (minY - patch.originY) * scaleY}px`;
-  canvas.style.width = `${patch.widthPx * scaleX}px`;
-  canvas.style.height = `${patch.heightPx * scaleY}px`;
+  const previewRect = {
+    left: rect.left - (minX - patch.originX) * scaleX,
+    top: rect.top - (minY - patch.originY) * scaleY,
+    width: patch.widthPx * scaleX,
+    height: patch.heightPx * scaleY,
+  };
+  canvas.style.position = 'absolute';
+  canvas.style.left = `${previewRect.left}px`;
+  canvas.style.top = `${previewRect.top}px`;
+  canvas.style.width = `${previewRect.width}px`;
+  canvas.style.height = `${previewRect.height}px`;
   canvas.style.zIndex = '999';
   canvas.style.pointerEvents = 'none';
   const context = canvas.getContext('2d');
@@ -1485,6 +1544,45 @@ function createScannedRepairPreview(span, selection, editorRect = null) {
   const image = context.createImageData(patch.widthPx, patch.heightPx);
   image.data.set(rgba);
   context.putImageData(image, 0, 0);
+  if (pageContext?.doc && pageContext.frame && pageContext.geometry) {
+    const { doc, pageNum, frame, geometry } = pageContext;
+    const bounds = canonicalBoundsFromDisplayRect(previewRect, frame);
+    const origin = applyPageRotation(
+      bounds.x,
+      bounds.y,
+      geometry.pageWidth,
+      geometry.pageHeight,
+      geometry.rotation,
+    );
+    const containerLeft = frame.containerLeft;
+    const containerTop = frame.containerTop;
+    const sourceStyle = {
+      position: 'absolute',
+      left: `${containerLeft + frame.offsetX + origin.x * frame.scale}px`,
+      top: `${containerTop + frame.offsetY + origin.y * frame.scale}px`,
+      width: `${bounds.width * frame.scale}px`,
+      height: `${bounds.height * frame.scale}px`,
+      'z-index': '1',
+      'pointer-events': 'none',
+      'image-rendering': 'auto',
+    };
+    Object.assign(canvas.style, sourceStyle);
+    canvas._pageTextEditPlacement = createPageTextEditPlacement({
+      documentId: doc.id,
+      pageNum,
+      pageWidth: geometry.pageWidth,
+      pageHeight: geometry.pageHeight,
+      canonicalBounds: bounds,
+      sourceScale: frame.scale,
+      sourceStyle,
+      sourceClientAnchor: {
+        left: Number.parseFloat(sourceStyle.left),
+        top: Number.parseFloat(sourceStyle.top),
+      },
+      mode: 'ocr-repair-preview',
+      generation: doc.generation || doc.renderGeneration || 0,
+    });
+  }
   document.body.appendChild(canvas);
   return canvas;
 }
@@ -1618,12 +1716,12 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
   const initialText = selection.content.replacementText;
   const scannedRichText = selection.content.richText
     || withScannedRichText(selection.content).richText;
-  const preview = createScannedRepairPreview(span, selection, rect);
+  let preview = null;
   const lineHeightPx = fixedRegion
     ? Math.max(fontSizePx, rect.height / Math.max(1, selection.content.source.canonicalBaselines.length))
     : Math.max(fontSizePx, rect.height);
   const styleObj = {
-    position: 'fixed',
+    position: 'absolute',
     left: `${rect.left}px`,
     top: `${rect.top}px`,
     width: `${Math.max(rect.width + 4, 80)}px`,
@@ -1638,6 +1736,71 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     background: 'transparent',
     'z-index': '1000',
   };
+  const textLayer = span.closest('.textLayer');
+  const pageCanvas = textLayer?.parentElement?.querySelector('canvas.pdf-canvas')
+    || pdfCanvas || document.getElementById('pdf-canvas');
+  const editorContainer = textLayer?.parentElement;
+  let placement = null;
+  if (pageCanvas && editorContainer) {
+    const geometry = getTextEditGeometry(pageNum, pageCanvas);
+    const viewGeometry = getTextEditViewGeometry(pageCanvas, doc);
+    const containerRect = editorContainer.getBoundingClientRect();
+    const canvasRect = pageCanvas.getBoundingClientRect();
+    const viewport = window.__pdfViewport;
+    const useViewport = editorContainer.id === 'canvas-container'
+      && viewport?.active && viewport.pageNum === pageNum;
+    const pageOffsetX = useViewport ? viewport.offsetX || 0 : canvasRect.left - containerRect.left;
+    const pageOffsetY = useViewport ? viewport.offsetY || 0 : canvasRect.top - containerRect.top;
+    const frame = {
+      pageWidth: geometry.pageWidth,
+      pageHeight: geometry.pageHeight,
+      rotation: geometry.rotation,
+      scale: viewGeometry.visualScale,
+      offsetX: pageOffsetX,
+      offsetY: pageOffsetY,
+      containerLeft: containerRect.left,
+      containerTop: containerRect.top,
+    };
+    const commitBounds = canonicalBoundsFromDisplayRect(rect, frame);
+    const previewBounds = {
+      ...commitBounds,
+      width: commitBounds.width + (4 / viewGeometry.visualScale),
+    };
+    const origin = applyPageRotation(
+      previewBounds.x,
+      previewBounds.y,
+      geometry.pageWidth,
+      geometry.pageHeight,
+      geometry.rotation,
+    );
+    styleObj.left = `${containerRect.left + pageOffsetX + origin.x * viewGeometry.visualScale}px`;
+    styleObj.top = `${containerRect.top + pageOffsetY + origin.y * viewGeometry.visualScale}px`;
+    styleObj.width = `${previewBounds.width * viewGeometry.visualScale}px`;
+    styleObj.height = `${previewBounds.height * viewGeometry.visualScale}px`;
+    styleObj.transform = geometry.rotation ? `rotate(${geometry.rotation}deg)` : 'none';
+    styleObj['transform-origin'] = '0 0';
+    placement = pagePlacementForViewportStyle({
+      doc,
+      pageNum,
+      geometry,
+      style: styleObj,
+      containerRect,
+      pageOffsetX,
+      pageOffsetY,
+      sourceScale: viewGeometry.visualScale,
+      mode: 'ocr-fixed',
+      canonicalBounds: previewBounds,
+      commitBounds,
+    });
+    preview = createScannedRepairPreview(span, selection, rect, {
+      doc,
+      pageNum,
+      geometry,
+      frame,
+    });
+  } else {
+    preview = createScannedRepairPreview(span, selection, rect);
+  }
   const editor = {
     block: { spans: [] },
     pageNum,
@@ -1821,6 +1984,11 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
       },
       singleLine: !fixedRegion,
       fixedRegion,
+      placement,
+      attachedPageElements: preview?._pageTextEditPlacement
+        ? [{ element: preview, placement: preview._pageTextEditPlacement }]
+        : [],
+      editorBackground: 'transparent',
       direction: 'ltr',
       ariaLabel: fixedRegion
         ? paragraphReflow
@@ -1962,7 +2130,7 @@ function startPdfTextEditing(span, pageNum) {
   // Build style object for the Solid overlay
   // Use fixed positioning based on container's viewport position
   const styleObj = {
-    position: 'fixed',
+    position: 'absolute',
     left: `${containerRect.left + groupRect.left + offsetX}px`,
     top: `${editorTop}px`,
     // PDF.js fallback-font scaleX can make DOM word bounds far wider than
@@ -1978,6 +2146,26 @@ function startPdfTextEditing(span, pageNum) {
   };
   if (editorBold) styleObj['font-weight'] = 'bold';
   if (editorItalic) styleObj['font-style'] = 'italic';
+  const pageCanvas = textLayer.parentElement?.querySelector('canvas.pdf-canvas')
+    || pdfCanvas || document.getElementById('pdf-canvas');
+  const placementGeometry = pageCanvas ? getTextEditGeometry(pageNum, pageCanvas) : null;
+  const placementScale = editorFontSize / fontSize;
+  const placementViewport = window.__pdfViewport;
+  const placementUsesViewport = editorContainer.id === 'canvas-container'
+    && placementViewport?.active && placementViewport.pageNum === pageNum;
+  const placementOffsetX = placementUsesViewport ? placementViewport.offsetX || 0 : offsetX;
+  const placementOffsetY = placementUsesViewport ? placementViewport.offsetY || 0 : offsetY;
+  const placement = placementGeometry ? pagePlacementForViewportStyle({
+    doc: getActiveDocument(),
+    pageNum,
+    geometry: placementGeometry,
+    style: styleObj,
+    containerRect,
+    pageOffsetX: placementOffsetX,
+    pageOffsetY: placementOffsetY,
+    sourceScale: placementScale,
+    mode: 'native-expandable',
+  }) : null;
 
   // Hide all spans BEFORE showing editor so text doesn't double-render
   for (const s of block.spans) s.style.visibility = 'hidden';
@@ -2074,6 +2262,7 @@ function startPdfTextEditing(span, pageNum) {
     options: {
       richTextDocument: originalRichText,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+      placement,
       expandableRegion: expandableNativeEditorOptions(
         originalRichText,
         pageNum,
@@ -2130,7 +2319,10 @@ function finishPdfTextEditing() {
 
   // Persist when the text OR the formatting changed (a pure re-style of
   // existing PDF text must be saveable too).
-  const nativeChanged = newText !== originalText || styleChanged;
+  const geometryChanged = Boolean(richTextDraft && activeEditor.richTextDocument && (
+    JSON.stringify(richTextDraft.region) !== JSON.stringify(activeEditor.richTextDocument.region)
+  ));
+  const nativeChanged = newText !== originalText || styleChanged || geometryChanged;
   if (nativeChanged && !activeEditor.sourceProvenance) {
     showMessage('This paragraph contains visible text that could not be linked to eligible source operators. The document was left untouched.');
   } else if (nativeChanged) {
@@ -2415,7 +2607,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
 
   // Build style object using fixed positioning
   const styleObj = {
-    position: 'fixed',
+    position: 'absolute',
     left: `${editorLeft}px`,
     top: `${editorTop}px`,
     width: `${Math.max(scaledWidth, 80)}px`,
@@ -2436,6 +2628,17 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
   styleObj['text-decoration-line'] = decorations.length ? decorations.join(' ') : 'none';
   styleObj['text-decoration-thickness'] = '0.06em';
   styleObj['text-underline-offset'] = '0.08em';
+  const placement = pagePlacementForViewportStyle({
+    doc: editDoc,
+    pageNum,
+    geometry,
+    style: styleObj,
+    containerRect,
+    pageOffsetX,
+    pageOffsetY,
+    sourceScale: editScale,
+    mode: nativeExpandable ? 'native-expandable' : 'owned-text',
+  });
 
   const oldTextEdit = cloneTextEditRecord(textEdit);
   const isAddedText = view.originalText === '';
@@ -2602,6 +2805,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
     options: {
       richTextDocument: view.richText,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+      placement,
       reflowWidth: Boolean(transaction) && !nativeExpandable,
       expandableRegion: nativeExpandable ? expandableNativeEditorOptions(
         view.richText,

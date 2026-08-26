@@ -1,4 +1,4 @@
-import { state, getActiveDocument } from '../core/state.js';
+import { state, getActiveDocument, getPageRotation } from '../core/state.js';
 import { redrawAnnotations, redrawContinuous } from '../annotations/rendering.js';
 import { hasFill } from '../annotations/fill-utils.js';
 import { showProperties } from '../ui/panels/properties-panel.js';
@@ -23,6 +23,8 @@ import {
   proposeFontSubstitution,
   resolvePackagedFace,
 } from '../text/font-catalog.js';
+import { createPageTextEditPlacement } from '../text/page-text-edit-placement.js';
+import { resolveTextEditPageGeometry } from '../text/text-edit-appearance.js';
 
 // Start inline text editing for textbox/callout
 export function startTextEditing(annotation, { isNew = false } = {}) {
@@ -126,7 +128,7 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
 
   // Build style object for the textarea overlay
   const styleObj = {
-    position: 'fixed',
+    position: 'absolute',
     left: `${centerX}px`,
     top: `${centerY}px`,
     width: `${scaledWidth}px`,
@@ -160,6 +162,33 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
   const halfLeading = ((ls - 1) * (annotation.fontSize || 14) * scale) / 2;
   // Pass halfLeading offset to the overlay component via a custom property
   styleObj['--text-offset'] = `${halfLeading}px`;
+
+  const pageDims = doc?.pageDims?.[annotation.page];
+  const geometry = resolveTextEditPageGeometry(
+    pageDims,
+    canvasRect.width / Math.max(scale, 0.0001),
+    canvasRect.height / Math.max(scale, 0.0001),
+    getPageRotation(annotation.page),
+  );
+  const placement = createPageTextEditPlacement({
+    documentId: doc.id,
+    pageNum: annotation.page,
+    pageWidth: geometry.pageWidth,
+    pageHeight: geometry.pageHeight,
+    canonicalBounds: {
+      x: annotation.x + width / 2,
+      y: annotation.y + height / 2,
+      width,
+      height,
+    },
+    sourceScale: scale,
+    sourceStyle: styleObj,
+    sourceClientAnchor: { left: centerX, top: centerY },
+    mode: 'annotation-text',
+    elementRotation: annotation.rotation || 0,
+    anchor: 'center',
+    generation: doc.generation || doc.renderGeneration || 0,
+  });
 
   const initialText = annotation.text || '';
   const face = resolvePackagedFace(sourceFamily, annotation.fontBold, annotation.fontItalic);
@@ -325,6 +354,7 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
     options: {
       richTextDocument,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+      placement,
       displayScale: scale,
       reflowWidth: true,
       growDown: true,

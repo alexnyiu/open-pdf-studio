@@ -2074,6 +2074,10 @@ async function handleUiState(params) {
       computedStyle = {
         display: cs.display,
         visibility: cs.visibility,
+        position: cs.position,
+        overflowX: cs.overflowX,
+        overflowY: cs.overflowY,
+        boxShadow: cs.boxShadow,
         fontSize: cs.fontSize,
         lineHeight: cs.lineHeight,
         left: cs.left,
@@ -2082,6 +2086,7 @@ async function handleUiState(params) {
       };
     } catch { /* keep rect-based answer */ }
   }
+  const pageTextEditLayer = el.closest?.('.pdf-text-edit-layer') || null;
   return {
     ok: true,
     found: true,
@@ -2099,6 +2104,13 @@ async function handleUiState(params) {
     dataset: el.dataset ? { ...el.dataset } : {},
     inlineStyle: el.getAttribute?.('style') ?? null,
     computedStyle,
+    pageTextEditHost: {
+      attached: Boolean(pageTextEditLayer),
+      documentId: pageTextEditLayer?.dataset?.documentId ?? null,
+      page: pageTextEditLayer?.dataset?.page ?? null,
+      parentId: pageTextEditLayer?.parentElement?.id || null,
+      parentClass: pageTextEditLayer?.parentElement?.className || null,
+    },
     rect: {
       x: r.x,
       y: r.y,

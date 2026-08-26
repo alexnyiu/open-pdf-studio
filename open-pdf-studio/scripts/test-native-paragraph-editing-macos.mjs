@@ -130,10 +130,18 @@ async function setEditTool() {
 async function openEditor(selector, expectedText) {
   await click(selector);
   try {
-    return await waitUi('.pdf-text-editor', (value) => (
+    const editor = await waitUi('.pdf-text-editor', (value) => (
       value.found && value.visible && value.focused
         && String(value.value ?? value.text ?? '').includes(expectedText)
     ), 15_000);
+    assert.equal(editor.pageTextEditHost?.attached, true,
+      `editor was not mounted in a PDF page host: ${JSON.stringify(editor)}`);
+    assert.equal(editor.pageTextEditHost?.page, '1');
+    assert.equal(editor.computedStyle?.position, 'absolute');
+    assert.equal(editor.computedStyle?.boxShadow, 'none');
+    assert.notEqual(editor.computedStyle?.overflowX, 'scroll');
+    assert.notEqual(editor.computedStyle?.overflowY, 'scroll');
+    return editor;
   } catch (error) {
     const [dialog, consoleLog, sourceState] = await Promise.all([
       ui('.message-dialog-overlay').catch(() => null),
@@ -147,10 +155,22 @@ async function openEditor(selector, expectedText) {
 }
 
 async function replaceAndCommit(text) {
+  await callTool('app_key', { key: 'a', meta: true });
   const typed = await callTool('app_type', { text });
   assert.equal(typed.ok, true, typed.error);
   await callTool('app_key', { key: 'Enter', meta: true });
-  await waitUi('.pdf-text-editor', (value) => !value.found, 30_000);
+  try {
+    await waitUi('.pdf-text-editor', (value) => !value.found, 30_000);
+  } catch (error) {
+    const [editor, status, consoleLog] = await Promise.all([
+      ui('.pdf-text-editor').catch(() => null),
+      ui('#native-text-edit-status').catch(() => null),
+      callTool('app_get_recent_console').catch(() => null),
+    ]);
+    throw new Error(`formatted text did not commit: ${JSON.stringify({ editor, status, consoleLog })}`, {
+      cause: error,
+    });
+  }
 }
 
 async function save(pathname = null) {
@@ -200,6 +220,33 @@ try {
   const nativeSelector = '.textLayer span[data-item-index="2"]';
   await waitUi(nativeSelector, (value) => value.found && value.visible && value.rect.width > 5, 60_000);
   await openEditor(nativeSelector, 'ARCALYST penetration');
+  await callTool('app_set_zoom', { scale: 1.25 });
+  await waitUi('.pdf-text-editor', (value) => (
+    value.found && value.visible && value.focused && value.pageTextEditHost?.attached
+      && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
+  ), 30_000);
+  await callTool('app_set_view_mode', { mode: 'continuous' });
+  const continuousEditor = await waitUi('.pdf-text-editor', (value) => (
+    value.found && value.visible && value.focused && value.pageTextEditHost?.attached
+      && String(value.pageTextEditHost?.parentClass).includes('canvas-container-cont')
+      && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
+  ), 30_000);
+  await callTool('app_scroll', {
+    x: Math.round(continuousEditor.rect.x + continuousEditor.rect.width / 2),
+    y: Math.round(continuousEditor.rect.y + continuousEditor.rect.height / 2),
+    dy: 120,
+  });
+  await waitUi('.pdf-text-editor', (value) => (
+    value.found && value.visible && value.focused && value.pageTextEditHost?.attached
+      && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
+  ), 30_000);
+  await callTool('app_set_view_mode', { mode: 'single' });
+  await callTool('app_set_zoom', { scale: 1 });
+  await waitUi('.pdf-text-editor', (value) => (
+    value.found && value.visible && value.focused && value.pageTextEditHost?.attached
+      && value.pageTextEditHost?.parentId === 'canvas-container'
+      && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
+  ), 30_000);
   const firstReplacement = 'Packaged first line\nPackaged second line';
   await replaceAndCommit(firstReplacement);
 
@@ -275,7 +322,8 @@ try {
 
   const rightColorEditor = await openEditor(rightColorSelector, 'The growth runway');
   assert.equal(String(rightColorEditor.value ?? rightColorEditor.text).includes('Mounjaro and Zepbound'), false);
-  assert.ok(rightColorEditor.rect.left >= rightSource.rect.left - 2);
+  assert.ok(rightColorEditor.rect.left > leftColorEditor.rect.right + 2,
+    `right editor crossed the inferred gutter: ${JSON.stringify({ leftColorEditor, rightColorEditor })}`);
   await replaceAndCommit('Independent packaged right paragraph');
   assert.equal(await save(colorSaveAsPdf), colorSaveAsPdf);
   await closeActiveTab();
@@ -283,7 +331,8 @@ try {
   await setEditTool();
   const reopenedRight = await openEditor('.textLayer span[data-owned-text-edit-hit="true"]',
     'Independent packaged right paragraph');
-  assert.ok(reopenedRight.rect.left >= rightSource.rect.left - 2);
+  assert.ok(reopenedRight.rect.left > leftColorEditor.rect.right + 2,
+    'reopened right editor crossed the inferred gutter');
   await callTool('app_key', { key: 'Escape' });
   assert.match(await pdfJsText(colorSaveAsPdf), /Independent packaged right paragraph/u);
 

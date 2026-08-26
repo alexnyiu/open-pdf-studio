@@ -25,8 +25,14 @@ try {
     const { state } = await import('/js/core/state.ts');
     const { activateEditTextTool } = await import('/js/tools/text-edit-tool.js');
 
+    // This fixture owns its page geometry. Do not inherit the application's
+    // blank-document viewport zoom when measuring the synthetic PDF canvas.
+    window.__pdfViewport = null;
+
+    document.getElementById('canvas-container')?.setAttribute('id', 'app-canvas-container');
     const host = document.createElement('div');
-    host.id = 'native-paragraph-test-host';
+    host.id = 'canvas-container';
+    host.dataset.nativeParagraphTestHost = 'true';
     Object.assign(host.style, {
       position: 'fixed', left: '20px', top: '20px', width: '700px', height: '400px',
       zIndex: '10000', background: '#fff',
@@ -108,7 +114,7 @@ try {
   const targetBox = await target.boundingBox();
   const initialGrouping = await page.evaluate(async () => {
     const { detectNativeColumnTracks, groupNativeTextFragments, nativeTextLinePieces } = await import('/js/text/native-text-blocks.js');
-    const spans = [...document.querySelectorAll('#native-paragraph-test-host .textLayer span[data-pdf-transform]')];
+    const spans = [...document.querySelectorAll('[data-native-paragraph-test-host] .textLayer span[data-pdf-transform]')];
     const fragments = spans.map((span) => {
       const transform = JSON.parse(span.dataset.pdfTransform);
       return { text: span.textContent, sourceText: span.textContent,
@@ -130,6 +136,37 @@ try {
   await target.click();
   const editor = page.locator('.pdf-text-editor');
   await editor.waitFor({ state: 'visible' });
+  const pageLocalState = await editor.evaluate((node) => ({
+    editorPosition: getComputedStyle(node).position,
+    portalPosition: getComputedStyle(node.closest('.pdf-text-edit-portal')).position,
+    hostPage: node.closest('.pdf-text-edit-layer')?.dataset.page || null,
+    hostDocument: node.closest('.pdf-text-edit-layer')?.dataset.documentId || null,
+    boxShadow: getComputedStyle(node).boxShadow,
+  }));
+  assert.equal(pageLocalState.editorPosition, 'absolute');
+  assert.equal(pageLocalState.portalPosition, 'absolute');
+  assert.equal(pageLocalState.hostPage, '1');
+  assert.equal(pageLocalState.hostDocument, 'native-paragraph-test-document');
+  assert.equal(pageLocalState.boxShadow, 'none');
+  await page.evaluate(() => {
+    const previous = document.getElementById('canvas-container');
+    previous.id = 'retired-native-page-container';
+    const replacement = document.createElement('div');
+    replacement.id = 'canvas-container';
+    replacement.dataset.nativeParagraphTestHost = 'true';
+    replacement.style.cssText = previous.style.cssText;
+    for (const child of [...previous.children]) {
+      if (!child.classList.contains('pdf-text-edit-layer')) replacement.appendChild(child);
+    }
+    previous.after(replacement);
+  });
+  await page.waitForFunction(() => (
+    document.querySelector('.pdf-text-editor')?.closest('.pdf-text-edit-layer')?.parentElement?.id
+      === 'canvas-container'
+  ));
+  assert.equal(await editor.evaluate((node) => document.activeElement === node), true,
+    'page-container replacement must preserve editor focus');
+  await page.evaluate(() => document.getElementById('retired-native-page-container')?.remove());
   assert.equal(await target.evaluate((node) => node.style.visibility), 'hidden',
     'owned source spans must be hidden before the rich editor is painted');
   assert.equal((await editor.innerText()).replace(/\n\n/gu, '\n').replace(/[ \t]+\n/gu, '\n'),
@@ -141,13 +178,99 @@ try {
     const bridge = await import('/js/bridge.ts');
     return bridge.getPdfEditorLayoutState()?.pending === false;
   });
+  const moveHandle = page.getByRole('button', { name: 'Move text box' });
+  const resizeHandle = page.getByRole('button', { name: 'Resize text box' });
+  assert.equal(await moveHandle.count(), 1, 'native text box must expose one move handle');
+  assert.equal(await resizeHandle.count(), 1, 'native text box must expose one corner resize handle');
+  const beforeResize = await editor.boundingBox();
+  const beforeResizeMinimumHeight = await page.evaluate(async () => (
+    (await import('/js/solid/stores/pdfTextEditStore.js'))
+      .editorOptions().expandableRegion.minimumHeight
+  ));
+  const resizeBox = await resizeHandle.boundingBox();
+  await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + resizeBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(resizeBox.x + resizeBox.width / 2 + 36, resizeBox.y + resizeBox.height / 2 + 20, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const afterResize = await editor.boundingBox();
+  const resizeState = await page.evaluate(async () => {
+    const store = await import('/js/solid/stores/pdfTextEditStore.js');
+    return {
+      placement: store.editorPlacement(),
+      options: store.editorOptions().expandableRegion,
+    };
+  });
+  assert.ok(afterResize.width > beforeResize.width + 30,
+    `dragging the corner must widen the canonical native text box (${beforeResize.width} -> ${afterResize.width})`);
+  assert.ok(resizeState.options.minimumHeight > beforeResizeMinimumHeight + 8,
+    'dragging the corner must increase the canonical native text box minimum height');
+  assert.ok(afterResize.height > beforeResize.height + 8,
+    `dragging the corner must increase the native text box minimum height (${beforeResize.height} -> ${afterResize.height}): ${JSON.stringify(resizeState)}`);
+
+  const moveBox = await moveHandle.boundingBox();
+  await page.mouse.move(moveBox.x + moveBox.width / 2, moveBox.y + moveBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(moveBox.x + moveBox.width / 2 - 28, moveBox.y + moveBox.height / 2 + 16, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(50);
+  const afterMove = await editor.boundingBox();
+  assert.ok(Math.abs(afterMove.x - afterResize.x + 28) < 1.5,
+    'dragging the move handle must relocate the text box horizontally');
+  assert.ok(Math.abs(afterMove.y - afterResize.y - 16) < 1.5,
+    'dragging the move handle must relocate the text box vertically');
+  assert.equal(await editor.evaluate((node) => document.activeElement === node), true,
+    'moving or resizing must restore editor focus');
+
   const originalEditorBox = await editor.boundingBox();
   const immutableMinimumHeight = await page.evaluate(async () => {
     const { editorOptions } = await import('/js/solid/stores/pdfTextEditStore.js');
-    const expandable = editorOptions().expandableRegion;
-    return expandable.minimumHeight * expandable.displayScale;
+    return editorOptions().expandableRegion.minimumHeight;
   });
-  await editor.fill('This native paragraph is intentionally extended with enough words to wrap across several canonical lines while its original width remains fixed.');
+  await editor.fill('This native paragraph is intentionally extended on one authored line and must not wrap automatically.');
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const overlongEditorState = await editor.evaluate((node) => ({
+    rect: node.getBoundingClientRect().toJSON(),
+    overflow: getComputedStyle(node).overflow,
+    scrollHeight: node.scrollHeight,
+    clientHeight: node.clientHeight,
+    scrollWidth: node.scrollWidth,
+    clientWidth: node.clientWidth,
+  }));
+  const overlongLayout = await page.evaluate(async () => {
+    const bridge = await import('/js/bridge.ts');
+    const state = bridge.getPdfEditorLayoutState();
+    return {
+      valid: state?.valid,
+      message: state?.message,
+      lineCount: state?.result?.document?.lines?.length,
+      breaks: state?.result?.document?.lines?.map((line) => line.breakAfter),
+      manualLineBreaks: (await import('/js/solid/stores/pdfTextEditStore.js'))
+        .editorOptions().expandableRegion?.manualLineBreaks,
+    };
+  });
+  assert.equal(overlongLayout.lineCount, 1,
+    'typing an overlong line must not create generated editor lines');
+  assert.equal(overlongLayout.manualLineBreaks, true,
+    'the native editor must use manual-line mode');
+  assert.equal(overlongLayout.valid, false,
+    'an overlong manual line must remain visible but uncommittable');
+  assert.match(overlongLayout.message, /press Enter/i);
+  assert.ok(overlongEditorState.rect.width > originalEditorBox.width,
+    'the live text-box outline must expand to contain an overlong line');
+  assert.equal(overlongEditorState.overflow, 'visible');
+  assert.ok(overlongEditorState.scrollWidth <= overlongEditorState.clientWidth + 2,
+    'the expanded text box must contain the complete authored line');
+  assert.ok(overlongEditorState.scrollHeight <= overlongEditorState.clientHeight + 2,
+    'the manual-line editor must not hide text behind an internal scrollbar');
+
+  await editor.fill('First short line\nSecond short line\nThird short line\nFourth short line');
   await page.waitForFunction(async () => {
     const bridge = await import('/js/bridge.ts');
     return bridge.getPdfEditorLayoutState()?.pending === false;
@@ -158,11 +281,24 @@ try {
     scrollHeight: node.scrollHeight,
     clientHeight: node.clientHeight,
   }));
+  const grownLayoutState = await page.evaluate(async () => {
+    const bridge = await import('/js/bridge.ts');
+    const state = bridge.getPdfEditorLayoutState();
+    return {
+      valid: state?.valid,
+      message: state?.message,
+      requiredHeight: state?.result?.requiredHeight,
+      lines: bridge.getPdfEditorRichText()?.lines?.map((line) => ({
+        text: line.runs.map((run) => run.text).join(''),
+        baselineAdvance: line.baselineAdvance,
+      })),
+    };
+  });
   assert.ok(grownEditorState.rect.height > originalEditorBox.height,
-    'native editor must grow downward after canonical soft wrapping');
+    `native editor must grow downward after explicit Enter lines: ${JSON.stringify({ originalEditorBox, grownEditorState, grownLayoutState })}`);
   assert.ok(Math.abs(grownEditorState.rect.width - originalEditorBox.width) < 1,
-    'native editor width must remain fixed');
-  assert.equal(grownEditorState.overflow, 'hidden');
+    'short manual lines must retain the original text-box width');
+  assert.equal(grownEditorState.overflow, 'visible');
   assert.ok(grownEditorState.scrollHeight <= grownEditorState.clientHeight + 2,
     'grown native editor must not hide text behind an internal scrollbar');
 
@@ -193,12 +329,15 @@ try {
       targetCount: document.querySelectorAll('[data-owned-text-edit-hit]').length,
       targetIds: [...document.querySelectorAll('[data-owned-text-edit-hit]')]
         .map((node) => node.dataset.editId),
+      region: { ...record.richText.region },
     };
   });
   assert.equal(firstCommit.count, 1);
   assert.equal(firstCommit.revision, 1);
   assert.equal(firstCommit.targetCount, 2);
   assert.ok(firstCommit.targetIds.every((id) => id === firstCommit.id));
+  assert.ok(firstCommit.region.width > beforeResize.width,
+    'committed native record must retain the resized width');
 
   const hitTargetState = await page.locator('[data-owned-text-edit-hit]').first().evaluate((node) => ({
     rect: node.getBoundingClientRect().toJSON(),
@@ -281,7 +420,9 @@ try {
   assert.equal(await page.locator('.edit-text-selection-union').count(), 1);
   await page.keyboard.press('Enter');
   await editor.waitFor({ state: 'visible' });
-  assert.match((await editor.innerText()).replace(/\n\n/gu, '\n'), /Re-edited first line[\s\S]*Right cell/u);
+  const combinedDraft = (await editor.innerText()).replace(/\n\n/gu, '\n');
+  assert.match(combinedDraft, /Re-edited first line/u);
+  assert.match(combinedDraft, /Right cell/u);
   await editor.fill('Combined paragraph one');
   await editor.press('Enter');
   await page.keyboard.type('Combined paragraph two');
@@ -319,7 +460,7 @@ try {
 
   await page.evaluate(async () => {
     const { injectSyntheticTextSpans } = await import('/js/text/text-layer.js');
-    const host = document.getElementById('native-paragraph-test-host');
+    const host = document.querySelector('[data-native-paragraph-test-host]');
     host.querySelector('.textLayer').remove();
     const layer = document.createElement('div');
     layer.className = 'textLayer';
@@ -338,9 +479,10 @@ try {
   await page.evaluate(async () => {
     const { state } = await import('/js/core/state.ts');
     const { activateEditTextTool } = await import('/js/tools/text-edit-tool.js');
-    document.getElementById('native-paragraph-test-host')?.remove();
+    document.querySelector('[data-native-paragraph-test-host]')?.remove();
     const host = document.createElement('div');
-    host.id = 'native-side-by-side-test-host';
+    host.id = 'canvas-container';
+    host.dataset.nativeSideBySideTestHost = 'true';
     Object.assign(host.style, {
       position: 'fixed', left: '20px', top: '20px', width: '700px', height: '420px',
       zIndex: '10000', background: '#fff',
@@ -397,11 +539,11 @@ try {
     addSpan('LEFT HEADING', 20, 340, 90, '#0057a8', 10);
     addSpan('RIGHT HEADING', 320, 340, 100, '#0057a8', 10);
     addSpan('Left paragraph first line', 20, 320, 275, '#111111', 12, 'sideLeft');
-    addSpan('and colored ', 20, 304, 100, '#111111');
-    addSpan('blue', 120, 304, 40, '#0057a8');
-    addSpan(' gray ', 160, 304, 60, '#666666');
-    addSpan('pale', 220, 304, 50, '#f4f4f4');
-    addSpan('left paragraph final line.', 20, 288, 210, '#111111');
+    addSpan('and colored ', 20, 304, 100, '#111111', 12);
+    addSpan('blue', 120, 304, 40, '#0057a8', 12);
+    addSpan(' gray ', 160, 304, 60, '#666666', 6.8);
+    addSpan('pale', 220, 304, 50, '#f4f4f4', 6.8);
+    addSpan('left paragraph final line.', 20, 288, 210, '#111111', 12);
     addSpan('Right paragraph first line', 320, 320, 250, '#111111', 12, 'sideRight');
     addSpan('right paragraph second line', 320, 304, 245, '#111111');
     addSpan('right paragraph third line', 320, 288, 240, '#666666');
@@ -441,11 +583,16 @@ try {
   });
   const colorState = await editor.evaluate((node) => [...node.querySelectorAll('[data-rich-run]')]
     .map((run) => ({ text: run.textContent, color: run.dataset.color,
+      size: Number(run.dataset.size),
       contrastAid: run.dataset.contrastAid,
       textShadow: getComputedStyle(run).textShadow,
       backgroundColor: getComputedStyle(run).backgroundColor })));
-  assert.ok(colorState.some((run) => run.color === '#0057a8' && run.text.includes('blue')));
-  assert.ok(colorState.some((run) => run.color === '#666666' && run.text.includes('gray')));
+  assert.ok(colorState.some((run) => run.color === '#0057a8' && run.text.includes('blue')),
+    `blue mixed-format run was not retained: ${JSON.stringify(colorState)}`);
+  const grayRunState = colorState.find((run) => run.text.includes('gray'));
+  assert.equal(grayRunState?.size, 6.8,
+    `small gray mixed-format run was not retained: ${JSON.stringify(colorState)}`);
+  assert.notEqual(grayRunState?.color, '#000000');
   assert.ok(colorState.every((run) => run.textShadow === 'none'),
     `no native editing run may use a blurring text shadow: ${JSON.stringify(colorState)}`);
   const paleRun = colorState.find((run) => run.color === '#f4f4f4');
@@ -498,7 +645,72 @@ try {
       .find((run) => run.text.includes('blueX'))?.color;
   });
   assert.equal(typedColor, '#0057a8', 'typing inside a colored run must inherit that run color');
+  const blueSourceFormat = await page.evaluate(async () => {
+    const bridge = await import('/js/bridge.ts');
+    const document = bridge.getPdfEditorRichText();
+    const line = document.lines.find((candidate) => candidate.runs.some((run) => run.text.includes('blueX')));
+    const run = line.runs.find((candidate) => candidate.text.includes('blueX'));
+    return {
+      run: {
+        faceId: run.faceId, size: run.size, color: run.color,
+        bold: run.bold, italic: run.italic,
+        underline: run.underline, strikeout: run.strikeout,
+      },
+      line: { alignment: line.alignment, baselineAdvance: line.baselineAdvance },
+    };
+  });
+  await editor.press('Enter');
+  await page.keyboard.type('Blue continuation');
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const continuationFormat = await page.evaluate(async () => {
+    const bridge = await import('/js/bridge.ts');
+    const document = bridge.getPdfEditorRichText();
+    const line = document.lines.find((candidate) => (
+      candidate.runs.some((run) => run.text.includes('Blue continuation'))
+    ));
+    const run = line?.runs.find((candidate) => candidate.text.includes('Blue continuation'));
+    return run ? {
+      run: {
+        faceId: run.faceId, size: run.size, color: run.color,
+        bold: run.bold, italic: run.italic,
+        underline: run.underline, strikeout: run.strikeout,
+      },
+      line: { alignment: line.alignment, baselineAdvance: line.baselineAdvance },
+    } : null;
+  });
+  assert.deepEqual(continuationFormat, blueSourceFormat,
+    'an Enter-created line must inherit the complete caret run and paragraph format');
   await page.keyboard.press('Control+Enter');
+  await editor.waitFor({ state: 'detached' });
+
+  const leftEditId = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    return String(state.documents[0].textEdits[0].id);
+  });
+  await page.locator(`[data-owned-text-edit-hit][data-edit-id="${leftEditId}"]`).first().click({ force: true });
+  await editor.waitFor({ state: 'visible' });
+  const reopenedContinuationFormat = await page.evaluate(async () => {
+    const bridge = await import('/js/bridge.ts');
+    const document = bridge.getPdfEditorRichText();
+    const line = document.lines.find((candidate) => (
+      candidate.runs.some((run) => run.text.includes('Blue continuation'))
+    ));
+    const run = line?.runs.find((candidate) => candidate.text.includes('Blue continuation'));
+    return run ? {
+      run: {
+        faceId: run.faceId, size: run.size, color: run.color,
+        bold: run.bold, italic: run.italic,
+        underline: run.underline, strikeout: run.strikeout,
+      },
+      line: { alignment: line.alignment, baselineAdvance: line.baselineAdvance },
+    } : null;
+  });
+  assert.deepEqual(reopenedContinuationFormat, blueSourceFormat,
+    're-editing must restore the complete inherited run and line format');
+  await editor.press('Escape');
   await editor.waitFor({ state: 'detached' });
 
   await rightTarget.click();
@@ -513,14 +725,68 @@ try {
     return state.documents[0].textEdits.map((record) => ({
       region: record.richText.region,
       colors: [...new Set(record.richText.lines.flatMap((line) => line.runs.map((run) => run.color)))],
+      continuation: record.richText.lines.flatMap((line) => line.runs)
+        .find((run) => run.text.includes('Blue continuation')) || null,
     })).sort((left, right) => left.region.x - right.region.x);
   });
   assert.equal(sideBySideRecords.length, 2);
   assert.ok(sideBySideRecords[0].region.x + sideBySideRecords[0].region.width
     < sideBySideRecords[1].region.x);
   assert.ok(sideBySideRecords[0].colors.includes('#0057a8'));
-  assert.ok(sideBySideRecords[0].colors.includes('#666666'));
+  assert.ok(sideBySideRecords[0].colors.includes(grayRunState.color));
   assert.ok(sideBySideRecords[0].colors.includes('#f4f4f4'));
+  assert.equal(sideBySideRecords[0].continuation?.color, '#0057a8');
+  assert.equal(sideBySideRecords[0].continuation?.size, blueSourceFormat.run.size);
+  assert.equal(sideBySideRecords[0].continuation?.faceId, blueSourceFormat.run.faceId);
+
+  const savedRunOperators = await page.evaluate(async () => {
+    const { PDFDocument } = await import('/@id/pdf-lib');
+    const { state } = await import('/js/core/state.ts');
+    const { saveTextEditsToPages } = await import('/js/pdf/saver/text-edits.js');
+    const { createTextEditRecordV2 } = await import('/js/text/rich-text.js');
+    const sourceRecord = state.documents[0].textEdits.find((record) => (
+      record.richText.lines.some((line) => line.runs.some((run) => run.text.includes('Blue continuation')))
+    ));
+    const source = createTextEditRecordV2({
+      id: 'saved-format-operators',
+      page: 1,
+      richText: JSON.parse(JSON.stringify(sourceRecord.richText)),
+    });
+    const output = await PDFDocument.create();
+    const outputPage = output.addPage([612, 792]);
+    const calls = [];
+    const drawText = outputPage.drawText.bind(outputPage);
+    outputPage.drawText = (value, options) => {
+      calls.push({
+        value,
+        size: options.size,
+        fontName: options.font.name,
+        color: [options.color.red, options.color.green, options.color.blue],
+      });
+      return drawText(value, options);
+    };
+    await saveTextEditsToPages(output, [outputPage], [source]);
+    const operators = [...outputPage.getContentStream().getContentsString().matchAll(
+      /([0-9.]+) ([0-9.]+) ([0-9.]+) rg\n\/([^\s]+) ([0-9.]+) Tf/gu,
+    )].map((match) => ({
+      color: match.slice(1, 4).map(Number),
+      fontName: match[4],
+      size: Number(match[5]),
+    }));
+    return { calls, operators };
+  });
+  assert.equal(savedRunOperators.operators.length, savedRunOperators.calls.length,
+    'every saved rich-text run must emit its own RGB and font operators');
+  savedRunOperators.calls.forEach((call, index) => {
+    assert.match(savedRunOperators.operators[index].fontName,
+      new RegExp(`^${call.fontName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}-`, 'u'));
+    assert.equal(savedRunOperators.operators[index].size, call.size);
+    assert.deepEqual(savedRunOperators.operators[index].color, call.color);
+  });
+  const savedContinuation = savedRunOperators.calls.find((call) => call.value.includes('Blue continuation'));
+  assert.ok(savedContinuation, 'the inherited continuation must reach the saved PDF content stream');
+  assert.equal(savedContinuation.size, blueSourceFormat.run.size);
+  assert.deepEqual(savedContinuation.color, [0, 87 / 255, 168 / 255]);
 
   console.log('Native paragraph, side-by-side color, multi-box merge, atomic undo, and stable re-edit targets test passed');
 } finally {

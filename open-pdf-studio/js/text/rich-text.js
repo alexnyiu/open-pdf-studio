@@ -208,6 +208,41 @@ function orderedSelection(document, selection) {
     : { start: focus, end: anchor };
 }
 
+/**
+ * Resolve the canonical formatting used for inserted text. At a run boundary
+ * the preceding run wins, matching desktop word processors; at offset zero
+ * the first run supplies the format. Explicit typing-format overrides are
+ * normalized on top without mutating the source document.
+ */
+export function richTextInsertionContext(document, point, typingStyle = null) {
+  assertRichTextDocumentV2(document);
+  const caret = normalizePoint(document, point);
+  const line = document.lines[caret.line];
+  let sourceRun = line.runs[0];
+  if (caret.offset > 0) {
+    let cursor = 0;
+    for (const run of line.runs) {
+      cursor += graphemeLength(run.text);
+      sourceRun = run;
+      if (caret.offset <= cursor) break;
+    }
+  }
+  const normalizedRun = createTextRun('', {
+    ...sourceRun,
+    ...(typingStyle || {}),
+  });
+  return {
+    point: caret,
+    runStyle: Object.fromEntries(STYLE_KEYS.map((key) => [key, normalizedRun[key]])),
+    lineStyle: {
+      alignment: line.alignment,
+      baselineAdvance: line.baselineAdvance,
+    },
+    sourceLineId: line.id,
+    sourceRunId: sourceRun.id,
+  };
+}
+
 function splitLineByRange(line, start, end, patch) {
   const output = [];
   let cursor = 0;
@@ -253,22 +288,25 @@ export function applyTextFormat(document, selection, patch) {
 export function textFormatState(document, selection) {
   assertRichTextDocumentV2(document);
   const range = orderedSelection(document, selection);
+  if (comparePoints(range.start, range.end) === 0) {
+    const context = richTextInsertionContext(document, range.start);
+    return {
+      ...context.runStyle,
+      ...context.lineStyle,
+    };
+  }
   const seen = Object.fromEntries(STYLE_KEYS.map((key) => [key, new Set()]));
   for (let lineIndex = range.start.line; lineIndex <= range.end.line; lineIndex += 1) {
     const line = document.lines[lineIndex];
     let cursor = 0;
     for (const run of line.runs) {
       const end = cursor + graphemeLength(run.text);
-      const collapsed = comparePoints(range.start, range.end) === 0;
-      const intersects = collapsed
-        ? lineIndex === range.start.line && cursor <= range.start.offset && end >= range.start.offset
-        : lineIndex === range.start.line && lineIndex === range.end.line
+      const intersects = lineIndex === range.start.line && lineIndex === range.end.line
         ? end > range.start.offset && cursor < range.end.offset
         : (lineIndex !== range.start.line || end > range.start.offset)
           && (lineIndex !== range.end.line || cursor < range.end.offset);
       if (intersects) {
         STYLE_KEYS.forEach((key) => seen[key].add(run[key]));
-        if (collapsed) break;
       }
       cursor = end;
     }
@@ -310,26 +348,30 @@ export function replaceTextRange(document, selection, insertedText, typingStyle 
   };
   const prefixRuns = sliceRuns(startLine, 0, range.start.offset);
   const suffixRuns = sliceRuns(endLine, range.end.offset, lineLength(endLine));
-  let sourceOffset = 0;
-  const sourceRun = startLine.runs.find((run) => {
-    const length = graphemeLength(run.text);
-    const inside = range.start.offset >= sourceOffset && range.start.offset <= sourceOffset + length;
-    sourceOffset += length;
-    return inside;
-  }) || startLine.runs[0];
-  const style = { ...sourceRun, ...(typingStyle || {}) };
+  const insertionContext = richTextInsertionContext(result, range.start, typingStyle);
+  const style = insertionContext.runStyle;
   const insertedLines = String(insertedText ?? '').split('\n');
   const baselineSign = result.region.baselineDirection === 'increasing-y' ? 1 : -1;
   const newLines = insertedLines.map((value, index) => {
     const runs = [];
     if (index === 0) runs.push(...prefixRuns);
     if (value) runs.push(createTextRun(value, style, { shaped: null, seed: `insert-${index}` }));
+    else if (index > 0) {
+      // Retain an explicit zero-width insertion run even when the suffix has
+      // another style. The caret at the start of the new line must continue
+      // the pre-break format rather than inheriting the following glyph.
+      runs.push(createTextRun('', style, { shaped: null, seed: `insert-empty-${index}` }));
+    }
     if (index === insertedLines.length - 1) runs.push(...suffixRuns);
     if (runs.length === 0) runs.push(createTextRun('', style));
     return createTextLine(runs, {
+      id: index === 0
+        ? startLine.id
+        : (range.start.line !== range.end.line && index === insertedLines.length - 1
+          ? endLine.id : undefined),
       baseline: startLine.baseline + baselineSign * index * startLine.baselineAdvance,
-      baselineAdvance: startLine.baselineAdvance,
-      alignment: startLine.alignment,
+      baselineAdvance: insertionContext.lineStyle.baselineAdvance,
+      alignment: insertionContext.lineStyle.alignment,
       breakAfter: index === insertedLines.length - 1 ? endLine.breakAfter : 'hard',
     });
   });
@@ -344,7 +386,11 @@ export function replaceTextRange(document, selection, insertedText, typingStyle 
     offset: graphemeLength(insertedLines[insertedLines.length - 1])
       + (insertedLines.length === 1 ? prefixLength : 0),
   };
-  return { document: normalizeRichTextDocument(result), selection: { anchor: caret, focus: caret } };
+  // Structural editing deliberately retains run boundaries. Coalescing an
+  // inserted run with an adjacent, identically styled source run would change
+  // the source run's stable identity and flatten the original segmentation.
+  assertRichTextDocumentV2(result);
+  return { document: result, selection: { anchor: caret, focus: caret } };
 }
 
 export function assertRichTextDocumentV2(document) {

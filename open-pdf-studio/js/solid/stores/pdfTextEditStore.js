@@ -8,6 +8,7 @@ import {
 
 const [active, setActive] = createSignal(false);
 const [editorStyle, setEditorStyle] = createSignal({});
+const [editorPlacement, setEditorPlacement] = createSignal(null);
 const [text, setText] = createSignal('');
 const [commitHandler, setCommitHandler] = createSignal(null);
 const [cancelHandler, setCancelHandler] = createSignal(null);
@@ -23,6 +24,7 @@ const [typingStyle, setTypingStyle] = createSignal(null);
 const [mixedFormatState, setMixedFormatState] = createSignal({});
 let richTextHistory = [];
 let richTextHistoryIndex = -1;
+let editorSessionGeneration = 0;
 
 function cloneRichTextDocument(document) {
   // Rich-text drafts can come from Solid store proxies during re-editing.
@@ -32,6 +34,11 @@ function cloneRichTextDocument(document) {
 
 export function showPdfTextEditor(style, initialText, handlers) {
   setEditorStyle(style);
+  const placement = handlers.options?.placement;
+  setEditorPlacement(placement ? {
+    ...placement,
+    generation: ++editorSessionGeneration,
+  } : null);
   setText(initialText);
   setCommitHandler(() => handlers.onCommit || null);
   setCancelHandler(() => handlers.onCancel || null);
@@ -62,6 +69,7 @@ export function showPdfTextEditor(style, initialText, handlers) {
 
 export function hidePdfTextEditor() {
   setActive(false);
+  setEditorPlacement(null);
   setSelectOnFocus(false);
   setEditorOptions({});
   setEditorStatus('');
@@ -199,7 +207,45 @@ export function shiftEditorPosition(dxPx, dyPx) {
   });
 }
 
-export { active, editorStyle, text, setText, commitHandler, cancelHandler, keyDownHandler, blurHandler,
+export function updateEditorGeometry({ canonicalBounds, width, minimumHeight, anchorTop }) {
+  const safeWidth = Math.max(1, Number(width) || 1);
+  const safeHeight = Math.max(1, Number(minimumHeight) || 1);
+  setEditorPlacement((previous) => {
+    if (!previous || !canonicalBounds) return previous;
+    const sourceScale = Math.max(0.0001, Number(previous.sourceScale) || 1);
+    return {
+      ...previous,
+      canonicalBounds: { ...canonicalBounds },
+      sourceClientAnchor: null,
+      sourceStyle: {
+        ...previous.sourceStyle,
+        width: `${safeWidth * sourceScale}px`,
+        height: `${safeHeight * sourceScale}px`,
+      },
+    };
+  });
+  setEditorStyle((previous) => {
+    const placement = editorPlacement();
+    const sourceScale = Math.max(0.0001, Number(placement?.sourceScale) || 1);
+    return {
+      ...(previous || {}),
+      width: `${safeWidth * sourceScale}px`,
+      height: `${safeHeight * sourceScale}px`,
+    };
+  });
+  setEditorOptions((previous) => previous?.expandableRegion ? {
+    ...previous,
+    expandableRegion: {
+      ...previous.expandableRegion,
+      width: safeWidth,
+      contentWidth: Math.max(0.0001, safeWidth - 2 * (previous.expandableRegion.inkPadding || 0)),
+      minimumHeight: safeHeight,
+      anchorTop: Number.isFinite(anchorTop) ? anchorTop : previous.expandableRegion.anchorTop,
+    },
+  } : previous);
+}
+
+export { active, editorStyle, editorPlacement, text, setText, commitHandler, cancelHandler, keyDownHandler, blurHandler,
   selectOnFocus, setSelectOnFocus, editorOptions, editorStatus, setEditorStatus,
   editorLayoutState, setEditorLayoutState,
   richTextDocument, richTextSelection, typingStyle, mixedFormatState };

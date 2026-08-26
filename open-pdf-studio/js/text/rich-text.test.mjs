@@ -9,6 +9,7 @@ import {
   graphemeLength,
   migrateLegacyTextEditRecord,
   replaceTextRange,
+  richTextInsertionContext,
   richTextFromPlainText,
   richTextToPlainText,
   textFormatState,
@@ -101,6 +102,153 @@ test('collapsed caret typing style affects only inserted graphemes', () => {
     { text: 'x', italic: true },
     { text: '👨‍👩‍👧‍👦B', italic: false },
   ]);
+});
+
+test('caret insertion context is backward-biased at mixed-format run boundaries', () => {
+  const document = fixture();
+  const boundary = graphemeLength(document.lines[0].runs[0].text);
+  const atBoundary = richTextInsertionContext(document, { line: 0, offset: boundary });
+  const atStart = richTextInsertionContext(document, { line: 0, offset: 0 });
+  assert.equal(atBoundary.sourceRunId, 'run-a');
+  assert.equal(atBoundary.runStyle.color, normal.color);
+  assert.equal(atStart.sourceRunId, 'run-a');
+  assert.deepEqual(atBoundary.lineStyle, { alignment: 'left', baselineAdvance: 17 });
+});
+
+test('Enter preserves caret formatting and stable surrounding identities', () => {
+  const document = createRichTextDocument([
+    createTextLine([
+      createTextRun('Blue', {
+        ...normal,
+        faceId: 'liberation-sans-bold-italic',
+        size: 8.7,
+        color: '#0057a8',
+        bold: true,
+        italic: true,
+        underline: true,
+        strikeout: true,
+      }, { id: 'blue-run' }),
+      createTextRun(' gray', {
+        ...normal,
+        size: 6.8,
+        color: '#666666',
+      }, { id: 'gray-run' }),
+    ], {
+      id: 'mixed-line', baseline: 80, baselineAdvance: 15,
+      alignment: 'right', breakAfter: 'hard',
+    }),
+    createTextLine([createTextRun('Untouched', normal, { id: 'untouched-run' })], {
+      id: 'untouched-line', baseline: 65, baselineAdvance: 15,
+      alignment: 'left', breakAfter: 'hard',
+    }),
+  ], { x: 10, y: 45, width: 240, height: 50 });
+  const untouched = structuredClone(document.lines[1]);
+  const result = replaceTextRange(document, {
+    anchor: { line: 0, offset: 4 },
+    focus: { line: 0, offset: 4 },
+  }, '\n');
+  const inserted = result.document.lines[1].runs[0];
+  assert.equal(result.document.lines[0].id, 'mixed-line');
+  assert.equal(inserted.text, '');
+  assert.deepEqual({
+    faceId: inserted.faceId,
+    size: inserted.size,
+    color: inserted.color,
+    bold: inserted.bold,
+    italic: inserted.italic,
+    underline: inserted.underline,
+    strikeout: inserted.strikeout,
+  }, {
+    faceId: 'liberation-sans-bold-italic',
+    size: 8.7,
+    color: '#0057a8',
+    bold: true,
+    italic: true,
+    underline: true,
+    strikeout: true,
+  });
+  assert.equal(result.document.lines[1].alignment, 'right');
+  assert.equal(result.document.lines[1].baselineAdvance, 15);
+  assert.equal(result.document.lines[2].id, untouched.id);
+  assert.equal(result.document.lines[2].alignment, untouched.alignment);
+  assert.equal(result.document.lines[2].baselineAdvance, untouched.baselineAdvance);
+  assert.equal(result.document.lines[2].breakAfter, untouched.breakAfter);
+  assert.deepEqual(result.document.lines[2].runs, untouched.runs);
+  assert.equal(result.document.lines[2].baseline, untouched.baseline - 15);
+});
+
+test('multiple inserted lines share the caret format while explicit typing style wins', () => {
+  const document = fixture();
+  const result = replaceTextRange(document, {
+    anchor: { line: 0, offset: 1 },
+    focus: { line: 0, offset: 1 },
+  }, '\nΩ\n', {
+    faceId: 'liberation-serif-bold',
+    color: '#abcdef',
+    bold: true,
+    italic: false,
+  });
+  assert.equal(result.document.lines.length, 3);
+  for (const line of result.document.lines.slice(1)) {
+    assert.equal(line.runs[0].faceId, 'liberation-serif-bold');
+    assert.equal(line.runs[0].color, '#abcdef');
+    assert.equal(line.runs[0].bold, true);
+  }
+  assert.equal(result.document.lines[1].runs[0].text, 'Ω');
+  assert.equal(result.document.lines[2].runs[0].text, '');
+});
+
+test('multiline replacement preserves surrounding runs and intentionally uses the selection-start style', () => {
+  const document = createRichTextDocument([
+    createTextLine([
+      createTextRun('Before ', { ...normal, bold: true }, { id: 'before-run' }),
+      createTextRun('selected', { ...normal, color: '#ff0000' }, { id: 'selected-run' }),
+    ], { id: 'first-line', baseline: 80, baselineAdvance: 14, alignment: 'center' }),
+    createTextLine([
+      createTextRun(' range', { ...normal, italic: true }, { id: 'range-run' }),
+      createTextRun(' After', { ...normal, color: '#00aa00' }, { id: 'after-run' }),
+    ], { id: 'second-line', baseline: 66, baselineAdvance: 18, alignment: 'right' }),
+  ], { x: 10, y: 40, width: 200, height: 50 });
+  const before = structuredClone(document.lines[0].runs[0]);
+  const after = structuredClone(document.lines[1].runs[1]);
+  const result = replaceTextRange(document, {
+    anchor: { line: 0, offset: 7 },
+    focus: { line: 1, offset: 6 },
+  }, 'red\ncontinuation');
+  assert.equal(richTextToPlainText(result.document), 'Before red\ncontinuation After');
+  assert.deepEqual(result.document.lines[0].runs[0], before);
+  assert.deepEqual(result.document.lines[1].runs.at(-1), after);
+  assert.equal(result.document.lines[0].runs.at(-1).bold, true);
+  assert.equal(result.document.lines[1].runs[0].bold, true);
+  assert.equal(result.document.lines[0].id, 'first-line');
+  assert.equal(result.document.lines[1].id, 'second-line');
+  assert.equal(result.document.lines[0].alignment, 'center');
+  assert.equal(result.document.lines[1].alignment, 'center');
+  assert.equal(result.document.lines[1].baselineAdvance, 14);
+});
+
+test('select-all multiline replacement uses an explicit active typing format', () => {
+  const document = fixture();
+  const active = {
+    faceId: 'liberation-mono-bold-italic',
+    size: 9.25,
+    color: '#abcdef',
+    bold: true,
+    italic: true,
+    underline: true,
+    strikeout: true,
+  };
+  const result = replaceTextRange(document, {
+    anchor: { line: 0, offset: 0 },
+    focus: { line: 0, offset: graphemeLength(richTextToPlainText(document)) },
+  }, 'one\ntwo', active);
+  assert.equal(richTextToPlainText(result.document), 'one\ntwo');
+  for (const line of result.document.lines) {
+    const run = line.runs[0];
+    for (const [key, value] of Object.entries(active)) assert.equal(run[key], value);
+  }
+  assert.equal(result.document.lines[0].id, document.lines[0].id);
+  assert.deepEqual(document, fixture(), 'replacement must not mutate the source document');
 });
 
 test('multiline baselines follow the explicit coordinate direction', () => {

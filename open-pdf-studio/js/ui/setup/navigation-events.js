@@ -1,12 +1,13 @@
 import { state, getActiveDocument } from '../../core/state.js';
 import { goToPage } from '../../pdf/renderer.js';
-import { viewport, zoomStepAtPoint, suppressNextFit, addPanVelocity, stopPanMomentum } from '../../pdf/pdf-viewport.js';
+import { viewport, zoomAtPoint, suppressNextFit, addPanVelocity, stopPanMomentum } from '../../pdf/pdf-viewport.js';
+import { normalizedWheelDelta, smoothWheelZoomFactor } from '../../pdf/zoom-gesture.js';
 import { getTool } from '../../tools/tool-registry.js';
 
 // ─── Wheel Zoom + Pan + Page Navigation ───────────────────────────────────
 // Single source of truth for the wheel event on the main view.
 // In vector viewport mode:
-//   Ctrl+wheel  → zoom at cursor (snaps to discrete preset levels)
+//   Ctrl+wheel  → smooth proportional zoom at cursor
 //   plain wheel → pan inside the current page; at the page edge in the wheel
 //                 direction, navigate to next/previous page.
 // In legacy mode it falls back to scroll-position-based page nav.
@@ -16,22 +17,22 @@ let _pageNavCooldown = false;
 // and trigger a page change. Without this, sub-pixel float offsets prevent nav.
 const EDGE_SLACK = 1;
 
-// Trackpad pinch-zoom synthesizes wheel events with `ctrlKey` set and small
-// deltaY values (often 1–10). A real mouse wheel notch sends ~100. We
-// accumulate small deltas across events and only fire a discrete zoom step
-// when the accumulator exceeds the threshold, so a single trackpad pinch
-// doesn't slingshot through 5 zoom levels.
-let _zoomAccum = 0;
-let _zoomAccumSign = 0;
-const ZOOM_DELTA_THRESHOLD = 50;
-let _zoomAccumResetTimer = null;
-function _resetZoomAccumSoon() {
-  if (_zoomAccumResetTimer) clearTimeout(_zoomAccumResetTimer);
-  _zoomAccumResetTimer = setTimeout(() => {
-    _zoomAccum = 0;
-    _zoomAccumSign = 0;
-    _zoomAccumResetTimer = null;
-  }, 200);
+// Wheel and pinch events can arrive faster than the display refresh. Coalesce
+// them to one cursor-anchored zoom update per animation frame.
+let _zoomFrame = 0;
+let _zoomDelta = 0;
+let _zoomPoint = { x: 0, y: 0 };
+function _scheduleSmoothZoom(x, y, delta) {
+  _zoomPoint = { x, y };
+  _zoomDelta += delta;
+  if (_zoomFrame) return;
+  _zoomFrame = requestAnimationFrame(() => {
+    const pending = _zoomDelta;
+    const point = _zoomPoint;
+    _zoomDelta = 0;
+    _zoomFrame = 0;
+    if (pending) zoomAtPoint(point.x, point.y, smoothWheelZoomFactor(pending));
+  });
 }
 
 export function setupWheelZoom() {
@@ -57,7 +58,7 @@ export function setupWheelZoom() {
         // continuous helper, anchored at the cursor's Y position so the
         // content under the mouse stays put.
         if (activeDoc.viewMode === 'continuous' && activeDoc.filePath) {
-          const contDy = e.deltaY || 0;
+          const contDy = normalizedWheelDelta(e.deltaY, e.deltaMode, window.innerHeight);
           if (contDy !== 0) {
             const container = document.getElementById('pdf-container');
             const anchorY = container
@@ -67,8 +68,7 @@ export function setupWheelZoom() {
             // page follows the cursor immediately instead of jumping a fixed
             // chunk per notch. Clamp per event so a high-res wheel can't
             // slingshot through several zoom levels at once.
-            let zf = Math.pow(1.0012, -contDy);
-            zf = Math.max(0.5, Math.min(2.0, zf));
+            const zf = smoothWheelZoomFactor(contDy);
             const m = await import('../../pdf/renderer.js');
             m.continuousZoomBy(zf, anchorY);
           }
@@ -102,28 +102,8 @@ export function setupWheelZoom() {
         || e.target.getBoundingClientRect();
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
-      const dy = e.deltaY || 0;
-      const direction = dy < 0 ? 1 : -1;  // wheel up = zoom in (+1)
-
-      // Mouse wheel notch (large deltaY) → step immediately.
-      // Trackpad pinch (small deltaY) → accumulate, only step at threshold.
-      if (Math.abs(dy) >= ZOOM_DELTA_THRESHOLD) {
-        _zoomAccum = 0;
-        _zoomAccumSign = 0;
-        zoomStepAtPoint(sx, sy, direction);
-      } else {
-        // Reset accumulator if direction reversed
-        if (_zoomAccumSign !== 0 && _zoomAccumSign !== direction) {
-          _zoomAccum = 0;
-        }
-        _zoomAccumSign = direction;
-        _zoomAccum += Math.abs(dy);
-        if (_zoomAccum >= ZOOM_DELTA_THRESHOLD) {
-          _zoomAccum = 0;
-          zoomStepAtPoint(sx, sy, direction);
-        }
-        _resetZoomAccumSoon();
-      }
+      const dy = normalizedWheelDelta(e.deltaY, e.deltaMode, window.innerHeight);
+      if (dy) _scheduleSmoothZoom(sx, sy, dy);
       return;
     }
 

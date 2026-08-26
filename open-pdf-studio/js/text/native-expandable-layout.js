@@ -120,8 +120,9 @@ function shapedBounds(document, layout, contentWidth, inkInsets, antialiasMargin
 }
 
 /**
- * Exact native-only reflow. Width stays fixed, authored hard breaks survive,
- * generated wraps become soft, and the immutable top edge remains anchored.
+ * Exact native-only layout. Automatic mode generates soft wraps. Manual-line
+ * mode preserves the displayed source lines and only accepts authored line
+ * elements; an overlong line is reported instead of being silently reflowed.
  */
 export async function layoutExpandableNativeText(document, options = {}) {
   const width = Number(options.width ?? document.region.width);
@@ -141,10 +142,11 @@ export async function layoutExpandableNativeText(document, options = {}) {
   let activeAlignment = document.lines[0].alignment;
   let activeAdvance = document.lines[0].baselineAdvance;
 
-  const pushLine = (breakAfter) => {
+  const pushLine = (breakAfter, preserveMeasuredAdvance = false) => {
     const fallback = runs[0] || document.lines[0].runs[0];
     const safeRuns = runs.length ? runs : [createTextRun('', fallback)];
-    const advance = lineAdvance(safeRuns, activeAdvance);
+    const advance = preserveMeasuredAdvance
+      ? activeAdvance : lineAdvance(safeRuns, activeAdvance);
     output.push(createTextLine(safeRuns, {
       baseline,
       baselineAdvance: advance,
@@ -155,27 +157,36 @@ export async function layoutExpandableNativeText(document, options = {}) {
     runs = [];
   };
 
-  for (const sourceLine of document.lines) {
-    if (runs.length === 0) {
+  if (options.manualLineBreaks) {
+    for (const sourceLine of document.lines) {
       activeAlignment = sourceLine.alignment;
       activeAdvance = sourceLine.baselineAdvance;
+      for (const sourceRun of sourceLine.runs) appendText(runs, sourceRun.text, sourceRun);
+      pushLine(sourceLine.breakAfter, true);
     }
-    for (const sourceRun of sourceLine.runs) {
-      const tokens = sourceRun.text.match(/\s+|[^\s]+/gu) || [''];
-      for (const token of tokens) {
-        const tokenRuns = structuredClone(runs);
-        appendText(tokenRuns, token, sourceRun);
-        if (runs.length && !/^\s+$/u.test(token)
-            && await shapedLineAdvance(tokenRuns) > contentWidth + 1e-6) pushLine('soft');
-        for (const unit of graphemes(token)) {
-          const candidate = structuredClone(runs);
-          appendText(candidate, unit, sourceRun);
-          if (runs.length && await shapedLineAdvance(candidate) > contentWidth + 1e-6) pushLine('soft');
-          appendText(runs, unit, sourceRun);
+  } else {
+    for (const sourceLine of document.lines) {
+      if (runs.length === 0) {
+        activeAlignment = sourceLine.alignment;
+        activeAdvance = sourceLine.baselineAdvance;
+      }
+      for (const sourceRun of sourceLine.runs) {
+        const tokens = sourceRun.text.match(/\s+|[^\s]+/gu) || [''];
+        for (const token of tokens) {
+          const tokenRuns = structuredClone(runs);
+          appendText(tokenRuns, token, sourceRun);
+          if (runs.length && !/^\s+$/u.test(token)
+              && await shapedLineAdvance(tokenRuns) > contentWidth + 1e-6) pushLine('soft');
+          for (const unit of graphemes(token)) {
+            const candidate = structuredClone(runs);
+            appendText(candidate, unit, sourceRun);
+            if (runs.length && await shapedLineAdvance(candidate) > contentWidth + 1e-6) pushLine('soft');
+            appendText(runs, unit, sourceRun);
+          }
         }
       }
+      if (sourceLine.breakAfter !== 'soft') pushLine('hard');
     }
-    if (sourceLine.breakAfter !== 'soft') pushLine('hard');
   }
   if (runs.length || output.length === 0) pushLine('hard');
 
@@ -200,6 +211,10 @@ export async function layoutExpandableNativeText(document, options = {}) {
       ? document.region.y : anchorTop - requiredHeight,
   });
   const layout = await shapeRichTextDocument(reflowed);
+  const maximumLineAdvance = Math.max(0, ...layout.lines.map((line) => (
+    line.runs.reduce((sum, run) => sum + (run.shaped?.advance || 0), 0)
+  )));
+  const requiredWidth = maximumLineAdvance + inkInsets.left + inkInsets.right;
   const inkGeometry = shapedBounds(
     reflowed,
     layout,
@@ -227,6 +242,9 @@ export async function layoutExpandableNativeText(document, options = {}) {
     .filter((entry) => entry && entry.id !== options.editId && intersects(regionRect, entry))
     .map((entry) => entry.id || 'native-page-content');
   const rejectionReasons = [...layout.rejectionReasons];
+  if (options.manualLineBreaks && requiredWidth > width + 1e-6) {
+    rejectionReasons.push('A line exceeds the text box width; press Enter to start a new line');
+  }
   if (crossesColumnBounds) rejectionReasons.push('Shaped text crosses its native column boundary');
   if (crossesPageEdge) rejectionReasons.push('Shaped text crosses the page CropBox');
   return {
@@ -237,6 +255,7 @@ export async function layoutExpandableNativeText(document, options = {}) {
     editorBounds: { ...reflowed.region },
     inkInsets,
     contentWidth,
+    requiredWidth,
     requiredHeight,
     overlapWarnings,
     columnValid: !crossesColumnBounds,

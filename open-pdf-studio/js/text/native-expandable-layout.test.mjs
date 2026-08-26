@@ -106,3 +106,117 @@ test('ink-safe content width contains small mixed-style runs and right-edge punc
     assert.ok(bounds.x + bounds.width <= result.editorBounds.x + result.editorBounds.width + 1e-6);
   }
 });
+
+test('manual-line mode never generates wraps and rejects an overlong authored line', async () => {
+  const source = documentFor('one two three four five six');
+  const result = await layoutExpandableNativeText(source, {
+    width: 45,
+    inkPadding: 2,
+    minimumHeight: source.region.height,
+    anchorTop: source.region.y + source.region.height,
+    pageBounds: { x: 0, y: 0, width: 200, height: 200 },
+    manualLineBreaks: true,
+  });
+  assert.equal(result.document.lines.length, 1);
+  assert.equal(result.document.lines.some((line) => line.breakAfter === 'soft'), false);
+  assert.equal(richTextToPlainText(result.document), 'one two three four five six');
+  assert.ok(result.requiredWidth > result.editorBounds.width);
+  assert.equal(result.valid, false);
+  assert.match(result.rejectionReasons.join('; '), /press Enter/);
+});
+
+test('manual-line mode preserves a source visual-line marker without adding lines', async () => {
+  const source = createRichTextDocument([
+    createTextLine([createTextRun('one two three four five six', { size: 10 })], {
+      baseline: 90, baselineAdvance: 12, breakAfter: 'soft',
+    }),
+  ], { x: 10, y: 78, width: 45, height: 16 });
+  const result = await layoutExpandableNativeText(source, {
+    width: 45,
+    minimumHeight: 16,
+    manualLineBreaks: true,
+  });
+  assert.equal(result.document.lines.length, 1);
+  assert.equal(result.document.lines[0].breakAfter, 'soft');
+  assert.match(result.rejectionReasons.join('; '), /press Enter/);
+});
+
+test('manual-line mode accepts explicit lines and grows only for those lines', async () => {
+  const source = createRichTextDocument([
+    createTextLine([createTextRun('one two', { size: 10 })], {
+      baseline: 90, baselineAdvance: 12, breakAfter: 'hard',
+    }),
+    createTextLine([createTextRun('three four', { size: 10 })], {
+      baseline: 78, baselineAdvance: 12, breakAfter: 'hard',
+    }),
+  ], { x: 10, y: 78, width: 55, height: 16 });
+  const result = await layoutExpandableNativeText(source, {
+    width: 55,
+    inkPadding: 2,
+    minimumHeight: 16,
+    anchorTop: 94,
+    manualLineBreaks: true,
+  });
+  assert.equal(result.valid, true);
+  assert.equal(result.document.lines.length, 2);
+  assert.equal(result.document.lines.every((line) => line.breakAfter === 'hard'), true);
+  assert.ok(result.document.region.height > 16);
+});
+
+test('manual-line shaping preserves complete run and paragraph formatting', async () => {
+  const source = createRichTextDocument([
+    createTextLine([
+      createTextRun('Blue ', {
+        faceId: 'liberation-sans-bold-italic', size: 8.7, color: '#0057a8',
+        bold: true, italic: true, underline: true, strikeout: false,
+      }),
+      createTextRun('gray', {
+        faceId: 'liberation-serif-regular', size: 6.8, color: '#666666',
+        bold: false, italic: false, underline: false, strikeout: true,
+      }),
+    ], {
+      baseline: 90, baselineAdvance: 9.5, alignment: 'right', breakAfter: 'hard',
+    }),
+    createTextLine([createTextRun('next', {
+      faceId: 'liberation-mono-italic', size: 7.2, color: '#123456', italic: true,
+    })], {
+      baseline: 80.5, baselineAdvance: 10.25, alignment: 'center', breakAfter: 'hard',
+    }),
+  ], { x: 10, y: 70, width: 90, height: 24 });
+  const result = await layoutExpandableNativeText(source, {
+    width: 90,
+    minimumHeight: 24,
+    anchorTop: 94,
+    manualLineBreaks: true,
+  });
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.document.lines.map((line) => ({
+    alignment: line.alignment,
+    baselineAdvance: line.baselineAdvance,
+    breakAfter: line.breakAfter,
+    runs: line.runs.map((run) => ({
+      text: run.text,
+      faceId: run.faceId,
+      size: run.size,
+      color: run.color,
+      bold: run.bold,
+      italic: run.italic,
+      underline: run.underline,
+      strikeout: run.strikeout,
+    })),
+  })), source.lines.map((line) => ({
+    alignment: line.alignment,
+    baselineAdvance: line.baselineAdvance,
+    breakAfter: line.breakAfter,
+    runs: line.runs.map((run) => ({
+      text: run.text,
+      faceId: run.faceId,
+      size: run.size,
+      color: run.color,
+      bold: run.bold,
+      italic: run.italic,
+      underline: run.underline,
+      strikeout: run.strikeout,
+    })),
+  })));
+});

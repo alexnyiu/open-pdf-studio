@@ -828,6 +828,27 @@ body.pdf-cursor-override #canvas-container * {
   background: rgba(0, 120, 215, 0.08);
 }
 
+.pdf-text-edit-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.pdf-text-edit-portal {
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.pdf-text-edit-layer > .pdf-text-edit-portal {
+  position: absolute;
+  z-index: 1;
+}
+
 .pdf-text-editor {
   box-sizing: border-box;
   border: 0;
@@ -840,7 +861,8 @@ body.pdf-cursor-override #canvas-container * {
   color: #000;
   white-space: pre;
   word-break: normal;
-  box-shadow: 0 0 0 1px rgba(0, 120, 215, 0.3);
+  box-shadow: none;
+  pointer-events: auto;
 }
 
 .pdf-text-editor:focus-visible {
@@ -864,13 +886,82 @@ body.pdf-cursor-override #canvas-container * {
 
 .rich-text-editor-reflow {
   white-space: pre-wrap;
-  overflow: hidden;
+  overflow: visible;
   overflow-wrap: anywhere;
 }
 
 .rich-text-editor-reflow > [data-rich-line-index] {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.rich-text-editor-manual-lines,
+.rich-text-editor-manual-lines > [data-rich-line-index] {
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.pdf-text-editor-manipulation {
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.pdf-text-editor-move-handle,
+.pdf-text-editor-resize-handle {
+  position: absolute;
+  z-index: 3;
+  display: block;
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid #ffffff;
+  background: #0078d7;
+  box-shadow: 0 0 0 1px #0078d7;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.pdf-text-editor-move-handle {
+  top: -6px;
+  left: 50%;
+  width: 28px;
+  height: 8px;
+  border-radius: 4px;
+  transform: translateX(-50%);
+  cursor: move;
+}
+
+.pdf-text-editor-resize-handle {
+  right: -5px;
+  bottom: -5px;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  cursor: nwse-resize;
+}
+
+.pdf-text-editor-move-handle:focus-visible,
+.pdf-text-editor-resize-handle:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.pdf-text-edit-commit-bounds {
+  box-sizing: border-box;
+  z-index: 1;
+  outline: 1px solid rgba(0, 120, 215, 0.85);
+  background: transparent;
+  pointer-events: none;
+}
+
+.pdf-text-editor-overflow {
+  outline: 2px dashed #d97706;
+  outline-offset: 1px;
+}
+
+.pdf-text-editor-rejected {
+  outline-color: #c42b1c;
+  outline-style: dashed;
 }
 
 .scanned-text-estimate-note {
