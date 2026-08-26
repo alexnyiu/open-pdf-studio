@@ -24,32 +24,30 @@ export function colorContrastRatio(foreground, background) {
   return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
 }
 
-/**
- * Preserve the canonical foreground while adding a disposable editor-only
- * halo when the source color would be difficult to see on the editor surface.
- */
+/** Preserve the canonical foreground while supplying a crisp editor-only backing. */
 export function editableRunPresentation(foreground, background = '#ffffff', minimumContrast = 4.5) {
   const color = normalizedHex(foreground, '#000000');
   const surface = normalizedHex(background, '#ffffff');
   const contrastRatio = colorContrastRatio(color, surface);
   if (contrastRatio >= minimumContrast) {
-    return { color, background: surface, contrastRatio, contrastAid: false, haloColor: null,
-      textShadow: 'none' };
+    return {
+      color,
+      background: surface,
+      contrastRatio,
+      contrastAid: false,
+      backingColor: null,
+      textShadow: 'none',
+    };
   }
-  const haloColor = colorContrastRatio('#000000', surface) >= colorContrastRatio('#ffffff', surface)
+  const backingColor = colorContrastRatio(color, '#000000') >= colorContrastRatio(color, '#ffffff')
     ? '#000000' : '#ffffff';
   return {
     color,
     background: surface,
     contrastRatio,
     contrastAid: true,
-    haloColor,
-    textShadow: [
-      `-1px 0 ${haloColor}`,
-      `1px 0 ${haloColor}`,
-      `0 -1px ${haloColor}`,
-      `0 1px ${haloColor}`,
-    ].join(', '),
+    backingColor,
+    textShadow: 'none',
   };
 }
 

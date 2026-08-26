@@ -4,7 +4,10 @@ import { PDFDocument, PDFName, PDFRawStream, decodePDFRawStream } from 'pdf-lib'
 import {
   applyDocumentMetadataToPdf,
   assertDocumentMetadataRoundTrip,
+  documentMetadataFieldFromEditorValue,
+  documentMetadataFieldToEditorValue,
   documentMetadataFromPdfInfo,
+  documentMetadataWithEditorField,
 } from './document-metadata.js';
 
 const metadata = {
@@ -78,4 +81,18 @@ test('PDF.js metadata validation reports an exact round trip', async () => {
   };
   assert.deepEqual(documentMetadataFromPdfInfo(info), metadata);
   await assert.doesNotReject(assertDocumentMetadataRoundTrip({ getMetadata: async () => ({ info }) }, metadata));
+});
+
+test('inline editor values share exact string and local date conversion', () => {
+  assert.equal(documentMetadataFieldToEditorValue('title', '  Exact title  '), '  Exact title  ');
+  assert.equal(documentMetadataFieldFromEditorValue('keywords', 'alpha, beta'), 'alpha, beta');
+  const local = documentMetadataFieldToEditorValue('creationDate', metadata.creationDate);
+  assert.equal(documentMetadataFieldFromEditorValue('creationDate', local), metadata.creationDate);
+  assert.throws(
+    () => documentMetadataFieldFromEditorValue('modificationDate', 'not-a-date'),
+    /Invalid modificationDate/u,
+  );
+  const cleared = documentMetadataWithEditorField(metadata, 'subject', '');
+  assert.equal(cleared.subject, '');
+  assert.equal(cleared.author, metadata.author);
 });

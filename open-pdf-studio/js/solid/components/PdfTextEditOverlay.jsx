@@ -1,4 +1,4 @@
-import { For, Show, createEffect, onCleanup, onMount } from 'solid-js';
+import { For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { active, editorStyle, text, setText, keyDownHandler, blurHandler, selectOnFocus,
   setSelectOnFocus, editorOptions, editorStatus, setEditorStatus, richTextDocument,
   setEditorLayoutState,
@@ -25,6 +25,8 @@ export default function PdfTextEditOverlay() {
   let richDisplayHeight = 0;
   let exactDisplayHeight = 0;
   let lastExpandableInputKey = '';
+  let liveContentWidth = 0;
+  const [inkInsetsPx, setInkInsetsPx] = createSignal(null);
 
   const resizeToContent = () => {
     if (!textareaRef) return;
@@ -121,6 +123,7 @@ export default function PdfTextEditOverlay() {
     setEditorStatus('Finishing exact text layout…');
     void layoutExpandableNativeText(source, {
       width: config.width,
+      inkPadding: config.inkPadding,
       minimumHeight: config.minimumHeight,
       anchorTop: config.anchorTop,
       pageBounds: config.pageBounds,
@@ -132,12 +135,17 @@ export default function PdfTextEditOverlay() {
       shapedSignature = canonicalRichTextHash(result.document);
       updateRichTextDraft(result.document, { recordHistory: false, preserveDom: true });
       exactDisplayHeight = result.requiredHeight * (config.displayScale || 1);
+      liveContentWidth = result.contentWidth;
+      setInkInsetsPx({
+        left: result.inkInsets.left * (config.displayScale || 1),
+        right: result.inkInsets.right * (config.displayScale || 1),
+      });
       const notices = [];
       if (result.overlapWarnings.length) {
         notices.push('Text overlaps existing page content. Commit is allowed; neighboring source objects will not move.');
       }
       if (documentNeedsContrastAid(result.document, config.editorBackground)) {
-        notices.push('Low-contrast source colors have an editing-only outline. Saved colors remain unchanged.');
+        notices.push('Low-contrast source colors have an editing-only backing. Saved colors remain unchanged.');
       }
       const message = result.valid
         ? notices.join(' ')
@@ -163,6 +171,8 @@ export default function PdfTextEditOverlay() {
     if (!active() || !current) {
       shapingGeneration += 1;
       shapedSignature = '';
+      liveContentWidth = 0;
+      if (inkInsetsPx()) setInkInsetsPx(null);
       return;
     }
     if (editorOptions().expandableRegion) {
@@ -252,7 +262,8 @@ export default function PdfTextEditOverlay() {
       .filter((line) => line.breakAfter !== 'soft').length;
     const expandable = editorOptions().expandableRegion;
     const next = expandable
-      ? reflowRichTextToWidth(inserted.document, expandable.width, undefined, {
+      ? reflowRichTextToWidth(inserted.document,
+          liveContentWidth || expandable.contentWidth || expandable.width, undefined, {
           minimumHeight: expandable.minimumHeight,
           anchorTop: expandable.anchorTop,
         })
@@ -360,7 +371,8 @@ export default function PdfTextEditOverlay() {
     const next = createRichTextDocument(lines, current.region);
     const expandable = editorOptions().expandableRegion;
     const draft = expandable
-      ? reflowRichTextToWidth(next, expandable.width, undefined, {
+      ? reflowRichTextToWidth(next,
+          liveContentWidth || expandable.contentWidth || expandable.width, undefined, {
           minimumHeight: expandable.minimumHeight,
           anchorTop: expandable.anchorTop,
         })
@@ -380,6 +392,9 @@ export default function PdfTextEditOverlay() {
   const richEditorStyle = () => ({
     ...(editorStyle() || {}),
     background: editorBackground(),
+    'padding-left': `${inkInsetsPx()?.left ?? editorOptions().expandableRegion?.inkPaddingPx ?? 0}px`,
+    'padding-right': `${inkInsetsPx()?.right ?? editorOptions().expandableRegion?.inkPaddingPx ?? 0}px`,
+    'font-synthesis': 'none',
   });
   const runStyle = (run) => ({
     'font-family': run.faceId.includes('mono') ? '"Liberation Mono", monospace'
@@ -388,9 +403,21 @@ export default function PdfTextEditOverlay() {
     'font-weight': run.bold ? '700' : '400',
     'font-style': run.italic ? 'italic' : 'normal',
     color: runPresentation(run).color,
-    'text-shadow': runPresentation(run).textShadow,
+    'background-color': runPresentation(run).backingColor || 'transparent',
+    'box-decoration-break': 'clone',
+    '-webkit-box-decoration-break': 'clone',
+    'font-synthesis': 'none',
+    'text-shadow': 'none',
+    'vertical-align': 'baseline',
     'text-decoration-line': [run.underline && 'underline', run.strikeout && 'line-through'].filter(Boolean).join(' ') || 'none',
   });
+
+  const lineDisplayHeight = (line) => {
+    const shapedHeight = Math.max(0, ...line.runs.map((run) => (
+      (run.shaped?.metrics?.ascent || 0) + (run.shaped?.metrics?.descent || 0)
+    )));
+    return Math.max(line.baselineAdvance, shapedHeight) * (editorOptions().displayScale || 1);
+  };
 
   // A collapsed formatting command changes only the style of subsequently
   // typed graphemes. Insert a zero-width styled DOM run at the native caret;
@@ -496,8 +523,8 @@ export default function PdfTextEditOverlay() {
                 data-break-after={line.breakAfter || 'hard'}
                 style={{
                   'text-align': line.alignment,
-                  'min-height': `${line.baselineAdvance * (editorOptions().displayScale || 1)}px`,
-                  'line-height': `${line.baselineAdvance * (editorOptions().displayScale || 1)}px`,
+                  'min-height': `${lineDisplayHeight(line)}px`,
+                  'line-height': `${lineDisplayHeight(line)}px`,
                 }}
               >
                 <For each={line.runs}>{(run) =>
@@ -523,7 +550,7 @@ export default function PdfTextEditOverlay() {
           <div id={editorOptions().expandableRegion ? 'native-text-edit-status' : 'scanned-text-edit-status'} class="ocr-review-live-region" role="status" aria-live="polite" aria-atomic="true">
             {editorStatus() || editorOptions().status || (editorOptions().expandableRegion
               ? documentNeedsContrastAid(richTextDocument(), editorBackground())
-                ? 'Editing native text. The width is fixed and the region grows downward. Low-contrast source colors have an editing-only outline; saved colors remain unchanged.'
+                ? 'Editing native text. The width is fixed and the region grows downward. Low-contrast source colors have an editing-only backing; saved colors remain unchanged.'
                 : 'Editing native text. The width is fixed and the region grows downward.'
               : 'Editing scanned text. Font properties are estimates.')}
           </div>

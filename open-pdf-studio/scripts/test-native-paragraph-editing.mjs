@@ -130,12 +130,23 @@ try {
   await target.click();
   const editor = page.locator('.pdf-text-editor');
   await editor.waitFor({ state: 'visible' });
+  assert.equal(await target.evaluate((node) => node.style.visibility), 'hidden',
+    'owned source spans must be hidden before the rich editor is painted');
   assert.equal((await editor.innerText()).replace(/\n\n/gu, '\n').replace(/[ \t]+\n/gu, '\n'),
     'Target first (mixed)\nSecond paragraph line');
   assert.equal(await page.locator('[role="dialog"]').filter({ hasText: 'source operators' }).count(), 0,
     'eligible visible text plus synthetic whitespace must not show an ambiguity modal');
 
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
   const originalEditorBox = await editor.boundingBox();
+  const immutableMinimumHeight = await page.evaluate(async () => {
+    const { editorOptions } = await import('/js/solid/stores/pdfTextEditStore.js');
+    const expandable = editorOptions().expandableRegion;
+    return expandable.minimumHeight * expandable.displayScale;
+  });
   await editor.fill('This native paragraph is intentionally extended with enough words to wrap across several canonical lines while its original width remains fixed.');
   await page.waitForFunction(async () => {
     const bridge = await import('/js/bridge.ts');
@@ -163,8 +174,8 @@ try {
   const shrunkenEditorBox = await editor.boundingBox();
   assert.ok(shrunkenEditorBox.height < grownEditorState.rect.height,
     'deleting text must shrink the editor after exact layout');
-  assert.ok(shrunkenEditorBox.height >= originalEditorBox.height,
-    'native editor must never shrink below its immutable original height');
+  assert.ok(shrunkenEditorBox.height + 0.5 >= immutableMinimumHeight,
+    `native editor must never shrink below its immutable original height (${shrunkenEditorBox.height} < ${immutableMinimumHeight})`);
   await editor.press('Enter');
   await page.keyboard.type('Edited second line');
   await page.keyboard.press('Control+Enter');
@@ -430,13 +441,43 @@ try {
   });
   const colorState = await editor.evaluate((node) => [...node.querySelectorAll('[data-rich-run]')]
     .map((run) => ({ text: run.textContent, color: run.dataset.color,
-      contrastAid: run.dataset.contrastAid, textShadow: getComputedStyle(run).textShadow })));
+      contrastAid: run.dataset.contrastAid,
+      textShadow: getComputedStyle(run).textShadow,
+      backgroundColor: getComputedStyle(run).backgroundColor })));
   assert.ok(colorState.some((run) => run.color === '#0057a8' && run.text.includes('blue')));
   assert.ok(colorState.some((run) => run.color === '#666666' && run.text.includes('gray')));
+  assert.ok(colorState.every((run) => run.textShadow === 'none'),
+    `no native editing run may use a blurring text shadow: ${JSON.stringify(colorState)}`);
   const paleRun = colorState.find((run) => run.color === '#f4f4f4');
   assert.equal(paleRun?.contrastAid, 'true');
-  assert.notEqual(paleRun?.textShadow, 'none');
-  assert.match((await page.locator('#native-text-edit-status').innerText()), /editing-only outline/u);
+  assert.equal(paleRun?.textShadow, 'none');
+  assert.equal(paleRun?.backgroundColor, 'rgb(0, 0, 0)');
+  assert.match((await page.locator('#native-text-edit-status').innerText()), /editing-only backing/u);
+  const inkContainment = await page.evaluate(async () => {
+    const bridge = await import('/js/bridge.ts');
+    const result = bridge.getPdfEditorLayoutState()?.result;
+    return {
+      editorBounds: result?.editorBounds,
+      lineInkBounds: result?.lineInkBounds,
+      contentWidth: result?.contentWidth,
+    };
+  });
+  assert.ok(inkContainment.contentWidth > 0);
+  assert.ok(inkContainment.lineInkBounds.every((bounds) => (
+    bounds.x >= inkContainment.editorBounds.x - 1e-6
+      && bounds.x + bounds.width
+        <= inkContainment.editorBounds.x + inkContainment.editorBounds.width + 1e-6
+  )), `shaped glyph ink escaped the native editor: ${JSON.stringify(inkContainment)}`);
+  const scrollContainment = await editor.evaluate((node) => ({
+    scrollWidth: node.scrollWidth,
+    clientWidth: node.clientWidth,
+    scrollHeight: node.scrollHeight,
+    clientHeight: node.clientHeight,
+  }));
+  assert.ok(scrollContainment.scrollWidth <= scrollContainment.clientWidth + 1,
+    `native editor has horizontal overflow: ${JSON.stringify(scrollContainment)}`);
+  assert.ok(scrollContainment.scrollHeight <= scrollContainment.clientHeight + 2,
+    `native editor has hidden vertical overflow: ${JSON.stringify(scrollContainment)}`);
 
   await editor.locator('[data-color="#0057a8"]').filter({ hasText: 'blue' }).evaluate((run) => {
     const selection = window.getSelection();

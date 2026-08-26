@@ -4,13 +4,13 @@ import Dialog from './Dialog.jsx';
 import { closeDialog } from '../stores/dialogStore.js';
 import { useTranslation } from '../../i18n/useTranslation.js';
 import { getActiveDocument } from '../../core/state.js';
-import { recordDocumentMetadata } from '../../core/undo-manager.js';
 import {
   cloneDocumentMetadata,
-  documentMetadataEqual,
+  documentMetadataFieldFromEditorValue,
+  documentMetadataFieldToEditorValue,
   normalizeDocumentMetadata,
 } from '../../pdf/document-metadata.js';
-import { populateDocInfo } from '../stores/propertiesStore.js';
+import { commitDocumentMetadata } from '../stores/documentMetadataEditorStore.js';
 
 function PropRow(props) {
   return (
@@ -21,30 +21,16 @@ function PropRow(props) {
   );
 }
 
-function toLocalDateTime(iso) {
-  if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 19);
-}
-
-function fromLocalDateTime(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new TypeError('Invalid date');
-  return date.toISOString();
-}
-
 export default function DocPropertiesDialog(props) {
   const { t } = useTranslation('dialogs');
   const { t: tCommon } = useTranslation('common');
   const d = props.data;
+  const ownerDocumentId = getActiveDocument()?.id;
   const initial = cloneDocumentMetadata(d.metadata);
   const [form, setForm] = createStore({
     ...initial,
-    creationDate: toLocalDateTime(initial.creationDate),
-    modificationDate: toLocalDateTime(initial.modificationDate),
+    creationDate: documentMetadataFieldToEditorValue('creationDate', initial.creationDate),
+    modificationDate: documentMetadataFieldToEditorValue('modificationDate', initial.modificationDate),
   });
   const fields = [
     ['title', 'docTitle'],
@@ -59,8 +45,8 @@ export default function DocPropertiesDialog(props) {
     try {
       return normalizeDocumentMetadata({
         ...form,
-        creationDate: fromLocalDateTime(form.creationDate),
-        modificationDate: fromLocalDateTime(form.modificationDate),
+        creationDate: documentMetadataFieldFromEditorValue('creationDate', form.creationDate),
+        modificationDate: documentMetadataFieldFromEditorValue('modificationDate', form.modificationDate),
       });
     } catch {
       return null;
@@ -70,13 +56,9 @@ export default function DocPropertiesDialog(props) {
   const close = () => closeDialog('doc-properties');
   const save = async () => {
     const metadata = parsed();
-    const doc = getActiveDocument();
-    if (!metadata || !doc) return;
-    if (!documentMetadataEqual(initial, metadata)) {
-      doc.metadata = cloneDocumentMetadata(metadata);
-      recordDocumentMetadata(initial, metadata);
-      await populateDocInfo();
-    }
+    if (!metadata || ownerDocumentId == null) return;
+    const result = await commitDocumentMetadata({ documentId: ownerDocumentId, metadata });
+    if (result.stale) return;
     close();
   };
 

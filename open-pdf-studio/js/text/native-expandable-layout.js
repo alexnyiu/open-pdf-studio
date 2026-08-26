@@ -16,17 +16,31 @@ function appendText(runs, text, style) {
   else runs.push(createTextRun(text, style));
 }
 
-async function shapedLineWidth(runs, antialiasMargin = 1) {
+async function shapedLineAdvance(runs) {
   let advance = 0;
-  let left = 0;
-  let right = 0;
   for (const run of runs) {
     const shaped = await shapeTextRun(run);
-    left = Math.min(left, advance + shaped.inkBounds.left - antialiasMargin);
-    right = Math.max(right, advance + shaped.inkBounds.right + antialiasMargin, advance + shaped.advance);
     advance += shaped.advance;
   }
-  return right - left;
+  return advance;
+}
+
+async function documentInkInsets(document, inkPadding = 0, antialiasMargin = 1) {
+  let leftOverhang = 0;
+  let rightOverhang = 0;
+  for (const line of document.lines) {
+    for (const run of line.runs) {
+      const shaped = await shapeTextRun(run);
+      leftOverhang = Math.max(leftOverhang, -shaped.inkBounds.left);
+      rightOverhang = Math.max(rightOverhang, shaped.inkBounds.right - shaped.advance);
+    }
+  }
+  return {
+    left: Math.max(0, inkPadding) + antialiasMargin + Math.max(0, leftOverhang),
+    right: Math.max(0, inkPadding) + antialiasMargin + Math.max(0, rightOverhang),
+    top: Math.max(0, inkPadding) + antialiasMargin,
+    bottom: Math.max(0, inkPadding) + antialiasMargin,
+  };
 }
 
 function lineAdvance(runs, fallback) {
@@ -55,30 +69,54 @@ function normalizedColumnBounds(value) {
   return Number.isFinite(left) && Number.isFinite(right) && right > left ? { left, right } : null;
 }
 
-function shapedBounds(document, layout, antialiasMargin = 1) {
+function shapedBounds(document, layout, contentWidth, inkInsets, antialiasMargin = 1) {
   let left = Number.POSITIVE_INFINITY;
   let right = Number.NEGATIVE_INFINITY;
   let bottom = Number.POSITIVE_INFINITY;
   let top = Number.NEGATIVE_INFINITY;
+  const lineInkBounds = [];
   for (const line of layout.lines) {
     const lineAdvanceWidth = line.runs.reduce((sum, run) => sum + (run.shaped?.advance || 0), 0);
     const alignmentOffset = line.alignment === 'center'
-      ? (document.region.width - lineAdvanceWidth) / 2
-      : line.alignment === 'right' ? document.region.width - lineAdvanceWidth : 0;
+      ? (contentWidth - lineAdvanceWidth) / 2
+      : line.alignment === 'right' ? contentWidth - lineAdvanceWidth : 0;
+    let lineLeft = Number.POSITIVE_INFINITY;
+    let lineRight = Number.NEGATIVE_INFINITY;
+    let lineBottom = Number.POSITIVE_INFINITY;
+    let lineTop = Number.NEGATIVE_INFINITY;
     for (const run of line.runs) {
       const shaped = run.shaped;
       if (!shaped) continue;
-      const runX = document.region.x + alignmentOffset + (run.geometry?.x || 0);
-      left = Math.min(left, runX + shaped.inkBounds.left - antialiasMargin);
-      right = Math.max(right, runX + shaped.inkBounds.right + antialiasMargin);
-      bottom = Math.min(bottom, line.baseline - shaped.metrics.descent - antialiasMargin);
-      top = Math.max(top, line.baseline + shaped.metrics.ascent + antialiasMargin);
+      const runX = document.region.x + inkInsets.left + alignmentOffset + (run.geometry?.x || 0);
+      lineLeft = Math.min(lineLeft, runX + shaped.inkBounds.left - antialiasMargin);
+      lineRight = Math.max(lineRight, runX + shaped.inkBounds.right + antialiasMargin);
+      lineBottom = Math.min(lineBottom, line.baseline - shaped.metrics.descent - antialiasMargin);
+      lineTop = Math.max(lineTop, line.baseline + shaped.metrics.ascent + antialiasMargin);
+    }
+    if ([lineLeft, lineRight, lineBottom, lineTop].every(Number.isFinite)) {
+      const lineBounds = {
+        x: lineLeft,
+        y: lineBottom,
+        width: lineRight - lineLeft,
+        height: lineTop - lineBottom,
+      };
+      lineInkBounds.push(lineBounds);
+      left = Math.min(left, lineLeft);
+      right = Math.max(right, lineRight);
+      bottom = Math.min(bottom, lineBottom);
+      top = Math.max(top, lineTop);
     }
   }
   if (![left, right, bottom, top].every(Number.isFinite)) {
-    return { x: document.region.x, y: document.region.y, width: 0, height: 0 };
+    return {
+      bounds: { x: document.region.x, y: document.region.y, width: 0, height: 0 },
+      lineInkBounds,
+    };
   }
-  return { x: left, y: bottom, width: right - left, height: top - bottom };
+  return {
+    bounds: { x: left, y: bottom, width: right - left, height: top - bottom },
+    lineInkBounds,
+  };
 }
 
 /**
@@ -88,6 +126,11 @@ function shapedBounds(document, layout, antialiasMargin = 1) {
 export async function layoutExpandableNativeText(document, options = {}) {
   const width = Number(options.width ?? document.region.width);
   if (!(width > 0)) throw new Error('Expandable native text width must be positive');
+  const antialiasMargin = Math.max(0, Number(options.antialiasMargin ?? 1) || 0);
+  const inkPadding = Math.max(0, Number(options.inkPadding) || 0);
+  const inkInsets = await documentInkInsets(document, inkPadding, antialiasMargin);
+  const contentWidth = width - inkInsets.left - inkInsets.right;
+  if (!(contentWidth > 0)) throw new Error('Expandable native text has no ink-safe content width');
   const minimumHeight = Math.max(0, Number(options.minimumHeight ?? document.region.height) || 0);
   const anchorTop = Number.isFinite(options.anchorTop)
     ? options.anchorTop : document.region.y + document.region.height;
@@ -123,11 +166,11 @@ export async function layoutExpandableNativeText(document, options = {}) {
         const tokenRuns = structuredClone(runs);
         appendText(tokenRuns, token, sourceRun);
         if (runs.length && !/^\s+$/u.test(token)
-            && await shapedLineWidth(tokenRuns) > width + 1e-6) pushLine('soft');
+            && await shapedLineAdvance(tokenRuns) > contentWidth + 1e-6) pushLine('soft');
         for (const unit of graphemes(token)) {
           const candidate = structuredClone(runs);
           appendText(candidate, unit, sourceRun);
-          if (runs.length && await shapedLineWidth(candidate) > width + 1e-6) pushLine('soft');
+          if (runs.length && await shapedLineAdvance(candidate) > contentWidth + 1e-6) pushLine('soft');
           appendText(runs, unit, sourceRun);
         }
       }
@@ -144,7 +187,11 @@ export async function layoutExpandableNativeText(document, options = {}) {
     y: document.region.y,
   });
   const preliminary = await shapeRichTextDocument(reflowed);
-  const requiredHeight = Math.max(minimumHeight, advanceHeight, preliminary.height);
+  const requiredHeight = Math.max(
+    minimumHeight,
+    advanceHeight + inkInsets.top + inkInsets.bottom,
+    preliminary.height + inkInsets.top + inkInsets.bottom,
+  );
   reflowed = createRichTextDocument(preliminary.lines, {
     ...document.region,
     width,
@@ -153,7 +200,14 @@ export async function layoutExpandableNativeText(document, options = {}) {
       ? document.region.y : anchorTop - requiredHeight,
   });
   const layout = await shapeRichTextDocument(reflowed);
-  const bounds = shapedBounds(reflowed, layout);
+  const inkGeometry = shapedBounds(
+    reflowed,
+    layout,
+    contentWidth,
+    inkInsets,
+    antialiasMargin,
+  );
+  const bounds = inkGeometry.bounds;
   const pageBounds = normalizedPageBounds(options.pageBounds);
   const crossesPageEdge = Boolean(pageBounds && (
     bounds.x < pageBounds.x - 1e-6
@@ -179,6 +233,10 @@ export async function layoutExpandableNativeText(document, options = {}) {
     document: reflowed,
     layout,
     shapedBounds: bounds,
+    lineInkBounds: inkGeometry.lineInkBounds,
+    editorBounds: { ...reflowed.region },
+    inkInsets,
+    contentWidth,
     requiredHeight,
     overlapWarnings,
     columnValid: !crossesColumnBounds,

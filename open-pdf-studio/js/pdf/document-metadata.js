@@ -11,6 +11,37 @@ export const DOCUMENT_METADATA_FIELDS = Object.freeze([
   'modificationDate',
 ]);
 
+export const DOCUMENT_METADATA_DATE_FIELDS = Object.freeze([
+  'creationDate',
+  'modificationDate',
+]);
+
+const DOCUMENT_METADATA_FIELD_SET = new Set(DOCUMENT_METADATA_FIELDS);
+const DOCUMENT_METADATA_DATE_FIELD_SET = new Set(DOCUMENT_METADATA_DATE_FIELDS);
+
+export function isDocumentMetadataField(field) {
+  return DOCUMENT_METADATA_FIELD_SET.has(field);
+}
+
+export function documentMetadataFieldToEditorValue(field, value) {
+  if (!isDocumentMetadataField(field)) throw new TypeError(`Unsupported document metadata field: ${field}`);
+  if (!DOCUMENT_METADATA_DATE_FIELD_SET.has(field)) return value == null ? '' : String(value);
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 19);
+}
+
+export function documentMetadataFieldFromEditorValue(field, value) {
+  if (!isDocumentMetadataField(field)) throw new TypeError(`Unsupported document metadata field: ${field}`);
+  if (!DOCUMENT_METADATA_DATE_FIELD_SET.has(field)) return value == null ? '' : String(value);
+  if (value == null || value === '') return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) throw new TypeError(`Invalid ${field}`);
+  return date.toISOString();
+}
+
 export function createEmptyDocumentMetadata() {
   return {
     title: '',
@@ -73,6 +104,14 @@ export function normalizeDocumentMetadata(value = {}) {
     }
   }
   return normalized;
+}
+
+export function documentMetadataWithEditorField(value, field, editorValue) {
+  const current = normalizeDocumentMetadata(value || {});
+  return normalizeDocumentMetadata({
+    ...current,
+    [field]: documentMetadataFieldFromEditorValue(field, editorValue),
+  });
 }
 
 export function cloneDocumentMetadata(value) {

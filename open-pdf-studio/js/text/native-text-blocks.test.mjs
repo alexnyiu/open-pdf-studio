@@ -145,6 +145,17 @@ test('preserves lexical spaces while retaining independently styled inline runs'
   assert.equal(pieces[2].item.style, 'italic');
 });
 
+test('does not duplicate a source-authored trailing space between operator runs', () => {
+  const left = fragment('Target first', 344, 664, 54, { sourceText: 'Target first ' });
+  left.sourceRuns = [{ decodedText: 'Target first ', fillColor: '#111111' }];
+  const right = fragment('(mixed)', 399, 664, 24, { style: 'italic' });
+  right.sourceRuns = [{ decodedText: '(mixed)', fillColor: '#777777' }];
+
+  const pieces = nativeTextLinePieces([left, right]);
+  assert.equal(pieces.map((piece) => piece.text).join(''), 'Target first (mixed)');
+  assert.equal(pieces.filter((piece) => piece.syntheticSpace).length, 0);
+});
+
 test('restores merged PDF.js spans to exact source-colored operator runs', () => {
   const item = fragment('including blue emphasis and pale detail', 52, 650, 170, {
     fontSize: 8.7,

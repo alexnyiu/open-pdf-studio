@@ -267,9 +267,10 @@ try {
     `ordinary small gray text must render without a blurring halo: ${JSON.stringify(grayRun)}`);
   assert.match(grayRun.inlineStyle, /text-shadow:\s*none/u);
   assert.equal(paleRun.dataset.contrastAid, 'true', JSON.stringify(packagedRuns));
-  assert.match(paleRun.inlineStyle, /text-shadow/u);
+  assert.match(paleRun.inlineStyle, /text-shadow:\s*none/u);
+  assert.match(paleRun.inlineStyle, /background-color:\s*rgb\(0,\s*0,\s*0\)/u);
   const colorStatus = await waitUi('#native-text-edit-status');
-  assert.match(colorStatus.text, /editing-only outline/u);
+  assert.match(colorStatus.text, /editing-only backing/u);
   await callTool('app_key', { key: 'Escape' });
 
   const rightColorEditor = await openEditor(rightColorSelector, 'The growth runway');

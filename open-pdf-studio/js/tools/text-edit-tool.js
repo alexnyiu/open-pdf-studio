@@ -827,8 +827,12 @@ function nativePageContentBounds(pageNum, layer, { block = null, provenance = nu
 
 function expandableNativeEditorOptions(document, pageNum, canvasEl, layer, options = {}) {
   const geometry = getTextEditGeometry(pageNum, canvasEl);
+  const displayScale = Math.max(0.0001, Number(options.displayScale) || 1);
+  const inkPaddingPx = Math.max(0, Number(options.inkPaddingPx ?? 2) || 0);
+  const inkPadding = inkPaddingPx / displayScale;
   return {
     width: document.region.width,
+    contentWidth: Math.max(0.0001, document.region.width - (inkPadding * 2)),
     minimumHeight: options.minimumHeight ?? document.region.height,
     anchorTop: options.anchorTop ?? document.region.y + document.region.height,
     pageBounds: { x: 0, y: 0, width: geometry.pageWidth, height: geometry.pageHeight },
@@ -836,7 +840,9 @@ function expandableNativeEditorOptions(document, pageNum, canvasEl, layer, optio
     editorBackground: options.editorBackground || options.block?.editorBackground || '#ffffff',
     existingBounds: nativePageContentBounds(pageNum, layer, options),
     editId: options.editId,
-    displayScale: options.displayScale || 1,
+    displayScale,
+    inkPadding,
+    inkPaddingPx,
     onDraftLayout: options.onDraftLayout,
   };
 }
@@ -1962,7 +1968,7 @@ function startPdfTextEditing(span, pageNum) {
     // PDF.js fallback-font scaleX can make DOM word bounds far wider than
     // their source operator. Size from PDF geometry so editing does not
     // stretch or jump as soon as the inline editor opens.
-    width: `${Math.max(pdfWidth * (editorFontSize / fontSize) + 4, 80)}px`,
+    width: `${Math.max(pdfWidth * (editorFontSize / fontSize), 80)}px`,
     height: `${Math.max(numLines * visualLineHeight, 24)}px`,
     'font-size': `${editorFontSize}px`,
     'line-height': `${visualLineHeight}px`,
@@ -2412,7 +2418,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
     position: 'fixed',
     left: `${editorLeft}px`,
     top: `${editorTop}px`,
-    width: `${Math.max(scaledWidth + 4, 80)}px`,
+    width: `${Math.max(scaledWidth, 80)}px`,
     height: `${Math.max(numLines * visualLineHeight, 24)}px`,
     'font-size': `${editorFontSize}px`,
     'line-height': `${visualLineHeight}px`,

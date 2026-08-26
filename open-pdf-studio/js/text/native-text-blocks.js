@@ -397,18 +397,22 @@ export function nativeTextLinePieces(line) {
   for (const item of line || []) {
     const previous = pieces.findLast?.((piece) => !piece.syntheticSpace)?.item
       || [...pieces].reverse().find((piece) => !piece.syntheticSpace)?.item;
-    if (previous && needsLexicalSpace(previous, item)) {
-      pieces.push({ text: ' ', syntheticSpace: true, item: previous });
-    }
     const sourceRuns = Array.isArray(item.sourceRuns) ? item.sourceRuns : [];
     const sourceText = sourceRuns.map((source) => String(source?.decodedText ?? '')).join('');
     const itemText = String(item.text ?? '');
     const comparable = (value) => value.replace(/\s+/gu, ' ').trim();
+    const emitSourceRuns = sourceRuns.length > 0 && comparable(sourceText) === comparable(itemText);
+    const emittedText = emitSourceRuns ? sourceText : itemText;
+    const previousText = String(pieces.at(-1)?.text ?? '');
+    if (previous && needsLexicalSpace(previous, item)
+        && !/\s$/u.test(previousText) && !/^\s/u.test(emittedText)) {
+      pieces.push({ text: ' ', syntheticSpace: true, item: previous });
+    }
     // PDF.js may merge adjacent show-text operators into one visual span.
     // Split it back into the exact source runs only when their complete text
     // still matches, avoiding duplication when one operator was split across
     // several PDF.js spans.
-    if (sourceRuns.length > 0 && comparable(sourceText) === comparable(itemText)) {
+    if (emitSourceRuns) {
       for (const source of sourceRuns) {
         pieces.push({
           text: String(source.decodedText ?? ''),

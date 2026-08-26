@@ -7,21 +7,23 @@ import {
   editableRunPresentation,
 } from './text-edit-contrast.js';
 
-test('contrast helper preserves canonical colors and adds the strongest editor-only halo', () => {
+test('contrast helper preserves canonical colors and adds a crisp editor-only backing', () => {
   const pale = editableRunPresentation('#f4f4f4', '#ffffff');
   assert.equal(pale.color, '#f4f4f4');
   assert.equal(pale.contrastAid, true);
-  assert.equal(pale.haloColor, '#000000');
-  assert.match(pale.textShadow, /-1px 0 #000000/);
+  assert.equal(pale.backingColor, '#000000');
+  assert.equal(pale.textShadow, 'none');
 
   const dark = editableRunPresentation('#111111', '#000000');
   assert.equal(dark.color, '#111111');
   assert.equal(dark.contrastAid, true);
-  assert.equal(dark.haloColor, '#ffffff');
+  assert.equal(dark.backingColor, '#ffffff');
+  assert.equal(dark.textShadow, 'none');
 
   const blue = editableRunPresentation('#0057a8', '#ffffff');
   assert.equal(blue.color, '#0057a8');
   assert.equal(blue.contrastAid, false);
+  assert.equal(blue.backingColor, null);
   assert.equal(blue.textShadow, 'none');
 });
 

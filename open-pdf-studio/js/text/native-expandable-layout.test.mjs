@@ -22,12 +22,19 @@ test('exact native layout soft-wraps, grows down, and preserves the top anchor',
   const source = documentFor('one two three four five six');
   const result = await layoutExpandableNativeText(source, {
     width: 45,
+    inkPadding: 2,
     minimumHeight: source.region.height,
     anchorTop: source.region.y + source.region.height,
     pageBounds: { x: 0, y: 0, width: 200, height: 200 },
   });
   assert.equal(result.valid, true);
   assert.ok(result.document.lines.length > 1);
+  assert.ok(result.contentWidth < 45);
+  assert.equal(result.lineInkBounds.length, result.document.lines.length);
+  assert.ok(result.lineInkBounds.every((bounds) => (
+    bounds.x >= result.editorBounds.x - 1e-6
+      && bounds.x + bounds.width <= result.editorBounds.x + result.editorBounds.width + 1e-6
+  )));
   assert.equal(result.document.lines.some((line) => line.breakAfter === 'soft'), true);
   assert.equal(richTextToPlainText(result.document), 'one two three four five six');
   assert.ok(result.document.region.height > source.region.height);
@@ -73,4 +80,29 @@ test('exact native layout rejects glyphs or regions that cross the inferred colu
   assert.equal(result.columnValid, false);
   assert.equal(result.valid, false);
   assert.match(result.rejectionReasons.join('; '), /native column boundary/);
+});
+
+test('ink-safe content width contains small mixed-style runs and right-edge punctuation', async () => {
+  const source = createRichTextDocument([
+    createTextLine([
+      createTextRun('Main explanation ', { faceId: 'liberation-sans-regular', size: 8.7 }),
+      createTextRun('(small gray detail),', {
+        faceId: 'liberation-sans-regular', size: 6.8, color: '#777777',
+      }),
+    ], { baseline: 90, baselineAdvance: 11, breakAfter: 'hard' }),
+  ], { x: 10, y: 75, width: 88, height: 18 });
+  const result = await layoutExpandableNativeText(source, {
+    width: 88,
+    inkPadding: 2,
+    minimumHeight: 18,
+    anchorTop: 93,
+  });
+  assert.equal(result.valid, true);
+  assert.ok(result.document.lines.length >= 2);
+  assert.ok(result.inkInsets.left >= 3);
+  assert.ok(result.inkInsets.right >= 3);
+  for (const bounds of result.lineInkBounds) {
+    assert.ok(bounds.x >= result.editorBounds.x - 1e-6);
+    assert.ok(bounds.x + bounds.width <= result.editorBounds.x + result.editorBounds.width + 1e-6);
+  }
 });
