@@ -29,6 +29,24 @@ test('shared scorer joins only when multiple compatible continuation signals agr
   assert.ok(result.evidence.filter((entry) => entry.weight > 0).length >= 3);
 });
 
+test('native edge-style evidence supports mixed-inline continuation without changing forced gates', () => {
+  const result = scoreParagraphBoundary(
+    line('a', 'The explanation continues'),
+    line('b', 'with a smaller inline run.', { top: 16, bottom: 25, height: 9 }),
+    {
+      ...compact,
+      styleEvidence: {
+        edgeSizeRatio: 1,
+        sharedFontFamily: true,
+        mixedInlineStyles: true,
+      },
+    },
+  );
+  assert.equal(result.decision, PARAGRAPH_BOUNDARY_JOIN);
+  assert.ok(result.evidence.some((entry) => entry.id === 'compatible-edge-size'));
+  assert.ok(result.evidence.some((entry) => entry.id === 'shared-font-family'));
+});
+
 test('forced column, heading/list, geometry, direction, and large-gap changes split', () => {
   assert.equal(scoreParagraphBoundary(line('a', 'Text'), line('b', 'Text', { columnId: 'column-2' }), compact).decision,
     PARAGRAPH_BOUNDARY_SPLIT);

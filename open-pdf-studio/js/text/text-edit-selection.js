@@ -132,8 +132,22 @@ function estimatedAdvance(grapheme, style) {
   return style.size * (style.faceId?.includes('-mono-') ? 0.6 : 0.54);
 }
 
-/** Deterministic fallback reflow. Save-time shaping remains the authority. */
-export function reflowRichTextToWidth(document, width, measure = estimatedAdvance) {
+function flowedRegion(document, width, contentHeight, options = {}) {
+  const minimumHeight = Math.max(0, Number(options.minimumHeight ?? document.region.height) || 0);
+  const height = Math.max(minimumHeight, contentHeight);
+  const anchorTop = Number.isFinite(options.anchorTop)
+    ? options.anchorTop : document.region.y + document.region.height;
+  return {
+    ...document.region,
+    width,
+    height,
+    y: document.region.baselineDirection === 'increasing-y'
+      ? document.region.y : anchorTop - height,
+  };
+}
+
+/** Deterministic immediate reflow. Exact fontkit shaping follows asynchronously. */
+export function reflowRichTextToWidth(document, width, measure = estimatedAdvance, options = {}) {
   if (!(width > 0)) throw new Error('Reflow width must be positive');
   const output = [];
   let lineRuns = [];
@@ -178,5 +192,5 @@ export function reflowRichTextToWidth(document, width, measure = estimatedAdvanc
   }
   if (lineRuns.length || output.length === 0) pushLine('hard');
   const height = output.reduce((sum, line) => sum + line.baselineAdvance, 0);
-  return createRichTextDocument(output, { ...document.region, width, height: Math.max(document.region.height, height) });
+  return createRichTextDocument(output, flowedRegion(document, width, height, options));
 }

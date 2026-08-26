@@ -151,6 +151,7 @@ export {
   shiftEditorPosition as shiftPdfEditorPosition,
   setEditorStatus as setPdfEditorStatus,
   getEditorRichText as getPdfEditorRichText,
+  getEditorLayoutState as getPdfEditorLayoutState,
   getEditorFormatState as getPdfEditorFormatState,
   applyRichTextDraftFormat as applyPdfEditorRichTextFormat,
   applyRichTextDraftParagraphFormat as applyPdfEditorRichTextParagraphFormat,

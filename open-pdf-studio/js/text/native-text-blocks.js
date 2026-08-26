@@ -14,15 +14,27 @@ function average(values) {
   return values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
 }
 
+function normalizedFontFamily(item) {
+  const value = item.fontFamily || item.actualFontName || item.fontName || '';
+  return String(value).trim().toLocaleLowerCase() || null;
+}
+
 function segmentMetrics(items) {
   const left = Math.min(...items.map((item) => item.pdfX));
   const segmentRight = Math.max(...items.map(right));
+  const families = new Set(items.map(normalizedFontFamily).filter(Boolean));
+  const sizes = new Set(items.map((item) => Number(item.fontSize).toFixed(3)));
   return {
     left,
     right: segmentRight,
     center: (left + segmentRight) / 2,
     baseline: average(items.map((item) => item.pdfY)),
     fontSize: average(items.map((item) => item.fontSize)),
+    leadingFontSize: items[0].fontSize,
+    trailingFontSize: items.at(-1).fontSize,
+    leadingFontFamily: normalizedFontFamily(items[0]),
+    trailingFontFamily: normalizedFontFamily(items.at(-1)),
+    mixedInlineStyles: families.size > 1 || sizes.size > 1,
   };
 }
 
@@ -40,8 +52,13 @@ function segmentText(items) {
 
 function sharedBoundaryAllowsJoin(block, segment, current, baselineGap) {
   const previousSegment = block.lines.at(-1);
-  const previous = segmentMetrics(previousSegment);
+  const previous = block.lastMetrics || segmentMetrics(previousSegment);
   const fontSize = average([previous.fontSize, current.fontSize]);
+  const edgeSizeRatio = Math.min(previous.trailingFontSize, current.leadingFontSize)
+    / Math.max(previous.trailingFontSize, current.leadingFontSize);
+  const sharedFontFamily = previous.trailingFontFamily && current.leadingFontFamily
+    ? previous.trailingFontFamily === current.leadingFontFamily
+    : null;
   return scoreParagraphBoundary({
     id: 'native-previous', text: segmentText(previousSegment), columnId: 'native-track',
     geometryValid: true, direction: 'ltr', left: previous.left, top: 0,
@@ -57,12 +74,18 @@ function sharedBoundaryAllowsJoin(block, segment, current, baselineGap) {
     medianGap: Math.max(1, baselineGap - fontSize),
     medianWidth: Math.max(previous.right - previous.left, current.right - current.left),
     gap: Math.max(0, baselineGap - fontSize),
+    styleEvidence: {
+      edgeSizeRatio,
+      sharedFontFamily,
+      mixedInlineStyles: previous.mixedInlineStyles || current.mixedInlineStyles,
+    },
   }).decision === PARAGRAPH_BOUNDARY_JOIN;
 }
 
 function attachLine(block, line, metrics) {
   block.lines.push(line);
   block.lastBaseline = metrics.baseline;
+  block.lastMetrics = metrics;
   block.fontSize = average([block.fontSize, metrics.fontSize]);
   block.left = Math.min(block.left, metrics.left);
   block.right = Math.max(block.right, metrics.right);
@@ -76,6 +99,7 @@ function newBlock(line, metrics) {
     lines: [line],
     firstBaseline: metrics.baseline,
     lastBaseline: metrics.baseline,
+    lastMetrics: metrics,
     fontSize: metrics.fontSize,
     left: metrics.left,
     right: metrics.right,
@@ -139,7 +163,8 @@ export function groupNativeTextFragments(fragments) {
     const metrics = segments.map(segmentMetrics);
     const baseline = Math.max(...metrics.map((entry) => entry.baseline));
     active = active.filter((block) => (
-      block.lastBaseline - baseline < Math.max(block.fontSize, ...metrics.map((entry) => entry.fontSize)) * 1.8
+      block.lastBaseline - baseline
+        < Math.max(block.lastMetrics.fontSize, ...metrics.map((entry) => entry.fontSize)) * 1.8
     ));
     const claimed = new Set();
 
@@ -149,13 +174,10 @@ export function groupNativeTextFragments(fragments) {
       const candidates = active
         .filter((block) => !claimed.has(block))
         .map((block) => {
-          const fontRatio = Math.min(block.fontSize, current.fontSize)
-            / Math.max(block.fontSize, current.fontSize);
           const baselineGap = block.lastBaseline - current.baseline;
-          const fontSize = average([block.fontSize, current.fontSize]);
+          const fontSize = average([block.lastMetrics.fontSize, current.fontSize]);
           const alignment = alignmentDistance(block, current);
-          const eligible = fontRatio > 0.92
-            && baselineGap > fontSize * 0.5
+          const eligible = baselineGap > fontSize * 0.5
             && baselineGap < fontSize * 1.8
             && alignment < fontSize
             && sharedBoundaryAllowsJoin(block, segment, current, baselineGap);

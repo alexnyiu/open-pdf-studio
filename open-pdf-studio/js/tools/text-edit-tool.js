@@ -6,7 +6,7 @@ import { markDocumentModified } from '../ui/chrome/tabs.js';
 import { canvasContainer, continuousContainer, pdfCanvas } from '../ui/dom-elements.js';
 import { showPdfTextEditor, hidePdfTextEditor, getPdfEditorText as getEditorText,
   updatePdfEditorStyle, shiftPdfEditorPosition, setPdfEditorStatus,
-  getPdfEditorRichText, applyPdfEditorRichTextFormat } from '../bridge.js';
+  getPdfEditorRichText, getPdfEditorLayoutState, applyPdfEditorRichTextFormat } from '../bridge.js';
 import {
   DEFAULT_TEXT_FORMAT_CAPABILITIES,
   createRichTextDocument,
@@ -803,6 +803,60 @@ function getTextEditGeometry(pageNum, canvasEl) {
   );
 }
 
+function nativePageContentBounds(pageNum, layer, { block = null, provenance = null, editId = null } = {}) {
+  const bounds = [];
+  if (layer) {
+    for (const candidate of getBlockGroups(layer)) {
+      if (candidate === block) continue;
+      const candidateProvenance = provenanceForSpans(candidate.spans);
+      if (provenance && candidateProvenance
+          && sameNativeTextOwnership(candidateProvenance, provenance)) continue;
+      const region = richTextForNativeBlock(candidate, pageNum).region;
+      bounds.push({ id: `source:${bounds.length}`, ...region });
+    }
+  }
+  for (const record of getActiveDocument()?.textEdits?.filter((entry) => entry.page === pageNum) || []) {
+    if (String(record.id) === String(editId)) continue;
+    const projected = projectTextEditRecord(record);
+    const region = projected.richText?.region;
+    if (region) bounds.push({ id: `edit:${record.id}`, ...region });
+  }
+  return bounds;
+}
+
+function expandableNativeEditorOptions(document, pageNum, canvasEl, layer, options = {}) {
+  const geometry = getTextEditGeometry(pageNum, canvasEl);
+  return {
+    width: document.region.width,
+    minimumHeight: options.minimumHeight ?? document.region.height,
+    anchorTop: options.anchorTop ?? document.region.y + document.region.height,
+    pageBounds: { x: 0, y: 0, width: geometry.pageWidth, height: geometry.pageHeight },
+    existingBounds: nativePageContentBounds(pageNum, layer, options),
+    editId: options.editId,
+    displayScale: options.displayScale || 1,
+    onDraftLayout: options.onDraftLayout,
+  };
+}
+
+function nativeLayoutBlocksCommit(editor) {
+  if (!editor?.expandableNative) return false;
+  const retainEditorFocus = () => queueMicrotask(() => {
+    document.querySelector('.pdf-text-editor.rich-text-editor')?.focus();
+  });
+  const layout = getPdfEditorLayoutState();
+  if (layout?.pending) {
+    setPdfEditorStatus('Exact text shaping is still in progress. The editor remains open; apply again when layout finishes.');
+    retainEditorFocus();
+    return true;
+  }
+  if (layout?.valid === false) {
+    setPdfEditorStatus(layout.message || 'The shaped text cannot be committed inside the page CropBox.');
+    retainEditorFocus();
+    return true;
+  }
+  return false;
+}
+
 export function activateEditTextTool() {
   state.isEditingPdfText = true;
   void import('../pdf/editable-metadata-preload.js').then(({ scheduleEditableMetadataPreload }) => (
@@ -926,7 +980,9 @@ function getBlockGroups(layer) {
       pdfX: transform[4],
       pdfY: transform[5],
       pdfWidth: parseFloat(span.dataset.pdfWidth) || 0,
-      fontSize
+      fontSize,
+      fontFamily: span.style.fontFamily || '',
+      actualFontName: span.dataset.pdfActualFontName || '',
     }];
   });
   const blocks = groupNativeTextFragments(items).map((block) => block.lines);
@@ -1790,8 +1846,9 @@ function startPdfTextEditing(span, pageNum) {
     return;
   }
 
-  // Combined text with line breaks
-  const combinedText = lineData.map(l => l.text).join('\n');
+  // Physical source lines inside one paragraph are soft wraps, not authored
+  // paragraph breaks. The canonical rich-text draft below owns that meaning.
+  let combinedText = lineData.map(l => l.text).join('\n');
   const unsupportedFonts = [...new Set(lineData.flatMap((line) => line.spans.map((sourceSpan) => (
     sourceSpan.dataset.pdfActualFontName || sourceSpan.dataset.pdfFontName || 'Unknown font'
   ))).filter((name) => !/^liberation\s*(sans|serif|mono)/iu.test(name)))];
@@ -1825,21 +1882,8 @@ function startPdfTextEditing(span, pageNum) {
   const visualLineHeight = numLines > 1
     ? Math.abs(lineData[1].domTop - lineData[0].domTop)
     : editorFontSize * (lineSpacing / fontSize);
-  const originalRichText = createRichTextDocument(lineData.map((line, index) => createTextLine(
-    line.runs,
-    {
-      id: `source-line-${pageNum}-${index}`,
-      baseline: line.pdfY,
-      baselineAdvance: lineSpacing,
-      alignment: 'left',
-    },
-  )), {
-    x: pdfX,
-    y: pdfY - (numLines - 1) * lineSpacing - fontSize * 0.3,
-    width: pdfWidth,
-    height: (numLines - 1) * lineSpacing + fontSize * 1.3,
-    rotation: getPageRotation(pageNum),
-  });
+  const originalRichText = richTextForNativeBlock(block, pageNum);
+  combinedText = richTextToPlainText(originalRichText);
 
   // Place editor in the textLayer's parent container (not in the textLayer itself)
   // because .textLayer has opacity: 0.25 which makes all children semi-transparent
@@ -1923,6 +1967,7 @@ function startPdfTextEditing(span, pageNum) {
       strikethrough: false,
     },
     richTextDocument: originalRichText,
+    expandableNative: true,
     sourceProvenance,
     substitution,
   };
@@ -1968,6 +2013,7 @@ function startPdfTextEditing(span, pageNum) {
         // Don't close if focus moved to the properties panel.
         // Use the static mount point from index.html (not the Solid-rendered element).
         const activeEl = document.activeElement;
+        if (activeEl?.closest?.('.pdf-text-editor')) return;
         const propsRoot = document.getElementById('properties-panel-root');
         if (activeEl && propsRoot && propsRoot.contains(activeEl)) {
           return;
@@ -1985,6 +2031,21 @@ function startPdfTextEditing(span, pageNum) {
     options: {
       richTextDocument: originalRichText,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
+      expandableRegion: expandableNativeEditorOptions(
+        originalRichText,
+        pageNum,
+        textLayer.parentElement?.querySelector('canvas.pdf-canvas')
+          || pdfCanvas || document.getElementById('pdf-canvas'),
+        textLayer,
+        {
+          block,
+          provenance: sourceProvenance,
+          displayScale: editorFontSize / fontSize,
+          onDraftLayout: (layout) => {
+            if (activeEditor?.block === block) activeEditor.draftLayout = layout;
+          },
+        },
+      ),
       ariaLabel: `Edit formatted PDF text region: ${combinedText}`,
     },
   });
@@ -1998,6 +2059,8 @@ function finishPdfTextEditing() {
     activeEditor._finishEditing();
     return;
   }
+
+  if (nativeLayoutBlocksCommit(activeEditor)) return;
 
   const {
     block, pageNum, originalText,
@@ -2231,6 +2294,11 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
   finishPdfTextEditing();
 
   const view = projectTextEditRecord(textEdit);
+  const nativeExpandable = textEdit?.schema === 'open-pdf-studio.text-edit-record'
+    && textEdit.version === 2
+    && Boolean(textEdit.original)
+    && Array.isArray(textEdit.sourceProvenance)
+    && textEdit.sourceProvenance.length > 0;
 
   const editDoc = getActiveDocument();
   const geometry = getTextEditGeometry(pageNum, canvasEl);
@@ -2244,7 +2312,9 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
 
   const firstBaseY = pageHeight - view.pdfY;
   const maxCharCount = Math.max(...newLines.map(l => l.length), 1);
-  const editWidth = transaction
+  const editWidth = nativeExpandable
+    ? Math.max(view.richText.region.width, fontSize)
+    : transaction
     ? Math.max(view.pdfWidth || 0, fontSize)
     : Math.max(view.pdfWidth || 0, fontSize * 0.6 * maxCharCount) + fontSize * 0.5;
 
@@ -2328,6 +2398,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
   const isAddedText = view.originalText === '';
 
   const finishEditing = () => {
+    if (nativeLayoutBlocksCommit(activeEditor)) return;
     const newText = getEditorText();
     const richTextDraft = getPdfEditorRichText();
     hidePdfTextEditor();
@@ -2351,7 +2422,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
 
     if (newText.trim() !== '') {
       if (textEdit.schema === 'open-pdf-studio.text-edit-record' && textEdit.version === 2 && richTextDraft) {
-        textEdit.richText = transaction
+        textEdit.richText = transaction && !nativeExpandable
           ? reflowRichTextToWidth(richTextDraft, Math.max(textEdit.richText.region.width, 1))
           : richTextDraft;
         if (!transaction) textEdit.revision += 1;
@@ -2389,6 +2460,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
     pageNum,
     kind: 'record',
     _recordRef: textEdit,
+    expandableNative: nativeExpandable,
     originalText: view.newText,
     pdfX: view.pdfX,
     pdfY: view.pdfY,
@@ -2469,6 +2541,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
         // Don't close if focus moved to the properties panel.
         // Use the static mount point from index.html (not the Solid-rendered element).
         const activeEl = document.activeElement;
+        if (activeEl?.closest?.('.pdf-text-editor')) return;
         const propsRoot = document.getElementById('properties-panel-root');
         if (activeEl && propsRoot && propsRoot.contains(activeEl)) {
           return;
@@ -2486,7 +2559,21 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
     options: {
       richTextDocument: view.richText,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
-      reflowWidth: Boolean(transaction),
+      reflowWidth: Boolean(transaction) && !nativeExpandable,
+      expandableRegion: nativeExpandable ? expandableNativeEditorOptions(
+        view.richText,
+        pageNum,
+        canvasEl,
+        canvasEl.parentElement?.querySelector('.textLayer'),
+        {
+          provenance: textEdit.sourceProvenance,
+          editId: textEdit.id,
+          displayScale: editScale,
+          onDraftLayout: (layout) => {
+            if (activeEditor?._recordRef === textEdit) activeEditor.draftLayout = layout;
+          },
+        },
+      ) : undefined,
       ariaLabel: `Edit formatted PDF text region: ${view.newText}`,
     },
   });

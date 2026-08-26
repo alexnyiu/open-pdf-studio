@@ -113,13 +113,44 @@ try {
   await target.click();
   const editor = page.locator('.pdf-text-editor');
   await editor.waitFor({ state: 'visible' });
-  assert.equal((await editor.innerText()).replace(/\n\n/gu, '\n'),
+  assert.equal((await editor.innerText()).replace(/\n\n/gu, '\n').replace(/[ \t]+\n/gu, '\n'),
     'Target first (mixed)\nSecond paragraph line');
   assert.equal(await page.locator('[role="dialog"]').filter({ hasText: 'source operators' }).count(), 0,
     'eligible visible text plus synthetic whitespace must not show an ambiguity modal');
 
-  await editor.fill('Edited first line\nEdited second line');
-  await editor.press('Control+Enter');
+  const originalEditorBox = await editor.boundingBox();
+  await editor.fill('This native paragraph is intentionally extended with enough words to wrap across several canonical lines while its original width remains fixed.');
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const grownEditorState = await editor.evaluate((node) => ({
+    rect: node.getBoundingClientRect().toJSON(),
+    overflow: getComputedStyle(node).overflow,
+    scrollHeight: node.scrollHeight,
+    clientHeight: node.clientHeight,
+  }));
+  assert.ok(grownEditorState.rect.height > originalEditorBox.height,
+    'native editor must grow downward after canonical soft wrapping');
+  assert.ok(Math.abs(grownEditorState.rect.width - originalEditorBox.width) < 1,
+    'native editor width must remain fixed');
+  assert.equal(grownEditorState.overflow, 'hidden');
+  assert.ok(grownEditorState.scrollHeight <= grownEditorState.clientHeight + 2,
+    'grown native editor must not hide text behind an internal scrollbar');
+
+  await editor.fill('Edited first line');
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const shrunkenEditorBox = await editor.boundingBox();
+  assert.ok(shrunkenEditorBox.height < grownEditorState.rect.height,
+    'deleting text must shrink the editor after exact layout');
+  assert.ok(shrunkenEditorBox.height >= originalEditorBox.height,
+    'native editor must never shrink below its immutable original height');
+  await editor.press('Enter');
+  await page.keyboard.type('Edited second line');
+  await page.keyboard.press('Control+Enter');
   await editor.waitFor({ state: 'detached' });
 
   const firstCommit = await page.evaluate(async () => {
@@ -163,8 +194,10 @@ try {
     throw new Error(`Owned line target did not reopen its record: ${JSON.stringify({ hitTargetState, state, pageErrors })}`);
   }
   await editor.waitFor({ state: 'visible' });
-  await editor.fill('Re-edited first line\nRe-edited second line');
-  await editor.press('Control+Enter');
+  await editor.fill('Re-edited first line');
+  await editor.press('Enter');
+  await page.keyboard.type('Re-edited second line');
+  await page.keyboard.press('Control+Enter');
   await editor.waitFor({ state: 'detached' });
 
   const secondCommit = await page.evaluate(async () => {
@@ -221,8 +254,10 @@ try {
   await page.keyboard.press('Enter');
   await editor.waitFor({ state: 'visible' });
   assert.match((await editor.innerText()).replace(/\n\n/gu, '\n'), /Re-edited first line[\s\S]*Right cell/u);
-  await editor.fill('Combined paragraph one\nCombined paragraph two');
-  await editor.press('Control+Enter');
+  await editor.fill('Combined paragraph one');
+  await editor.press('Enter');
+  await page.keyboard.type('Combined paragraph two');
+  await page.keyboard.press('Control+Enter');
   await editor.waitFor({ state: 'detached' });
 
   const mergedState = await page.evaluate(async () => {

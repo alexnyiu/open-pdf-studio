@@ -56,4 +56,17 @@ test('reflow distinguishes generated soft wraps from authored hard breaks and gr
   assert.equal(richTextToPlainText(flowed), 'one two three\nfour');
   assert.equal(flowed.lines.some((line) => line.breakAfter === 'soft'), true);
   assert.ok(flowed.region.height > source.region.height);
+  assert.equal(flowed.region.y + flowed.region.height, source.region.y + source.region.height);
+});
+
+test('reflow shrinks after deletion without crossing the immutable minimum height', () => {
+  const expanded = createRichTextDocument([
+    createTextLine([createTextRun('short', { size: 10 })], { baseline: 90, breakAfter: 'hard' }),
+  ], { x: 10, y: -20, width: 30, height: 60 });
+  const flowed = reflowRichTextToWidth(expanded, 30, undefined, {
+    minimumHeight: 20,
+    anchorTop: 40,
+  });
+  assert.equal(flowed.region.height, 20);
+  assert.equal(flowed.region.y, 20);
 });

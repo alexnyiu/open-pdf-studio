@@ -16,8 +16,29 @@ function fragment(text, x, y, width, options = {}) {
     fontSize: options.fontSize || 6.8,
     sourceText: options.sourceText ?? text,
     style: options.style || 'regular',
+    fontName: options.fontName || 'BodyRegular',
   };
 }
+
+test('joins mixed-size body lines by the runs touching each boundary', () => {
+  const fragments = [
+    fragment('IMPORTANT', 64, 700, 48, { fontSize: 7.2, fontName: 'BodyBold' }),
+    fragment('The screen result is a starting point that', 64, 684, 180, { fontSize: 8.7 }),
+    fragment('combines price strength with ', 64, 673, 105, { fontSize: 8.7 }),
+    fragment('smaller inline detail', 169, 673, 70, { fontSize: 6.8 }),
+    fragment('smaller continuation ', 64, 662, 70, { fontSize: 6.8 }),
+    fragment('returns to body ', 134, 662, 70, { fontSize: 8.7 }),
+    fragment('and smaller detail ', 204, 662, 65, { fontSize: 6.8 }),
+    fragment('before body.', 269, 662, 54, { fontSize: 8.7 }),
+    fragment('The final body line completes the paragraph.', 64, 651, 190, { fontSize: 8.7 }),
+  ];
+
+  const blocks = groupNativeTextFragments(fragments);
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].lines.length, 1);
+  assert.equal(blocks[0].lines[0][0].text, 'IMPORTANT');
+  assert.equal(blocks[1].lines.length, 4);
+});
 
 test('keeps each multiline table-cell paragraph in one independent block', () => {
   const fragments = [

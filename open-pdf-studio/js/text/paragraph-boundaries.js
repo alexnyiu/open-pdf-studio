@@ -81,6 +81,17 @@ export function scoreParagraphBoundary(previous, next, context = {}) {
   else if (gap > Math.max(height * 1.2, medianGap * 1.35)) signals.push(evidence('expanded-spacing', -2, gap));
   if (heightRatio <= 1.14) signals.push(evidence('compatible-height', 1, heightRatio));
   else if (heightRatio > 1.24) signals.push(evidence('different-height', -2, heightRatio));
+  const edgeSizeRatio = context.styleEvidence?.edgeSizeRatio;
+  if (Number.isFinite(edgeSizeRatio)) {
+    if (edgeSizeRatio >= 0.92) signals.push(evidence('compatible-edge-size', 1, edgeSizeRatio));
+    else if (edgeSizeRatio < 0.82) signals.push(evidence('incompatible-edge-size', -2, edgeSizeRatio));
+  }
+  if (context.styleEvidence?.sharedFontFamily === true) {
+    signals.push(evidence('shared-font-family', 1));
+  } else if (context.styleEvidence?.sharedFontFamily === false
+    && context.styleEvidence?.mixedInlineStyles !== true) {
+    signals.push(evidence('different-font-family', -1));
+  }
   const previousList = LIST_MARKER.test(previous.text ?? '');
   const firstLineIndentContinuation = next.left < previous.left
     && leftDelta <= height * 2.5 && !TERMINAL_PUNCTUATION.test(previous.text ?? '');

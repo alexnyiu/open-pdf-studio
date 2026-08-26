@@ -16,6 +16,7 @@ const [blurHandler, setBlurHandler] = createSignal(null);
 const [selectOnFocus, setSelectOnFocus] = createSignal(false);
 const [editorOptions, setEditorOptions] = createSignal({});
 const [editorStatus, setEditorStatus] = createSignal('');
+const [editorLayoutState, setEditorLayoutState] = createSignal({ pending: false, valid: true, message: '' });
 const [richTextDocument, setRichTextDocument] = createSignal(null);
 const [richTextSelection, setRichTextSelection] = createSignal(null);
 const [typingStyle, setTypingStyle] = createSignal(null);
@@ -38,6 +39,7 @@ export function showPdfTextEditor(style, initialText, handlers) {
   setBlurHandler(() => handlers.onBlur || null);
   setEditorOptions(handlers.options || {});
   setEditorStatus('');
+  setEditorLayoutState({ pending: false, valid: true, message: '' });
   // Never let the live contentEditable draft mutate the record (or a Solid
   // proxy for it) before commit. Re-editing always works on an isolated copy.
   const sourceRichText = handlers.options?.richTextDocument || null;
@@ -63,6 +65,7 @@ export function hidePdfTextEditor() {
   setSelectOnFocus(false);
   setEditorOptions({});
   setEditorStatus('');
+  setEditorLayoutState({ pending: false, valid: true, message: '' });
   setRichTextDocument(null);
   setRichTextSelection(null);
   setTypingStyle(null);
@@ -77,6 +80,10 @@ export function getEditorText() {
 
 export function getEditorRichText() {
   return richTextDocument();
+}
+
+export function getEditorLayoutState() {
+  return editorLayoutState();
 }
 
 export function getEditorFormatState() {
@@ -194,4 +201,5 @@ export function shiftEditorPosition(dxPx, dyPx) {
 
 export { active, editorStyle, text, setText, commitHandler, cancelHandler, keyDownHandler, blurHandler,
   selectOnFocus, setSelectOnFocus, editorOptions, editorStatus, setEditorStatus,
+  editorLayoutState, setEditorLayoutState,
   richTextDocument, richTextSelection, typingStyle, mixedFormatState };
