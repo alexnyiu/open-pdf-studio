@@ -1,5 +1,5 @@
 import { Show } from 'solid-js';
-import { annotProps, sectionVis, updateAnnotProp } from '../../stores/propertiesStore.js';
+import { annotProps, ocrParagraphActions, sectionVis, updateAnnotProp } from '../../stores/propertiesStore.js';
 import CollapsibleSection from './CollapsibleSection.jsx';
 import PrefComboBox from '../preferences/PrefComboBox.jsx';
 import { useTranslation } from '../../../i18n/useTranslation.js';
@@ -66,6 +66,28 @@ export default function ParagraphSection() {
               disabled={isLocked}
             />
           </div>
+        </Show>
+        <Show when={annotProps.scannedTextEstimate === true && ocrParagraphActions()}>
+          {(actions) => <div class="property-group ocr-paragraph-actions" aria-label="OCR paragraph grouping">
+            <label>Grouping</label>
+            <div class="property-button-grid">
+              <button type="button" disabled={!actions().canMergeSelected}
+                onClick={() => actions().mergeSelected()}>Merge Selected</button>
+              <button type="button" disabled={!actions().canMergePrevious}
+                title={actions().mergePreviousReason || 'Merge with the previous OCR paragraph'}
+                onClick={() => actions().mergePrevious()}>Merge Previous</button>
+              <button type="button" disabled={!actions().canMergeNext}
+                title={actions().mergeNextReason || 'Merge with the next OCR paragraph'}
+                onClick={() => actions().mergeNext()}>Merge Next</button>
+              <button type="button" disabled={!actions().canSplitBefore}
+                onClick={() => actions().splitBefore()}>Split Before</button>
+              <button type="button" disabled={!actions().canSplitAfter}
+                onClick={() => actions().splitAfter()}>Split After</button>
+              <button type="button" disabled={!actions().canReset}
+                onClick={() => actions().reset()}>Reset Automatic Grouping</button>
+            </div>
+            <Show when={actions().status}><div class="property-hint" role="status">{actions().status}</div></Show>
+          </div>}
         </Show>
       </CollapsibleSection>
     </Show>

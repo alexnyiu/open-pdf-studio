@@ -373,16 +373,18 @@ async function validateOwnership(page, context, pageIndex, pageCount) {
   const patchDigests = textArray(privateDict, PATCH_DIGESTS, context, 'PatchDigests');
   const selectionIds = textArray(privateDict, SELECTION_IDS, context, 'SelectionIds');
   const length = imageRefs.length;
-  if (length === 0 || [imageResources, imageDigests, patchDigests, selectionIds]
+  if ([imageResources, imageDigests, patchDigests, selectionIds]
     .some((values) => values.length !== length)) {
-    fail('MALFORMED_OWNERSHIP', 'Owned repair image metadata arrays must be non-empty and equal length');
+    fail('MALFORMED_OWNERSHIP', 'Owned repair image metadata arrays must have equal length');
   }
   const resources = page.node.Resources();
   const xobjects = resources?.lookupMaybe(XOBJECT, PDFDict);
-  if (!(xobjects instanceof PDFDict)) fail('MALFORMED_OWNERSHIP', 'Owned repair page lacks XObject resources');
+  if (length > 0 && !(xobjects instanceof PDFDict)) {
+    fail('MALFORMED_OWNERSHIP', 'Owned repair page lacks XObject resources');
+  }
   for (let index = 0; index < length; index += 1) {
     const imageRef = imageRefs[index];
-    if (!sameRef(xobjects.get(PDFName.of(imageResources[index])), imageRef)) {
+    if (!sameRef(xobjects?.get(PDFName.of(imageResources[index])), imageRef)) {
       fail('MALFORMED_OWNERSHIP', 'Owned repair image resource no longer matches PieceInfo');
     }
     const stream = context.lookup(imageRef);
@@ -612,7 +614,7 @@ export async function writeOwnedScannedTextRepairLayer({
   const prepared = state.pages.flatMap((pageState) => {
     const selections = pageState.selections
       .filter((selection) => selection.repair.status === 'applied');
-    if (selections.length === 0) return [];
+    if (selections.length === 0 && !pageState.paragraphGrouping) return [];
     const page = pages[pageState.index];
     if (!page) fail('INVALID_PAGE_INDEX', 'Edit state identifies a page outside the PDF');
     return [{

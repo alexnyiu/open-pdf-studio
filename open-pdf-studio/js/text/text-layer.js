@@ -107,42 +107,46 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
     const editsByLine = new Map(appliedEdits
       .filter((selection) => selection.target.kind === 'line')
       .map((selection) => [selection.target.targetId, selection]));
-    const pendingSelectionIds = new Set(pendingItems
-      .map((item) => item.scannedSelection?.id)
-      .filter(Boolean));
     items = pendingItems.map((item) => ({
       ...item,
       scannedSelection: item.scannedSelection || editsByLine.get(item.lineId) || null,
     }));
     for (const selection of appliedEdits) {
-      if (pendingSelectionIds.has(selection.id)) continue;
       const fixedRegion = ['fixed-region-multiline', 'approved-region-paragraph-reflow']
         .includes(selection.content.scope);
-      items.push({
-        id: `${selection.id}-hit-target`,
-        lineId: selection.target.targetId,
-        pageNum,
-        readingOrder: Number.MAX_SAFE_INTEGER,
-        text: selection.content.searchableText.text,
-        confidence: selection.geometry.confidence,
-        polygon: fixedRegion
-          ? selection.content.source.canonicalRegion
-          : selection.content.source.canonicalPolygon,
-        baseline: fixedRegion
-          ? selection.content.source.canonicalBaselines[0]
-          : selection.content.source.canonicalBaseline,
-        pageGeometry: doc.ocr?.pages?.[pageNum]?.recognition?.geometry
-          || (editPage?.pageGeometry?.transformChain ? editPage.pageGeometry : null),
-        resultRevision: 0,
-        correctionRevision: 0,
-        scannedTextEditRevision: selection.revision,
-        language: null,
-        direction: 'ltr',
-        words: undefined,
-        ownership: { stream: 'persisted-scanned-text-edit' },
-        scannedSelection: selection,
-        sourceLineIds: fixedRegion ? [...selection.target.lineIds] : [selection.target.targetId],
-        hitOnly: true,
+      const pageGeometry = doc.ocr?.pages?.[pageNum]?.recognition?.geometry
+        || (editPage?.pageGeometry?.transformChain ? editPage.pageGeometry : null);
+      const sourceLineIds = fixedRegion ? [...selection.target.lineIds] : [selection.target.targetId];
+      sourceLineIds.forEach((sourceLineId, lineIndex) => {
+        const sourcePolygon = fixedRegion
+          ? selection.content.source.originalPolygons[lineIndex]
+          : selection.content.source.canonicalPolygon;
+        const polygon = fixedRegion && pageGeometry
+          ? mapPolygonBetweenSpaces(pageGeometry.transformChain, sourcePolygon, OCR_PDF_USER_SPACE)
+          : sourcePolygon;
+        items.push({
+          id: `${selection.id}-hit-target-${sourceLineId}`,
+          lineId: sourceLineId,
+          pageNum,
+          readingOrder: Number.MAX_SAFE_INTEGER - sourceLineIds.length + lineIndex,
+          text: selection.content.searchableText.text,
+          confidence: selection.geometry.confidence,
+          polygon,
+          baseline: fixedRegion
+            ? selection.content.source.canonicalBaselines[lineIndex]
+            : selection.content.source.canonicalBaseline,
+          pageGeometry,
+          resultRevision: 0,
+          correctionRevision: 0,
+          scannedTextEditRevision: selection.revision,
+          language: null,
+          direction: 'ltr',
+          words: undefined,
+          ownership: { stream: 'persisted-scanned-text-edit' },
+          scannedSelection: selection,
+          sourceLineIds: [sourceLineId],
+          hitOnly: true,
+        });
       });
     }
   }
@@ -156,6 +160,7 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
     if (!projected || !item.text) continue;
     const scannedSelection = item.scannedSelection;
     const showVisiblePreview = scannedSelection
+      && !item.hitOnly
       && doc.scannedTextEditPersistedRevision !== doc.scannedTextEdits?.stateRevision
       && item.pageGeometry;
     if (showVisiblePreview) {

@@ -43,6 +43,7 @@ const [panelCollapsed, setPanelCollapsed] = createSignal(false);
 
 // Panel mode: 'none' | 'annotation' | 'multi' | 'textEdit'
 const [panelMode, setPanelMode] = createSignal('none');
+const [ocrParagraphActions, setOcrParagraphActions] = createSignal(null);
 
 // Collapsed sections tracking. Persisted in preferences so that once the user
 // collapses a section it STAYS collapsed (default-off) across selections and
@@ -261,6 +262,7 @@ function computeSectionVisibility(type) {
 
 // Show properties for a single annotation
 export function storeShowProperties(annotation) {
+  setOcrParagraphActions(null);
   currentAnnotation = annotation;
   // Fire plugin selection-listeners (separate from property-panel-registry):
   // gives plugins a direct channel to react to selection without scraping DOM.
@@ -414,6 +416,7 @@ export function storeShowProperties(annotation) {
 
 // Hide properties (deselect annotation, show doc info)
 export function storeHideProperties() {
+  setOcrParagraphActions(null);
   currentAnnotation = null;
   fireSelectionChange(null);
   setPanelMode('none');
@@ -672,6 +675,7 @@ export function storeShowTextEditProperties(info) {
 
   // First show as textbox to get text format section
   storeShowProperties(pseudoAnnotation);
+  setOcrParagraphActions(info.ocrParagraphActions || null);
 
   // Override type display and hide irrelevant sections
   setAnnotProps('typeDisplay', info.scannedTextEstimate
@@ -1651,6 +1655,7 @@ export {
   panelMode, setPanelMode,
   collapsedSections,
   annotProps, setAnnotProps,
+  ocrParagraphActions, setOcrParagraphActions,
   sectionVis, setSectionVis,
   docInfo,
   customFieldsDef,

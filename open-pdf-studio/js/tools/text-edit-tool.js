@@ -24,7 +24,8 @@ import {
   unionSelectionGeometry,
 } from '../text/text-edit-selection.js';
 import { proposeFontSubstitution, resolvePackagedFace } from '../text/font-catalog.js';
-import { showMessage } from '../solid/stores/dialogStore.js';
+import { openDialog, showMessage } from '../solid/stores/dialogStore.js';
+import { showOcrParagraphMenu } from '../solid/stores/contextMenuStore.js';
 import { injectSyntheticTextSpans, refreshPendingOcrTextLayer, resolveTextLayerFonts } from '../text/text-layer.js';
 import { provenanceForSpans } from '../text/native-text-provenance.js';
 import { sameNativeTextOwnership } from '../text/native-text-matching.js';
@@ -35,6 +36,16 @@ import {
 import { ownedTextEditLineTargets } from '../text/owned-text-edit-targets.js';
 import { evaluateScannedTextEdit } from '../ocr/editing/edit-state.js';
 import { fixedRegionTargetFromLineIds } from '../ocr/editing/fixed-region.js';
+import {
+  OCR_PARAGRAPH_LINE_LIMIT_REASON,
+  buildOcrParagraphRegions,
+  paragraphRegionForLine,
+  partitionSelectionByParagraph,
+} from '../ocr/editing/paragraph-regions.js';
+import {
+  resetOcrParagraphGroupingForDocument,
+  setOcrParagraphBoundaryOverrideForDocument,
+} from '../ocr/editing/paragraph-grouping-state.js';
 import {
   SCANNED_TEXT_REFLOW_LAYOUT_MODE,
   SCANNED_TEXT_REFLOW_SCOPE,
@@ -62,6 +73,7 @@ let layerOwnedEditListeners = [];
 let ownedEditCaptureHandler = null;
 let textLayerObserver = null;
 let blockGroupsCache = new Map();
+let ocrParagraphCache = new Map();
 let paragraphOutline = null;
 let selectionOutlines = [];
 let selectedTextItems = new Map();
@@ -69,8 +81,13 @@ let selectionKeyHandler = null;
 let marqueePointerHandlers = null;
 let marqueeState = null;
 const stagedScannedLineSelections = new WeakMap();
+const selectedOcrParagraphs = new Map();
 // WeakMap: span -> block group, for fast lookup on hover/click
 let spanToBlock = new WeakMap();
+
+globalThis.window?.addEventListener?.('open-pdf-studio:request-text-edit-hover-refresh', () => {
+  if (state.isEditingPdfText && state.currentTool === 'editText') enableTextLayerHover();
+});
 
 function cloneTextEditRecord(record) {
   // Solid stores expose records as proxies, which structuredClone rejects.
@@ -108,8 +125,213 @@ function hideParagraphOutline() {
 
 function clearTextBoxSelection() {
   selectedTextItems.clear();
+  selectedOcrParagraphs.clear();
   selectionOutlines.forEach((element) => element.remove());
   selectionOutlines = [];
+}
+
+function ocrParagraphContext(doc, pageNum) {
+  const pageState = doc?.ocr?.pages?.[pageNum];
+  const result = pageState?.recognition?.result;
+  const pageGeometry = pageState?.recognition?.geometry;
+  if (!result || !pageGeometry || pageState.recognition.ownership?.owner !== 'open-pdf-studio') return null;
+  const grouping = doc.scannedTextEdits?.pages?.find((page) => page.index === pageNum - 1)?.paragraphGrouping;
+  const revision = grouping?.ownership?.revision ?? 0;
+  const key = [doc.id, result.document.generation, result.page.id, result.page.revision,
+    result.sourceRaster.id, pageGeometry.geometryId, revision].join('|');
+  let regions = ocrParagraphCache.get(key);
+  if (!regions) {
+    regions = buildOcrParagraphRegions({ result, pageGeometry, overrides: grouping });
+    ocrParagraphCache.set(key, regions);
+    if (ocrParagraphCache.size > 64) ocrParagraphCache = new Map([[key, regions]]);
+  }
+  return { result, pageGeometry, grouping, regions };
+}
+
+function ocrRegionRect(layer, region) {
+  const lineIds = new Set(region.lineIds);
+  const spans = [...layer.querySelectorAll('span[data-ocr-owner][data-ocr-line-id]')]
+    .filter((candidate) => (candidate.dataset.ocrSourceLineIds || candidate.dataset.ocrLineId || '')
+      .split(/\s+/u).some((id) => lineIds.has(id)));
+  if (spans.length === 0) return null;
+  const layerRect = layer.getBoundingClientRect();
+  const rects = spans.map((candidate) => candidate.getBoundingClientRect());
+  const left = Math.min(...rects.map((rect) => rect.left)) - layerRect.left;
+  const top = Math.min(...rects.map((rect) => rect.top)) - layerRect.top;
+  const right = Math.max(...rects.map((rect) => rect.right)) - layerRect.left;
+  const bottom = Math.max(...rects.map((rect) => rect.bottom)) - layerRect.top;
+  return { spans, rect: { left, top, width: right - left, height: bottom - top } };
+}
+
+function showOcrParagraphOutline(layer, region) {
+  const block = ocrRegionRect(layer, region);
+  if (block) showParagraphOutline(layer, block);
+}
+
+function showOcrParagraphSelection(layer, regions) {
+  selectionOutlines.forEach((element) => element.remove());
+  selectionOutlines = [];
+  const parent = layer.parentElement;
+  if (!parent) return;
+  const layerRect = layer.getBoundingClientRect();
+  const parentRect = parent.getBoundingClientRect();
+  for (const region of regions) {
+    const block = ocrRegionRect(layer, region);
+    if (!block) continue;
+    const outline = document.createElement('div');
+    outline.className = 'edit-text-paragraph-outline edit-text-selection-outline';
+    outline.setAttribute('aria-label', `Selected OCR paragraph with ${region.lineIds.length} lines`);
+    outline.style.left = `${layerRect.left - parentRect.left + block.rect.left}px`;
+    outline.style.top = `${layerRect.top - parentRect.top + block.rect.top}px`;
+    outline.style.width = `${Math.max(block.rect.width, 1)}px`;
+    outline.style.height = `${Math.max(block.rect.height, 1)}px`;
+    parent.appendChild(outline);
+    selectionOutlines.push(outline);
+  }
+}
+
+function toggleOcrParagraphSelection(pageNum, layer, region) {
+  const key = `${pageNum}:${region.id}`;
+  if (selectedOcrParagraphs.has(key)) selectedOcrParagraphs.delete(key);
+  else selectedOcrParagraphs.set(key, region);
+  showOcrParagraphSelection(layer, [...selectedOcrParagraphs.entries()]
+    .filter(([entryKey]) => entryKey.startsWith(`${pageNum}:`)).map(([, entry]) => entry));
+}
+
+function boundaryBetween(context, beforeLineId, afterLineId) {
+  return context.regions.boundaries?.find((entry) => entry.beforeLineId === beforeLineId
+    && entry.afterLineId === afterLineId) ?? null;
+}
+
+function groupingTouchesRegion(grouping, region) {
+  const ids = new Set(region.lineIds);
+  return grouping?.boundaries?.some((entry) => ids.has(entry.beforeLineId) || ids.has(entry.afterLineId)) === true;
+}
+
+function ocrParagraphActionsForSpan({ doc, pageNum, span, context, region, existingRaster = null, onApplied }) {
+  const regionIndex = context.regions.findIndex((entry) => entry.id === region.id);
+  const previous = context.regions[regionIndex - 1] ?? null;
+  const next = context.regions[regionIndex + 1] ?? null;
+  const firstLineId = region.lineIds[0];
+  const lastLineId = region.lineIds.at(-1);
+  const clickedLineId = span.dataset.ocrLineId;
+  const clickedIndex = region.lineIds.indexOf(clickedLineId);
+  const previousBoundary = previous && boundaryBetween(context, previous.lineIds.at(-1), firstLineId);
+  const nextBoundary = next && boundaryBetween(context, lastLineId, next.lineIds[0]);
+  const canMergePrevious = previous?.columnId === region.columnId
+    && previousBoundary?.decision === 'ambiguous'
+    && previous.lineIds.length + region.lineIds.length <= 32;
+  const canMergeNext = next?.columnId === region.columnId
+    && nextBoundary?.decision === 'ambiguous'
+    && next.lineIds.length + region.lineIds.length <= 32;
+  const canSplitBefore = clickedIndex > 0;
+  const canSplitAfter = clickedIndex >= 0 && clickedIndex < region.lineIds.length - 1;
+  const ownedSelection = appliedScannedSelection(
+    doc, pageNum, clickedLineId, span.dataset.scannedTextEditSelectionId || null,
+  );
+  const ownedLineIndex = ownedSelection?.target?.lineIds?.indexOf(clickedLineId) ?? -1;
+  const ownedFixedRegion = ownedSelection?.target?.kind === 'region'
+    && ownedSelection.content?.scope === 'fixed-region-multiline';
+  const selectedRegions = [...selectedOcrParagraphs.entries()]
+    .filter(([key]) => key.startsWith(`${pageNum}:`))
+    .map(([, entry]) => entry)
+    .sort((left, right) => left.readingOrder - right.readingOrder);
+  const selectedBoundary = selectedRegions.length === 2
+    ? boundaryBetween(context, selectedRegions[0].lineIds.at(-1), selectedRegions[1].lineIds[0]) : null;
+  const canMergeSelected = selectedRegions.length === 2
+    && selectedRegions[0].columnId === selectedRegions[1].columnId
+    && selectedBoundary?.decision === 'ambiguous'
+    && selectedRegions[0].lineIds.length + selectedRegions[1].lineIds.length <= 32;
+  const ensureRaster = async () => existingRaster || sourceRasterForScannedLine(doc, context.result);
+  const complete = async () => {
+    markDocumentModified();
+    ocrParagraphCache.clear();
+    onApplied?.();
+    refreshPendingOcrTextLayer(pageNum);
+    enableTextLayerHover();
+  };
+  const persist = async (beforeLineId, afterLineId, decision, validateMergedIds = null) => {
+    try {
+      const raster = await ensureRaster();
+      if (validateMergedIds) {
+        const target = fixedRegionTargetFromLineIds(context.result, validateMergedIds);
+        const lines = target.lineIds.map((id) => context.result.lines.find((line) => line.id === id));
+        const preflight = await evaluateScannedTextEdit({
+          result: context.result, pageGeometry: context.pageGeometry, raster, target,
+          replacementText: lines.map((line) => line.text).join('\n'), contextPaddingPx: 24,
+        });
+        if (!preflight.selection.analysis.eligibility.eligible || !preflight.selection.content) {
+          throw new Error('The merged paragraph does not pass fixed-region validation');
+        }
+      }
+      await setOcrParagraphBoundaryOverrideForDocument(doc, {
+        result: context.result, pageGeometry: context.pageGeometry, raster,
+        beforeLineId, afterLineId, decision,
+      });
+      await complete();
+    } catch (error) {
+      showMessage(`OCR paragraph grouping was not changed: ${error?.message || String(error)}`);
+    }
+  };
+  const splitOwned = (boundaryIndex) => {
+    onApplied?.();
+    openDialog('split-ocr-region', {
+      pageNum, selectionId: ownedSelection.id, boundaryIndex,
+    });
+  };
+  return {
+    canMergePrevious,
+    canMergeNext,
+    canMergeSelected,
+    canSplitBefore: ownedFixedRegion ? ownedLineIndex > 0 : canSplitBefore,
+    canSplitAfter: ownedFixedRegion
+      ? ownedLineIndex >= 0 && ownedLineIndex < ownedSelection.target.lineIds.length - 1
+      : canSplitAfter,
+    canReset: groupingTouchesRegion(context.grouping, region),
+    mergePreviousReason: previous?.columnId !== region.columnId
+      ? 'Cross-column merges are disabled'
+      : previousBoundary?.decision !== 'ambiguous'
+        ? 'Only ambiguous same-column boundaries may be merged manually'
+        : null,
+    mergeNextReason: next?.columnId !== region.columnId
+      ? 'Cross-column merges are disabled'
+      : nextBoundary?.decision !== 'ambiguous'
+        ? 'Only ambiguous same-column boundaries may be merged manually'
+        : null,
+    status: region.rejectionReason === OCR_PARAGRAPH_LINE_LIMIT_REASON
+      ? 'More than 32 lines. Split this paragraph manually before editing.' : null,
+    mergePrevious: () => canMergePrevious && persist(previous.lineIds.at(-1), firstLineId, 'merge',
+      [...previous.lineIds, ...region.lineIds]),
+    mergeNext: () => canMergeNext && persist(lastLineId, next.lineIds[0], 'merge',
+      [...region.lineIds, ...next.lineIds]),
+    mergeSelected: () => {
+      if (!canMergeSelected) return;
+      const owned = selectedRegions.map((selectedRegion) => appliedScannedSelection(
+        doc, pageNum, selectedRegion.lineIds[0], null,
+      ));
+      if (owned.every(Boolean) && owned[0].id !== owned[1].id) {
+        onApplied?.();
+        openDialog('merge-ocr-regions', { pageNum, selectionIds: owned.map((selection) => selection.id) });
+        return;
+      }
+      return persist(
+        selectedRegions[0].lineIds.at(-1), selectedRegions[1].lineIds[0], 'merge',
+        [...selectedRegions[0].lineIds, ...selectedRegions[1].lineIds],
+      );
+    },
+    splitBefore: () => ownedFixedRegion
+      ? ownedLineIndex > 0 && splitOwned(ownedLineIndex)
+      : canSplitBefore && persist(region.lineIds[clickedIndex - 1], clickedLineId, 'split'),
+    splitAfter: () => ownedFixedRegion
+      ? ownedLineIndex >= 0 && ownedLineIndex < ownedSelection.target.lineIds.length - 1
+        && splitOwned(ownedLineIndex + 1)
+      : canSplitAfter && persist(clickedLineId, region.lineIds[clickedIndex + 1], 'split'),
+    reset: async () => {
+      if (!groupingTouchesRegion(context.grouping, region)) return;
+      await resetOcrParagraphGroupingForDocument(doc, { pageIndex: pageNum - 1, lineIds: region.lineIds });
+      await complete();
+    },
+  };
 }
 
 export function clearSelectedTextBoxes() {
@@ -953,8 +1175,21 @@ function enableTextLayerHover() {
       span.style.pointerEvents = 'auto';
       span.style.cursor = 'text';
       span.classList.add('edit-text-hoverable');
-      const enterHandler = () => span.classList.add('edit-text-block-hover');
-      const leaveHandler = () => span.classList.remove('edit-text-block-hover');
+      const enterHandler = () => {
+        span.classList.add('edit-text-block-hover');
+        const context = ocrParagraphContext(getActiveDocument(), pageNum);
+        const region = context && paragraphRegionForLine(context.regions, span.dataset.ocrLineId);
+        if (region) showOcrParagraphOutline(layer, region);
+      };
+      const leaveHandler = (event) => {
+        span.classList.remove('edit-text-block-hover');
+        const next = event.relatedTarget instanceof Element
+          ? event.relatedTarget.closest('span[data-ocr-owner][data-ocr-line-id]') : null;
+        const context = ocrParagraphContext(getActiveDocument(), pageNum);
+        const currentRegion = context && paragraphRegionForLine(context.regions, span.dataset.ocrLineId);
+        const nextRegion = next && context && paragraphRegionForLine(context.regions, next.dataset.ocrLineId);
+        if (!currentRegion || currentRegion.id !== nextRegion?.id) hideParagraphOutline();
+      };
       const mouseDownHandler = () => {
         if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
         // A native click normally collapses the DOM range before `click` runs.
@@ -969,18 +1204,41 @@ function enableTextLayerHover() {
         const explicitLineIds = stagedScannedLineSelections.get(span)
           || explicitScannedLineSelection(span);
         stagedScannedLineSelections.delete(span);
+        const context = ocrParagraphContext(getActiveDocument(), pageNum);
+        const region = context && paragraphRegionForLine(context.regions, span.dataset.ocrLineId);
+        if (event.shiftKey && region) {
+          toggleOcrParagraphSelection(pageNum, layer, region);
+          return;
+        }
         await startScannedTextEditing(span, pageNum, explicitLineIds);
+      };
+      const contextMenuHandler = (event) => {
+        if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
+        const doc = getActiveDocument();
+        const context = ocrParagraphContext(doc, pageNum);
+        const region = context && paragraphRegionForLine(context.regions, span.dataset.ocrLineId);
+        if (!doc || !context || !region) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showOcrParagraphMenu(event.clientX, event.clientY, {
+          pageNum,
+          lineId: span.dataset.ocrLineId,
+          regionId: region.id,
+          actions: ocrParagraphActionsForSpan({ doc, pageNum, span, context, region }),
+        });
       };
       span.addEventListener('mouseenter', enterHandler);
       span.addEventListener('mouseleave', leaveHandler);
       span.addEventListener('mousedown', mouseDownHandler);
       span.addEventListener('click', clickHandler);
+      span.addEventListener('contextmenu', contextMenuHandler);
       hoverListeners.push({
         span,
         enter: enterHandler,
         leave: leaveHandler,
         mouseDown: mouseDownHandler,
         click: clickHandler,
+        contextmenu: contextMenuHandler,
       });
     });
   });
@@ -996,6 +1254,7 @@ function disableTextLayerHover() {
     h.span.removeEventListener('mouseleave', h.leave);
     if (h.mouseDown) h.span.removeEventListener('mousedown', h.mouseDown);
     h.span.removeEventListener('click', h.click);
+    if (h.contextmenu) h.span.removeEventListener('contextmenu', h.contextmenu);
     h.span.classList.remove('edit-text-hoverable', 'edit-text-block-hover');
     h.span.style.pointerEvents = keepTextAccess ? 'auto' : '';
     h.span.style.cursor = keepTextAccess ? 'text' : '';
@@ -1184,10 +1443,10 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     : { kind: 'line', lineId: selection?.target?.targetId || lineId };
   try {
     if (!selection) {
-      const pageState = doc.ocr?.pages?.[pageNum];
-      result = pageState?.recognition?.result;
-      pageGeometry = pageState?.recognition?.geometry;
-      if (!result || !pageGeometry || pageState.recognition.ownership?.owner !== 'open-pdf-studio') {
+      const paragraphContext = ocrParagraphContext(doc, pageNum);
+      result = paragraphContext?.result;
+      pageGeometry = paragraphContext?.pageGeometry;
+      if (!result || !pageGeometry) {
         throw Object.assign(new Error('This scanned line does not have a current application-owned OCR result'), {
           code: 'OCR_SOURCE_UNAVAILABLE',
         });
@@ -1196,9 +1455,31 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
         ? stagedLineIds
         : explicitScannedLineSelection(span))
         .filter((candidate) => result.lines.some((line) => line.id === candidate));
-      target = explicitlySelectedLineIds.length > 1
-        ? fixedRegionTargetFromLineIds(result, explicitlySelectedLineIds)
-        : { kind: 'line', lineId };
+      const selectedRegions = explicitlySelectedLineIds.length > 0
+        ? partitionSelectionByParagraph(paragraphContext.regions, explicitlySelectedLineIds)
+        : [];
+      if (selectedRegions.length > 1) {
+        const layer = span.closest('.textLayer');
+        if (layer) showOcrParagraphSelection(layer, selectedRegions);
+        showMessage('The selection spans multiple OCR paragraphs. Review the separate outlines and use Merge explicitly. Cross-column merges remain disabled.');
+        return;
+      }
+      const inferredRegion = selectedRegions[0]
+        || paragraphRegionForLine(paragraphContext.regions, lineId);
+      if (!inferredRegion) throw new Error('The selected OCR line no longer belongs to current paragraph geometry');
+      if (!inferredRegion.editable && inferredRegion.rejectionReason === OCR_PARAGRAPH_LINE_LIMIT_REASON) {
+        throw Object.assign(new Error('This paragraph contains more than 32 OCR lines. Split it manually before editing.'), {
+          code: OCR_PARAGRAPH_LINE_LIMIT_REASON,
+        });
+      }
+      if (!inferredRegion.editable) {
+        throw Object.assign(new Error('This paragraph has unsupported or ambiguous source geometry and cannot be edited safely.'), {
+          code: inferredRegion.rejectionReason,
+        });
+      }
+      target = inferredRegion.lineIds.length > 1
+        ? fixedRegionTargetFromLineIds(result, inferredRegion.lineIds)
+        : { kind: 'line', lineId: inferredRegion.lineIds[0] };
       const targetLines = target.kind === 'region'
         ? target.lineIds.map((targetLineId) => result.lines.find((entry) => entry.id === targetLineId))
         : [result.lines.find((entry) => entry.id === lineId)];
@@ -1372,6 +1653,16 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
   activeEditor = editor;
   publishPdfTextEditState(editor);
 
+  const liveParagraphContext = ocrParagraphContext(doc, pageNum);
+  const liveParagraphRegion = liveParagraphContext
+    && paragraphRegionForLine(liveParagraphContext.regions, lineId);
+  const paragraphActions = liveParagraphRegion
+    ? ocrParagraphActionsForSpan({
+        doc, pageNum, span, context: liveParagraphContext, region: liveParagraphRegion,
+        existingRaster: raster, onApplied: cleanup,
+      })
+    : null;
+
   showTextEditPropertiesSafely({
     text: initialText,
     fontSize: estimate.fontSize.value,
@@ -1383,6 +1674,7 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     isStrikethrough: false,
     textAlign: estimate.alignment.value,
     scannedTextEstimate: true,
+    ocrParagraphActions: paragraphActions,
     page: pageNum,
   });
 

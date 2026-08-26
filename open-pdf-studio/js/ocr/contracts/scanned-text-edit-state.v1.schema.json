@@ -83,12 +83,17 @@
         },
         "selections": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "maxItems": 100000,
           "x-uniqueBy": "id",
           "items": { "$ref": "#/$defs/selection" }
-        }
-      }
+        },
+        "paragraphGrouping": { "$ref": "#/$defs/paragraphGrouping" }
+      },
+      "anyOf": [
+        { "required": ["paragraphGrouping"] },
+        { "properties": { "selections": { "minItems": 1 } } }
+      ]
     },
     "searchableWordSnapshot": {
       "type": "object",
@@ -567,6 +572,7 @@
               "baseline": { "type": "number" },
               "baselineAdvance": { "type": "number", "exclusiveMinimum": 0 },
               "alignment": { "enum": ["left", "center", "right"] },
+              "breakAfter": { "enum": ["hard", "soft"] },
               "runs": {
                 "type": "array",
                 "minItems": 1,
@@ -903,6 +909,31 @@
         "parentRevision": { "type": "integer", "minimum": 0 },
         "createdAt": { "$ref": "common.schema.json#/$defs/timestamp" },
         "updatedAt": { "$ref": "common.schema.json#/$defs/timestamp" }
+      }
+    },
+    "paragraphGrouping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "geometryId", "boundaries", "ownership"],
+      "properties": {
+        "algorithm": { "const": "ocr-paragraph-boundaries-v1" },
+        "geometryId": { "$ref": "common.schema.json#/$defs/id" },
+        "boundaries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["beforeLineId", "afterLineId", "decision"],
+            "properties": {
+              "beforeLineId": { "$ref": "common.schema.json#/$defs/id" },
+              "afterLineId": { "$ref": "common.schema.json#/$defs/id" },
+              "decision": { "enum": ["merge", "split"] }
+            }
+          }
+        },
+        "ownership": { "$ref": "#/$defs/operationOwnership" }
       }
     },
     "selectionId": {

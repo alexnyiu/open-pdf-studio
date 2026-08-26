@@ -82,7 +82,10 @@ export async function buildAndValidateScannedTextEditPdfCandidate({
   const sourceBytes = bytes(baseBytes);
   const existingInspection = await inspectOwnedScannedTextRepairLayer(sourceBytes);
   const desired = appliedSelections(state);
-  const desiredPages = new Set(desired.map(({ page }) => page.index));
+  const desiredPages = new Set([
+    ...desired.map(({ page }) => page.index),
+    ...(state?.pages || []).filter((page) => page.paragraphGrouping).map((page) => page.index),
+  ]);
   const relevantPageIndexes = [...new Set([
     ...existingInspection.filter((entry) => entry.owned).map((entry) => entry.pageIndex),
     ...desiredPages,
@@ -102,7 +105,7 @@ export async function buildAndValidateScannedTextEditPdfCandidate({
   if (!sameSet(actualPages, desiredPages)) {
     fail('OWNERSHIP_SET_MISMATCH', 'Visible scanned-text ownership does not match application edit state');
   }
-  const repeatedBytes = desired.length > 0
+  const repeatedBytes = desiredPages.size > 0
     ? await writeOwnedScannedTextRepairLayer({
         pdfBytes: candidateBytes,
         state,

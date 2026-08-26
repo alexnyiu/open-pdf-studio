@@ -227,6 +227,23 @@ export interface ScannedTextEditStateV1 {
     };
     searchableTextSnapshot?: ScannedTextSearchableLineSnapshot[];
     selections: ScannedTextEditSelection[];
+    paragraphGrouping?: {
+      algorithm: 'ocr-paragraph-boundaries-v1';
+      geometryId: string;
+      boundaries: Array<{
+        beforeLineId: string;
+        afterLineId: string;
+        decision: 'merge' | 'split';
+      }>;
+      ownership: {
+        owner: 'open-pdf-studio';
+        operationId: string;
+        revision: number;
+        parentRevision: number;
+        createdAt: string;
+        updatedAt: string;
+      };
+    };
   }>;
   history: {
     generation: number;

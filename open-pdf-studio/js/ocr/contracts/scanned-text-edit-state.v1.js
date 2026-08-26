@@ -1187,6 +1187,47 @@ function validateSearchableTextSnapshot(value, path, issues) {
   });
 }
 
+function validateParagraphGrouping(value, path, issues, page) {
+  if (!isObject(value)) {
+    issues.push(`${path} must be an object`);
+    return;
+  }
+  requireExactKeys(value, new Set(['algorithm', 'geometryId', 'boundaries', 'ownership']), path, issues);
+  if (value.algorithm !== 'ocr-paragraph-boundaries-v1') {
+    issues.push(`${path}.algorithm must be ocr-paragraph-boundaries-v1`);
+  }
+  validateIdentifier(value.geometryId, `${path}.geometryId`, issues);
+  if (value.geometryId !== page?.pageGeometry?.geometryId) {
+    issues.push(`${path}.geometryId must match pageGeometry.geometryId`);
+  }
+  if (!Array.isArray(value.boundaries) || value.boundaries.length === 0) {
+    issues.push(`${path}.boundaries must be a non-empty array`);
+  } else {
+    const keys = new Set();
+    let previousKey = null;
+    value.boundaries.forEach((boundary, index) => {
+      const boundaryPath = `${path}.boundaries[${index}]`;
+      if (!isObject(boundary)) {
+        issues.push(`${boundaryPath} must be an object`);
+        return;
+      }
+      requireExactKeys(boundary, new Set(['beforeLineId', 'afterLineId', 'decision']), boundaryPath, issues);
+      validateIdentifier(boundary.beforeLineId, `${boundaryPath}.beforeLineId`, issues);
+      validateIdentifier(boundary.afterLineId, `${boundaryPath}.afterLineId`, issues);
+      if (boundary.beforeLineId === boundary.afterLineId) issues.push(`${boundaryPath} must identify two lines`);
+      if (!['merge', 'split'].includes(boundary.decision)) issues.push(`${boundaryPath}.decision is unsupported`);
+      const key = `${boundary.beforeLineId}\u0000${boundary.afterLineId}`;
+      if (keys.has(key)) issues.push(`${boundaryPath} must be unique`);
+      if (previousKey !== null && key.localeCompare(previousKey) <= 0) {
+        issues.push(`${path}.boundaries must be sorted by stable adjacent-line IDs`);
+      }
+      keys.add(key);
+      previousKey = key;
+    });
+  }
+  validateOperationOwnership(value.ownership, `${path}.ownership`, issues, value.ownership?.revision);
+}
+
 function validatePage(value, index, state, issues) {
   const path = `pages[${index}]`;
   if (!isObject(value)) {
@@ -1197,6 +1238,7 @@ function validatePage(value, index, state, issues) {
     'id', 'index', 'revision', 'sourceRaster', 'pageGeometry', 'selections',
   ]);
   if (Object.hasOwn(value, 'searchableTextSnapshot')) pageKeys.add('searchableTextSnapshot');
+  if (Object.hasOwn(value, 'paragraphGrouping')) pageKeys.add('paragraphGrouping');
   requireExactKeys(value, pageKeys, path, issues);
   validateIdentifier(value.id, `${path}.id`, issues);
   if (state.pageIds.has(value.id)) issues.push(`${path}.id must be unique`);
@@ -1234,10 +1276,15 @@ function validatePage(value, index, state, issues) {
   if (Object.hasOwn(value, 'searchableTextSnapshot')) {
     validateSearchableTextSnapshot(value.searchableTextSnapshot, `${path}.searchableTextSnapshot`, issues);
   }
+  if (Object.hasOwn(value, 'paragraphGrouping')) {
+    validateParagraphGrouping(value.paragraphGrouping, `${path}.paragraphGrouping`, issues, value);
+  }
   if (!Array.isArray(value.selections)) {
     issues.push(`${path}.selections must be an array`);
   } else {
-    if (value.selections.length === 0) issues.push(`${path}.selections must not be empty`);
+    if (value.selections.length === 0 && !Object.hasOwn(value, 'paragraphGrouping')) {
+      issues.push(`${path} must contain selections or paragraphGrouping overrides`);
+    }
     value.selections.forEach((selection, selectionIndex) => {
       validateSelection(selection, `${path}.selections[${selectionIndex}]`, issues, value);
       if (state.selectionIds.has(selection?.id)) {
@@ -1301,8 +1348,10 @@ export function validateScannedTextEditStateV1(value, {
     issues.push('stateRevision must equal history.generation');
   }
   if (Array.isArray(value.pages)) {
-    const operations = value.pages.flatMap((page) => page?.selections ?? [])
-      .map((selection) => selection?.ownership?.operationId)
+    const operations = value.pages.flatMap((page) => [
+      ...(page?.selections ?? []).map((selection) => selection?.ownership?.operationId),
+      page?.paragraphGrouping?.ownership?.operationId,
+    ])
       .filter((operationId) => typeof operationId === 'string');
     if (value.stateRevision === 0
         && (operations.length !== 0 || value.history?.lastOperationId !== null)) {
@@ -1310,7 +1359,7 @@ export function validateScannedTextEditStateV1(value, {
     }
     if (value.stateRevision > 0
         && (operations.length === 0 || !operations.includes(value.history?.lastOperationId))) {
-      issues.push('history.lastOperationId must identify a retained selection operation');
+      issues.push('history.lastOperationId must identify a retained scanned-text operation');
     }
   }
   validateIsoTimestamp(value.createdAt, 'createdAt', issues);

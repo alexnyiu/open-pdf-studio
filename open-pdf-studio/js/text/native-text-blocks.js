@@ -1,3 +1,5 @@
+import { PARAGRAPH_BOUNDARY_JOIN, scoreParagraphBoundary } from './paragraph-boundaries.js';
+
 const VISUALLY_EMPTY_TEXT = /^[\p{White_Space}\p{Cf}\p{Cc}]*$/u;
 
 export function isVisibleNativeText(value) {
@@ -30,6 +32,32 @@ function alignmentDistance(block, segment) {
     Math.abs(block.anchorCenter - segment.center),
     Math.abs(block.anchorRight - segment.right),
   );
+}
+
+function segmentText(items) {
+  return nativeTextLinePieces(items).map((piece) => piece.text).join('');
+}
+
+function sharedBoundaryAllowsJoin(block, segment, current, baselineGap) {
+  const previousSegment = block.lines.at(-1);
+  const previous = segmentMetrics(previousSegment);
+  const fontSize = average([previous.fontSize, current.fontSize]);
+  return scoreParagraphBoundary({
+    id: 'native-previous', text: segmentText(previousSegment), columnId: 'native-track',
+    geometryValid: true, direction: 'ltr', left: previous.left, top: 0,
+    bottom: previous.fontSize, width: previous.right - previous.left,
+    height: previous.fontSize, angle: 0,
+  }, {
+    id: 'native-next', text: segmentText(segment), columnId: 'native-track',
+    geometryValid: true, direction: 'ltr', left: current.left,
+    top: baselineGap, bottom: baselineGap + current.fontSize,
+    width: current.right - current.left, height: current.fontSize, angle: 0,
+  }, {
+    medianHeight: fontSize,
+    medianGap: Math.max(1, baselineGap - fontSize),
+    medianWidth: Math.max(previous.right - previous.left, current.right - current.left),
+    gap: Math.max(0, baselineGap - fontSize),
+  }).decision === PARAGRAPH_BOUNDARY_JOIN;
 }
 
 function attachLine(block, line, metrics) {
@@ -129,7 +157,8 @@ export function groupNativeTextFragments(fragments) {
           const eligible = fontRatio > 0.92
             && baselineGap > fontSize * 0.5
             && baselineGap < fontSize * 1.8
-            && alignment < fontSize;
+            && alignment < fontSize
+            && sharedBoundaryAllowsJoin(block, segment, current, baselineGap);
           return { block, eligible, score: alignment / fontSize + baselineGap / fontSize * 0.1 };
         })
         .filter((candidate) => candidate.eligible)

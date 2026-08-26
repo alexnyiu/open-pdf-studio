@@ -1,7 +1,8 @@
 import { createEffect, onMount, onCleanup, Show, Switch, Match, For } from 'solid-js';
 import { showConfirm } from '../../ui/chrome/confirm-dialog.js';
 import {
-  visible, menuType, position, targetAnnotation, multiSelectCount, targetPage, hideMenu, vertexContext
+  visible, menuType, position, targetAnnotation, multiSelectCount, targetPage, hideMenu, vertexContext,
+  ocrParagraphTarget
 } from '../stores/contextMenuStore.js';
 import {
   openPopupIcon, hidePopupIcon, resetPopupIcon, cutIcon, copyIcon, pasteIcon,
@@ -77,6 +78,29 @@ function MenuItem(props) {
 
 function Separator() {
   return <div class="context-menu-separator" />;
+}
+
+function OcrParagraphMenuContent() {
+  const actions = () => ocrParagraphTarget()?.actions;
+  return (
+    <>
+      <MenuItem label="Merge Selected Paragraphs" disabled={!actions()?.canMergeSelected}
+        onClick={() => actions()?.mergeSelected()} />
+      <Separator />
+      <MenuItem label="Merge Previous" disabled={!actions()?.canMergePrevious}
+        onClick={() => actions()?.mergePrevious()} />
+      <MenuItem label="Merge Next" disabled={!actions()?.canMergeNext}
+        onClick={() => actions()?.mergeNext()} />
+      <Separator />
+      <MenuItem label="Split Before" disabled={!actions()?.canSplitBefore}
+        onClick={() => actions()?.splitBefore()} />
+      <MenuItem label="Split After" disabled={!actions()?.canSplitAfter}
+        onClick={() => actions()?.splitAfter()} />
+      <Separator />
+      <MenuItem label="Reset Automatic Grouping" disabled={!actions()?.canReset}
+        onClick={() => actions()?.reset()} />
+    </>
+  );
 }
 
 function Submenu(props) {
@@ -987,6 +1011,9 @@ export default function ContextMenu() {
         </Match>
         <Match when={menuType() === 'textSelection'}>
           <TextSelectionMenuContent />
+        </Match>
+        <Match when={menuType() === 'ocrParagraph'}>
+          <OcrParagraphMenuContent />
         </Match>
         <Match when={menuType() === 'bookmark'}>
           <BookmarkMenuContent />

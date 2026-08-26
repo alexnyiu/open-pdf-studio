@@ -168,12 +168,17 @@ async function waitRegionHit(expectedText) {
   );
 }
 
-async function startRegionEditor(expectedText) {
+async function startRegionEditor(expectedText, sourceLineId = null) {
   const tool = await callTool('app_set_tool', { tool: 'editText' });
   assert.equal(tool.ok, true, tool.error);
   assert.equal(tool.current, 'editText');
-  const hit = await waitRegionHit(expectedText);
-  await click('.textLayer span[data-ocr-region-id][data-scanned-text-edit-hit-only="true"]');
+  const selector = sourceLineId
+    ? `.textLayer span[data-ocr-region-id][data-scanned-text-edit-hit-only="true"][data-ocr-line-id="${sourceLineId}"]`
+    : '.textLayer span[data-ocr-region-id][data-scanned-text-edit-hit-only="true"]';
+  await waitUi(selector, (value) => value.found && value.visible
+    && normalize(value.accessibility?.label) === normalize(expectedText)
+    && value.rect.width > 5 && value.rect.height > 5, 60_000);
+  await click(selector);
   const editor = await waitUi(
     '.pdf-text-editor[aria-multiline="true"][dir="ltr"]',
     (value) => value.found && value.visible && value.focused && value.value === expectedText,
@@ -386,7 +391,15 @@ try {
   await callTool('app_set_window_size', { width: 1320, height: 900 });
   await openPdf(workingPdf);
 
-  const { editor } = await startRegionEditor('REGION ONE\nREGION TWO\nREGION THREE');
+  for (const sourceLineId of ['region-line-2', 'region-line-3']) {
+    const probe = await startRegionEditor('REGION ONE\nREGION TWO\nREGION THREE', sourceLineId);
+    assert.equal(probe.editor.value, 'REGION ONE\nREGION TWO\nREGION THREE');
+    await callTool('app_key', { key: 'Escape' });
+    await waitUi('.pdf-text-editor', (value) => !value.found);
+  }
+  evidence.assertions.clickAnyOwnedSourceLine = true;
+
+  const { editor } = await startRegionEditor('REGION ONE\nREGION TWO\nREGION THREE', 'region-line-1');
   assert.match(editor.accessibility.label, /fixed region/iu);
   const status = await waitUi('#scanned-text-edit-status',
     (value) => value.found && value.visible && /fixed original region/iu.test(value.text));
@@ -431,7 +444,7 @@ try {
   );
   assert.equal(savedLayoutLines.join(reflowMode ? ' ' : '\n'), replacementText);
   if (reflowMode) {
-    assert.equal(selection.content.layout.shaping, 'fontkit-liberation-sans-ltr-v1');
+    assert.equal(selection.content.layout.shaping, 'fontkit-liberation-ltr-v1');
     assert.equal(selection.content.layout.direction, 'ltr');
     assert.equal(selection.content.layout.glyphCoverage, 'complete');
     assert.ok(savedLayoutLines.length >= 2, 'production paragraph must visibly wrap');

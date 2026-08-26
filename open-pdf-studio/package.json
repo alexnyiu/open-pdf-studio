@@ -35,7 +35,7 @@
     "test:ocr-edit-single-line:macos": "node scripts/test-ocr-edit-single-line-macos.mjs",
     "test:native-text-editing:ui": "node scripts/test-native-paragraph-editing.mjs",
     "test:native-text-editing:macos": "node scripts/test-native-paragraph-editing-macos.mjs",
-    "test:ocr-edit-regions:unit": "node --test js/ocr/editing/fixed-region.test.mjs",
+    "test:ocr-edit-regions:unit": "node --test js/text/paragraph-boundaries.test.mjs js/ocr/editing/paragraph-regions.test.mjs js/ocr/editing/fixed-region.test.mjs",
     "test:ocr-edit-regions:visual": "node --test js/ocr/editing/editing-foundation.visual.test.mjs",
     "test:ocr-edit-regions:pdfium": "cargo test -p open-pdf-studio --test scanned_text_edit_pdfium -- --nocapture",
     "test:ocr-edit-regions:macos": "node scripts/test-ocr-edit-regions-macos.mjs",

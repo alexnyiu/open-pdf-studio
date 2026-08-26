@@ -6,6 +6,7 @@ const [position, setPosition] = createSignal({ x: 0, y: 0 });
 const [targetAnnotation, setTargetAnnotation] = createSignal(null);
 const [multiSelectCount, setMultiSelectCount] = createSignal(0);
 const [targetPage, setTargetPage] = createSignal(null);
+const [ocrParagraphTarget, setOcrParagraphTarget] = createSignal(null);
 // For edit-contour mode: when right-clicking on a vertex handle, this holds
 // { handleType, holeIndex|null, nodeIndex } so the context menu can offer
 // vertex-specific actions (delete, insert before/after).
@@ -38,6 +39,13 @@ export function showTextSelectionMenu(x, y) {
   setVisible(true);
 }
 
+export function showOcrParagraphMenu(x, y, target) {
+  setOcrParagraphTarget(target);
+  setMenuType('ocrParagraph');
+  setPosition({ x, y });
+  setVisible(true);
+}
+
 export function showBookmarkMenu(x, y) {
   setMenuType('bookmark');
   setPosition({ x, y });
@@ -56,5 +64,6 @@ export function hideMenu() {
 }
 
 export {
-  visible, menuType, position, targetAnnotation, multiSelectCount, targetPage, vertexContext
+  visible, menuType, position, targetAnnotation, multiSelectCount, targetPage, vertexContext,
+  ocrParagraphTarget
 };

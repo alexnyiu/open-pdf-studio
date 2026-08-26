@@ -24,6 +24,7 @@ import {
   writeOwnedScannedTextRepairLayer,
 } from './pdf-repair-layer.js';
 import { makeOcrFixture } from '../searchable-layer.test-fixtures.mjs';
+import { setOcrParagraphBoundaryOverrideForDocument } from './paragraph-grouping-state.js';
 
 globalThis.DOMMatrix ||= class DOMMatrix {};
 const {
@@ -345,6 +346,67 @@ test('PDF.js proves exact approved-region pixels, preserved scan content, owned 
   assert.deepEqual(removedRaster.data, sourceRaster.data, 'removing the owned repair layer must reveal the preserved original scan');
 });
 
+test('metadata-only paragraph grouping persists with zero images, text changes, and pixel changes', async () => {
+  const fixtureManifest = await manifest();
+  const flatEntry = fixtureManifest.fixtures.find((entry) => entry.id === 'flat-color');
+  const sourceBytes = new Uint8Array(await readFile(new URL(fixtureManifest.pdfProof.source, FIXTURE_ROOT)));
+  const raster = await fixtureRaster(flatEntry);
+  const fixture = makeOcrFixture({
+    documentId: 'paragraph-metadata-document',
+    documentGeneration: 'paragraph-metadata-generation',
+    pageId: 'paragraph-metadata-page',
+    pageRevision: 0,
+    lines: [
+      { ...flatEntry.ocrLine, id: 'metadata-line-1', text: 'First paragraph line', y: 42 },
+      { ...flatEntry.ocrLine, id: 'metadata-line-2', text: 'Second paragraph line', y: 64 },
+    ],
+    width: flatEntry.widthPx,
+    height: flatEntry.heightPx,
+    documentFingerprint: { algorithm: 'sha256', value: digest(sourceBytes) },
+  });
+  const doc = {
+    id: fixture.result.document.id, scannedTextEdits: null, undoStack: [], redoStack: [],
+    savedUndoStackLength: 0,
+  };
+  await setOcrParagraphBoundaryOverrideForDocument(doc, {
+    ...fixture,
+    raster,
+    beforeLineId: 'metadata-line-1',
+    afterLineId: 'metadata-line-2',
+    decision: 'split',
+    operationId: 'metadata-only-grouping',
+    modifiedAt: '2026-08-25T12:00:00.000Z',
+    executeCommand(target, command) { target.undoStack.push(command); },
+  });
+  const candidate = await buildAndValidateScannedTextEditPdfCandidate({
+    baseBytes: sourceBytes,
+    state: doc.scannedTextEdits,
+    pageGeometries: [fixture.pageGeometry],
+    expectedPageCount: 1,
+    modifiedAt: FIXED_PDF_TIME,
+  });
+  try {
+    const [inspection] = candidate.inspection;
+    assert.equal(inspection.owned, true);
+    assert.equal(inspection.imageRefs.length, 0);
+    assert.equal(inspection.selectionIds.length, 0);
+    assert.equal(inspection.state.pages[0].paragraphGrouping.boundaries[0].decision, 'split');
+    const [beforeRaster, afterRaster] = await Promise.all([
+      renderPdfPage(sourceBytes),
+      renderPdfPage(candidate.candidateBytes),
+    ]);
+    assert.deepEqual(afterRaster.data, beforeRaster.data);
+    assert.deepEqual(candidate.pdfiumPlan.allowedRegions, []);
+    assert.deepEqual(candidate.pdfiumPlan.selectedPageIndexes, [0]);
+
+    const reopened = { scannedTextEdits: null };
+    await hydrateOwnedScannedTextEditState(reopened, candidate.candidateBytes);
+    assert.deepEqual(reopened.scannedTextEdits, doc.scannedTextEdits);
+  } finally {
+    await destroyPreparedPdfJsDocument(candidate.candidatePdfJsDocument);
+  }
+});
+
 test('single-line visible and invisible layers survive reopen and repeat save without pixel or text duplication', async () => {
   const fixtureManifest = await manifest();
   const flatEntry = fixtureManifest.fixtures.find((entry) => entry.id === 'flat-color');
@@ -559,10 +621,7 @@ test('approved paragraph reflow remains synchronized, pixel-bounded, and idempot
   ]);
   const content = editedInspection.state.pages[0].selections[0].content;
   assert.equal(content.scope, 'approved-region-paragraph-reflow');
-  // The checked-in proof predates the shared 12-face shaper. Loading its
-  // explicit legacy engine tag verifies migration compatibility; newly
-  // generated paragraph records use fontkit-liberation-ltr-v1.
-  assert.equal(content.layout.shaping, 'fontkit-liberation-sans-ltr-v1');
+  assert.equal(content.layout.shaping, proof.shaping);
   assert.equal(content.layout.direction, 'ltr');
   assert.equal(content.layout.glyphCoverage, 'complete');
   assert.equal(content.layout.measuredLineSpacingPt, proof.measuredLineSpacingPt);
