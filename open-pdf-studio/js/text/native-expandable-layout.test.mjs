@@ -60,3 +60,17 @@ test('deletion shrinkage respects the immutable original height', async () => {
   assert.equal(result.document.region.height, 16);
   assert.equal(result.document.region.y, 64);
 });
+
+test('exact native layout rejects glyphs or regions that cross the inferred column', async () => {
+  const source = documentFor('one two three', { x: 60, width: 45 });
+  const result = await layoutExpandableNativeText(source, {
+    width: 45,
+    minimumHeight: source.region.height,
+    anchorTop: source.region.y + source.region.height,
+    columnBounds: { left: 10, right: 90 },
+    pageBounds: { x: 0, y: 0, width: 200, height: 200 },
+  });
+  assert.equal(result.columnValid, false);
+  assert.equal(result.valid, false);
+  assert.match(result.rejectionReasons.join('; '), /native column boundary/);
+});

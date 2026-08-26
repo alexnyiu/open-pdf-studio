@@ -242,3 +242,24 @@ export function sampleTextColor(canvas, elementRect, fallback = '#000000') {
     return fallback;
   }
 }
+
+export function sampleDominantBackgroundColor(canvas, elementRect, fallback = '#ffffff') {
+  if (!canvas || !elementRect) return fallback;
+  try {
+    const bounds = elementRectToCanvasPixels(
+      elementRect,
+      canvas.getBoundingClientRect(),
+      canvas.width,
+      canvas.height,
+    );
+    if (!bounds) return fallback;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return fallback;
+    const image = context.getImageData(bounds.x, bounds.y, bounds.width, bounds.height);
+    const color = dominantBackgroundColor(image.data);
+    if (!color) return fallback;
+    return `#${componentHex(color.r)}${componentHex(color.g)}${componentHex(color.b)}`;
+  } catch (_) {
+    return fallback;
+  }
+}

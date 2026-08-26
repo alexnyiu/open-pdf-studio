@@ -17,9 +17,12 @@ const appBundle = path.resolve(process.env.OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE |
   projectDir, '..', 'target', 'release', 'bundle', 'macos', 'Open PDF Studio.app',
 ));
 const fixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-paragraph-table.pdf');
+const colorFixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-side-by-side-color.pdf');
 const runDir = await mkdtemp(path.join(tmpdir(), 'opds-native-paragraph-'));
 const workingPdf = path.join(runDir, 'native-paragraph-working.pdf');
+const colorWorkingPdf = path.join(runDir, 'native-side-by-side-working.pdf');
 const saveAsPdf = path.join(runDir, 'native-paragraph-save-as.pdf');
+const colorSaveAsPdf = path.join(runDir, 'native-side-by-side-save-as.pdf');
 const sessionPath = path.join(runDir, 'session.json');
 const stdoutPath = path.join(runDir, 'app.stdout.log');
 const stderrPath = path.join(runDir, 'app.stderr.log');
@@ -73,6 +76,21 @@ async function waitUntil(description, probe, timeoutMs = 30_000) {
 
 async function ui(selector) {
   return callTool('app_ui_state', { selector, searchTabs: false });
+}
+
+async function richRunStates(maxLines = 32, maxRuns = 16) {
+  const states = [];
+  for (let line = 0; line < maxLines; line += 1) {
+    let foundLine = false;
+    for (let run = 1; run <= maxRuns; run += 1) {
+      const value = await ui(`.pdf-text-editor [data-rich-line-index="${line}"] > [data-rich-run]:nth-child(${run})`);
+      if (!value.found) break;
+      foundLine = true;
+      states.push(value);
+    }
+    if (!foundLine && line > 0) break;
+  }
+  return states;
 }
 
 async function waitUi(selector, predicate = (value) => value.found && value.visible, timeoutMs = 30_000) {
@@ -153,7 +171,10 @@ async function pdfJsText(pdfPath) {
   }
 }
 
-await Promise.all([access(appBundle), access(fixture), copyFile(fixture, workingPdf)]);
+await Promise.all([
+  access(appBundle), access(fixture), access(colorFixture),
+  copyFile(fixture, workingPdf), copyFile(colorFixture, colorWorkingPdf),
+]);
 
 try {
   const port = await availablePort();
@@ -223,7 +244,49 @@ try {
   ), 60_000);
   assert.ok(String(pdfiumLayer.text).includes('Reopened second line'));
 
-  console.log(`Packaged native paragraph editing acceptance passed: ${saveAsPdf}`);
+  await closeActiveTab();
+  await openPdf(colorWorkingPdf);
+  await setEditTool();
+  const leftColorSelector = '.textLayer span[data-item-index="4"]';
+  const rightColorSelector = '.textLayer span[data-item-index="16"]';
+  const leftSource = await waitUi(leftColorSelector, (value) => value.found && value.visible && value.rect.width > 5, 60_000);
+  const rightSource = await waitUi(rightColorSelector, (value) => value.found && value.visible && value.rect.width > 5, 60_000);
+  const leftColorEditor = await openEditor(leftColorSelector, 'Mounjaro and Zepbound');
+  assert.equal(String(leftColorEditor.value ?? leftColorEditor.text).includes('The growth runway'), false);
+  assert.ok(leftColorEditor.rect.right < rightSource.rect.left,
+    'packaged side-by-side editor crossed the inferred gutter');
+  const packagedRuns = await richRunStates();
+  const blueRun = packagedRuns.find((run) => String(run.text).includes('blue emphasis'));
+  const grayRun = packagedRuns.find((run) => String(run.text).includes('gray explanation'));
+  const paleRun = packagedRuns.find((run) => String(run.text).includes('pale detail'));
+  assert.ok(blueRun, `blue source run was not preserved: ${JSON.stringify(packagedRuns)}`);
+  assert.ok(grayRun, `gray source run was not preserved: ${JSON.stringify(packagedRuns)}`);
+  assert.ok(paleRun, `pale source run was not preserved: ${JSON.stringify(packagedRuns)}`);
+  assert.equal(blueRun.dataset.contrastAid, 'false', JSON.stringify(packagedRuns));
+  assert.equal(grayRun.dataset.contrastAid, 'false',
+    `ordinary small gray text must render without a blurring halo: ${JSON.stringify(grayRun)}`);
+  assert.match(grayRun.inlineStyle, /text-shadow:\s*none/u);
+  assert.equal(paleRun.dataset.contrastAid, 'true', JSON.stringify(packagedRuns));
+  assert.match(paleRun.inlineStyle, /text-shadow/u);
+  const colorStatus = await waitUi('#native-text-edit-status');
+  assert.match(colorStatus.text, /editing-only outline/u);
+  await callTool('app_key', { key: 'Escape' });
+
+  const rightColorEditor = await openEditor(rightColorSelector, 'The growth runway');
+  assert.equal(String(rightColorEditor.value ?? rightColorEditor.text).includes('Mounjaro and Zepbound'), false);
+  assert.ok(rightColorEditor.rect.left >= rightSource.rect.left - 2);
+  await replaceAndCommit('Independent packaged right paragraph');
+  assert.equal(await save(colorSaveAsPdf), colorSaveAsPdf);
+  await closeActiveTab();
+  await openPdf(colorSaveAsPdf);
+  await setEditTool();
+  const reopenedRight = await openEditor('.textLayer span[data-owned-text-edit-hit="true"]',
+    'Independent packaged right paragraph');
+  assert.ok(reopenedRight.rect.left >= rightSource.rect.left - 2);
+  await callTool('app_key', { key: 'Escape' });
+  assert.match(await pdfJsText(colorSaveAsPdf), /Independent packaged right paragraph/u);
+
+  console.log(`Packaged native paragraph editing acceptance passed: ${saveAsPdf}; ${colorSaveAsPdf}`);
 } finally {
   if (application && !exited) {
     try { process.kill(applicationPid || -application.pid, 'SIGTERM'); } catch {}

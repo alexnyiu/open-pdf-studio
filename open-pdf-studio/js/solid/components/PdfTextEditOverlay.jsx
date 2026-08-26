@@ -15,6 +15,7 @@ import {
 import { shapeRichTextDocument } from '../../text/font-catalog.js';
 import { reflowRichTextToWidth } from '../../text/text-edit-selection.js';
 import { layoutExpandableNativeText } from '../../text/native-expandable-layout.js';
+import { documentNeedsContrastAid, editableRunPresentation } from '../../text/text-edit-contrast.js';
 
 export default function PdfTextEditOverlay() {
   let textareaRef;
@@ -123,6 +124,7 @@ export default function PdfTextEditOverlay() {
       minimumHeight: config.minimumHeight,
       anchorTop: config.anchorTop,
       pageBounds: config.pageBounds,
+      columnBounds: config.columnBounds,
       existingBounds: config.existingBounds,
       editId: config.editId,
     }).then((result) => {
@@ -130,10 +132,15 @@ export default function PdfTextEditOverlay() {
       shapedSignature = canonicalRichTextHash(result.document);
       updateRichTextDraft(result.document, { recordHistory: false, preserveDom: true });
       exactDisplayHeight = result.requiredHeight * (config.displayScale || 1);
+      const notices = [];
+      if (result.overlapWarnings.length) {
+        notices.push('Text overlaps existing page content. Commit is allowed; neighboring source objects will not move.');
+      }
+      if (documentNeedsContrastAid(result.document, config.editorBackground)) {
+        notices.push('Low-contrast source colors have an editing-only outline. Saved colors remain unchanged.');
+      }
       const message = result.valid
-        ? result.overlapWarnings.length
-          ? 'Text overlaps existing page content. Commit is allowed; neighboring source objects will not move.'
-          : ''
+        ? notices.join(' ')
         : `Text layout rejected: ${result.rejectionReasons.join('; ')}`;
       setEditorLayoutState({ pending: false, valid: result.valid, message, result });
       setEditorStatus(message);
@@ -368,13 +375,20 @@ export default function PdfTextEditOverlay() {
     queueMicrotask(syncRichSelection);
   };
 
+  const editorBackground = () => editorOptions().expandableRegion?.editorBackground || '#ffffff';
+  const runPresentation = (run) => editableRunPresentation(run.color, editorBackground());
+  const richEditorStyle = () => ({
+    ...(editorStyle() || {}),
+    background: editorBackground(),
+  });
   const runStyle = (run) => ({
     'font-family': run.faceId.includes('mono') ? '"Liberation Mono", monospace'
       : run.faceId.includes('serif') ? '"Liberation Serif", serif' : '"Liberation Sans", sans-serif',
     'font-size': `${run.size * (editorOptions().displayScale || 1)}px`,
     'font-weight': run.bold ? '700' : '400',
     'font-style': run.italic ? 'italic' : 'normal',
-    color: run.color,
+    color: runPresentation(run).color,
+    'text-shadow': runPresentation(run).textShadow,
     'text-decoration-line': [run.underline && 'underline', run.strikeout && 'line-through'].filter(Boolean).join(' ') || 'none',
   });
 
@@ -453,7 +467,7 @@ export default function PdfTextEditOverlay() {
             aria-multiline={editorOptions().singleLine ? 'false' : 'true'}
             aria-describedby={editorOptions().expandableRegion ? 'native-text-edit-status' : undefined}
             spellcheck={false}
-            style={editorStyle()}
+            style={richEditorStyle()}
             onInput={syncRichDocument}
             on:keydown={(event) => {
               if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
@@ -497,6 +511,7 @@ export default function PdfTextEditOverlay() {
                     data-italic={String(run.italic)}
                     data-underline={String(run.underline)}
                     data-strikeout={String(run.strikeout)}
+                    data-contrast-aid={String(runPresentation(run).contrastAid)}
                     style={runStyle(run)}
                   >{run.text || '\u200b'}</span>
                 }</For>
@@ -507,7 +522,9 @@ export default function PdfTextEditOverlay() {
         <Show when={editorOptions().singleLine || editorOptions().fixedRegion || editorOptions().expandableRegion}>
           <div id={editorOptions().expandableRegion ? 'native-text-edit-status' : 'scanned-text-edit-status'} class="ocr-review-live-region" role="status" aria-live="polite" aria-atomic="true">
             {editorStatus() || editorOptions().status || (editorOptions().expandableRegion
-              ? 'Editing native text. The width is fixed and the region grows downward.'
+              ? documentNeedsContrastAid(richTextDocument(), editorBackground())
+                ? 'Editing native text. The width is fixed and the region grows downward. Low-contrast source colors have an editing-only outline; saved colors remain unchanged.'
+                : 'Editing native text. The width is fixed and the region grows downward.'
               : 'Editing scanned text. Font properties are estimates.')}
           </div>
         </Show>

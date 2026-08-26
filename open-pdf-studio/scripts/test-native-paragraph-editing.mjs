@@ -106,7 +106,24 @@ try {
     'hovering one paragraph must render one union outline');
   const outline = await page.locator('.edit-text-paragraph-outline').boundingBox();
   const targetBox = await target.boundingBox();
-  assert.ok(outline.height >= 38, `paragraph outline must cover both lines (${outline.height}px)`);
+  const initialGrouping = await page.evaluate(async () => {
+    const { detectNativeColumnTracks, groupNativeTextFragments, nativeTextLinePieces } = await import('/js/text/native-text-blocks.js');
+    const spans = [...document.querySelectorAll('#native-paragraph-test-host .textLayer span[data-pdf-transform]')];
+    const fragments = spans.map((span) => {
+      const transform = JSON.parse(span.dataset.pdfTransform);
+      return { text: span.textContent, sourceText: span.textContent,
+        pdfX: transform[4], pdfY: transform[5], pdfWidth: Number(span.dataset.pdfWidth),
+        fontSize: Math.hypot(transform[2], transform[3]), fontFamily: span.style.fontFamily };
+    });
+    return {
+      tracks: detectNativeColumnTracks(fragments),
+      blocks: groupNativeTextFragments(fragments)
+        .map((block) => ({ columnId: block.columnId,
+          lines: block.lines.map((line) => nativeTextLinePieces(line).map((piece) => piece.text).join('')) })),
+    };
+  });
+  assert.ok(outline.height >= 38,
+    `paragraph outline must cover both lines (${outline.height}px): ${JSON.stringify(initialGrouping)}`);
   assert.ok(outline.x <= targetBox.x && outline.x + outline.width < 540,
     'paragraph outline must not include the adjacent table cell');
 
@@ -307,7 +324,164 @@ try {
   assert.match((await editor.innerText()).replace(/\n\n/gu, '\n'), /Combined paragraph one\nCombined paragraph two/u);
   await editor.press('Escape');
 
-  console.log('Native paragraph, multi-box merge, atomic undo, and stable re-edit targets test passed');
+  await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    const { activateEditTextTool } = await import('/js/tools/text-edit-tool.js');
+    document.getElementById('native-paragraph-test-host')?.remove();
+    const host = document.createElement('div');
+    host.id = 'native-side-by-side-test-host';
+    Object.assign(host.style, {
+      position: 'fixed', left: '20px', top: '20px', width: '700px', height: '420px',
+      zIndex: '10000', background: '#fff',
+    });
+    const canvas = document.createElement('canvas');
+    canvas.className = 'pdf-canvas';
+    canvas.width = 700;
+    canvas.height = 420;
+    Object.assign(canvas.style, { position: 'absolute', inset: '0', width: '700px', height: '420px' });
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, 700, 420);
+    const layer = document.createElement('div');
+    layer.className = 'textLayer';
+    layer.dataset.page = '1';
+    Object.assign(layer.style, { position: 'absolute', inset: '0', width: '700px', height: '420px', transform: 'none' });
+    host.append(canvas, layer);
+    document.body.append(host);
+
+    let operatorIndex = 0;
+    const addSpan = (text, x, baseline, width, color, size = 12, testId = '') => {
+      context.fillStyle = color;
+      context.font = `${size}px Arial`;
+      context.fillText(text, x, 420 - baseline);
+      const span = document.createElement('span');
+      span.textContent = text;
+      Object.assign(span.style, {
+        position: 'absolute', left: `${x}px`, top: `${420 - baseline - size}px`,
+        width: `${width}px`, height: `${size}px`, font: `${size}px / ${size}px Arial`,
+        color: 'transparent', transform: 'none',
+      });
+      span.dataset.pdfTransform = JSON.stringify([size, 0, 0, size, x, baseline]);
+      span.dataset.pdfWidth = String(width);
+      span.dataset.pdfFontFamily = 'sans-serif';
+      span.dataset.pdfFontName = 'LiberationSans';
+      span.dataset.pdfActualFontName = 'Liberation Sans';
+      span.dataset.pdfLoadedFontName = '';
+      span.dataset.pdfBold = 'false';
+      span.dataset.pdfItalic = 'false';
+      if (testId) span.dataset[testId] = 'true';
+      const source = [{
+        markerId: `side-${operatorIndex}`,
+        streamObjectId: '20 0 R',
+        operatorIndex: operatorIndex++,
+        decodedText: text,
+        eligibility: { eligible: true },
+      }];
+      span.dataset.nativeTextProvenance = JSON.stringify(source);
+      span.dataset.nativeTextMarkerIds = source[0].markerId;
+      layer.appendChild(span);
+      return span;
+    };
+
+    addSpan('LEFT HEADING', 20, 340, 90, '#0057a8', 10);
+    addSpan('RIGHT HEADING', 320, 340, 100, '#0057a8', 10);
+    addSpan('Left paragraph first line', 20, 320, 275, '#111111', 12, 'sideLeft');
+    addSpan('and colored ', 20, 304, 100, '#111111');
+    addSpan('blue', 120, 304, 40, '#0057a8');
+    addSpan(' gray ', 160, 304, 60, '#666666');
+    addSpan('pale', 220, 304, 50, '#f4f4f4');
+    addSpan('left paragraph final line.', 20, 288, 210, '#111111');
+    addSpan('Right paragraph first line', 320, 320, 250, '#111111', 12, 'sideRight');
+    addSpan('right paragraph second line', 320, 304, 245, '#111111');
+    addSpan('right paragraph third line', 320, 288, 240, '#666666');
+    addSpan('right paragraph fourth line', 320, 272, 250, '#111111');
+    addSpan('right paragraph final line.', 320, 256, 210, '#111111');
+
+    state.documents = [{
+      id: 'native-side-by-side-document', currentPage: 1, scale: 1, viewMode: 'single',
+      annotations: [], selectedAnnotations: [], textEdits: [], undoStack: [], redoStack: [],
+      pdfDoc: { numPages: 1, getPage: async () => ({
+        getTextContent: async () => ({ items: [], styles: {} }),
+        getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+      }) }, pageDims: { 1: { widthPt: 700, heightPt: 420, rotation: 0 } },
+    }];
+    state.activeDocumentIndex = 0;
+    state.currentTool = 'editText';
+    activateEditTextTool();
+  });
+
+  const leftTarget = page.locator('[data-side-left="true"]');
+  const rightTarget = page.locator('[data-side-right="true"]');
+  await leftTarget.hover();
+  const leftOutline = await page.locator('.edit-text-paragraph-outline').boundingBox();
+  const rightTargetBox = await rightTarget.boundingBox();
+  assert.ok(leftOutline.x + leftOutline.width < rightTargetBox.x,
+    'side-by-side paragraph outline must stop before the neighboring column');
+  await leftTarget.click();
+  await editor.waitFor({ state: 'visible' });
+  assert.match(await editor.innerText(), /Left paragraph first line/u);
+  assert.doesNotMatch(await editor.innerText(), /Right paragraph/u);
+  const sideEditorBox = await editor.boundingBox();
+  assert.ok(sideEditorBox.x + sideEditorBox.width < rightTargetBox.x,
+    'native editor width must remain inside its inferred column');
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const colorState = await editor.evaluate((node) => [...node.querySelectorAll('[data-rich-run]')]
+    .map((run) => ({ text: run.textContent, color: run.dataset.color,
+      contrastAid: run.dataset.contrastAid, textShadow: getComputedStyle(run).textShadow })));
+  assert.ok(colorState.some((run) => run.color === '#0057a8' && run.text.includes('blue')));
+  assert.ok(colorState.some((run) => run.color === '#666666' && run.text.includes('gray')));
+  const paleRun = colorState.find((run) => run.color === '#f4f4f4');
+  assert.equal(paleRun?.contrastAid, 'true');
+  assert.notEqual(paleRun?.textShadow, 'none');
+  assert.match((await page.locator('#native-text-edit-status').innerText()), /editing-only outline/u);
+
+  await editor.locator('[data-color="#0057a8"]').filter({ hasText: 'blue' }).evaluate((run) => {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.setStart(run.firstChild, run.firstChild.textContent.length);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await page.keyboard.type('X');
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const typedColor = await page.evaluate(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorRichText().lines.flatMap((line) => line.runs)
+      .find((run) => run.text.includes('blueX'))?.color;
+  });
+  assert.equal(typedColor, '#0057a8', 'typing inside a colored run must inherit that run color');
+  await page.keyboard.press('Control+Enter');
+  await editor.waitFor({ state: 'detached' });
+
+  await rightTarget.click();
+  await editor.waitFor({ state: 'visible' });
+  assert.match(await editor.innerText(), /Right paragraph first line/u);
+  assert.doesNotMatch(await editor.innerText(), /Left paragraph/u);
+  await editor.fill('Independent right paragraph replacement');
+  await page.keyboard.press('Control+Enter');
+  await editor.waitFor({ state: 'detached' });
+  const sideBySideRecords = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    return state.documents[0].textEdits.map((record) => ({
+      region: record.richText.region,
+      colors: [...new Set(record.richText.lines.flatMap((line) => line.runs.map((run) => run.color)))],
+    })).sort((left, right) => left.region.x - right.region.x);
+  });
+  assert.equal(sideBySideRecords.length, 2);
+  assert.ok(sideBySideRecords[0].region.x + sideBySideRecords[0].region.width
+    < sideBySideRecords[1].region.x);
+  assert.ok(sideBySideRecords[0].colors.includes('#0057a8'));
+  assert.ok(sideBySideRecords[0].colors.includes('#666666'));
+  assert.ok(sideBySideRecords[0].colors.includes('#f4f4f4'));
+
+  console.log('Native paragraph, side-by-side color, multi-box merge, atomic undo, and stable re-edit targets test passed');
 } finally {
   await browser.close();
 }

@@ -48,6 +48,13 @@ function normalizedPageBounds(value) {
     ? { x, y, width, height } : null;
 }
 
+function normalizedColumnBounds(value) {
+  if (!value) return null;
+  const left = Number(value.left ?? value.x);
+  const right = Number(value.right ?? (Number(value.x) + Number(value.width)));
+  return Number.isFinite(left) && Number.isFinite(right) && right > left ? { left, right } : null;
+}
+
 function shapedBounds(document, layout, antialiasMargin = 1) {
   let left = Number.POSITIVE_INFINITY;
   let right = Number.NEGATIVE_INFINITY;
@@ -155,10 +162,18 @@ export async function layoutExpandableNativeText(document, options = {}) {
     || bounds.y + bounds.height > pageBounds.y + pageBounds.height + 1e-6
   ));
   const regionRect = reflowed.region;
+  const columnBounds = normalizedColumnBounds(options.columnBounds);
+  const crossesColumnBounds = Boolean(columnBounds && (
+    regionRect.x < columnBounds.left - 1e-6
+    || regionRect.x + regionRect.width > columnBounds.right + 1e-6
+    || bounds.x < columnBounds.left - 1e-6
+    || bounds.x + bounds.width > columnBounds.right + 1e-6
+  ));
   const overlapWarnings = (options.existingBounds || [])
     .filter((entry) => entry && entry.id !== options.editId && intersects(regionRect, entry))
     .map((entry) => entry.id || 'native-page-content');
   const rejectionReasons = [...layout.rejectionReasons];
+  if (crossesColumnBounds) rejectionReasons.push('Shaped text crosses its native column boundary');
   if (crossesPageEdge) rejectionReasons.push('Shaped text crosses the page CropBox');
   return {
     document: reflowed,
@@ -166,6 +181,7 @@ export async function layoutExpandableNativeText(document, options = {}) {
     shapedBounds: bounds,
     requiredHeight,
     overlapWarnings,
+    columnValid: !crossesColumnBounds,
     pageEdgeValid: !crossesPageEdge,
     valid: rejectionReasons.length === 0,
     rejectionReasons: [...new Set(rejectionReasons)],

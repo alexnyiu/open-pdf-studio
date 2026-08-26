@@ -6,9 +6,68 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Table, TableStyle
+from reportlab.pdfgen import canvas
 
 
 OUTPUT = Path(__file__).resolve().parents[1] / "tests/fixtures/text/native-paragraph-table.pdf"
+SIDE_BY_SIDE_OUTPUT = Path(__file__).resolve().parents[1] / "tests/fixtures/text/native-side-by-side-color.pdf"
+
+
+def deterministic_canvas(*args, **kwargs) -> canvas.Canvas:
+    kwargs.pop("invariant", None)
+    return canvas.Canvas(*args, invariant=1, **kwargs)
+
+
+def draw_runs(pdf: canvas.Canvas, x: float, y: float, runs: list[tuple[str, str, float]]) -> None:
+    cursor = x
+    for text, color, size in runs:
+        pdf.setFont("LiberationSans", size)
+        pdf.setFillColor(colors.HexColor(color))
+        pdf.drawString(cursor, y, text)
+        cursor += pdfmetrics.stringWidth(text, "LiberationSans", size)
+
+
+def build_side_by_side_fixture() -> None:
+    pdf = canvas.Canvas(str(SIDE_BY_SIDE_OUTPUT), pagesize=letter, invariant=1)
+    pdf.setTitle("Open PDF Studio side-by-side native color fixture")
+    left_x = 52.6
+    right_x = 311.08
+    heading_y = 700
+    leading = 11.2
+
+    pdf.setStrokeColor(colors.HexColor("#c8d2dc"))
+    pdf.rect(46, 612, 248, 105, stroke=1, fill=0)
+    pdf.rect(304, 578, 248, 139, stroke=1, fill=0)
+    draw_runs(pdf, left_x, heading_y, [("WHY IT IS GROWING", "#0057a8", 7.2)])
+    draw_runs(pdf, right_x, heading_y, [("CAN THE GROWTH CONTINUE?", "#0057a8", 7.2)])
+
+    left_lines = [
+        [("Mounjaro and Zepbound continue expanding as obesity", "#111111", 8.7)],
+        [("and diabetes adoption ", "#111111", 8.7), ("(gray explanation)", "#666666", 6.8)],
+        [("grows globally while manufacturing capacity expands", "#111111", 8.7)],
+        [("and next-generation medicines add another runway", "#111111", 8.7)],
+        [("including ", "#111111", 8.7), ("blue emphasis", "#0057a8", 8.7), (" and ", "#111111", 8.7),
+         ("pale detail", "#f4f4f4", 6.8)],
+        [("after the current franchise matures.", "#111111", 8.7)],
+    ]
+    right_lines = [
+        [("The growth runway remains unusually long because the", "#111111", 8.7)],
+        [("market is large and still underpenetrated ", "#111111", 8.7), ("(only a", "#666666", 6.8)],
+        [("small share of customers currently use the", "#666666", 6.8)],
+        [("product),", "#666666", 6.8), (" but growth should normalize as revenue", "#111111", 8.7)],
+        [("base becomes enormous. Sustained growth depends on", "#111111", 8.7)],
+        [("manufacturing capacity, broader reimbursement ", "#111111", 8.7), ("(whether", "#666666", 6.8)],
+        [("insurers or government programs will pay for treatment)", "#666666", 6.8), (",", "#111111", 8.7)],
+        [("successful launches retain strong efficacy and safety", "#111111", 8.7)],
+        [("versus competitors.", "#111111", 8.7)],
+    ]
+    for index, runs in enumerate(left_lines):
+        draw_runs(pdf, left_x, heading_y - 12 - index * leading, runs)
+    for index, runs in enumerate(right_lines):
+        draw_runs(pdf, right_x, heading_y - 12 - index * leading, runs)
+
+    pdf.showPage()
+    pdf.save()
 
 
 def main() -> None:
@@ -59,7 +118,8 @@ def main() -> None:
         ("TOPPADDING", (0, 0), (-1, -1), 6),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
     ]))
-    document.build([table])
+    document.build([table], canvasmaker=deterministic_canvas)
+    build_side_by_side_fixture()
 
 
 if __name__ == "__main__":

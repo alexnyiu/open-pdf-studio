@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream, PDFRef, PDFString } from 'pdf-lib';
 
 import {
+  createRichTextDocument,
+  createTextLine,
   createTextEditRecordV2,
+  createTextRun,
   richTextFromPlainText,
 } from './rich-text.js';
 import {
@@ -116,6 +119,30 @@ test('native paragraph re-edit keeps one stable record and owned layer across re
   const finalManifest = await readOwnedTextEditManifest(repeated);
   assert.equal(finalManifest.pages[0].edits.length, 1);
   assert.equal(finalManifest.pages[0].edits[0].richText.lines[0].runs[0].text, 'Re-edited paragraph');
+});
+
+test('owned manifest preserves mixed run colors through reopen and repeated save', async () => {
+  const document = await PDFDocument.create();
+  document.addPage([300, 300]);
+  const richText = createRichTextDocument([
+    createTextLine([
+      createTextRun('Black ', { faceId: 'liberation-sans-regular', size: 10, color: '#111111' }),
+      createTextRun('Blue ', { faceId: 'liberation-sans-regular', size: 10, color: '#0057a8' }),
+      createTextRun('Gray ', { faceId: 'liberation-sans-regular', size: 10, color: '#666666' }),
+      createTextRun('Pale', { faceId: 'liberation-sans-regular', size: 10, color: '#f4f4f4' }),
+    ], { baseline: 80, baselineAdvance: 12 }),
+  ], { x: 20, y: 65, width: 180, height: 20 });
+  const record = createTextEditRecordV2({ id: 'mixed-color-record', page: 1, richText });
+  const expectedColors = ['#111111', '#0057a8', '#666666', '#f4f4f4'];
+
+  await writeOwnedTextEditManifest(document, 'mixed-color-document', [record]);
+  const reopened = await PDFDocument.load(await document.save({ useObjectStreams: false }));
+  const first = await readOwnedTextEditManifest(reopened);
+  assert.deepEqual(first.pages[0].edits[0].richText.lines[0].runs.map((run) => run.color), expectedColors);
+  await writeOwnedTextEditManifest(reopened, first.documentId, first.pages[0].edits, first);
+  const repeated = await PDFDocument.load(await reopened.save({ useObjectStreams: false }));
+  const second = await readOwnedTextEditManifest(repeated);
+  assert.deepEqual(second.pages[0].edits[0].richText.lines[0].runs.map((run) => run.color), expectedColors);
 });
 
 test('manifest hydration rejects an externally modified owned layer marker', async () => {

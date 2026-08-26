@@ -63,6 +63,7 @@ import {
   invertPageRotation,
   restoreTextEditSnapshot,
   resolveTextEditPageGeometry,
+  sampleDominantBackgroundColor,
   sampleTextColor,
   sourceTextLineExtent,
 } from '../text/text-edit-appearance.js';
@@ -584,7 +585,7 @@ function selectionItemForBlock(block, pageNum, layer) {
   const markerKey = provenance?.map((source) => source.markerId).sort().join('|') || `unowned:${block.rect.left}:${block.rect.top}`;
   return {
     key: `native:${markerKey}`, kind: 'native', page: pageNum,
-    rotation: getPageRotation(pageNum), eligible: Boolean(provenance),
+    rotation: getPageRotation(pageNum), eligible: Boolean(provenance) && block.laneValid !== false,
     geometry: { left: richText.region.x, top: richText.region.y, width: richText.region.width, height: richText.region.height },
     viewRect: block.rect, visualBaseline: block.lineData[0].domBottom,
     richText, original: richText, sourceProvenance: provenance,
@@ -831,6 +832,8 @@ function expandableNativeEditorOptions(document, pageNum, canvasEl, layer, optio
     minimumHeight: options.minimumHeight ?? document.region.height,
     anchorTop: options.anchorTop ?? document.region.y + document.region.height,
     pageBounds: { x: 0, y: 0, width: geometry.pageWidth, height: geometry.pageHeight },
+    columnBounds: options.columnBounds || options.block?.columnBounds || null,
+    editorBackground: options.editorBackground || options.block?.editorBackground || '#ffffff',
     existingBounds: nativePageContentBounds(pageNum, layer, options),
     editId: options.editId,
     displayScale: options.displayScale || 1,
@@ -961,16 +964,22 @@ function getBlockGroups(layer) {
     if (!Array.isArray(transform) || transform.length < 6) return [];
     const fontSize = Math.sqrt(transform[2] ** 2 + transform[3] ** 2);
     let sourceText = '';
+    let sourceRuns = [];
     try {
       const sources = JSON.parse(span.dataset.nativeTextProvenance || 'null');
-      if (Array.isArray(sources)) sourceText = sources.map((source) => source.decodedText || '').join('');
+      if (Array.isArray(sources)) {
+        sourceRuns = sources;
+        sourceText = sources.map((source) => source.decodedText || '').join('');
+      }
     } catch (_) {
       sourceText = '';
+      sourceRuns = [];
     }
     return [{
       span,
       text: span.textContent || '',
       sourceText,
+      sourceRuns,
       // DOM coords – only for editor placement later
       domLeft: r.left - layerRect.left,
       domTop: r.top - layerRect.top,
@@ -985,7 +994,7 @@ function getBlockGroups(layer) {
       actualFontName: span.dataset.pdfActualFontName || '',
     }];
   });
-  const blocks = groupNativeTextFragments(items).map((block) => block.lines);
+  const blocks = groupNativeTextFragments(items);
   if (blocks.length === 0) { blockGroupsCache.set(layer, []); return []; }
 
   // ── Build group objects ──
@@ -993,7 +1002,8 @@ function getBlockGroups(layer) {
   const pdfCanvasEl = layer.parentElement?.querySelector('canvas.pdf-canvas')
     || pdfCanvas || document.getElementById('pdf-canvas');
 
-  const groups = blocks.map(block => {
+  const groups = blocks.map(nativeBlock => {
+    const block = nativeBlock.lines;
     const allItems = block.flat();
     const allSpans = allItems.map(it => it.span);
 
@@ -1002,6 +1012,12 @@ function getBlockGroups(layer) {
     const minTop = Math.min(...allItems.map(it => it.domTop));
     const maxRight = Math.max(...allItems.map(it => it.domRight));
     const maxBottom = Math.max(...allItems.map(it => it.domBottom));
+    const editorBackground = sampleDominantBackgroundColor(pdfCanvasEl, {
+      left: layerRect.left + minLeft,
+      top: layerRect.top + minTop,
+      right: layerRect.left + maxRight,
+      bottom: layerRect.top + maxBottom,
+    });
 
     const lineData = block.map(lineItems => {
       const sourceExtent = sourceTextLineExtent(lineItems);
@@ -1019,28 +1035,37 @@ function getBlockGroups(layer) {
       const pieces = nativeTextLinePieces(lineItems);
       const runs = pieces.map((piece, runIndex) => {
         const item = piece.item;
+        const source = piece.source;
         const runSpan = item.span;
         const actual = runSpan.dataset.pdfActualFontName || runSpan.dataset.pdfFontFamily || '';
         const bold = runSpan.dataset.pdfBold === 'true';
         const italic = runSpan.dataset.pdfItalic === 'true';
         const face = resolvePackagedFace(actual, bold, italic);
+        const sourceGeometry = Array.isArray(source?.geometry) ? source.geometry : null;
+        const sourceSize = Number(source?.fontSize);
+        const runSize = Number.isFinite(sourceSize) && sourceSize > 0 ? sourceSize : item.fontSize;
+        const sourceColor = /^#[0-9a-f]{6}$/iu.test(source?.fillColor || '')
+          ? source.fillColor.toLowerCase()
+          : null;
         return createTextRun(piece.text, {
           faceId: face?.id,
-          size: item.fontSize,
-          color: sampleTextColor(pdfCanvasEl, runSpan.getBoundingClientRect()),
+          size: runSize,
+          color: sourceColor || sampleTextColor(pdfCanvasEl, runSpan.getBoundingClientRect()),
           bold,
           italic,
           underline: false,
           strikeout: false,
           direction: 'ltr',
         }, {
-          id: `source-${runSpan.dataset.pdfFontName || 'font'}-${runIndex}`,
-          sourceConfidence: actual ? 0.9 : 0.5,
+          id: source?.markerId || `source-${runSpan.dataset.pdfFontName || 'font'}-${runIndex}`,
+          sourceConfidence: sourceColor ? 1 : (actual ? 0.9 : 0.5),
           geometry: {
-            x: piece.syntheticSpace ? item.pdfX + item.pdfWidth : item.pdfX,
-            baseline: item.pdfY,
-            width: piece.syntheticSpace ? Math.max(item.fontSize * 0.25, 0.5) : item.pdfWidth,
-            height: item.fontSize,
+            x: piece.syntheticSpace ? item.pdfX + item.pdfWidth
+              : (Number(sourceGeometry?.[0]) || item.pdfX),
+            baseline: Number(sourceGeometry?.[1]) || item.pdfY,
+            width: piece.syntheticSpace ? Math.max(item.fontSize * 0.25, 0.5)
+              : (Number(sourceGeometry?.[2]) || item.pdfWidth),
+            height: Number(sourceGeometry?.[3]) || runSize,
           },
         });
       });
@@ -1060,7 +1085,7 @@ function getBlockGroups(layer) {
         loadedFontName,
         isBold,
         isItalic,
-        color,
+        color: runs[0]?.color || color,
         runs,
       };
     });
@@ -1079,6 +1104,13 @@ function getBlockGroups(layer) {
       spans: allSpans,
       lineData,
       lineSpacing,
+      columnId: nativeBlock.columnId,
+      columnBounds: nativeBlock.columnBounds,
+      laneValid: allItems.every((item) => (
+        item.pdfX >= nativeBlock.columnBounds.left - 1e-6
+        && item.pdfX + item.pdfWidth <= nativeBlock.columnBounds.right + 1e-6
+      )),
+      editorBackground,
       rect: { left: minLeft, top: minTop, width: maxRight - minLeft, height: maxBottom - minTop }
     };
 
@@ -1821,6 +1853,11 @@ function startPdfTextEditing(span, pageNum) {
 
   const block = spanToBlock.get(span);
   if (!block || block.spans.length === 0) return;
+
+  if (block.laneValid === false) {
+    showMessage('This paragraph crosses an inferred native column boundary. Editing was blocked and the document was left untouched.');
+    return;
+  }
 
   hideParagraphOutline();
 

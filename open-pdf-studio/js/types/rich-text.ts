@@ -110,6 +110,7 @@ export interface NativeTextSourceProvenanceV1 {
   operatorSha256: string;
   originalOperatorBase64: string;
   decodedText: string;
+  fillColor?: string;
   totalAdvance: number;
   markerId: string;
   ownershipState: 'source' | 'neutralized' | 'restored';

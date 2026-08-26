@@ -12,6 +12,7 @@ use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::color;
 use crate::content_stream::ContentStreamIter;
 use crate::fonts::{FontEntry, FontRegistry};
 use crate::RenderError;
@@ -62,6 +63,8 @@ pub struct NativeTextSourceProvenanceV1 {
     pub operator_sha256: String,
     pub original_operator_base64: String,
     pub decoded_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill_color: Option<String>,
     pub total_advance: f32,
     pub font_name: String,
     pub font_size: f32,
@@ -185,8 +188,18 @@ impl TextState {
 #[derive(Clone)]
 struct WalkState {
     ctm: Matrix,
-    stack: Vec<(Matrix, TextState)>,
+    stack: Vec<(Matrix, TextState, Option<[u8; 3]>, FillColorSpace)>,
     text: TextState,
+    fill_color: Option<[u8; 3]>,
+    fill_color_space: FillColorSpace,
+}
+
+#[derive(Clone, Copy)]
+enum FillColorSpace {
+    Gray,
+    Rgb,
+    Cmyk,
+    Unsupported,
 }
 
 impl Default for WalkState {
@@ -195,8 +208,19 @@ impl Default for WalkState {
             ctm: Matrix::identity(),
             stack: Vec::new(),
             text: TextState::default(),
+            fill_color: Some([0, 0, 0]),
+            fill_color_space: FillColorSpace::Gray,
         }
     }
+}
+
+fn color_hex(color: Option<[u8; 3]>) -> Option<String> {
+    color.map(|[red, green, blue]| format!("#{red:02x}{green:02x}{blue:02x}"))
+}
+
+fn rgb_color(red: f32, green: f32, blue: f32) -> [u8; 3] {
+    let component = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    [component(red), component(green), component(blue)]
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -635,12 +659,91 @@ impl<'a> InspectContext<'a> {
             }
             let range = iter.operation_span().unwrap_or((0, 0));
             match operation.operator.as_str() {
-                "q" => state.stack.push((state.ctm, state.text.clone())),
+                "q" => state.stack.push((
+                    state.ctm,
+                    state.text.clone(),
+                    state.fill_color,
+                    state.fill_color_space,
+                )),
                 "Q" => {
-                    if let Some((saved_ctm, saved_text)) = state.stack.pop() {
+                    if let Some((saved_ctm, saved_text, saved_fill_color, saved_fill_space)) =
+                        state.stack.pop()
+                    {
                         state.ctm = saved_ctm;
                         state.text = saved_text;
+                        state.fill_color = saved_fill_color;
+                        state.fill_color_space = saved_fill_space;
                     }
+                }
+                "g" if !operation.operands.is_empty() => {
+                    let (red, green, blue) = color::gray_to_rgb(num(&operation.operands[0]));
+                    state.fill_color = Some([red, green, blue]);
+                    state.fill_color_space = FillColorSpace::Gray;
+                }
+                "rg" if operation.operands.len() >= 3 => {
+                    state.fill_color = Some(rgb_color(
+                        num(&operation.operands[0]),
+                        num(&operation.operands[1]),
+                        num(&operation.operands[2]),
+                    ));
+                    state.fill_color_space = FillColorSpace::Rgb;
+                }
+                "k" if operation.operands.len() >= 4 => {
+                    let (red, green, blue) = color::cmyk_to_rgb(
+                        num(&operation.operands[0]),
+                        num(&operation.operands[1]),
+                        num(&operation.operands[2]),
+                        num(&operation.operands[3]),
+                    );
+                    state.fill_color = Some([red, green, blue]);
+                    state.fill_color_space = FillColorSpace::Cmyk;
+                }
+                "cs" if !operation.operands.is_empty() => {
+                    state.fill_color_space = match &operation.operands[0] {
+                        Object::Name(name)
+                            if name.as_slice() == b"DeviceGray" || name.as_slice() == b"G" =>
+                        {
+                            FillColorSpace::Gray
+                        }
+                        Object::Name(name)
+                            if name.as_slice() == b"DeviceRGB" || name.as_slice() == b"RGB" =>
+                        {
+                            FillColorSpace::Rgb
+                        }
+                        Object::Name(name)
+                            if name.as_slice() == b"DeviceCMYK" || name.as_slice() == b"CMYK" =>
+                        {
+                            FillColorSpace::Cmyk
+                        }
+                        _ => FillColorSpace::Unsupported,
+                    };
+                    if matches!(state.fill_color_space, FillColorSpace::Unsupported) {
+                        state.fill_color = None;
+                    }
+                }
+                "sc" | "scn" => {
+                    state.fill_color = match state.fill_color_space {
+                        FillColorSpace::Gray if !operation.operands.is_empty() => {
+                            let (red, green, blue) =
+                                color::gray_to_rgb(num(&operation.operands[0]));
+                            Some([red, green, blue])
+                        }
+                        FillColorSpace::Rgb if operation.operands.len() >= 3 => Some(rgb_color(
+                            num(&operation.operands[0]),
+                            num(&operation.operands[1]),
+                            num(&operation.operands[2]),
+                        )),
+                        FillColorSpace::Cmyk if operation.operands.len() >= 4 => {
+                            let (red, green, blue) = color::cmyk_to_rgb(
+                                num(&operation.operands[0]),
+                                num(&operation.operands[1]),
+                                num(&operation.operands[2]),
+                                num(&operation.operands[3]),
+                            );
+                            Some([red, green, blue])
+                        }
+                        _ => None,
+                    };
                 }
                 "cm" if operation.operands.len() >= 6 => {
                     state.ctm = state.ctm.concat(Matrix([
@@ -810,6 +913,7 @@ impl<'a> InspectContext<'a> {
                         original_operator_base64: base64::engine::general_purpose::STANDARD
                             .encode(original),
                         decoded_text: decoded,
+                        fill_color: color_hex(state.fill_color),
                         total_advance: advance,
                         font_name: state.text.font_name.clone(),
                         font_size: state.text.font_size,
@@ -985,9 +1089,12 @@ pub fn inspect_native_text_sources_batch(
         ));
     }
     let document_hash = sha256(bytes);
-    page_indices.iter().map(|page_index| {
-        inspect_native_text_sources_in_document(&doc, &document_hash, *page_index)
-    }).collect()
+    page_indices
+        .iter()
+        .map(|page_index| {
+            inspect_native_text_sources_in_document(&doc, &document_hash, *page_index)
+        })
+        .collect()
 }
 
 fn neutral_operation(source: &NativeTextSourceProvenanceV1) -> Result<Vec<u8>, RenderError> {
@@ -1562,6 +1669,17 @@ mod tests {
         assert_eq!(maps[0].runs.len(), 1);
         assert_eq!(maps[0].runs[0].decoded_text, "Hello");
         assert_eq!(maps[0].document_sha256, sha256(&bytes));
+    }
+
+    #[test]
+    fn inspection_reports_exact_device_fill_colors_for_text_runs() {
+        let bytes = fixture("0.4 g (Gray) Tj 0 0.341176 0.658824 rg (Blue) Tj");
+        let map = inspect_native_text_sources(&bytes, 0).unwrap();
+        assert_eq!(map.runs.len(), 2);
+        assert_eq!(map.runs[0].decoded_text, "Gray");
+        assert_eq!(map.runs[0].fill_color.as_deref(), Some("#666666"));
+        assert_eq!(map.runs[1].decoded_text, "Blue");
+        assert_eq!(map.runs[1].fill_color.as_deref(), Some("#0057a8"));
     }
 
     #[test]
