@@ -1,23 +1,23 @@
-mod parser;
-pub mod content_stream;
-pub mod tile_render;
-mod graphics_state;
-mod interpreter;
-mod renderer;
 mod color;
+pub mod content_stream;
 pub mod draw_commands;
 pub mod encoding;
 pub mod font_parser;
 pub mod fonts;
-pub mod text_renderer;
+mod graphics_state;
+mod interpreter;
 pub mod native_text;
+mod parser;
+mod renderer;
+pub mod text_renderer;
+pub mod tile_render;
 
-pub use parser::DocumentHandle;
-pub use native_text::{
-    NativeTextApplyReportV1, NativeTextApplyResultV1, NativeTextSourceMapV1,
-    NativeTextSourceProvenanceV1, inspect_native_text_sources_batch,
-};
 pub use draw_commands::DrawCommandBuffer;
+pub use native_text::{
+    inspect_native_text_sources_batch, NativeTextApplyReportV1, NativeTextApplyResultV1,
+    NativeTextSourceMapV1, NativeTextSourceProvenanceV1,
+};
+pub use parser::DocumentHandle;
 
 #[derive(Debug, PartialEq)]
 pub enum PageType {

@@ -34,7 +34,10 @@ fn is_ws(b: u8) -> bool {
 
 #[inline(always)]
 fn is_delim(b: u8) -> bool {
-    matches!(b, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%')
+    matches!(
+        b,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    )
 }
 
 impl<'a> ContentStreamIter<'a> {
@@ -306,9 +309,7 @@ impl<'a> ContentStreamIter<'a> {
     /// true/false/null als operand-keyword.
     fn try_keyword(&mut self) -> Option<Object> {
         let rest = &self.bytes[self.pos..];
-        let kw_end = |n: usize| {
-            rest.get(n).map_or(true, |&b| is_ws(b) || is_delim(b))
-        };
+        let kw_end = |n: usize| rest.get(n).map_or(true, |&b| is_ws(b) || is_delim(b));
         if rest.starts_with(b"true") && kw_end(4) {
             self.pos += 4;
             return Some(Object::Boolean(true));
@@ -387,7 +388,11 @@ impl<'a> ContentStreamIter<'a> {
                 if before_ok && after_ok {
                     // Data eindigt vóór de whitespace die bij de EI-syntax
                     // hoort (before_ok garandeert die ws, behalve op pos 0).
-                    let end = if self.pos > start { self.pos - 1 } else { start };
+                    let end = if self.pos > start {
+                        self.pos - 1
+                    } else {
+                        start
+                    };
                     self.last_inline = Some((start, end));
                     self.pos += 2; // voorbij EI
                     return;
@@ -482,7 +487,10 @@ mod tests {
     fn reports_exact_operation_ranges() {
         let src = b"  % lead\n/F1 12 Tf\n(Hello\\) world) Tj  \n";
         let mut it = ContentStreamIter::new(src);
-        let mut op = Operation { operator: String::new(), operands: Vec::new() };
+        let mut op = Operation {
+            operator: String::new(),
+            operands: Vec::new(),
+        };
         assert!(it.next_into(&mut op));
         let (start, end) = it.operation_span().expect("Tf range");
         assert_eq!(&src[start..end], b"/F1 12 Tf");
@@ -499,12 +507,21 @@ mod tests {
         assert_eq!(v[1].0, "TJ");
         if let Object::Array(a) = &v[1].1[0] {
             assert_eq!(a.len(), 3);
-            assert_eq!(a[0], Object::String(b"Hel)lo".to_vec(), StringFormat::Literal));
-            assert_eq!(a[2], Object::String(b"Hi?".to_vec(), StringFormat::Hexadecimal));
+            assert_eq!(
+                a[0],
+                Object::String(b"Hel)lo".to_vec(), StringFormat::Literal)
+            );
+            assert_eq!(
+                a[2],
+                Object::String(b"Hi?".to_vec(), StringFormat::Hexadecimal)
+            );
         } else {
             panic!("geen array");
         }
-        assert_eq!(v[2].1[0], Object::String(b"a(b)c".to_vec(), StringFormat::Literal));
+        assert_eq!(
+            v[2].1[0],
+            Object::String(b"a(b)c".to_vec(), StringFormat::Literal)
+        );
     }
 
     #[test]
@@ -525,13 +542,19 @@ mod tests {
         // de ws-byte die bij EI hoort — dus precies de rauwe data.
         let src = b"BI /W 3 /H 1 /BPC 8 /CS/G ID \xAA\xBB\xCC EI 1 0 0 1 5 5 cm";
         let mut it = ContentStreamIter::new(src);
-        let mut op = Operation { operator: String::new(), operands: Vec::new() };
+        let mut op = Operation {
+            operator: String::new(),
+            operands: Vec::new(),
+        };
         let mut span = None;
         while it.next_into(&mut op) {
             if op.operator == "ID" {
                 span = it.inline_image_span();
                 // ID-operanden = de BI-dict-paren
-                assert!(op.operands.iter().any(|o| *o == Object::Name(b"BPC".to_vec())));
+                assert!(op
+                    .operands
+                    .iter()
+                    .any(|o| *o == Object::Name(b"BPC".to_vec())));
             }
         }
         let (s, e) = span.expect("span gezet");

@@ -12,6 +12,15 @@ import { closeAllPopups } from '../../bridge.js';
 import { cancelOcrWorkflowDocument } from '../../ocr/workflow-service.js';
 import { forgetRegisteredDocumentOcrCache } from '../../ocr/cache.js';
 import { invalidateTextCache } from '../../search/text-cache.js';
+import {
+  cancelTextEditingForDocument,
+  isTextEditingDirtyForDocument,
+} from '../../text/text-edit-session.js';
+import { replaceDocumentPdfProxy } from '../../core/document-lifecycle.js';
+import { authorizeDocumentClose } from './document-close-authorization.js';
+import { showUnsavedClosePrompt } from './unsaved-close-prompt.js';
+
+const pendingTabCloses = new Map();
 
 /**
  * Create a new tab for a document
@@ -58,6 +67,7 @@ export function switchToTab(index) {
   // Save scroll position of current document
   const currentDoc = getActiveDocument();
   if (currentDoc) {
+    cancelTextEditingForDocument(currentDoc.id, 'tab-switch');
     import('../../pdf/whole-pdf-preload.js').then((module) => module.cancelWholePdfPreload(currentDoc, { reason: 'tab-switch' }));
     const container = document.getElementById('pdf-container');
     if (container) {
@@ -194,26 +204,39 @@ export function switchToTab(index) {
  */
 export async function closeTab(index, force = false) {
   if (index < 0 || index >= state.documents.length) return false;
-
   const doc = state.documents[index];
+  const pending = pendingTabCloses.get(doc.id);
+  if (pending) return pending;
 
-  // Cancel any in-progress background annotation loading for this document
-  cancelAnnotationLoading(doc);
-
-  // Check for unsaved changes - show Save / Don't Save / Cancel dialog
-  if (!force && doc.modified) {
-    const action = await showUnsavedChangesDialog(doc.fileName);
-    if (action === 'cancel') return false;
-    if (action === 'save') {
-      const saved = await savePDF();
-      if (!saved) return false; // Save failed or was cancelled
-      // This phase does not persist OCR into the PDF. Saving other document
-      // changes therefore cannot authorize closing over dirty pending OCR;
-      // the user may still explicitly choose Don't Save.
-      if (doc.ocr?.dirty) return false;
-    }
-    // action === 'dontsave' → proceed to close without saving
+  const operation = closeDocumentTab(doc, force);
+  pendingTabCloses.set(doc.id, operation);
+  try {
+    return await operation;
+  } finally {
+    if (pendingTabCloses.get(doc.id) === operation) pendingTabCloses.delete(doc.id);
   }
+}
+
+async function closeDocumentTab(doc, force) {
+  const authorized = await authorizeDocumentClose({
+    documentState: doc,
+    force,
+    requestAction: showUnsavedClosePrompt,
+    saveDocument: async (ownerDocument) => {
+      // savePDF is active-document scoped. Never allow a stacked/programmatic
+      // close prompt to save whichever unrelated tab happens to be visible.
+      if (getActiveDocument() !== ownerDocument) return false;
+      return savePDF();
+    },
+    isTextEditingDirtyForDocument,
+    cancelTextEditingForDocument,
+  });
+  if (!authorized) return false;
+
+  // The close has been authorized. Background work and transient editor state
+  // remain untouched while a prompt is pending or after the user presses
+  // Cancel; teardown begins only here.
+  cancelAnnotationLoading(doc);
 
   // Document identity is the cancellation boundary for background OCR. Wait
   // for the disposable child to be reaped before removing application state.
@@ -246,7 +269,7 @@ export async function closeTab(index, force = false) {
   clearEditableMetadataPreload(doc);
   const { cancelWholePdfPreload } = await import('../../pdf/whole-pdf-preload.js');
   cancelWholePdfPreload(doc, { release: true, reason: 'close' });
-  doc.pdfDoc = null;
+  replaceDocumentPdfProxy(doc, null, 'document-close');
   try {
     await closedPdfDocument?.destroy?.();
   } catch (error) {
@@ -276,6 +299,12 @@ export async function closeTab(index, force = false) {
   invalidateTextCache(doc.id);
   forgetRegisteredDocumentOcrCache(doc.id);
 
+  // Tabs can be reordered while asynchronous document cleanup runs. Resolve
+  // the immutable owner again immediately before mutation rather than using
+  // the caller's stale numeric index.
+  const index = state.documents.indexOf(doc);
+  if (index === -1) return true;
+
   // Remove the document
   state.documents.splice(index, 1);
 
@@ -301,33 +330,6 @@ export async function closeTab(index, force = false) {
   window.__OPDS_SESSION_SAVE__?.();
 
   return true;
-}
-
-/**
- * Show unsaved changes dialog with Save / Don't Save / Cancel options.
- * Uses native Tauri 3-button dialog when available, falls back to browser confirm.
- * @param {string} fileName - Name of the file with unsaved changes
- * @returns {Promise<'save'|'dontsave'|'cancel'>}
- */
-async function showUnsavedChangesDialog(fileName) {
-  if (window.__TAURI__?.dialog?.message) {
-    const result = await window.__TAURI__.dialog.message(
-      `Do you want to save changes to "${fileName}"?`,
-      {
-        title: 'Save Changes',
-        kind: 'warning',
-        buttons: { yes: 'Save', no: "Don't Save", cancel: 'Cancel' }
-      }
-    );
-    // result is 'Yes', 'No', or 'Cancel' (or the custom label string)
-    if (result === 'Yes' || result === 'Save') return 'save';
-    if (result === 'No' || result === "Don't Save") return 'dontsave';
-    return 'cancel';
-  }
-
-  // Fallback for non-Tauri: browser confirm (only supports 2 choices)
-  const result = confirm(`"${fileName}" has unsaved changes.\n\nClick OK to save before closing, or Cancel to discard changes.`);
-  return result ? 'save' : 'dontsave';
 }
 
 /**
@@ -469,14 +471,20 @@ export function updateWindowTitle() {
  * Mark the active document as modified
  */
 export function markDocumentModified() {
-  const doc = getActiveDocument();
+  return markDocumentModifiedForDocument(getActiveDocument());
+}
+
+/** Mark an immutable owner document modified even when another tab is visible. */
+export function markDocumentModifiedForDocument(doc) {
   if (doc) {
     doc.modified = true;
     // Direct modification bypasses undo stack, so clean point is unreachable
     doc.savedUndoStackLength = -1;
     updateTabBar();
     updateWindowTitle();
+    return true;
   }
+  return false;
 }
 
 /**

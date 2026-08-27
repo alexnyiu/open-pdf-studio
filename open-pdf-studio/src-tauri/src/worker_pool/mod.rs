@@ -4,16 +4,16 @@
 //!
 //! Architecture: spec/2026-05-19-multi-process-pdfium-design.md.
 
-pub mod state;
+pub mod recovery;
 pub mod routing;
 pub mod spawn;
-pub mod recovery;
+pub mod state;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 pub use state::{Status, WorkerState};
@@ -74,14 +74,28 @@ fn validate_pdfium_page_geometry(
         || value.page_index != page_index
         || !valid_page_box(&value.media_box)
         || !valid_page_box(&value.crop_box)
-        || value.bleed_box.as_ref().is_some_and(|entry| !valid_page_box(entry))
-        || value.trim_box.as_ref().is_some_and(|entry| !valid_page_box(entry))
-        || value.art_box.as_ref().is_some_and(|entry| !valid_page_box(entry))
+        || value
+            .bleed_box
+            .as_ref()
+            .is_some_and(|entry| !valid_page_box(entry))
+        || value
+            .trim_box
+            .as_ref()
+            .is_some_and(|entry| !valid_page_box(entry))
+        || value
+            .art_box
+            .as_ref()
+            .is_some_and(|entry| !valid_page_box(entry))
         || !finite_positive(value.user_unit)
         || value.user_unit > 75_000.0
-        || !matches!(value.user_unit_provenance.as_str(), "pdf-page-dictionary" | "pdf-default")
+        || !matches!(
+            value.user_unit_provenance.as_str(),
+            "pdf-page-dictionary" | "pdf-default"
+        )
     {
-        return Err(anyhow!("worker returned invalid PDF page geometry identity or boxes"));
+        return Err(anyhow!(
+            "worker returned invalid PDF page geometry identity or boxes"
+        ));
     }
     if !page_box_is_within(&value.media_box, &value.crop_box)
         || value
@@ -112,21 +126,21 @@ fn validate_pdfium_page_geometry(
     }
     let unrotated_width = value.crop_box.width * value.user_unit;
     let unrotated_height = value.crop_box.height * value.user_unit;
-    let (expected_display_width, expected_display_height) = if matches!(
-        value.total_rotation_degrees_clockwise,
-        90 | 270
-    ) {
-        (unrotated_height, unrotated_width)
-    } else {
-        (unrotated_width, unrotated_height)
-    };
+    let (expected_display_width, expected_display_height) =
+        if matches!(value.total_rotation_degrees_clockwise, 90 | 270) {
+            (unrotated_height, unrotated_width)
+        } else {
+            (unrotated_width, unrotated_height)
+        };
     if value.displayed_page.coordinate_space != "cropped-display-pdf-points"
         || value.displayed_page.unit != "pdf-point"
         || value.displayed_page.origin != "displayed-crop-top-left"
         || !close_geometry_value(value.displayed_page.width, expected_display_width)
         || !close_geometry_value(value.displayed_page.height, expected_display_height)
     {
-        return Err(anyhow!("worker returned inconsistent displayed page geometry"));
+        return Err(anyhow!(
+            "worker returned inconsistent displayed page geometry"
+        ));
     }
     let raster = &value.raster;
     let requested_scale = f64::from(scale);
@@ -163,7 +177,9 @@ fn validate_pdfium_page_geometry(
         || !raster.annotations_excluded
         || raster.forms_excluded
     {
-        return Err(anyhow!("worker returned inconsistent PDFium raster geometry"));
+        return Err(anyhow!(
+            "worker returned inconsistent PDFium raster geometry"
+        ));
     }
     Ok(())
 }
@@ -263,7 +279,11 @@ pub struct OcrRasterResult {
 /// (`.exe` alleen op Windows) zodat respawn ook op Linux/macOS de juiste naam
 /// zoekt.
 pub(crate) fn worker_exe_path() -> std::path::PathBuf {
-    let name = if cfg!(windows) { "pdfium-worker.exe" } else { "pdfium-worker" };
+    let name = if cfg!(windows) {
+        "pdfium-worker.exe"
+    } else {
+        "pdfium-worker"
+    };
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join(name)))
@@ -313,7 +333,10 @@ impl WorkerPool {
             if let Some(stdin) = stdin_guard.as_mut() {
                 let _ = stdin.write_all(b"{\"op\":\"trim\"}\n").await;
                 let _ = stdin.flush().await;
-                eprintln!("[pool] worker {} idle — pagina-handles getrimd", worker.slot);
+                eprintln!(
+                    "[pool] worker {} idle — pagina-handles getrimd",
+                    worker.slot
+                );
             }
         }
     }
@@ -325,10 +348,13 @@ impl WorkerPool {
 
     /// Snapshot of current queue depths (usize::MAX for dead slots).
     fn depths(&self) -> Vec<usize> {
-        self.workers.iter().map(|w| match w.status() {
-            Status::Ready => w.queue_depth.load(Ordering::Acquire),
-            _ => usize::MAX,
-        }).collect()
+        self.workers
+            .iter()
+            .map(|w| match w.status() {
+                Status::Ready => w.queue_depth.load(Ordering::Acquire),
+                _ => usize::MAX,
+            })
+            .collect()
     }
 
     async fn claim_low_priority_worker(&self) -> Result<Arc<WorkerState>> {
@@ -374,7 +400,9 @@ impl WorkerPool {
         let worker = self.workers[slot].clone();
         self.touch(&worker);
         worker.queue_depth.fetch_add(1, Ordering::Release);
-        let result = self.render_on_worker(worker.clone(), path, page_index, scale, rotation).await;
+        let result = self
+            .render_on_worker(worker.clone(), path, page_index, scale, rotation)
+            .await;
         worker.queue_depth.fetch_sub(1, Ordering::Release);
 
         if result.is_ok() {
@@ -394,7 +422,9 @@ impl WorkerPool {
         let worker2 = self.workers[slot2].clone();
         self.touch(&worker2);
         worker2.queue_depth.fetch_add(1, Ordering::Release);
-        let result2 = self.render_on_worker(worker2.clone(), path, page_index, scale, rotation).await;
+        let result2 = self
+            .render_on_worker(worker2.clone(), path, page_index, scale, rotation)
+            .await;
         worker2.queue_depth.fetch_sub(1, Ordering::Release);
         result2
     }
@@ -416,7 +446,12 @@ impl WorkerPool {
         self.touch(&worker);
         let result = self
             .render_on_worker_with_limits(
-                worker.clone(), path, page_index, scale, rotation, Some(limits),
+                worker.clone(),
+                path,
+                page_index,
+                scale,
+                rotation,
+                Some(limits),
             )
             .await;
         worker.queue_depth.fetch_sub(1, Ordering::Release);
@@ -447,9 +482,7 @@ impl WorkerPool {
         let worker = self.claim_low_priority_worker().await?;
         self.touch(&worker);
         let result = self
-            .page_geometry_on_worker(
-                worker.clone(), path, page_index, scale, rotation, limits,
-            )
+            .page_geometry_on_worker(worker.clone(), path, page_index, scale, rotation, limits)
             .await;
         worker.queue_depth.fetch_sub(1, Ordering::Release);
         if result.is_err() {
@@ -491,7 +524,9 @@ impl WorkerPool {
             stdin
                 .write_all(req_line.as_bytes())
                 .await
-                .with_context(|| format!("write page geometry request to worker {}", worker.slot))?;
+                .with_context(|| {
+                    format!("write page geometry request to worker {}", worker.slot)
+                })?;
             stdin.flush().await?;
         }
         let mut resp_line = String::new();
@@ -500,9 +535,12 @@ impl WorkerPool {
             let stdout = stdout_guard
                 .as_mut()
                 .ok_or_else(|| anyhow!("worker {} has no stdout", worker.slot))?;
-            match tokio::time::timeout(WORKER_READ_TIMEOUT, stdout.read_line(&mut resp_line)).await {
+            match tokio::time::timeout(WORKER_READ_TIMEOUT, stdout.read_line(&mut resp_line)).await
+            {
                 Ok(result) => {
-                    result.with_context(|| format!("read page geometry from worker {}", worker.slot))?;
+                    result.with_context(|| {
+                        format!("read page geometry from worker {}", worker.slot)
+                    })?;
                 }
                 Err(_) => {
                     return Err(anyhow!(
@@ -514,15 +552,24 @@ impl WorkerPool {
             }
         }
         if resp_line.is_empty() || resp_line.len() > 256 * 1024 {
-            return Err(anyhow!("worker {} returned an invalid page geometry response size", worker.slot));
+            return Err(anyhow!(
+                "worker {} returned an invalid page geometry response size",
+                worker.slot
+            ));
         }
         let resp: serde_json::Value = serde_json::from_str(&resp_line)
             .with_context(|| format!("parse worker {} page geometry response", worker.slot))?;
-        let response = resp
-            .as_object()
-            .ok_or_else(|| anyhow!("worker {} returned a non-object page geometry response", worker.slot))?;
+        let response = resp.as_object().ok_or_else(|| {
+            anyhow!(
+                "worker {} returned a non-object page geometry response",
+                worker.slot
+            )
+        })?;
         if response.get("id").and_then(serde_json::Value::as_u64) != Some(id) {
-            return Err(anyhow!("worker {} returned a mismatched page geometry response id", worker.slot));
+            return Err(anyhow!(
+                "worker {} returned a mismatched page geometry response id",
+                worker.slot
+            ));
         }
         if !resp["ok"].as_bool().unwrap_or(false) {
             if response.len() != 3
@@ -530,7 +577,10 @@ impl WorkerPool {
                 || !response.contains_key("ok")
                 || !response.contains_key("error")
             {
-                return Err(anyhow!("worker {} returned a malformed page geometry error", worker.slot));
+                return Err(anyhow!(
+                    "worker {} returned a malformed page geometry error",
+                    worker.slot
+                ));
             }
             return Err(anyhow!(
                 "worker {} page geometry error: {}",
@@ -543,7 +593,10 @@ impl WorkerPool {
             || !response.contains_key("ok")
             || !response.contains_key("pageGeometry")
         {
-            return Err(anyhow!("worker {} returned a malformed page geometry response", worker.slot));
+            return Err(anyhow!(
+                "worker {} returned a malformed page geometry response",
+                worker.slot
+            ));
         }
         let geometry: PdfiumPageGeometry = serde_json::from_value(resp["pageGeometry"].clone())
             .with_context(|| format!("parse worker {} page geometry", worker.slot))?;
@@ -558,7 +611,10 @@ impl WorkerPool {
             || pixels > limits.max_pixels
             || bytes > limits.max_raster_bytes
         {
-            return Err(anyhow!("worker {} returned page geometry beyond requested limits", worker.slot));
+            return Err(anyhow!(
+                "worker {} returned page geometry beyond requested limits",
+                worker.slot
+            ));
         }
         validate_pdfium_page_geometry(&geometry, page_index, scale, rotation, width, height)?;
         Ok(geometry)
@@ -593,7 +649,15 @@ impl WorkerPool {
         let _t_queue = std::time::Instant::now();
         let _exchange = request_lock.lock().await;
         let _t_run = std::time::Instant::now();
-        let _plog = PoolTrace::new(worker.slot, "render", path, page_index, scale, _t_queue, _t_run);
+        let _plog = PoolTrace::new(
+            worker.slot,
+            "render",
+            path,
+            page_index,
+            scale,
+            _t_queue,
+            _t_run,
+        );
         let id = self.next_request_id.fetch_add(1, Ordering::Release);
 
         let req = if let Some(limits) = ocr_limits {
@@ -624,9 +688,12 @@ impl WorkerPool {
         // Write request
         {
             let mut stdin_guard = worker.stdin.lock().await;
-            let stdin = stdin_guard.as_mut()
+            let stdin = stdin_guard
+                .as_mut()
                 .ok_or_else(|| anyhow!("worker {} has no stdin", worker.slot))?;
-            stdin.write_all(req_line.as_bytes()).await
+            stdin
+                .write_all(req_line.as_bytes())
+                .await
                 .with_context(|| format!("write to worker {}", worker.slot))?;
             stdin.flush().await?;
         }
@@ -636,11 +703,21 @@ impl WorkerPool {
         let mut resp_line = String::new();
         {
             let mut stdout_guard = worker.stdout.lock().await;
-            let stdout = stdout_guard.as_mut()
+            let stdout = stdout_guard
+                .as_mut()
                 .ok_or_else(|| anyhow!("worker {} has no stdout", worker.slot))?;
-            match tokio::time::timeout(WORKER_READ_TIMEOUT, stdout.read_line(&mut resp_line)).await {
-                Ok(r) => { r.with_context(|| format!("read from worker {}", worker.slot))?; }
-                Err(_) => return Err(anyhow!("worker {} read timeout ({}s)", worker.slot, WORKER_READ_TIMEOUT.as_secs())),
+            match tokio::time::timeout(WORKER_READ_TIMEOUT, stdout.read_line(&mut resp_line)).await
+            {
+                Ok(r) => {
+                    r.with_context(|| format!("read from worker {}", worker.slot))?;
+                }
+                Err(_) => {
+                    return Err(anyhow!(
+                        "worker {} read timeout ({}s)",
+                        worker.slot,
+                        WORKER_READ_TIMEOUT.as_secs()
+                    ))
+                }
             }
         }
 
@@ -662,27 +739,50 @@ impl WorkerPool {
 
         let expected_bytes = usize::try_from(w)
             .ok()
-            .and_then(|width| usize::try_from(h).ok().and_then(|height| width.checked_mul(height)))
+            .and_then(|width| {
+                usize::try_from(h)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
             .and_then(|pixels| pixels.checked_mul(4))
-            .ok_or_else(|| anyhow!("worker {} returned overflowing raster dimensions", worker.slot))?;
+            .ok_or_else(|| {
+                anyhow!(
+                    "worker {} returned overflowing raster dimensions",
+                    worker.slot
+                )
+            })?;
         if w == 0 || h == 0 || shm_bytes != expected_bytes {
-            return Err(anyhow!("worker {} returned inconsistent raster metadata", worker.slot));
+            return Err(anyhow!(
+                "worker {} returned inconsistent raster metadata",
+                worker.slot
+            ));
         }
         if let Some(limits) = ocr_limits {
             let pixels = u64::from(w) * u64::from(h);
-            if w > limits.max_width || h > limits.max_height ||
-                pixels > limits.max_pixels || shm_bytes as u64 > limits.max_raster_bytes {
-                return Err(anyhow!("worker {} returned an OCR raster beyond its limits", worker.slot));
+            if w > limits.max_width
+                || h > limits.max_height
+                || pixels > limits.max_pixels
+                || shm_bytes as u64 > limits.max_raster_bytes
+            {
+                return Err(anyhow!(
+                    "worker {} returned an OCR raster beyond its limits",
+                    worker.slot
+                ));
             }
         }
 
         // Read RGBA from SHM
         let shm_guard = worker.shm.lock().await;
-        let mmap = shm_guard.as_ref()
+        let mmap = shm_guard
+            .as_ref()
             .ok_or_else(|| anyhow!("worker {} has no shm", worker.slot))?;
         const HEADER: usize = 32;
         if shm_bytes + HEADER > mmap.len() {
-            return Err(anyhow!("worker {} shm_bytes {} exceeds region", worker.slot, shm_bytes));
+            return Err(anyhow!(
+                "worker {} shm_bytes {} exceeds region",
+                worker.slot,
+                shm_bytes
+            ));
         }
         let rgba = mmap[HEADER..HEADER + shm_bytes].to_vec();
 
@@ -734,16 +834,28 @@ impl WorkerPool {
         let worker = self.workers[slot].clone();
         self.touch(&worker);
         worker.queue_depth.fetch_add(1, Ordering::Release);
-        let result = self.render_region_on_worker(
-            worker.clone(), path, page_index, scale, rotation,
-            region_x_pt, region_y_pt, region_w_pt, region_h_pt,
-        ).await;
+        let result = self
+            .render_region_on_worker(
+                worker.clone(),
+                path,
+                page_index,
+                scale,
+                rotation,
+                region_x_pt,
+                region_y_pt,
+                region_w_pt,
+                region_h_pt,
+            )
+            .await;
         worker.queue_depth.fetch_sub(1, Ordering::Release);
         // Geen retry (de aanroeper valt terug op in-proc PDFium), maar een
         // gefaalde/getimede worker is mogelijk gedesynchroniseerd — respawn
         // hem zodat de volgende tegel niet weer op een wedged worker landt.
         if result.is_err() {
-            tokio::spawn(recovery::handle_worker_crash(worker.clone(), worker_exe_path()));
+            tokio::spawn(recovery::handle_worker_crash(
+                worker.clone(),
+                worker_exe_path(),
+            ));
         }
         result
     }
@@ -766,7 +878,15 @@ impl WorkerPool {
         let _t_queue = std::time::Instant::now();
         let _exchange = request_lock.lock().await;
         let _t_run = std::time::Instant::now();
-        let _plog = PoolTrace::new(worker.slot, "region", path, page_index, scale, _t_queue, _t_run);
+        let _plog = PoolTrace::new(
+            worker.slot,
+            "region",
+            path,
+            page_index,
+            scale,
+            _t_queue,
+            _t_run,
+        );
         let id = self.next_request_id.fetch_add(1, Ordering::Release);
 
         let req = json!({
@@ -785,9 +905,12 @@ impl WorkerPool {
 
         {
             let mut stdin_guard = worker.stdin.lock().await;
-            let stdin = stdin_guard.as_mut()
+            let stdin = stdin_guard
+                .as_mut()
                 .ok_or_else(|| anyhow!("worker {} has no stdin", worker.slot))?;
-            stdin.write_all(req_line.as_bytes()).await
+            stdin
+                .write_all(req_line.as_bytes())
+                .await
                 .with_context(|| format!("write to worker {}", worker.slot))?;
             stdin.flush().await?;
         }
@@ -795,11 +918,21 @@ impl WorkerPool {
         let mut resp_line = String::new();
         {
             let mut stdout_guard = worker.stdout.lock().await;
-            let stdout = stdout_guard.as_mut()
+            let stdout = stdout_guard
+                .as_mut()
                 .ok_or_else(|| anyhow!("worker {} has no stdout", worker.slot))?;
-            match tokio::time::timeout(WORKER_READ_TIMEOUT, stdout.read_line(&mut resp_line)).await {
-                Ok(r) => { r.with_context(|| format!("read from worker {}", worker.slot))?; }
-                Err(_) => return Err(anyhow!("worker {} region read timeout ({}s)", worker.slot, WORKER_READ_TIMEOUT.as_secs())),
+            match tokio::time::timeout(WORKER_READ_TIMEOUT, stdout.read_line(&mut resp_line)).await
+            {
+                Ok(r) => {
+                    r.with_context(|| format!("read from worker {}", worker.slot))?;
+                }
+                Err(_) => {
+                    return Err(anyhow!(
+                        "worker {} region read timeout ({}s)",
+                        worker.slot,
+                        WORKER_READ_TIMEOUT.as_secs()
+                    ))
+                }
             }
         }
 
@@ -812,7 +945,11 @@ impl WorkerPool {
 
         if !resp["ok"].as_bool().unwrap_or(false) {
             let err = resp["error"].as_str().unwrap_or("unknown");
-            return Err(anyhow!("worker {} region render error: {}", worker.slot, err));
+            return Err(anyhow!(
+                "worker {} region render error: {}",
+                worker.slot,
+                err
+            ));
         }
 
         let w = resp["w"].as_u64().unwrap_or(0) as u32;
@@ -820,11 +957,16 @@ impl WorkerPool {
         let shm_bytes = resp["shm_bytes"].as_u64().unwrap_or(0) as usize;
 
         let shm_guard = worker.shm.lock().await;
-        let mmap = shm_guard.as_ref()
+        let mmap = shm_guard
+            .as_ref()
             .ok_or_else(|| anyhow!("worker {} has no shm", worker.slot))?;
         const HEADER: usize = 32;
         if shm_bytes + HEADER > mmap.len() {
-            return Err(anyhow!("worker {} shm_bytes {} exceeds region", worker.slot, shm_bytes));
+            return Err(anyhow!(
+                "worker {} shm_bytes {} exceeds region",
+                worker.slot,
+                shm_bytes
+            ));
         }
         let rgba = mmap[HEADER..HEADER + shm_bytes].to_vec();
 
@@ -841,8 +983,15 @@ struct PoolTrace {
 }
 
 impl PoolTrace {
-    fn new(slot: u32, op: &'static str, path: &str, page: u32, scale: f32,
-           t_queue: std::time::Instant, t_run: std::time::Instant) -> Self {
+    fn new(
+        slot: u32,
+        op: &'static str,
+        path: &str,
+        page: u32,
+        scale: f32,
+        t_queue: std::time::Instant,
+        t_run: std::time::Instant,
+    ) -> Self {
         if std::env::var("OPDS_POOL_TRACE").ok().as_deref() != Some("1") {
             return Self { line: None, t_run };
         }
@@ -852,7 +1001,10 @@ impl PoolTrace {
             .unwrap_or_default();
         let wait_ms = t_run.duration_since(t_queue).as_millis();
         Self {
-            line: Some(format!("w{} {} p{} s{:.3} wait={}ms {}", slot, op, page, scale, wait_ms, name)),
+            line: Some(format!(
+                "w{} {} p{} s{:.3} wait={}ms {}",
+                slot, op, page, scale, wait_ms, name
+            )),
             t_run,
         }
     }
@@ -863,7 +1015,11 @@ impl Drop for PoolTrace {
         if let Some(l) = self.line.take() {
             use std::io::Write;
             let p = std::env::temp_dir().join("opds-pool-trace.log");
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+            {
                 let _ = writeln!(f, "{} run={}ms", l, self.t_run.elapsed().as_millis());
             }
         }

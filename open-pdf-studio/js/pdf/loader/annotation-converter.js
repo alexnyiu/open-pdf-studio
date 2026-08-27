@@ -13,6 +13,7 @@ import {
   DEFAULT_TEXT_FORMAT_CAPABILITIES,
   assertRichTextDocumentV2,
 } from '../../text/rich-text.js';
+import { canonicalFreeTextContent } from './free-text-content.js';
 
 // Convert PDF annotation to our format
 export async function convertPdfAnnotation(annot, pageNum, viewport, stampImageMap, annotColorMap) {
@@ -1075,8 +1076,7 @@ export async function convertPdfAnnotation(annot, pageNum, viewport, stampImageM
       let fontUnderline = extraColors.fontUnderline || false;
       let fontStrikethrough = extraColors.fontStrikethrough || false;
 
-      // Text content: prefer textContent array (joined), fallback to contents
-      const text = annot.textContent ? annot.textContent.join('\n') : (annot.contents || '');
+      const text = canonicalFreeTextContent(annot, ownedRichText);
 
       // For FreeText annotations, annot.color (C entry) is the background/fill color per PDF spec
       // Border color: IC entry or appearance stream stroke color (extracted via pdf-lib)

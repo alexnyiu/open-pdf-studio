@@ -82,6 +82,19 @@ test('exact native layout rejects glyphs or regions that cross the inferred colu
   assert.match(result.rejectionReasons.join('; '), /native column boundary/);
 });
 
+test('exact native layout rejects a canonical editor region outside the CropBox even when ink fits', async () => {
+  const source = documentFor('short', { x: 170, width: 45 });
+  const result = await layoutExpandableNativeText(source, {
+    width: 45,
+    minimumHeight: source.region.height,
+    anchorTop: source.region.y + source.region.height,
+    pageBounds: { x: 0, y: 0, width: 200, height: 200 },
+  });
+  assert.equal(result.pageEdgeValid, false);
+  assert.equal(result.valid, false);
+  assert.match(result.rejectionReasons.join('; '), /CropBox/);
+});
+
 test('ink-safe content width contains small mixed-style runs and right-edge punctuation', async () => {
   const source = createRichTextDocument([
     createTextLine([
@@ -123,6 +136,128 @@ test('manual-line mode never generates wraps and rejects an overlong authored li
   assert.ok(result.requiredWidth > result.editorBounds.width);
   assert.equal(result.valid, false);
   assert.match(result.rejectionReasons.join('; '), /press Enter/);
+});
+
+test('unchanged ARCALYST source uses its complete authored width without consuming visual ink padding', async () => {
+  const sourceWidth = 261.6415875;
+  const source = createRichTextDocument([
+    createTextLine([
+      createTextRun('ARCALYST penetration ', {
+        faceId: 'liberation-sans-regular', size: 9,
+      }),
+      createTextRun('(the share of the potential market already', {
+        faceId: 'liberation-sans-italic', size: 9, italic: true,
+      }),
+      // richTextForNativeBlock retains the semantic separator between source
+      // visual lines as canonical trailing whitespace on the soft-wrap line.
+      createTextRun(' ', {
+        faceId: 'liberation-sans-italic', size: 9, italic: true,
+      }),
+    ], { baseline: 735, baselineAdvance: 11, breakAfter: 'soft' }),
+    createTextLine([
+      createTextRun('using the product) ', {
+        faceId: 'liberation-sans-italic', size: 9, italic: true,
+      }),
+      createTextRun('+ pipeline', {
+        faceId: 'liberation-sans-regular', size: 9,
+      }),
+    ], { baseline: 724, baselineAdvance: 11, breakAfter: 'hard' }),
+  ], { x: 180, y: 721.3, width: sourceWidth, height: 22.7 });
+
+  const result = await layoutExpandableNativeText(source, {
+    width: sourceWidth,
+    contentWidth: sourceWidth,
+    contentInset: 0,
+    inkPadding: 2,
+    minimumHeight: source.region.height,
+    anchorTop: source.region.y + source.region.height,
+    pageBounds: { x: 0, y: 0, width: 612, height: 792 },
+    columnBounds: { left: 180, right: 464 },
+    manualLineBreaks: true,
+  });
+
+  assert.equal(result.valid, true, result.rejectionReasons.join('; '));
+  assert.equal(result.contentWidth, sourceWidth);
+  assert.equal(result.contentInset, 0);
+  assert.deepEqual(result.contentInsets, { left: 0, right: 0, top: 0, bottom: 0 });
+  assert.equal(result.document.region.x, source.region.x);
+  assert.equal(result.document.region.width, source.region.width);
+  assert.equal(result.document.lines.length, 2);
+  assert.equal(richTextToPlainText(result.document), richTextToPlainText(source));
+  assert.ok(result.fullLineAdvances[0] > result.contentWidth,
+    'the canonical soft-wrap separator remains in the logical shaped line');
+  assert.ok(result.paintedLineAdvances[0] <= result.contentWidth + 1e-6,
+    'trailing Unicode whitespace does not consume visible line capacity');
+  assert.ok(result.requiredWidth <= result.contentWidth + 1e-6);
+  assert.ok(result.inkInsets.left >= 3, 'visual ink safety remains available to the editor');
+  assert.ok(result.lineInkBounds.every((bounds) => (
+    bounds.x >= 180 - 1e-6 && bounds.x + bounds.width <= 464 + 1e-6
+  )));
+  assert.doesNotMatch(result.rejectionReasons.join('; '), /fixed region|press Enter/u);
+});
+
+test('explicit manual capacity still rejects genuinely visible overflow', async () => {
+  const source = documentFor('one two three four five six');
+  const result = await layoutExpandableNativeText(source, {
+    width: 45,
+    contentWidth: 45,
+    contentInset: 0,
+    inkPadding: 2,
+    minimumHeight: source.region.height,
+    anchorTop: source.region.y + source.region.height,
+    pageBounds: { x: 0, y: 0, width: 200, height: 200 },
+    manualLineBreaks: true,
+  });
+
+  assert.ok(result.paintedLineAdvances[0] > result.contentWidth);
+  assert.equal(result.valid, false);
+  assert.match(result.rejectionReasons.join('; '), /press Enter/u);
+});
+
+test('trailing Unicode whitespace does not shift explicit right alignment', async () => {
+  const plain = documentFor('aligned');
+  const spaced = documentFor('aligned\u00a0');
+  plain.lines[0].alignment = 'right';
+  spaced.lines[0].alignment = 'right';
+  const options = {
+    width: 80,
+    contentWidth: 80,
+    contentInset: 0,
+    minimumHeight: 16,
+    manualLineBreaks: true,
+  };
+
+  const [plainResult, spacedResult] = await Promise.all([
+    layoutExpandableNativeText(plain, options),
+    layoutExpandableNativeText(spaced, options),
+  ]);
+
+  assert.ok(spacedResult.fullLineAdvances[0] > plainResult.fullLineAdvances[0]);
+  assert.ok(Math.abs(
+    spacedResult.paintedLineAdvances[0] - plainResult.paintedLineAdvances[0],
+  ) <= 1e-6);
+  assert.ok(Math.abs(
+    spacedResult.lineInkBounds[0].x - plainResult.lineInkBounds[0].x,
+  ) <= 1e-6);
+});
+
+test('explicit canonical content inset controls x placement and vertical growth', async () => {
+  const source = documentFor('short', { x: 10, y: 78, width: 80, height: 10 });
+  const result = await layoutExpandableNativeText(source, {
+    width: 80,
+    contentWidth: 72,
+    contentInset: 4,
+    inkPadding: 7,
+    minimumHeight: 0,
+    anchorTop: 94,
+    pageBounds: { x: 0, y: 0, width: 200, height: 200 },
+  });
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.contentInsets, { left: 4, right: 4, top: 4, bottom: 4 });
+  assert.ok(result.lineInkBounds[0].x >= source.region.x + 4 - 1e-6);
+  assert.ok(result.requiredHeight >= source.lines[0].baselineAdvance + 8);
+  assert.equal(result.document.region.y + result.document.region.height, 94);
 });
 
 test('manual-line mode preserves a source visual-line marker without adding lines', async () => {

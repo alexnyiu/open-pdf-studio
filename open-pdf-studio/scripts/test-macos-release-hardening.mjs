@@ -37,6 +37,15 @@ const defaultAppPath = path.join(
   'Open PDF Studio.app',
 );
 
+async function gitHead() {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
+  const result = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+    cwd: repoDir,
+    encoding: 'utf8',
+  });
+  return result.stdout.trim();
+}
+
 function parseArguments(argv) {
   const options = {
     appPath: process.env.OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE || defaultAppPath,
@@ -308,6 +317,7 @@ async function main() {
   const report = {
     contract: 'open-pdf-studio.macos-release-hardening',
     schemaVersion: 1,
+    head: await gitHead(),
     generatedAt: new Date().toISOString(),
     platform: { os: process.platform, architecture: process.arch },
     appPath,

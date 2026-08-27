@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Muokkaa: {{label}}",
+    "editValueHint": "{{label}}. Muokkaa kaksoisnapsauttamalla tai painamalla Enter.",
+    "timezoneHint": "Päivämäärät näytetään aikavyöhykkeellä {{timezone}} ja tallennetaan ISO 8601 -muodossa."
+  },
+  "fontSubstitution": {
+    "title": "Hyväksy fontin korvaaminen",
+    "sourceFace": "Alkuperäinen fontti",
+    "sourceFaces": "Alkuperäiset fontit",
+    "unknown": "Tuntematon",
+    "packagedSubstitute": "Sovellukseen sisältyvä korvaava fontti",
+    "notAvailable": "Ei saatavilla",
+    "sampleText": "Esimerkki",
+    "sampleFallback": "Nopea ruskea kettu hyppää laiskan koiran yli.",
+    "scope": "Koskee",
+    "scopeAnnotation": "Tätä merkintää",
+    "scopeSelection": "Valittuja tekstiruutuja",
+    "scopeParagraph": "Tätä PDF-kappaletta",
+    "scopeFindReplace": "Tätä Etsi/korvaa-muokkausta",
+    "remember": "Muista tämä hyväksyntä avoimessa asiakirjassa",
+    "approve": "Käytä korvaavaa fonttia",
+    "cancel": "Peruuta"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Muokkaa PDF-tekstiä",
+      "editFormatted": "Muokkaa muotoiltua PDF-tekstiä",
+      "editAnnotation": "Muokkaa muotoiltua {{type}}-tekstiä",
+      "editRegion": "Muokkaa muotoiltua PDF-tekstialuetta: {{text}}",
+      "editScannedLine": "Muokkaa skannattua tekstiriviä: {{text}}",
+      "editScannedFixed": "Muokkaa skannatun tekstin kiinteää aluetta: {{text}}",
+      "editScannedReflow": "Muokkaa skannatun kappaleen uudelleenjuoksutusaluetta: {{text}}",
+      "selectedOcrParagraph": "Valittu OCR-kappale, jossa on {{count}} riviä"
+    },
+    "handles": {
+      "move": "Siirrä tekstiruutua",
+      "moveHint": "Siirrä tekstiruutua vetämällä",
+      "resize": "Muuta tekstiruudun kokoa",
+      "resizeHint": "Muuta tekstiruudun kokoa vetämällä"
+    },
+    "actions": {
+      "apply": "Käytä",
+      "cancel": "Peruuta"
+    },
+    "status": {
+      "ocrOverflow": "Koko OCR-luonnos näkyy hyväksytyn alueen ulkopuolella. Tallennus pysyy estettynä, kunnes kiinteän alueen tarkka tarkistus vahvistaa tekstin mahtuvan siihen.",
+      "scannedRegion": "Skannattua tekstiä muokataan hyväksytyllä alueella.",
+      "shaping": "Tarkkaa tekstin asettelua viimeistellään…",
+      "overlap": "Teksti peittää sivun olemassa olevaa sisältöä. Muutoksen voi hyväksyä; viereiset alkuperäiset objektit eivät siirry.",
+      "lowContrast": "Heikkokontrastisilla alkuperäisväreillä on vain muokkauksen aikana näkyvä tausta. Tallennetut värit eivät muutu.",
+      "layoutRejectedPrefix": "Tekstin asettelu hylättiin:",
+      "layoutRejected": "Tekstin asettelu hylättiin: {{reasons}}",
+      "shapingRejected": "Tekstin muotoilu hylättiin: {{reason}}",
+      "nativeManual": "Alkuperäistä PDF-tekstiä muokataan tekstiruudussa, jossa rivit asetetaan käsin. Luo uusi rivi painamalla Enter.",
+      "nativeManualContrast": "Alkuperäistä PDF-tekstiä muokataan tekstiruudussa, jossa rivit asetetaan käsin. Luo uusi rivi painamalla Enter. Heikkokontrastisilla alkuperäisväreillä on vain muokkauksen aikana näkyvä tausta; tallennetut värit eivät muutu.",
+      "nativeGrowing": "Alkuperäistä PDF-tekstiä muokataan. Leveys on kiinteä, ja alue kasvaa alaspäin.",
+      "nativeGrowingContrast": "Alkuperäistä PDF-tekstiä muokataan. Leveys on kiinteä, ja alue kasvaa alaspäin. Heikkokontrastisilla alkuperäisväreillä on vain muokkauksen aikana näkyvä tausta; tallennetut värit eivät muutu.",
+      "scannedEstimate": "Skannattua tekstiä muokataan. Fontin ominaisuudet ovat arvioita.",
+      "applyRejected": "Tekstimuokkausta ei voitu käyttää: {{reason}}",
+      "cropBoxRejected": "Muotoiltua tekstiä ei voi hyväksyä sivun CropBox-alueella.",
+      "layoutTimeout": "Tarkka tekstin asettelu ei valmistunut ajoissa. Muokkain pysyy avoinna.",
+      "scannedRejected": "Skannatun tekstin muutos hylättiin: {{reason}}",
+      "lineBreakUnsupported": "Rivinvaihtoja ei tueta. Käytä tätä yksirivistä muokkausta painamalla Komento-Enter.",
+      "ocrOneLine": "Yhtä erillistä skannattua tekstiriviä muokataan. Fontin ominaisuudet ovat arvioita.",
+      "ocrFixed": "Useita OCR-rivejä muokataan yhdellä kiinteällä alkuperäisellä alueella. Yksi kappale juoksutetaan uudelleen tämän alueen sisällä; pakotetut rivinvaihdot säilyttävät kiinteiden rivien tilan. Komento-Enter käyttää muutosta.",
+      "ocrReflow": "Yhtä kappaletta muokataan sen hyväksytyllä alkuperäisellä OCR-alueella. Komento-Enter käyttää muutosta; ylivuoto hylätään.",
+      "operationFailed": "Tekstitoimintoa ei voitu suorittaa loppuun. Asiakirjaa ei muutettu.",
+      "staleDraft": "Asiakirja muuttui tekstieditorin ollessa avoinna. Luonnos hylättiin.",
+      "multipleOcrParagraphs": "Valinta ulottuu useaan OCR-kappaleeseen. Tarkista erilliset ääriviivat ja käytä Yhdistä-toimintoa erikseen. Sarakkeiden välinen yhdistäminen on edelleen pois käytöstä.",
+      "nativeColumnBoundary": "Tämä kappale ylittää havaitun alkuperäisen sarakerajan. Muokkaus estettiin, eikä asiakirjaa muutettu.",
+      "nativeSourceUnavailable": "Näkyvää tekstiä ei voitu yhdistää kelvollisiin lähdeoperaattoreihin. Asiakirjaa ei muutettu.",
+      "nativeDeleteUnavailable": "Tätä PDF:n alkuperäistä tekstiä ei voi poistaa turvallisesti, koska sen tarkat lähdeoperaattorit ovat tulkinnanvaraisia. Asiakirjaa ei muutettu.",
+      "readOnly": "Aiemmin muokattu teksti on vain luku -tilassa. Asiakirjaa ei muutettu."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "{{limit}} grafeemin raja",
+      "lineThreshold": "{{limit}} rivin raja",
+      "message": "Koko liitetty sisältö säilytettiin: {{graphemeCount}} grafeemia {{lineCount}} rivillä. Raja ylitetty: {{thresholds}}. Esikatselu on rajattu. Poista koko lisäys valitsemalla Kumoa liittäminen.",
+      "messageWithExpansion": "Koko liitetty sisältö säilytettiin: {{graphemeCount}} grafeemia {{lineCount}} rivillä. Raja ylitetty: {{thresholds}}. Esikatselu on rajattu. Poista koko lisäys valitsemalla Kumoa liittäminen tai ota tarkasti vahvistetut rajat käyttöön valitsemalla Laajenna ruutua.",
+      "undo": "Kumoa liittäminen",
+      "expand": "Laajenna ruutua"
+    }
+  },
+  "ocrGrouping": {
+    "label": "OCR-kappaleiden ryhmittely",
+    "title": "Ryhmittely",
+    "mergeSelected": "Yhdistä valitut",
+    "mergeSelectedParagraphs": "Yhdistä valitut kappaleet",
+    "mergePrevious": "Yhdistä edelliseen",
+    "mergePreviousHint": "Yhdistä edelliseen OCR-kappaleeseen",
+    "mergeNext": "Yhdistä seuraavaan",
+    "mergeNextHint": "Yhdistä seuraavaan OCR-kappaleeseen",
+    "splitBefore": "Jaa ennen",
+    "splitAfter": "Jaa jälkeen",
+    "reset": "Palauta automaattinen ryhmittely",
+    "crossColumnDisabled": "Yhdistäminen sarakkeiden välillä on poistettu käytöstä",
+    "ambiguousBoundariesOnly": "Vain saman sarakkeen epäselvät rajat voi yhdistää käsin",
+    "tooManyLines": "Yli 32 riviä. Jaa tämä kappale käsin ennen muokkaamista.",
+    "mergeDescription": "Nykyiset tekstit on erotettu säilytetyllä pakotetulla rivinvaihdolla. Yhdistäminen tehdään vasta, kun yhdistetty lähdekorjaus ja kiinteä alue läpäisevät tarkistuksen.",
+    "mergedText": "Yhdistetty OCR-teksti",
+    "splitRegion": "Jaa OCR-alue",
+    "firstRegion": "Ensimmäinen alue",
+    "secondRegion": "Toinen alue",
+    "sourceLines": "Lähderivit: {{lines}}"
+  }
+}

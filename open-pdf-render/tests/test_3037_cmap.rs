@@ -1,7 +1,10 @@
 #[test]
 fn test_3037_font_cmap_mapping() {
     let path = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3037 Aanbouw Herenweg 20 Moerkapelle\71_constructie_advies\3037-CP-21 Constructieoverzicht.pdf";
-    let bytes = match std::fs::read(path) { Ok(b) => b, Err(_) => return };
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
     let doc = lopdf::Document::load_mem(&bytes).unwrap();
 
     let pages = doc.get_pages();
@@ -21,15 +24,24 @@ fn test_3037_font_cmap_mapping() {
 
     // Get font R11
     let fref = fonts.get(b"R11").unwrap();
-    let fid = match fref { lopdf::Object::Reference(id) => *id, _ => return };
+    let fid = match fref {
+        lopdf::Object::Reference(id) => *id,
+        _ => return,
+    };
     let fdict = doc.get_object(fid).unwrap().as_dict().unwrap();
 
     // Get embedded font data
     let desc_ref = fdict.get(b"FontDescriptor").unwrap();
-    let did = match desc_ref { lopdf::Object::Reference(id) => *id, _ => return };
+    let did = match desc_ref {
+        lopdf::Object::Reference(id) => *id,
+        _ => return,
+    };
     let desc = doc.get_object(did).unwrap().as_dict().unwrap();
     let ff2_ref = desc.get(b"FontFile2").unwrap();
-    let ff2_id = match ff2_ref { lopdf::Object::Reference(id) => *id, _ => return };
+    let ff2_id = match ff2_ref {
+        lopdf::Object::Reference(id) => *id,
+        _ => return,
+    };
     let ff2_stream = match doc.get_object(ff2_id).unwrap() {
         lopdf::Object::Stream(ref s) => s.clone(),
         _ => return,
@@ -66,19 +78,31 @@ fn test_3037_font_cmap_mapping() {
         let id = ttf_parser::GlyphId(gid);
         let name = face.glyph_name(id);
         let has_outline = face.outline_glyph(id, &mut DummyBuilder).is_some();
-        println!("  glyph {} = name: {:?}, has_outline: {}", gid, name, has_outline);
+        println!(
+            "  glyph {} = name: {:?}, has_outline: {}",
+            gid, name, has_outline
+        );
     }
 
     // Check FirstChar/LastChar from PDF
-    let first_char = fdict.get(b"FirstChar").and_then(|o| match o {
-        lopdf::Object::Integer(i) => Ok(Some(*i)),
-        _ => Ok(None),
-    }).unwrap();
-    let last_char = fdict.get(b"LastChar").and_then(|o| match o {
-        lopdf::Object::Integer(i) => Ok(Some(*i)),
-        _ => Ok(None),
-    }).unwrap();
-    println!("\nPDF FirstChar: {:?}, LastChar: {:?}", first_char, last_char);
+    let first_char = fdict
+        .get(b"FirstChar")
+        .and_then(|o| match o {
+            lopdf::Object::Integer(i) => Ok(Some(*i)),
+            _ => Ok(None),
+        })
+        .unwrap();
+    let last_char = fdict
+        .get(b"LastChar")
+        .and_then(|o| match o {
+            lopdf::Object::Integer(i) => Ok(Some(*i)),
+            _ => Ok(None),
+        })
+        .unwrap();
+    println!(
+        "\nPDF FirstChar: {:?}, LastChar: {:?}",
+        first_char, last_char
+    );
 }
 
 struct DummyBuilder;

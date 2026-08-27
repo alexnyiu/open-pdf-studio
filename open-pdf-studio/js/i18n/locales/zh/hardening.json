@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "编辑{{label}}",
+    "editValueHint": "{{label}}。双击或按 Enter 键进行编辑。",
+    "timezoneHint": "日期按 {{timezone}} 时区显示，并以 ISO 8601 格式保存。"
+  },
+  "fontSubstitution": {
+    "title": "批准字体替换",
+    "sourceFace": "源字体",
+    "sourceFaces": "源字体",
+    "unknown": "未知",
+    "packagedSubstitute": "随附的替代字体",
+    "notAvailable": "不可用",
+    "sampleText": "示例",
+    "sampleFallback": "敏捷的棕色狐狸跃过懒狗。",
+    "scope": "应用于",
+    "scopeAnnotation": "此批注",
+    "scopeSelection": "选中的文本框",
+    "scopeParagraph": "此 PDF 段落",
+    "scopeFindReplace": "此次查找/替换编辑",
+    "remember": "记住对此打开文档的批准",
+    "approve": "使用替代字体",
+    "cancel": "取消"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "编辑 PDF 文本",
+      "editFormatted": "编辑带格式的 PDF 文本",
+      "editAnnotation": "编辑带格式的 {{type}} 文本",
+      "editRegion": "编辑带格式的 PDF 文本区域：{{text}}",
+      "editScannedLine": "编辑扫描文本行：{{text}}",
+      "editScannedFixed": "编辑扫描文本的固定区域：{{text}}",
+      "editScannedReflow": "编辑扫描段落的重排区域：{{text}}",
+      "selectedOcrParagraph": "包含 {{count}} 行的已选 OCR 段落"
+    },
+    "handles": {
+      "move": "移动文本框",
+      "moveHint": "拖动以移动文本框",
+      "resize": "调整文本框大小",
+      "resizeHint": "拖动以调整文本框大小"
+    },
+    "actions": {
+      "apply": "应用",
+      "cancel": "取消"
+    },
+    "status": {
+      "ocrOverflow": "完整 OCR 草稿显示在已批准区域之外。保存仍会被阻止，直到精确的固定区域验证确认文本可以容纳。",
+      "scannedRegion": "正在已批准区域内编辑扫描文本。",
+      "shaping": "正在完成精确文本布局…",
+      "overlap": "文本与现有页面内容重叠。可以应用更改；相邻的源对象不会移动。",
+      "lowContrast": "低对比度的源颜色具有仅在编辑时显示的背景。保存后的颜色将保持不变。",
+      "layoutRejectedPrefix": "文本布局被拒绝：",
+      "layoutRejected": "文本布局被拒绝：{{reasons}}",
+      "shapingRejected": "文本塑形被拒绝：{{reason}}",
+      "nativeManual": "正在手动分行文本框中编辑原生文本。按 Enter 键新建一行。",
+      "nativeManualContrast": "正在手动分行文本框中编辑原生文本。按 Enter 键新建一行。低对比度的源颜色具有仅在编辑时显示的背景；保存后的颜色将保持不变。",
+      "nativeGrowing": "正在编辑原生文本。宽度固定，区域向下扩展。",
+      "nativeGrowingContrast": "正在编辑原生文本。宽度固定，区域向下扩展。低对比度的源颜色具有仅在编辑时显示的背景；保存后的颜色将保持不变。",
+      "scannedEstimate": "正在编辑扫描文本。字体属性为估算值。",
+      "applyRejected": "无法应用文本编辑：{{reason}}",
+      "cropBoxRejected": "塑形后的文本无法应用到页面的 CropBox 内。",
+      "layoutTimeout": "精确文本布局未能及时完成。编辑器将保持打开状态。",
+      "scannedRejected": "扫描文本更改被拒绝：{{reason}}",
+      "lineBreakUnsupported": "不支持换行。请使用 Command-Enter 应用此单行编辑。",
+      "ocrOneLine": "正在编辑一行独立的扫描文本。字体属性为估算值。",
+      "ocrFixed": "正在一个固定的原始区域内编辑多行 OCR 文本。单个段落会在此区域内重排；显式换行会保留固定行模式。Command-Enter 可应用更改。",
+      "ocrReflow": "正在已批准的原始 OCR 区域内编辑一个段落。Command-Enter 可应用更改；溢出会被拒绝。",
+      "operationFailed": "无法完成文本操作。文档未发生更改。",
+      "staleDraft": "文本编辑器打开期间文档发生了更改。草稿已丢弃。",
+      "multipleOcrParagraphs": "选择范围跨越多个 OCR 段落。请检查各自的轮廓，并明确使用“合并”。跨列合并仍处于禁用状态。",
+      "nativeColumnBoundary": "此段落跨越了检测到的原始列边界。编辑已被阻止，文档未发生更改。",
+      "nativeSourceUnavailable": "无法将可见文本关联到符合条件的源操作符。文档未发生更改。",
+      "nativeDeleteUnavailable": "无法安全删除此原生 PDF 文本，因为无法明确确定其确切的源操作符。文档未发生更改。",
+      "readOnly": "之前编辑的文本为只读。文档未发生更改。"
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "{{limit}} 个字素的限制",
+      "lineThreshold": "{{limit}} 行的限制",
+      "message": "已保留完整粘贴内容：{{lineCount}} 行中包含 {{graphemeCount}} 个字素。超出限制：{{thresholds}}。预览范围有限。使用“撤销粘贴”移除全部插入内容。",
+      "messageWithExpansion": "已保留完整粘贴内容：{{lineCount}} 行中包含 {{graphemeCount}} 个字素。超出限制：{{thresholds}}。预览范围有限。使用“撤销粘贴”移除全部插入内容，或使用“扩展文本框”采用经过精确验证的边界。",
+      "undo": "撤销粘贴",
+      "expand": "扩展文本框"
+    }
+  },
+  "ocrGrouping": {
+    "label": "OCR 段落分组",
+    "title": "分组",
+    "mergeSelected": "合并所选项",
+    "mergeSelectedParagraphs": "合并所选段落",
+    "mergePrevious": "与上一个合并",
+    "mergePreviousHint": "与上一个 OCR 段落合并",
+    "mergeNext": "与下一个合并",
+    "mergeNextHint": "与下一个 OCR 段落合并",
+    "splitBefore": "在前面拆分",
+    "splitAfter": "在后面拆分",
+    "reset": "重置自动分组",
+    "crossColumnDisabled": "已禁用跨栏合并",
+    "ambiguousBoundariesOnly": "只能手动合并同一栏中不明确的边界",
+    "tooManyLines": "超过 32 行。请在编辑前手动拆分此段落。",
+    "mergeDescription": "现有文本由保留的硬换行符分隔。只有在合并后的源补丁和固定区域通过验证后，才会应用合并。",
+    "mergedText": "已合并的 OCR 文本",
+    "splitRegion": "拆分 OCR 区域",
+    "firstRegion": "第一个区域",
+    "secondRegion": "第二个区域",
+    "sourceLines": "源文本行：{{lines}}"
+  }
+}

@@ -18,6 +18,7 @@ export const DOCUMENT_METADATA_DATE_FIELDS = Object.freeze([
 
 const DOCUMENT_METADATA_FIELD_SET = new Set(DOCUMENT_METADATA_FIELDS);
 const DOCUMENT_METADATA_DATE_FIELD_SET = new Set(DOCUMENT_METADATA_DATE_FIELDS);
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
 
 export function isDocumentMetadataField(field) {
   return DOCUMENT_METADATA_FIELD_SET.has(field);
@@ -30,7 +31,7 @@ export function documentMetadataFieldToEditorValue(field, value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 19);
+  return new Date(date.getTime() - offset).toISOString().slice(0, 23);
 }
 
 export function documentMetadataFieldFromEditorValue(field, value) {
@@ -95,9 +96,14 @@ export function normalizeDocumentMetadata(value = {}) {
       if (raw == null || raw === '') {
         normalized[field] = null;
       } else {
-        const date = new Date(raw);
+        const original = raw instanceof Date ? raw.toISOString() : String(raw);
+        const date = new Date(original);
         if (Number.isNaN(date.getTime())) throw new TypeError(`Invalid ${field}`);
-        normalized[field] = date.toISOString();
+        // Keep valid source ISO bytes intact. Editing the date itself supplies
+        // a new canonical ISO value, while editing another metadata field must
+        // not silently discard fractional seconds or an explicit zone offset.
+        normalized[field] = typeof raw === 'string' && ISO_TIMESTAMP_PATTERN.test(original)
+          ? original : date.toISOString();
       }
     } else {
       normalized[field] = value[field] == null ? '' : String(value[field]);

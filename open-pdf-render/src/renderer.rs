@@ -1,5 +1,5 @@
-use tiny_skia::*;
 use crate::graphics_state::GraphicsState;
+use tiny_skia::*;
 
 pub struct SkiaRenderer {
     pub pixmap: Pixmap,
@@ -10,10 +10,15 @@ pub struct SkiaRenderer {
 
 impl SkiaRenderer {
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
-        let mut pixmap = Pixmap::new(width, height)
-            .ok_or_else(|| "Failed to create pixmap".to_string())?;
+        let mut pixmap =
+            Pixmap::new(width, height).ok_or_else(|| "Failed to create pixmap".to_string())?;
         pixmap.fill(Color::WHITE);
-        Ok(SkiaRenderer { pixmap, path_builder: None, width, height })
+        Ok(SkiaRenderer {
+            pixmap,
+            path_builder: None,
+            width,
+            height,
+        })
     }
 
     /// Allocate an off-screen renderer of the SAME pixel dimensions as
@@ -51,7 +56,8 @@ impl SkiaRenderer {
         // double-clip and produce nothing different at best, garbage at
         // worst — leave it alone.
         self.pixmap.draw_pixmap(
-            0, 0,
+            0,
+            0,
             sub.pixmap.as_ref(),
             &paint,
             Transform::identity(),
@@ -90,7 +96,11 @@ impl SkiaRenderer {
     /// fall back to the original behaviour (the residual issue is
     /// dominated by the simple `re W n` axis-aligned rect case).
     pub fn apply_clip(&mut self, gs: &mut GraphicsState, path: &Path, even_odd: bool) {
-        let fill_rule = if even_odd { FillRule::EvenOdd } else { FillRule::Winding };
+        let fill_rule = if even_odd {
+            FillRule::EvenOdd
+        } else {
+            FillRule::Winding
+        };
 
         // Try the axis-aligned-rect fast path. When it fires, we transform
         // the rect into device space, inflate by 0.5 px on each edge, and
@@ -156,8 +166,8 @@ impl SkiaRenderer {
         loop {
             match iter.next() {
                 Some(PathSegment::Close) => continue,
-                Some(PathSegment::LineTo(p)) if (p.x - p0.x).abs() < 1e-4
-                    && (p.y - p0.y).abs() < 1e-4 =>
+                Some(PathSegment::LineTo(p))
+                    if (p.x - p0.x).abs() < 1e-4 && (p.y - p0.y).abs() < 1e-4 =>
                 {
                     continue;
                 }
@@ -175,7 +185,7 @@ impl SkiaRenderer {
         ];
         for (a, b) in edges.iter() {
             let horiz = (a.y - b.y).abs() < 1e-4 && (a.x - b.x).abs() > 1e-4;
-            let vert  = (a.x - b.x).abs() < 1e-4 && (a.y - b.y).abs() > 1e-4;
+            let vert = (a.x - b.x).abs() < 1e-4 && (a.y - b.y).abs() > 1e-4;
             if !horiz && !vert {
                 return None;
             }
@@ -188,8 +198,16 @@ impl SkiaRenderer {
         let (mut minx, mut miny) = (corners[0].x, corners[0].y);
         let (mut maxx, mut maxy) = (corners[0].x, corners[0].y);
         for p in &corners[1..] {
-            if p.x < minx { minx = p.x; } else if p.x > maxx { maxx = p.x; }
-            if p.y < miny { miny = p.y; } else if p.y > maxy { maxy = p.y; }
+            if p.x < minx {
+                minx = p.x;
+            } else if p.x > maxx {
+                maxx = p.x;
+            }
+            if p.y < miny {
+                miny = p.y;
+            } else if p.y > maxy {
+                maxy = p.y;
+            }
         }
 
         // Outward-round by 0.5 device px on each edge — see method-level
@@ -205,15 +223,21 @@ impl SkiaRenderer {
     }
 
     pub fn move_to(&mut self, x: f32, y: f32) {
-        if let Some(ref mut pb) = self.path_builder { pb.move_to(x, y); }
+        if let Some(ref mut pb) = self.path_builder {
+            pb.move_to(x, y);
+        }
     }
 
     pub fn line_to(&mut self, x: f32, y: f32) {
-        if let Some(ref mut pb) = self.path_builder { pb.line_to(x, y); }
+        if let Some(ref mut pb) = self.path_builder {
+            pb.line_to(x, y);
+        }
     }
 
     pub fn cubic_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32) {
-        if let Some(ref mut pb) = self.path_builder { pb.cubic_to(x1, y1, x2, y2, x3, y3); }
+        if let Some(ref mut pb) = self.path_builder {
+            pb.cubic_to(x1, y1, x2, y2, x3, y3);
+        }
     }
 
     pub fn rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
@@ -227,7 +251,9 @@ impl SkiaRenderer {
     }
 
     pub fn close_path(&mut self) {
-        if let Some(ref mut pb) = self.path_builder { pb.close(); }
+        if let Some(ref mut pb) = self.path_builder {
+            pb.close();
+        }
     }
 
     /// Multiply ExtGState constant alpha (`/ca` or `/CA`) into the per-color
@@ -239,15 +265,23 @@ impl SkiaRenderer {
 
     pub fn fill(&mut self, gs: &GraphicsState, even_odd: bool) {
         let path = match self.path_builder.take() {
-            Some(pb) => match pb.finish() { Some(p) => p, None => return },
+            Some(pb) => match pb.finish() {
+                Some(p) => p,
+                None => return,
+            },
             None => return,
         };
         let mut paint = Paint::default();
         let (r, g, b, a) = gs.fill_color;
         paint.set_color_rgba8(r, g, b, Self::blend_alpha(a, gs.effective_fill_alpha()));
         paint.anti_alias = true;
-        let rule = if even_odd { FillRule::EvenOdd } else { FillRule::Winding };
-        self.pixmap.fill_path(&path, &paint, rule, gs.ctm, gs.clip_path.as_ref());
+        let rule = if even_odd {
+            FillRule::EvenOdd
+        } else {
+            FillRule::Winding
+        };
+        self.pixmap
+            .fill_path(&path, &paint, rule, gs.ctm, gs.clip_path.as_ref());
     }
 
     /// Fill a pre-built path. Used by the per-render glyph path cache
@@ -260,8 +294,13 @@ impl SkiaRenderer {
         let (r, g, b, a) = gs.fill_color;
         paint.set_color_rgba8(r, g, b, Self::blend_alpha(a, gs.effective_fill_alpha()));
         paint.anti_alias = true;
-        let rule = if even_odd { FillRule::EvenOdd } else { FillRule::Winding };
-        self.pixmap.fill_path(path, &paint, rule, gs.ctm, gs.clip_path.as_ref());
+        let rule = if even_odd {
+            FillRule::EvenOdd
+        } else {
+            FillRule::Winding
+        };
+        self.pixmap
+            .fill_path(path, &paint, rule, gs.ctm, gs.clip_path.as_ref());
     }
 
     /// Stroke a pre-built glyph path with an explicit path-local stroke
@@ -356,7 +395,10 @@ impl SkiaRenderer {
 
     pub fn stroke(&mut self, gs: &GraphicsState) {
         let path = match self.path_builder.take() {
-            Some(pb) => match pb.finish() { Some(p) => p, None => return },
+            Some(pb) => match pb.finish() {
+                Some(p) => p,
+                None => return,
+            },
             None => return,
         };
         let mut paint = Paint::default();
@@ -366,13 +408,22 @@ impl SkiaRenderer {
 
         let mut stroke = Stroke::default();
         stroke.width = Self::resolve_stroke_width(gs);
-        stroke.line_cap = match gs.line_cap { 1 => LineCap::Round, 2 => LineCap::Square, _ => LineCap::Butt };
-        stroke.line_join = match gs.line_join { 1 => LineJoin::Round, 2 => LineJoin::Bevel, _ => LineJoin::Miter };
+        stroke.line_cap = match gs.line_cap {
+            1 => LineCap::Round,
+            2 => LineCap::Square,
+            _ => LineCap::Butt,
+        };
+        stroke.line_join = match gs.line_join {
+            1 => LineJoin::Round,
+            2 => LineJoin::Bevel,
+            _ => LineJoin::Miter,
+        };
         stroke.miter_limit = gs.miter_limit;
         if !gs.dash_array.is_empty() {
             stroke.dash = StrokeDash::new(gs.dash_array.clone(), gs.dash_phase);
         }
-        self.pixmap.stroke_path(&path, &paint, &stroke, gs.ctm, gs.clip_path.as_ref());
+        self.pixmap
+            .stroke_path(&path, &paint, &stroke, gs.ctm, gs.clip_path.as_ref());
     }
 
     pub fn fill_and_stroke(&mut self, gs: &GraphicsState, even_odd: bool) {
@@ -381,24 +432,53 @@ impl SkiaRenderer {
                 // Fill
                 let mut fill_paint = Paint::default();
                 let (r, g, b, a) = gs.fill_color;
-                fill_paint.set_color_rgba8(r, g, b, Self::blend_alpha(a, gs.effective_fill_alpha()));
+                fill_paint.set_color_rgba8(
+                    r,
+                    g,
+                    b,
+                    Self::blend_alpha(a, gs.effective_fill_alpha()),
+                );
                 fill_paint.anti_alias = true;
-                let rule = if even_odd { FillRule::EvenOdd } else { FillRule::Winding };
-                self.pixmap.fill_path(&path, &fill_paint, rule, gs.ctm, gs.clip_path.as_ref());
+                let rule = if even_odd {
+                    FillRule::EvenOdd
+                } else {
+                    FillRule::Winding
+                };
+                self.pixmap
+                    .fill_path(&path, &fill_paint, rule, gs.ctm, gs.clip_path.as_ref());
                 // Stroke
                 let mut stroke_paint = Paint::default();
                 let (r, g, b, a) = gs.stroke_color;
-                stroke_paint.set_color_rgba8(r, g, b, Self::blend_alpha(a, gs.effective_stroke_alpha()));
+                stroke_paint.set_color_rgba8(
+                    r,
+                    g,
+                    b,
+                    Self::blend_alpha(a, gs.effective_stroke_alpha()),
+                );
                 stroke_paint.anti_alias = true;
                 let mut stroke = Stroke::default();
                 stroke.width = Self::resolve_stroke_width(gs);
-                stroke.line_cap = match gs.line_cap { 1 => LineCap::Round, 2 => LineCap::Square, _ => LineCap::Butt };
-                stroke.line_join = match gs.line_join { 1 => LineJoin::Round, 2 => LineJoin::Bevel, _ => LineJoin::Miter };
+                stroke.line_cap = match gs.line_cap {
+                    1 => LineCap::Round,
+                    2 => LineCap::Square,
+                    _ => LineCap::Butt,
+                };
+                stroke.line_join = match gs.line_join {
+                    1 => LineJoin::Round,
+                    2 => LineJoin::Bevel,
+                    _ => LineJoin::Miter,
+                };
                 stroke.miter_limit = gs.miter_limit;
                 if !gs.dash_array.is_empty() {
                     stroke.dash = StrokeDash::new(gs.dash_array.clone(), gs.dash_phase);
                 }
-                self.pixmap.stroke_path(&path, &stroke_paint, &stroke, gs.ctm, gs.clip_path.as_ref());
+                self.pixmap.stroke_path(
+                    &path,
+                    &stroke_paint,
+                    &stroke,
+                    gs.ctm,
+                    gs.clip_path.as_ref(),
+                );
             }
         }
     }
@@ -408,7 +488,9 @@ impl SkiaRenderer {
             Some(p) => p,
             None => return,
         };
-        if width == 0 || height == 0 { return; }
+        if width == 0 || height == 0 {
+            return;
+        }
         // PDF Image XObjects live in a 1×1 unit square; the caller's CTM is
         // set up so that unit square maps to the destination region. But
         // `draw_pixmap` consumes a transform that maps the SOURCE PIXMAP
@@ -431,12 +513,7 @@ impl SkiaRenderer {
         // by a small amount in source space — enough to push the destination
         // rect just past the next pixel boundary on each side.
         let pad = 0.5_f32; // source-pixel padding; rounds dest rect outward
-        let expanded_src = Rect::from_ltrb(
-            -pad,
-            -pad,
-            width as f32 + pad,
-            height as f32 + pad,
-        );
+        let expanded_src = Rect::from_ltrb(-pad, -pad, width as f32 + pad, height as f32 + pad);
         if let Some(rect) = expanded_src {
             let path = PathBuilder::from_rect(rect);
             let pattern = Pattern::new(
@@ -466,7 +543,8 @@ impl SkiaRenderer {
                 blend_mode: BlendMode::SourceOver,
                 quality: FilterQuality::Bilinear,
             };
-            self.pixmap.draw_pixmap(0, 0, img, &paint, final_xform, gs.clip_path.as_ref());
+            self.pixmap
+                .draw_pixmap(0, 0, img, &paint, final_xform, gs.clip_path.as_ref());
         }
     }
 

@@ -53,7 +53,10 @@ fn concurrent_inproc_renders_do_not_corrupt_heap() {
             break;
         }
     }
-    assert!(pdfs.len() >= 2, "need >=2 readable PDFs in OPEN_PDF_STUDIO_STRESS_DIR");
+    assert!(
+        pdfs.len() >= 2,
+        "need >=2 readable PDFs in OPEN_PDF_STUDIO_STRESS_DIR"
+    );
 
     let iters: usize = std::env::var("OPEN_PDF_STUDIO_STRESS_ITERS")
         .ok()

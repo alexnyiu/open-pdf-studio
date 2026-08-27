@@ -10,11 +10,11 @@ fn test_count_text_commands() {
     let mut sorted: Vec<_> = pages.iter().collect();
     sorted.sort_by_key(|(n, _)| *n);
     let (_, &page_id) = sorted[0];
-    
+
     let page_obj = doc.get_object(page_id).unwrap();
     let dict = page_obj.as_dict().unwrap();
     let contents_ref = dict.get(b"Contents").unwrap();
-    
+
     let mut all_bytes = Vec::new();
     match contents_ref {
         lopdf::Object::Reference(id) => {
@@ -35,13 +35,13 @@ fn test_count_text_commands() {
         }
         _ => {}
     }
-    
+
     let content = lopdf::content::Content::decode(&all_bytes).unwrap();
     let mut bt_count = 0;
     let mut tj_count = 0;
     let mut do_count = 0;
     let mut path_count = 0;
-    
+
     for op in &content.operations {
         match op.operator.as_str() {
             "BT" => bt_count += 1,
@@ -51,7 +51,7 @@ fn test_count_text_commands() {
             _ => {}
         }
     }
-    
+
     println!("Content stream operators:");
     println!("  BT (begin text): {}", bt_count);
     println!("  Tj/TJ (show text): {}", tj_count);

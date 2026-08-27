@@ -28,7 +28,8 @@ pub async fn spawn_worker(worker: Arc<WorkerState>, exe_path: &std::path::Path) 
     // share, so without this every pool worker pops up a black console box.
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .with_context(|| format!("spawn worker {} from {:?}", worker.slot, exe_path))?;
 
     let stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
@@ -37,12 +38,17 @@ pub async fn spawn_worker(worker: Arc<WorkerState>, exe_path: &std::path::Path) 
 
     // Wait for ready line (with timeout)
     let mut ready_line = String::new();
-    timeout(READY_TIMEOUT, reader.read_line(&mut ready_line)).await
+    timeout(READY_TIMEOUT, reader.read_line(&mut ready_line))
+        .await
         .with_context(|| format!("worker {} ready timeout", worker.slot))?
         .with_context(|| format!("worker {} ready read", worker.slot))?;
 
     if !ready_line.contains("\"op\":\"ready\"") {
-        return Err(anyhow!("worker {} did not send ready: {}", worker.slot, ready_line));
+        return Err(anyhow!(
+            "worker {} did not send ready: {}",
+            worker.slot,
+            ready_line
+        ));
     }
 
     // mmap the SHM file the worker created (same PID-namespaced path)
@@ -53,11 +59,14 @@ pub async fn spawn_worker(worker: Arc<WorkerState>, exe_path: &std::path::Path) 
         worker.slot
     );
     let file = std::fs::OpenOptions::new()
-        .read(true).write(false)
+        .read(true)
+        .write(false)
         .open(&shm_path)
         .with_context(|| format!("open SHM {}", shm_path))?;
     let mmap = unsafe {
-        MmapOptions::new().len(SHM_SIZE).map(&file)
+        MmapOptions::new()
+            .len(SHM_SIZE)
+            .map(&file)
             .with_context(|| format!("mmap SHM {}", shm_path))?
     };
 
@@ -71,7 +80,10 @@ pub async fn spawn_worker(worker: Arc<WorkerState>, exe_path: &std::path::Path) 
     Ok(())
 }
 
-pub async fn spawn_pool(n_workers: u32, exe_path: &std::path::Path) -> Result<Vec<Arc<WorkerState>>> {
+pub async fn spawn_pool(
+    n_workers: u32,
+    exe_path: &std::path::Path,
+) -> Result<Vec<Arc<WorkerState>>> {
     let mut workers = Vec::with_capacity(n_workers as usize);
     for slot in 0..n_workers {
         let w = Arc::new(WorkerState::new(slot));
@@ -81,7 +93,10 @@ pub async fn spawn_pool(n_workers: u32, exe_path: &std::path::Path) -> Result<Ve
                 eprintln!("[pool] worker {} ready", slot);
             }
             Err(e) => {
-                eprintln!("[pool] worker {} spawn failed: {} — pool will run with N-1", slot, e);
+                eprintln!(
+                    "[pool] worker {} spawn failed: {} — pool will run with N-1",
+                    slot, e
+                );
                 w.set_status(Status::DeadPermanent);
             }
         }

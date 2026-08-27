@@ -48,6 +48,14 @@ import PrintProgressToast from './PrintProgressToast.jsx';
 import OcrProgressToast from './OcrProgressToast.jsx';
 import OcrRegionSplitDialog from './dialogs/OcrRegionSplitDialog.jsx';
 import OcrRegionMergeDialog from './dialogs/OcrRegionMergeDialog.jsx';
+import FontSubstitutionDialog from './dialogs/FontSubstitutionDialog.jsx';
+import UnsavedCloseDialog from './dialogs/UnsavedCloseDialog.jsx';
+import {
+  StylePresetCreateDialog,
+  StylePresetManageDialog,
+} from './dialogs/StylePresetDialogs.jsx';
+import { ModalStackProvider } from './ModalStackContext.jsx';
+import InertWhenModal from './InertWhenModal.jsx';
 
 const DIALOG_MAP = {
   'doc-properties': DocPropertiesDialog,
@@ -91,6 +99,9 @@ const DIALOG_MAP = {
   'recognize-text': RecognizeTextDialog,
   'split-ocr-region': OcrRegionSplitDialog,
   'merge-ocr-regions': OcrRegionMergeDialog,
+  'font-substitution': FontSubstitutionDialog,
+  'style-preset-create': StylePresetCreateDialog,
+  'style-preset-manage': StylePresetManageDialog,
 };
 
 export default function DialogHost() {
@@ -98,18 +109,28 @@ export default function DialogHost() {
     <>
       <For each={getDialogs()}>
         {(dialog) => {
-          const Component = DIALOG_MAP[dialog.name];
+          const Component = DIALOG_MAP[dialog.name]
+            || (dialog.name.startsWith('unsaved-close:') ? UnsavedCloseDialog : null);
           if (!Component) return null;
-          return <Component data={dialog.data} />;
+          return (
+            <ModalStackProvider value={{
+              dialog,
+              isTop: () => getDialogs().at(-1)?.id === dialog.id,
+            }}>
+              <Component data={dialog.data} />
+            </ModalStackProvider>
+          );
         }}
       </For>
-      <StavenreeksInlineEditor />
-      <ParametricLabelInlineEditor />
-      <PdfTextEditOverlay />
-      <StickyNotePopupHost />
-      <ParametricSymbolPicker />
-      <PrintProgressToast />
-      <OcrProgressToast />
+      <InertWhenModal class="nonmodal-dialog-background">
+        <StavenreeksInlineEditor />
+        <ParametricLabelInlineEditor />
+        <PdfTextEditOverlay />
+        <StickyNotePopupHost />
+        <ParametricSymbolPicker />
+        <PrintProgressToast />
+        <OcrProgressToast />
+      </InertWhenModal>
     </>
   );
 }

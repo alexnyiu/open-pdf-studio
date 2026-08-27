@@ -24,6 +24,7 @@ const NATIVE_REQUEST_CONTRACT: &str = "open-pdf-studio.ocr.native-page-request";
 const NATIVE_JOB_CONTRACT: &str = "open-pdf-studio.ocr.native-job";
 const NATIVE_RESULT_CONTRACT: &str = "open-pdf-studio.ocr.native-result";
 const CONTROLLER_OUTCOME_CONTRACT: &str = "open-pdf-studio.ocr.native-controller-outcome";
+const RASTER_PREFETCH_CONTRACT: &str = "open-pdf-studio.ocr.native-raster-prefetch";
 const JOB_CONTRACT: &str = "open-pdf-studio.ocr.job";
 const MODEL_PACK_CONTRACT: &str = "open-pdf-studio.ocr.model-pack";
 const NATIVE_SCHEMA_VERSION: u32 = 1;
@@ -178,6 +179,76 @@ pub struct NativePageRequest {
     document_policy: DocumentPolicy,
     scheduler: SchedulerMetadata,
     created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeRasterPrefetchRequest {
+    application_job_id: String,
+    document_id: String,
+    document_fingerprint: Fingerprint,
+    page_index: u32,
+    raster_dpi: f64,
+    maximum_pixels: u64,
+    maximum_side: u32,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeRasterPrefetchReceipt {
+    contract: &'static str,
+    status: &'static str,
+    application_job_id: String,
+    document_id: String,
+    page_index: u32,
+    token: Option<String>,
+    width_px: u32,
+    height_px: u32,
+    byte_length: u64,
+    raster_ms: f64,
+}
+
+#[derive(Debug)]
+struct PrefetchedRaster {
+    generation: u64,
+    token: String,
+    application_job_id: String,
+    document_id: String,
+    document_fingerprint: Fingerprint,
+    source_pdf_path: String,
+    source_stamp: SourceFileStamp,
+    page_index: u32,
+    raster_dpi: f64,
+    maximum_pixels: u64,
+    maximum_side: u32,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    raster_ms: f64,
+}
+
+#[derive(Debug)]
+struct PrefetchSlot {
+    generation: u64,
+    document_id: String,
+    raster: Option<PrefetchedRaster>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SourceFileStamp {
+    byte_length: u64,
+    modified_epoch_nanos: u128,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+#[derive(Clone, Debug)]
+struct ValidatedSourceIdentity {
+    path: String,
+    fingerprint: Fingerprint,
+    stamp: SourceFileStamp,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -476,6 +547,108 @@ fn validate_native_request(request: &NativePageRequest) -> Result<(), OcrFailure
         return Err(invalid());
     }
     Ok(())
+}
+
+fn validate_prefetch_request(request: &NativeRasterPrefetchRequest) -> Result<(), OcrFailure> {
+    if !is_identifier(&request.application_job_id)
+        || !is_identifier(&request.document_id)
+        || !validate_fingerprint(&request.document_fingerprint)
+        || !request.raster_dpi.is_finite()
+        || request.raster_dpi < 36.0
+        || request.raster_dpi > 288.0
+        || request.maximum_pixels == 0
+        || request.maximum_pixels > MAX_PIXELS
+        || request.maximum_side == 0
+        || request.maximum_side > MAX_WIDTH_PX.min(MAX_HEIGHT_PX)
+    {
+        return Err(failure(
+            "OCR_PREFETCH_REQUEST_INVALID",
+            "scheduling",
+            "The native OCR raster prefetch request is invalid",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn source_file_stamp(path: &str) -> Result<SourceFileStamp, OcrFailure> {
+    let metadata = fs::metadata(path).map_err(|_| {
+        failure(
+            "OCR_SOURCE_IDENTITY_UNAVAILABLE",
+            "rasterizing",
+            "The captured OCR source file is unavailable",
+            false,
+        )
+    })?;
+    let modified_epoch_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Ok(SourceFileStamp {
+            byte_length: metadata.len(),
+            modified_epoch_nanos,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(SourceFileStamp {
+            byte_length: metadata.len(),
+            modified_epoch_nanos,
+        })
+    }
+}
+
+fn fingerprint_source_file(path: &str) -> Result<Fingerprint, OcrFailure> {
+    let mut file = File::open(path).map_err(|_| {
+        failure(
+            "OCR_SOURCE_IDENTITY_UNAVAILABLE",
+            "rasterizing",
+            "The captured OCR source file could not be opened",
+            false,
+        )
+    })?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 1024 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|_| {
+            failure(
+                "OCR_SOURCE_IDENTITY_UNAVAILABLE",
+                "rasterizing",
+                "The captured OCR source file could not be verified",
+                false,
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(Fingerprint {
+        algorithm: "sha256".to_string(),
+        value: format!("{:x}", digest.finalize()),
+    })
+}
+
+fn prefetch_matches_request(
+    prefetched: &PrefetchedRaster,
+    source_pdf_path: &str,
+    request: &NativePageRequest,
+) -> bool {
+    prefetched.source_pdf_path == source_pdf_path
+        && prefetched.document_id == request.document.id
+        && prefetched.document_fingerprint == request.document.fingerprint
+        && prefetched.page_index == request.page.index
+        && prefetched.raster_dpi == request.recognition_options.raster_dpi
+        && prefetched.maximum_pixels == request.recognition_options.maximum_pixels
+        && prefetched.maximum_side == request.recognition_options.maximum_side
+        && source_file_stamp(source_pdf_path).ok().as_ref() == Some(&prefetched.source_stamp)
 }
 
 fn raster_fingerprint(rgba: &[u8]) -> Fingerprint {
@@ -1055,6 +1228,9 @@ struct RegistryState {
     latest_by_page: HashMap<String, String>,
     pending_job_cancellations: HashMap<String, u64>,
     pending_document_cancellations: HashMap<String, u64>,
+    prefetch_slots: HashMap<String, PrefetchSlot>,
+    next_prefetch_generation: u64,
+    source_identities: HashMap<String, ValidatedSourceIdentity>,
 }
 
 #[derive(Clone)]
@@ -1109,6 +1285,158 @@ impl OcrJobRegistry {
                 false,
             )
         })
+    }
+
+    fn begin_prefetch(&self, request: &NativeRasterPrefetchRequest) -> Option<u64> {
+        let mut state = self.state.lock().unwrap();
+        if state
+            .pending_document_cancellations
+            .contains_key(&request.document_id)
+        {
+            return None;
+        }
+        state.next_prefetch_generation = state.next_prefetch_generation.wrapping_add(1).max(1);
+        let generation = state.next_prefetch_generation;
+        state.prefetch_slots.retain(|application_job_id, slot| {
+            application_job_id == &request.application_job_id
+                || slot.document_id != request.document_id
+        });
+        state.prefetch_slots.insert(
+            request.application_job_id.clone(),
+            PrefetchSlot {
+                generation,
+                document_id: request.document_id.clone(),
+                raster: None,
+            },
+        );
+        Some(generation)
+    }
+
+    fn store_prefetch(&self, prefetched: PrefetchedRaster) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let Some(slot) = state.prefetch_slots.get_mut(&prefetched.application_job_id) else {
+            return false;
+        };
+        if slot.generation != prefetched.generation || slot.document_id != prefetched.document_id {
+            return false;
+        }
+        slot.raster = Some(prefetched);
+        true
+    }
+
+    fn take_prefetch(
+        &self,
+        token: &str,
+        source_pdf_path: &str,
+        request: &NativePageRequest,
+    ) -> Result<PrefetchedRaster, OcrFailure> {
+        let mut state = self.state.lock().unwrap();
+        let application_job_id = state
+            .prefetch_slots
+            .iter()
+            .find_map(|(application_job_id, slot)| {
+                (slot.raster.as_ref().map(|raster| raster.token.as_str()) == Some(token))
+                    .then(|| application_job_id.clone())
+            })
+            .ok_or_else(|| {
+                failure(
+                    "OCR_PREFETCH_NOT_FOUND",
+                    "rasterizing",
+                    "The native OCR raster prefetch is unavailable or was cancelled",
+                    true,
+                )
+            })?;
+        let mut slot = state.prefetch_slots.remove(&application_job_id).unwrap();
+        let prefetched = slot.raster.take().ok_or_else(|| {
+            failure(
+                "OCR_PREFETCH_NOT_READY",
+                "rasterizing",
+                "The native OCR raster prefetch is not ready",
+                true,
+            )
+        })?;
+        if !prefetch_matches_request(&prefetched, source_pdf_path, request) {
+            return Err(failure(
+                "OCR_PREFETCH_IDENTITY_MISMATCH",
+                "rasterizing",
+                "The prefetched raster no longer matches the captured OCR source identity",
+                false,
+            ));
+        }
+        Ok(prefetched)
+    }
+
+    fn cancel_prefetch(&self, application_job_id: &str) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .prefetch_slots
+            .remove(application_job_id)
+            .is_some()
+    }
+
+    fn cancel_document_prefetches(&self, document_id: &str) -> usize {
+        let mut state = self.state.lock().unwrap();
+        let before = state.prefetch_slots.len();
+        state
+            .prefetch_slots
+            .retain(|_, slot| slot.document_id != document_id);
+        before - state.prefetch_slots.len()
+    }
+
+    fn cancel_all_prefetches(&self) -> usize {
+        let mut state = self.state.lock().unwrap();
+        let count = state.prefetch_slots.len();
+        state.prefetch_slots.clear();
+        count
+    }
+
+    fn validate_source_identity(
+        &self,
+        document_id: &str,
+        path: &str,
+        expected: &Fingerprint,
+    ) -> Result<SourceFileStamp, OcrFailure> {
+        let before = source_file_stamp(path)?;
+        if let Some(cached) = self
+            .state
+            .lock()
+            .unwrap()
+            .source_identities
+            .get(document_id)
+            .cloned()
+        {
+            if cached.path == path && cached.fingerprint == *expected && cached.stamp == before {
+                return Ok(before);
+            }
+        }
+        let actual = fingerprint_source_file(path)?;
+        let after = source_file_stamp(path)?;
+        if before != after || actual != *expected {
+            return Err(failure(
+                "OCR_SOURCE_IDENTITY_CHANGED",
+                "rasterizing",
+                "The parent PDF changed after the OCR source identity was captured",
+                false,
+            ));
+        }
+        let mut state = self.state.lock().unwrap();
+        if state.source_identities.len() >= 128
+            && !state.source_identities.contains_key(document_id)
+        {
+            if let Some(oldest_key) = state.source_identities.keys().next().cloned() {
+                state.source_identities.remove(&oldest_key);
+            }
+        }
+        state.source_identities.insert(
+            document_id.to_string(),
+            ValidatedSourceIdentity {
+                path: path.to_string(),
+                fingerprint: expected.clone(),
+                stamp: after.clone(),
+            },
+        );
+        Ok(after)
     }
 
     fn register(&self, entry: Arc<JobEntry>) -> Result<Option<Arc<JobEntry>>, OcrFailure> {
@@ -1300,6 +1628,12 @@ impl OcrJobRegistry {
     }
 
     pub fn cancel_document(&self, document_id: &str) -> CancelBatchReport {
+        self.cancel_document_prefetches(document_id);
+        self.state
+            .lock()
+            .unwrap()
+            .source_identities
+            .remove(document_id);
         let entries = self.entries_for_document(document_id);
         if entries.is_empty() {
             let mut state = self.state.lock().unwrap();
@@ -1319,6 +1653,8 @@ impl OcrJobRegistry {
     }
 
     pub fn cancel_all(&self) -> CancelBatchReport {
+        self.cancel_all_prefetches();
+        self.state.lock().unwrap().source_identities.clear();
         let jobs = self
             .entries()
             .iter()
@@ -1798,12 +2134,168 @@ fn run_child_process(
     }
 }
 
+fn cancelled_prefetch_receipt(
+    request: &NativeRasterPrefetchRequest,
+    raster_ms: f64,
+) -> NativeRasterPrefetchReceipt {
+    NativeRasterPrefetchReceipt {
+        contract: RASTER_PREFETCH_CONTRACT,
+        status: "cancelled",
+        application_job_id: request.application_job_id.clone(),
+        document_id: request.document_id.clone(),
+        page_index: request.page_index,
+        token: None,
+        width_px: 0,
+        height_px: 0,
+        byte_length: 0,
+        raster_ms,
+    }
+}
+
+/// Rasterize and retain at most one bounded N+1 page per application job and
+/// document. Only the opaque receipt crosses IPC; RGBA ownership stays in the
+/// parent and cancellation removes the slot even while rendering is in flight.
+#[tauri::command]
+pub async fn prefetch_ocr_page_raster(
+    source_pdf_path: String,
+    request: NativeRasterPrefetchRequest,
+    pool: tauri::State<'_, Arc<tokio::sync::OnceCell<WorkerPool>>>,
+    registry: tauri::State<'_, OcrJobRegistry>,
+) -> Result<NativeRasterPrefetchReceipt, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("Production OCR is active on macOS only".to_string());
+    }
+    if source_pdf_path.is_empty() || source_pdf_path.len() > MAX_SOURCE_PATH_BYTES {
+        return Err("The parent-side OCR prefetch source is invalid".to_string());
+    }
+    validate_prefetch_request(&request).map_err(|error| error.message)?;
+    let Some(generation) = registry.begin_prefetch(&request) else {
+        return Ok(cancelled_prefetch_receipt(&request, 0.0));
+    };
+    let identity_registry = registry.inner().clone();
+    let identity_document_id = request.document_id.clone();
+    let identity_path = source_pdf_path.clone();
+    let identity_fingerprint = request.document_fingerprint.clone();
+    let source_identity = match tauri::async_runtime::spawn_blocking(move || {
+        identity_registry.validate_source_identity(
+            &identity_document_id,
+            &identity_path,
+            &identity_fingerprint,
+        )
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            registry.cancel_prefetch(&request.application_job_id);
+            return Err("The native OCR source identity check could not complete".to_string());
+        }
+    };
+    let source_stamp = match source_identity {
+        Ok(stamp) => stamp,
+        Err(error) => {
+            registry.cancel_prefetch(&request.application_job_id);
+            return Err(error.message);
+        }
+    };
+    let Some(pool) = pool.get() else {
+        registry.cancel_prefetch(&request.application_job_id);
+        return Err("The low-priority PDFium raster pool is unavailable".to_string());
+    };
+    let limits = OcrRasterLimits {
+        max_width: request.maximum_side.min(MAX_WIDTH_PX),
+        max_height: request.maximum_side.min(MAX_HEIGHT_PX),
+        max_pixels: request.maximum_pixels.min(MAX_PIXELS),
+        max_raster_bytes: MAX_RASTER_BYTES as u64,
+    };
+    let started = Instant::now();
+    let raster = pool
+        .render_ocr_low_priority(
+            &source_pdf_path,
+            request.page_index,
+            (request.raster_dpi / 72.0) as f32,
+            0,
+            limits,
+        )
+        .await;
+    let raster_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let (width, height, rgba) = match raster {
+        Ok(value) => (value.width, value.height, value.rgba),
+        Err(_) => {
+            registry.cancel_prefetch(&request.application_job_id);
+            return Err("The annotation-free PDFium prefetch raster failed".to_string());
+        }
+    };
+    let expected = usize::try_from(width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected != Some(rgba.len()) || rgba.len() > MAX_RASTER_BYTES {
+        registry.cancel_prefetch(&request.application_job_id);
+        return Err("The native OCR prefetch raster metadata is inconsistent".to_string());
+    }
+    if source_file_stamp(&source_pdf_path).ok().as_ref() != Some(&source_stamp) {
+        registry.cancel_prefetch(&request.application_job_id);
+        return Err("The parent PDF changed while its OCR raster was prefetched".to_string());
+    }
+    let token = random_hex();
+    let byte_length = rgba.len() as u64;
+    let prefetched = PrefetchedRaster {
+        generation,
+        token: token.clone(),
+        application_job_id: request.application_job_id.clone(),
+        document_id: request.document_id.clone(),
+        document_fingerprint: request.document_fingerprint.clone(),
+        source_pdf_path,
+        source_stamp,
+        page_index: request.page_index,
+        raster_dpi: request.raster_dpi,
+        maximum_pixels: request.maximum_pixels,
+        maximum_side: request.maximum_side,
+        width,
+        height,
+        rgba,
+        raster_ms,
+    };
+    if !registry.store_prefetch(prefetched) {
+        return Ok(cancelled_prefetch_receipt(&request, raster_ms));
+    }
+    Ok(NativeRasterPrefetchReceipt {
+        contract: RASTER_PREFETCH_CONTRACT,
+        status: "ready",
+        application_job_id: request.application_job_id,
+        document_id: request.document_id,
+        page_index: request.page_index,
+        token: Some(token),
+        width_px: width,
+        height_px: height,
+        byte_length,
+        raster_ms,
+    })
+}
+
+#[tauri::command]
+pub fn cancel_ocr_page_prefetch(
+    application_job_id: String,
+    registry: tauri::State<'_, OcrJobRegistry>,
+) -> Result<bool, String> {
+    if !is_identifier(&application_job_id) {
+        return Err("OCR application job identity is invalid".to_string());
+    }
+    Ok(registry.cancel_prefetch(&application_job_id))
+}
+
 /// Parent-side production entry point. The local PDF path is consumed only by
 /// the low-priority raster sidecar and is never serialized into the child job.
 #[tauri::command]
 pub async fn run_ocr_page_job(
     source_pdf_path: String,
     request: NativePageRequest,
+    prefetch_token: Option<String>,
     pool: tauri::State<'_, Arc<tokio::sync::OnceCell<WorkerPool>>>,
     registry: tauri::State<'_, OcrJobRegistry>,
 ) -> Result<ControllerOutcome, String> {
@@ -1900,36 +2392,126 @@ pub async fn run_ocr_page_job(
             )))
         }
     };
-    let scale = (request.recognition_options.raster_dpi / 72.0) as f32;
     let limits = native_limits(&request);
-    let raster_started = Instant::now();
-    let raster = pool
-        .render_ocr_low_priority(
-            &source_pdf_path,
-            request.page.index,
-            scale,
-            0,
-            OcrRasterLimits {
-                max_width: limits.max_width_px,
-                max_height: limits.max_height_px,
-                max_pixels: limits.max_pixels,
-                max_raster_bytes: limits.max_raster_bytes,
-            },
-        )
-        .await;
-    let raster_ms = raster_started.elapsed().as_secs_f64() * 1000.0;
-    let (width, height, rgba) = match raster {
-        Ok(value) => (value.width, value.height, value.rgba),
-        Err(_) => {
+    let (width, height, rgba, raster_ms) = if let Some(token) = prefetch_token.as_deref() {
+        if !is_identifier(token) {
             return Ok(finish(failed_outcome(
                 &request.job_id,
                 failure(
-                    "OCR_RASTER_FAILED",
+                    "OCR_PREFETCH_TOKEN_INVALID",
                     "rasterizing",
-                    "The annotation-free PDFium raster could not be produced within limits",
-                    true,
+                    "The native OCR prefetch token is invalid",
+                    false,
                 ),
-            )))
+            )));
+        }
+        match registry.take_prefetch(token, &source_pdf_path, &request) {
+            Ok(prefetched) => (
+                prefetched.width,
+                prefetched.height,
+                prefetched.rgba,
+                prefetched.raster_ms,
+            ),
+            Err(error) => return Ok(finish(failed_outcome(&request.job_id, error))),
+        }
+    } else {
+        let identity_registry = registry.inner().clone();
+        let identity_document_id = request.document.id.clone();
+        let identity_path = source_pdf_path.clone();
+        let identity_fingerprint = request.document.fingerprint.clone();
+        let source_identity = match tauri::async_runtime::spawn_blocking(move || {
+            identity_registry.validate_source_identity(
+                &identity_document_id,
+                &identity_path,
+                &identity_fingerprint,
+            )
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                return Ok(finish(failed_outcome(
+                    &request.job_id,
+                    failure(
+                        "OCR_SOURCE_IDENTITY_UNAVAILABLE",
+                        "rasterizing",
+                        "The native OCR source identity check could not complete",
+                        false,
+                    ),
+                )))
+            }
+        };
+        let source_stamp = match source_identity {
+            Ok(stamp) => stamp,
+            Err(error) => return Ok(finish(failed_outcome(&request.job_id, error))),
+        };
+        if entry.cancelled.load(Ordering::Acquire) {
+            return Ok(finish(ControllerOutcome {
+                contract: CONTROLLER_OUTCOME_CONTRACT,
+                schema_version: NATIVE_SCHEMA_VERSION,
+                status: "cancelled".to_string(),
+                job_id: request.job_id.clone(),
+                job: None,
+                result: None,
+                failure: None,
+                child_pid: None,
+                lifecycle: Vec::new(),
+                resources: json!({}),
+                isolation: empty_isolation(),
+                cancellation: Some(cancellation_metadata(&entry, epoch_ms())),
+                cleanup: CleanupMetadata {
+                    request_file_removed: true,
+                    result_file_removed: true,
+                    no_child_survived: true,
+                    session_directory_private: temp.is_private(),
+                },
+            }));
+        }
+        let scale = (request.recognition_options.raster_dpi / 72.0) as f32;
+        let raster_started = Instant::now();
+        let raster = pool
+            .render_ocr_low_priority(
+                &source_pdf_path,
+                request.page.index,
+                scale,
+                0,
+                OcrRasterLimits {
+                    max_width: limits.max_width_px,
+                    max_height: limits.max_height_px,
+                    max_pixels: limits.max_pixels,
+                    max_raster_bytes: limits.max_raster_bytes,
+                },
+            )
+            .await;
+        let raster_ms = raster_started.elapsed().as_secs_f64() * 1000.0;
+        match raster {
+            Ok(value)
+                if source_file_stamp(&source_pdf_path).ok().as_ref() == Some(&source_stamp) =>
+            {
+                (value.width, value.height, value.rgba, raster_ms)
+            }
+            Ok(_) => {
+                return Ok(finish(failed_outcome(
+                    &request.job_id,
+                    failure(
+                        "OCR_SOURCE_IDENTITY_CHANGED",
+                        "rasterizing",
+                        "The parent PDF changed while its OCR raster was produced",
+                        false,
+                    ),
+                )))
+            }
+            Err(_) => {
+                return Ok(finish(failed_outcome(
+                    &request.job_id,
+                    failure(
+                        "OCR_RASTER_FAILED",
+                        "rasterizing",
+                        "The annotation-free PDFium raster could not be produced within limits",
+                        true,
+                    ),
+                )))
+            }
         }
     };
     if entry.cancelled.load(Ordering::Acquire) {
@@ -2293,6 +2875,63 @@ mod tests {
         }
     }
 
+    fn prefetch_request(
+        application_job_id: &str,
+        document_id: &str,
+    ) -> NativeRasterPrefetchRequest {
+        NativeRasterPrefetchRequest {
+            application_job_id: application_job_id.to_string(),
+            document_id: document_id.to_string(),
+            document_fingerprint: Fingerprint {
+                algorithm: "sha256".to_string(),
+                value: "1".repeat(64),
+            },
+            page_index: 0,
+            raster_dpi: 144.0,
+            maximum_pixels: MAX_PIXELS,
+            maximum_side: MAX_WIDTH_PX,
+        }
+    }
+
+    fn prefetched_raster(
+        request: &NativeRasterPrefetchRequest,
+        generation: u64,
+        token: &str,
+    ) -> PrefetchedRaster {
+        PrefetchedRaster {
+            generation,
+            token: token.to_string(),
+            application_job_id: request.application_job_id.clone(),
+            document_id: request.document_id.clone(),
+            document_fingerprint: request.document_fingerprint.clone(),
+            source_pdf_path: "/tmp/source.pdf".to_string(),
+            source_stamp: SourceFileStamp {
+                byte_length: 0,
+                modified_epoch_nanos: 0,
+                #[cfg(unix)]
+                device: 0,
+                #[cfg(unix)]
+                inode: 0,
+            },
+            page_index: request.page_index,
+            raster_dpi: request.raster_dpi,
+            maximum_pixels: request.maximum_pixels,
+            maximum_side: request.maximum_side,
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3, 4],
+            raster_ms: 2.5,
+        }
+    }
+
+    fn test_registry_without_temp() -> OcrJobRegistry {
+        OcrJobRegistry {
+            state: Arc::new(Mutex::new(RegistryState::default())),
+            temp: None,
+            initialization_error: Some("test registry has no child temp store".to_string()),
+        }
+    }
+
     fn test_store() -> TempStore {
         let base = std::env::temp_dir().join(format!("ocr-controller-test-{}", random_hex()));
         ensure_private_directory(&base).unwrap();
@@ -2341,6 +2980,151 @@ mod tests {
         value = request("job-2");
         value.recognition_options.maximum_pixels = MAX_PIXELS + 1;
         assert!(validate_native_request(&value).is_err());
+    }
+
+    #[test]
+    fn native_prefetch_keeps_only_one_parent_owned_raster_per_document() {
+        let registry = test_registry_without_temp();
+        let first = prefetch_request("application-job-1", "document-1");
+        let first_generation = registry.begin_prefetch(&first).unwrap();
+        assert!(registry.store_prefetch(prefetched_raster(
+            &first,
+            first_generation,
+            "prefetch-token-1",
+        )));
+
+        let second = prefetch_request("application-job-2", "document-1");
+        let second_generation = registry.begin_prefetch(&second).unwrap();
+        assert!(registry.store_prefetch(prefetched_raster(
+            &second,
+            second_generation,
+            "prefetch-token-2",
+        )));
+
+        let state = registry.state.lock().unwrap();
+        assert_eq!(state.prefetch_slots.len(), 1);
+        assert!(state.prefetch_slots.contains_key("application-job-2"));
+        assert!(
+            state.jobs.is_empty(),
+            "prefetch must never start an inference child"
+        );
+    }
+
+    #[test]
+    fn native_prefetch_cancellation_releases_ready_and_inflight_buffers() {
+        let registry = test_registry_without_temp();
+        let request = prefetch_request("application-job-cancel", "document-1");
+        let generation = registry.begin_prefetch(&request).unwrap();
+        assert!(registry.cancel_prefetch(&request.application_job_id));
+        assert!(!registry.store_prefetch(prefetched_raster(
+            &request,
+            generation,
+            "prefetch-token-late",
+        )));
+        assert!(registry.state.lock().unwrap().prefetch_slots.is_empty());
+
+        let generation = registry.begin_prefetch(&request).unwrap();
+        assert!(registry.store_prefetch(prefetched_raster(
+            &request,
+            generation,
+            "prefetch-token-ready",
+        )));
+        assert_eq!(registry.cancel_document_prefetches("document-1"), 1);
+        assert!(registry.state.lock().unwrap().prefetch_slots.is_empty());
+    }
+
+    #[test]
+    fn native_prefetch_is_consumed_once_and_fails_closed_on_source_mismatch() {
+        let registry = test_registry_without_temp();
+        let prefetch = prefetch_request("application-job-consume", "document-1");
+        let generation = registry.begin_prefetch(&prefetch).unwrap();
+        let source = std::env::temp_dir().join(format!("ocr-prefetch-source-{}.pdf", random_hex()));
+        fs::write(&source, b"bounded-source").unwrap();
+        let source_path = source.to_string_lossy().into_owned();
+        let mut ready = prefetched_raster(&prefetch, generation, "prefetch-token-consume");
+        ready.source_pdf_path = source_path.clone();
+        ready.source_stamp = source_file_stamp(&source_path).unwrap();
+        assert!(registry.store_prefetch(ready));
+        let native_request = request("job-prefetch-consume");
+        let consumed = registry
+            .take_prefetch("prefetch-token-consume", &source_path, &native_request)
+            .unwrap();
+        assert_eq!(consumed.rgba, vec![1, 2, 3, 4]);
+        assert!(registry.state.lock().unwrap().prefetch_slots.is_empty());
+        assert_eq!(
+            registry
+                .take_prefetch("prefetch-token-consume", "/tmp/source.pdf", &native_request)
+                .unwrap_err()
+                .code,
+            "OCR_PREFETCH_NOT_FOUND",
+        );
+
+        let generation = registry.begin_prefetch(&prefetch).unwrap();
+        assert!(registry.store_prefetch(prefetched_raster(
+            &prefetch,
+            generation,
+            "prefetch-token-mismatch",
+        )));
+        assert_eq!(
+            registry
+                .take_prefetch(
+                    "prefetch-token-mismatch",
+                    "/tmp/replaced.pdf",
+                    &native_request
+                )
+                .unwrap_err()
+                .code,
+            "OCR_PREFETCH_IDENTITY_MISMATCH",
+        );
+        assert!(registry.state.lock().unwrap().prefetch_slots.is_empty());
+        let _ = fs::remove_file(source);
+    }
+
+    #[test]
+    fn native_prefetch_receipt_never_serializes_raster_pixels() {
+        let request = prefetch_request("application-job-receipt", "document-1");
+        let receipt = NativeRasterPrefetchReceipt {
+            contract: RASTER_PREFETCH_CONTRACT,
+            status: "ready",
+            application_job_id: request.application_job_id,
+            document_id: request.document_id,
+            page_index: request.page_index,
+            token: Some("prefetch-token-receipt".to_string()),
+            width_px: 1,
+            height_px: 1,
+            byte_length: 4,
+            raster_ms: 1.0,
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        assert!(!json.contains("rgba"));
+        assert!(!json.contains("pixels"));
+        assert!(!json.contains("[1,2,3,4]"));
+    }
+
+    #[test]
+    fn native_source_identity_cache_rejects_same_path_content_replacement() {
+        let registry = test_registry_without_temp();
+        let source = std::env::temp_dir().join(format!("ocr-source-identity-{}.pdf", random_hex()));
+        fs::write(&source, b"original-pdf-bytes").unwrap();
+        let source_path = source.to_string_lossy().into_owned();
+        let expected = fingerprint_source_file(&source_path).unwrap();
+        let first = registry
+            .validate_source_identity("document-1", &source_path, &expected)
+            .unwrap();
+        let cached = registry
+            .validate_source_identity("document-1", &source_path, &expected)
+            .unwrap();
+        assert_eq!(cached, first);
+
+        fs::write(&source, b"replacement-pdf-bytes-with-different-length").unwrap();
+        assert_eq!(
+            registry
+                .validate_source_identity("document-1", &source_path, &expected)
+                .unwrap_err()
+                .code,
+            "OCR_SOURCE_IDENTITY_CHANGED",
+        );
+        let _ = fs::remove_file(source);
     }
 
     #[test]

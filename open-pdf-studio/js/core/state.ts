@@ -320,6 +320,11 @@ export function getActiveDocument(): DocumentState | null {
   return state.documents[state.activeDocumentIndex] || null;
 }
 
+/** Resolve immutable document ownership without relying on the active tab. */
+export function getDocumentById(documentId: string): DocumentState | null {
+  return state.documents.find((document) => document.id === documentId) || null;
+}
+
 export function hasOpenDocuments(): boolean {
   return state.documents.length > 0;
 }
@@ -341,8 +346,12 @@ export function setPageRotation(pageNum: number, degrees: number): void {
   }
 }
 
-// Make shiftKeyPressed accessible globally for legacy code
-Object.defineProperty(window, 'shiftKeyPressed', {
-  get: () => state.shiftKeyPressed,
-  set: (value: boolean) => { state.shiftKeyPressed = value; }
-});
+// Make shiftKeyPressed accessible globally for legacy browser code without
+// making the otherwise data-only state module unsafe to load in Node-backed
+// release evidence producers.
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'shiftKeyPressed', {
+    get: () => state.shiftKeyPressed,
+    set: (value: boolean) => { state.shiftKeyPressed = value; }
+  });
+}

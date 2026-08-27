@@ -8,9 +8,9 @@
 //! call in an internal mutex, so multiple Tauri command threads can
 //! invoke PDFium concurrently — they just serialise inside PDFium.
 
+use pdfium_render::prelude::*;
 use std::path::Path;
 use std::sync::OnceLock;
-use pdfium_render::prelude::*;
 
 /// Global PDFium instance. Initialised once at app start by
 /// `init_pdfium`. Subsequent calls to `pdfium()` are zero-cost lookups.
@@ -28,10 +28,8 @@ pub fn init_pdfium(dll_dir: &Path) -> Result<(), String> {
         return Ok(()); // Already initialised — idempotent.
     }
 
-    let bindings = Pdfium::bind_to_library(
-        Pdfium::pdfium_platform_library_name_at_path(dll_dir),
-    )
-    .map_err(|e| format!("Failed to load PDFium DLL from {:?}: {}", dll_dir, e))?;
+    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(dll_dir))
+        .map_err(|e| format!("Failed to load PDFium DLL from {:?}: {}", dll_dir, e))?;
 
     let pdfium = Pdfium::new(bindings);
 
@@ -104,9 +102,8 @@ impl PdfiumDocumentHandle {
         // Safety: the document borrows from `bytes` and from `PDFIUM`. Both
         // live for 'static: `_bytes` is kept alive in the same struct, and
         // PDFIUM is a OnceLock<Pdfium> that is never dropped.
-        let bytes_ref: &'static [u8] = unsafe {
-            std::slice::from_raw_parts(bytes.as_ptr(), bytes.len())
-        };
+        let bytes_ref: &'static [u8] =
+            unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
 
         let document = {
             // Loading is an in-proc PDFium FFI call: serialise it against all
@@ -164,7 +161,10 @@ pub fn get_or_load_pdfium_doc(
     cache: &PdfiumDocCache,
 ) -> Result<Arc<PdfiumDocumentHandle>, String> {
     {
-        let map = cache.0.lock().map_err(|e| format!("Pdfium doc cache lock: {}", e))?;
+        let map = cache
+            .0
+            .lock()
+            .map_err(|e| format!("Pdfium doc cache lock: {}", e))?;
         if let Some(h) = map.get(path) {
             return Ok(h.clone());
         }
@@ -174,7 +174,10 @@ pub fn get_or_load_pdfium_doc(
     let arc_bytes = Arc::new(bytes);
     let handle = Arc::new(PdfiumDocumentHandle::load_from_bytes(arc_bytes)?);
 
-    let mut map = cache.0.lock().map_err(|e| format!("Pdfium doc cache lock: {}", e))?;
+    let mut map = cache
+        .0
+        .lock()
+        .map_err(|e| format!("Pdfium doc cache lock: {}", e))?;
     // Double-check after parse to avoid race-double-load.
     if let Some(existing) = map.get(path) {
         return Ok(existing.clone());
@@ -191,7 +194,10 @@ pub fn get_or_load_pdfium_doc_with_bytes(
     cache: &PdfiumDocCache,
 ) -> Result<Arc<PdfiumDocumentHandle>, String> {
     {
-        let map = cache.0.lock().map_err(|e| format!("Pdfium doc cache lock: {}", e))?;
+        let map = cache
+            .0
+            .lock()
+            .map_err(|e| format!("Pdfium doc cache lock: {}", e))?;
         if let Some(h) = map.get(path) {
             return Ok(h.clone());
         }
@@ -199,7 +205,10 @@ pub fn get_or_load_pdfium_doc_with_bytes(
 
     let handle = Arc::new(PdfiumDocumentHandle::load_from_bytes(bytes)?);
 
-    let mut map = cache.0.lock().map_err(|e| format!("Pdfium doc cache lock: {}", e))?;
+    let mut map = cache
+        .0
+        .lock()
+        .map_err(|e| format!("Pdfium doc cache lock: {}", e))?;
     if let Some(existing) = map.get(path) {
         return Ok(existing.clone());
     }
@@ -518,7 +527,12 @@ pub fn render_page_region_to_rgba(
     let config = PdfRenderConfig::new()
         .set_fixed_size(bitmap_w, bitmap_h)
         .transform(scale_x, 0.0, 0.0, scale_y, tx, ty)
-        .map_err(|e| format!("render_page_region_to_rgba: invalid transform matrix: {}", e))?
+        .map_err(|e| {
+            format!(
+                "render_page_region_to_rgba: invalid transform matrix: {}",
+                e
+            )
+        })?
         // ANNOTATION OWNERSHIP: see render_page_to_rgba above. Tiles must
         // omit /Annot entries too so the overlay-canvas is the single
         // source of truth at every zoom level. Without this, high-zoom

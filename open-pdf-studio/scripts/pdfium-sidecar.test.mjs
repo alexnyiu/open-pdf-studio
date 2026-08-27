@@ -97,3 +97,19 @@ test('cross-target builds never fall back to the host worker', async () => {
   assert.match(buildScript, /if host == target/);
   assert.match(buildScript, /validate_binary_target/);
 });
+
+test('arm64 packager probes PDFium after final nested and app signing', async () => {
+  const packager = await readFile(
+    path.join(projectDir, 'scripts', 'package-macos-release-arm64.mjs'),
+    'utf8',
+  );
+  const workerSigning = packager.indexOf("'pdfium-worker.entitlements.plist'");
+  const appSigning = packager.indexOf("'entitlements.plist'", workerSigning + 1);
+  const signatureVerification = packager.indexOf("'--verify', '--deep'", appSigning + 1);
+  const runtimeProbe = packager.indexOf("await run(bundledWorker, ['--probe-pdfium'])");
+
+  assert.ok(workerSigning >= 0, 'worker is signed with its dedicated entitlements');
+  assert.ok(appSigning > workerSigning, 'app signing follows nested worker signing');
+  assert.ok(signatureVerification > appSigning, 'final app signature is verified');
+  assert.ok(runtimeProbe > signatureVerification, 'signed worker PDFium probe is the final bundle gate');
+});

@@ -5,6 +5,7 @@ use crate::protocol::{
 };
 use pdfium_render::prelude::*;
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub struct RenderResult {
@@ -212,17 +213,36 @@ fn build_page_geometry(
 // deze ene instantie.
 static PDFIUM: OnceLock<Pdfium> = OnceLock::new();
 
-fn pdfium_library_directories(exe_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    vec![
-        exe_dir.to_path_buf(),
-        // macOS application bundle resources.
-        exe_dir.join("../Resources"),
-        // Tauri AppImage/deb resources. Product-name and identifier-style
-        // directories are both accepted because bundle layouts can differ.
-        exe_dir.join("../lib/Open PDF Studio"),
-        exe_dir.join("../lib/open-pdf-studio"),
-        std::path::PathBuf::from("."),
-    ]
+fn absolute_library_path(directory: PathBuf) -> PathBuf {
+    let candidate = Pdfium::pdfium_platform_library_name_at_path(&directory);
+    candidate.canonicalize().unwrap_or(candidate)
+}
+
+fn pdfium_library_candidates(exe_path: Option<&Path>, cwd: Option<&Path>) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    if let Some(exe_dir) = exe_path.and_then(Path::parent) {
+        directories.extend([
+            exe_dir.to_path_buf(),
+            // macOS application bundle resources.
+            exe_dir.join("../Resources"),
+            // Tauri AppImage/deb resources. Product-name and identifier-style
+            // directories are both accepted because bundle layouts can differ.
+            exe_dir.join("../lib/Open PDF Studio"),
+            exe_dir.join("../lib/open-pdf-studio"),
+        ]);
+    }
+    if let Some(cwd) = cwd {
+        directories.push(cwd.to_path_buf());
+    }
+
+    let mut candidates = Vec::new();
+    for directory in directories {
+        let candidate = absolute_library_path(directory);
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    candidates
 }
 
 fn pdfium() -> Result<&'static Pdfium> {
@@ -235,22 +255,31 @@ fn pdfium() -> Result<&'static Pdfium> {
         //      in Contents/Resources staat;
         //   4. ../lib/<product> — Tauri AppImage/deb resource layout;
         //   5. de huidige werkdirectory (dev / handmatige runs).
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let mut bindings = Pdfium::bind_to_system_library();
-        for directory in pdfium_library_directories(&exe_dir) {
-            if bindings.is_ok() {
-                break;
+        let exe_path = std::env::current_exe().ok();
+        let cwd = std::env::current_dir().ok();
+        let mut failures = Vec::new();
+        let bindings = match Pdfium::bind_to_system_library() {
+            Ok(bindings) => bindings,
+            Err(error) => {
+                failures.push(format!("system: {error}"));
+                let mut loaded = None;
+                for candidate in pdfium_library_candidates(exe_path.as_deref(), cwd.as_deref()) {
+                    match Pdfium::bind_to_library(&candidate) {
+                        Ok(bindings) => {
+                            loaded = Some(bindings);
+                            break;
+                        }
+                        Err(error) => failures.push(format!("{}: {error}", candidate.display())),
+                    }
+                }
+                loaded.ok_or_else(|| {
+                    anyhow!(
+                        "PDFium library not found; attempted system lookup and: {}",
+                        failures.join("; ")
+                    )
+                })?
             }
-            bindings = Pdfium::bind_to_library(
-                Pdfium::pdfium_platform_library_name_at_path(&directory),
-            );
-        }
-        let bindings = bindings.context(
-            "PDFium library not found (system, exe-dir, macOS resources, Tauri Linux resources, or cwd)",
-        )?;
+        };
         let _ = PDFIUM.set(Pdfium::new(bindings));
     }
     Ok(PDFIUM.get().expect("PDFIUM set above"))
@@ -592,15 +621,39 @@ mod tests {
     }
 
     #[test]
-    fn bundled_platform_resource_directories_are_searched() {
-        let directories = pdfium_library_directories(Path::new("/bundle/usr/bin"));
-        assert!(directories.contains(&PathBuf::from("/bundle/usr/bin/../Resources")));
-        assert!(directories.contains(&PathBuf::from(
-            "/bundle/usr/bin/../lib/Open PDF Studio",
+    fn bundled_platform_resource_directories_are_searched_with_absolute_library_paths() {
+        let candidates = pdfium_library_candidates(
+            Some(Path::new("/bundle/usr/bin/pdfium-worker")),
+            Some(Path::new("/tmp")),
+        );
+        assert!(candidates.contains(&PathBuf::from(
+            "/bundle/usr/bin/../Resources/libpdfium.dylib",
         )));
-        assert!(directories.contains(&PathBuf::from(
-            "/bundle/usr/bin/../lib/open-pdf-studio",
+        assert!(candidates.contains(&PathBuf::from(
+            "/bundle/usr/bin/../lib/Open PDF Studio/libpdfium.dylib",
         )));
+        assert!(candidates.contains(&PathBuf::from(
+            "/bundle/usr/bin/../lib/open-pdf-studio/libpdfium.dylib",
+        )));
+        assert!(candidates.iter().all(|candidate| candidate.is_absolute()));
+    }
+
+    #[test]
+    fn duplicate_current_directory_candidate_is_removed() {
+        let candidates = pdfium_library_candidates(
+            Some(Path::new("/opt/open-pdf-studio/pdfium-worker")),
+            Some(Path::new("/opt/open-pdf-studio")),
+        );
+
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|candidate| {
+                    candidate == &&Path::new("/opt/open-pdf-studio/libpdfium.dylib")
+                })
+                .count(),
+            1,
+        );
     }
 
     #[test]

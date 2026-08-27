@@ -1,7 +1,10 @@
 #[test]
 fn test_3037_font_encoding() {
     let path = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3037 Aanbouw Herenweg 20 Moerkapelle\71_constructie_advies\3037-CP-21 Constructieoverzicht.pdf";
-    let bytes = match std::fs::read(path) { Ok(b) => b, Err(_) => return };
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
     let doc = lopdf::Document::load_mem(&bytes).unwrap();
 
     let pages = doc.get_pages();
@@ -22,7 +25,10 @@ fn test_3037_font_encoding() {
 
     for (name, fref) in fonts.iter() {
         let fname = String::from_utf8_lossy(name);
-        let fid = match fref { lopdf::Object::Reference(id) => *id, _ => continue };
+        let fid = match fref {
+            lopdf::Object::Reference(id) => *id,
+            _ => continue,
+        };
         let fobj = doc.get_object(fid).unwrap();
         let fdict = fobj.as_dict().unwrap();
 
@@ -48,10 +54,14 @@ fn test_3037_font_encoding() {
                                 for (i, item) in arr.iter().enumerate().take(30) {
                                     match item {
                                         lopdf::Object::Integer(n) => print!("      code={} ", n),
-                                        lopdf::Object::Name(n) => print!("/{}  ", String::from_utf8_lossy(n)),
+                                        lopdf::Object::Name(n) => {
+                                            print!("/{}  ", String::from_utf8_lossy(n))
+                                        }
                                         _ => print!("?  "),
                                     }
-                                    if i % 10 == 9 { println!(); }
+                                    if i % 10 == 9 {
+                                        println!();
+                                    }
                                 }
                                 println!();
                             }
@@ -66,10 +76,14 @@ fn test_3037_font_encoding() {
                             for (i, item) in arr.iter().enumerate().take(30) {
                                 match item {
                                     lopdf::Object::Integer(n) => print!("      code={} ", n),
-                                    lopdf::Object::Name(n) => print!("/{}  ", String::from_utf8_lossy(n)),
+                                    lopdf::Object::Name(n) => {
+                                        print!("/{}  ", String::from_utf8_lossy(n))
+                                    }
                                     _ => print!("?  "),
                                 }
-                                if i % 10 == 9 { println!(); }
+                                if i % 10 == 9 {
+                                    println!();
+                                }
                             }
                             println!();
                         }

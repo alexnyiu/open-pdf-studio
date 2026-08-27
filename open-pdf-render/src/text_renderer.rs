@@ -1,8 +1,8 @@
+use crate::draw_commands::DrawCommandBuffer;
 use crate::font_parser::OutlineCommand;
 use crate::fonts::{FontEntry, FontRegistry};
-use crate::draw_commands::DrawCommandBuffer;
-use crate::renderer::SkiaRenderer;
 use crate::graphics_state::GraphicsStateStack;
+use crate::renderer::SkiaRenderer;
 
 /// Per-render glyph path cache keyed by (font ObjectId, glyph_id). Speed
 /// iter-23 cache: building a `tiny_skia::Path` from `OutlineCommand`s is
@@ -31,11 +31,7 @@ pub type GlyphPathCache = std::collections::HashMap<(lopdf::ObjectId, u32), tiny
 /// or /DW default), which preserves correct rendering for fonts whose
 /// width tables happen to be omitted (rare).
 #[inline]
-fn pdf_advance_width(
-    font_entry: &FontEntry,
-    code: u32,
-    fallback_advance_em: f32,
-) -> f32 {
+fn pdf_advance_width(font_entry: &FontEntry, code: u32, fallback_advance_em: f32) -> f32 {
     if let Some(&w) = font_entry.widths.get(&code) {
         return w / 1000.0;
     }
@@ -150,11 +146,7 @@ pub fn render_text_glyphs(
             //
             // Width source: PDF /Widths array first, embedded font hmtx as
             // fallback (see pdf_advance_width comment).
-            let w0 = pdf_advance_width(
-                font_entry,
-                byte as u32,
-                outline.advance_width / upm,
-            );
+            let w0 = pdf_advance_width(font_entry, byte as u32, outline.advance_width / upm);
             let tw = if byte == 32 { word_spacing } else { 0.0 };
             let tx = (w0 * font_size + char_spacing + tw) * horizontal_scaling;
             tm[4] += tx * tm[0];
@@ -229,13 +221,13 @@ pub fn render_cid_text_glyphs(
 
             // Width source: PDF /W array first (keyed by CID), embedded font
             // hmtx as fallback (see pdf_advance_width comment).
-            let w0 = pdf_advance_width(
-                font_entry,
-                cid as u32,
-                outline.advance_width / upm,
-            );
+            let w0 = pdf_advance_width(font_entry, cid as u32, outline.advance_width / upm);
             // CID space char is typically U+0020 = CID 3 (font-dependent)
-            let tw = if cid == 3 || cid == 32 { word_spacing } else { 0.0 };
+            let tw = if cid == 3 || cid == 32 {
+                word_spacing
+            } else {
+                0.0
+            };
             let tx = (w0 * font_size + char_spacing + tw) * horizontal_scaling;
             tm[4] += tx * tm[0];
             tm[5] += tx * tm[1];
@@ -269,9 +261,19 @@ pub fn render_text_glyphs_skia(
     glyph_cache: Option<(lopdf::ObjectId, &mut GlyphPathCache)>,
 ) {
     render_text_glyphs_skia_with_mode(
-        text_bytes, font_entry, font_size, horizontal_scaling,
-        char_spacing, word_spacing, rise, tm, fill_rgba,
-        renderer, state, glyph_cache, 0,
+        text_bytes,
+        font_entry,
+        font_size,
+        horizontal_scaling,
+        char_spacing,
+        word_spacing,
+        rise,
+        tm,
+        fill_rgba,
+        renderer,
+        state,
+        glyph_cache,
+        0,
     );
 }
 
@@ -344,13 +346,17 @@ pub fn render_text_glyphs_skia_with_mode(
                 // of the document so the cached Path is reusable across
                 // pages within the same render. We re-build the Path if
                 // there's no cache (e.g. inline font dict with no ObjectId).
-                let path_opt = if let (Some(font_id), Some(cache)) = (font_id_opt, cache_opt.as_deref_mut()) {
-                    Some(cache.entry((font_id, glyph_id as u32))
-                        .or_insert_with(|| build_glyph_path(&outline.commands))
-                        .clone())
-                } else {
-                    build_glyph_path_opt(&outline.commands)
-                };
+                let path_opt =
+                    if let (Some(font_id), Some(cache)) = (font_id_opt, cache_opt.as_deref_mut()) {
+                        Some(
+                            cache
+                                .entry((font_id, glyph_id as u32))
+                                .or_insert_with(|| build_glyph_path(&outline.commands))
+                                .clone(),
+                        )
+                    } else {
+                        build_glyph_path_opt(&outline.commands)
+                    };
 
                 if let Some(path) = path_opt {
                     // Speed iter-23: avoid the full state.save() / restore()
@@ -366,11 +372,15 @@ pub fn render_text_glyphs_skia_with_mode(
                     let saved_line_width = state.current.line_width;
                     let saved_dash = state.current.dash_array.clone();
                     state.current.fill_color = fill_rgba;
-                    state.current.ctm = state.current.ctm.pre_concat(
-                        tiny_skia::Transform::from_row(
-                            sh * tm[0], sh * tm[1], s * tm[2], s * tm[3], sgx, sgy,
-                        ),
-                    );
+                    state.current.ctm =
+                        state.current.ctm.pre_concat(tiny_skia::Transform::from_row(
+                            sh * tm[0],
+                            sh * tm[1],
+                            s * tm[2],
+                            s * tm[3],
+                            sgx,
+                            sgy,
+                        ));
                     if do_fill {
                         renderer.fill_cached_path(&path, &state.current, false);
                     }
@@ -383,9 +393,7 @@ pub fn render_text_glyphs_skia_with_mode(
                         // width. Note: `s` is positive and bounded > 0
                         // because `font_size > 0` and `upm > 0`.
                         let local_width = state.current.line_width / s;
-                        renderer.stroke_cached_path_with_width(
-                            &path, &state.current, local_width,
-                        );
+                        renderer.stroke_cached_path_with_width(&path, &state.current, local_width);
                     }
                     // Synthetic bold for fonts whose FontDescriptor /Flags
                     // has bit 19 (ForceBold) set per ISO 32000-1 §9.8.1
@@ -408,7 +416,9 @@ pub fn render_text_glyphs_skia_with_mode(
                         state.current.stroke_color = fill_rgba;
                         state.current.dash_array = Vec::new();
                         renderer.stroke_cached_path_with_width(
-                            &path, &state.current, bold_local_width,
+                            &path,
+                            &state.current,
+                            bold_local_width,
                         );
                     }
                     state.current.ctm = saved_ctm;
@@ -421,11 +431,7 @@ pub fn render_text_glyphs_skia_with_mode(
 
             // Width source: PDF /Widths array first, embedded font hmtx
             // as fallback (see pdf_advance_width comment).
-            let w0 = pdf_advance_width(
-                font_entry,
-                byte as u32,
-                outline.advance_width / upm,
-            );
+            let w0 = pdf_advance_width(font_entry, byte as u32, outline.advance_width / upm);
             let tw = if byte == 32 { word_spacing } else { 0.0 };
             let tx = (w0 * font_size + char_spacing + tw) * horizontal_scaling;
             tm[4] += tx * tm[0];
@@ -457,7 +463,9 @@ fn build_glyph_path_opt(cmds: &[OutlineCommand]) -> Option<tiny_skia::Path> {
         match cmd {
             OutlineCommand::MoveTo(x, y) => pb.move_to(*x, *y),
             OutlineCommand::LineTo(x, y) => pb.line_to(*x, *y),
-            OutlineCommand::CubicTo(x1, y1, x2, y2, x, y) => pb.cubic_to(*x1, *y1, *x2, *y2, *x, *y),
+            OutlineCommand::CubicTo(x1, y1, x2, y2, x, y) => {
+                pb.cubic_to(*x1, *y1, *x2, *y2, *x, *y)
+            }
             OutlineCommand::Close => pb.close(),
         }
     }
@@ -543,9 +551,19 @@ pub fn render_cid_text_glyphs_skia(
     glyph_cache: Option<(lopdf::ObjectId, &mut GlyphPathCache)>,
 ) {
     render_cid_text_glyphs_skia_with_mode(
-        text_bytes, font_entry, font_size, horizontal_scaling,
-        char_spacing, word_spacing, rise, tm, fill_rgba,
-        renderer, state, glyph_cache, 0,
+        text_bytes,
+        font_entry,
+        font_size,
+        horizontal_scaling,
+        char_spacing,
+        word_spacing,
+        rise,
+        tm,
+        fill_rgba,
+        renderer,
+        state,
+        glyph_cache,
+        0,
     );
 }
 
@@ -604,13 +622,17 @@ pub fn render_cid_text_glyphs_skia_with_mode(
                 let gy = rise * tm[3] + tm[5];
                 let (sgx, sgy) = snap_glyph_origin(gx, gy, &state.current.ctm);
 
-                let path_opt = if let (Some(font_id), Some(cache)) = (font_id_opt, cache_opt.as_deref_mut()) {
-                    Some(cache.entry((font_id, glyph_id as u32))
-                        .or_insert_with(|| build_glyph_path(&outline.commands))
-                        .clone())
-                } else {
-                    build_glyph_path_opt(&outline.commands)
-                };
+                let path_opt =
+                    if let (Some(font_id), Some(cache)) = (font_id_opt, cache_opt.as_deref_mut()) {
+                        Some(
+                            cache
+                                .entry((font_id, glyph_id as u32))
+                                .or_insert_with(|| build_glyph_path(&outline.commands))
+                                .clone(),
+                        )
+                    } else {
+                        build_glyph_path_opt(&outline.commands)
+                    };
 
                 if let Some(path) = path_opt {
                     // See comment in render_text_glyphs_skia: avoid full
@@ -621,19 +643,21 @@ pub fn render_cid_text_glyphs_skia_with_mode(
                     let saved_line_width = state.current.line_width;
                     let saved_dash = state.current.dash_array.clone();
                     state.current.fill_color = fill_rgba;
-                    state.current.ctm = state.current.ctm.pre_concat(
-                        tiny_skia::Transform::from_row(
-                            sh * tm[0], sh * tm[1], s * tm[2], s * tm[3], sgx, sgy,
-                        ),
-                    );
+                    state.current.ctm =
+                        state.current.ctm.pre_concat(tiny_skia::Transform::from_row(
+                            sh * tm[0],
+                            sh * tm[1],
+                            s * tm[2],
+                            s * tm[3],
+                            sgx,
+                            sgy,
+                        ));
                     if do_fill {
                         renderer.fill_cached_path(&path, &state.current, false);
                     }
                     if do_stroke {
                         let local_width = state.current.line_width / s;
-                        renderer.stroke_cached_path_with_width(
-                            &path, &state.current, local_width,
-                        );
+                        renderer.stroke_cached_path_with_width(&path, &state.current, local_width);
                     }
                     // Synthetic bold for ForceBold flag — see the simple-text
                     // variant above for the rationale and width derivation.
@@ -642,7 +666,9 @@ pub fn render_cid_text_glyphs_skia_with_mode(
                         state.current.stroke_color = fill_rgba;
                         state.current.dash_array = Vec::new();
                         renderer.stroke_cached_path_with_width(
-                            &path, &state.current, bold_local_width,
+                            &path,
+                            &state.current,
+                            bold_local_width,
                         );
                     }
                     state.current.ctm = saved_ctm;
@@ -655,12 +681,12 @@ pub fn render_cid_text_glyphs_skia_with_mode(
 
             // Width source: PDF /W array first (keyed by CID), embedded
             // font hmtx as fallback (see pdf_advance_width comment).
-            let w0 = pdf_advance_width(
-                font_entry,
-                cid as u32,
-                outline.advance_width / upm,
-            );
-            let tw = if cid == 3 || cid == 32 { word_spacing } else { 0.0 };
+            let w0 = pdf_advance_width(font_entry, cid as u32, outline.advance_width / upm);
+            let tw = if cid == 3 || cid == 32 {
+                word_spacing
+            } else {
+                0.0
+            };
             let tx = (w0 * font_size + char_spacing + tw) * horizontal_scaling;
             tm[4] += tx * tm[0];
             tm[5] += tx * tm[1];

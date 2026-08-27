@@ -21,7 +21,18 @@ const sourceDocument = {
     dirty: false,
   },
 };
-state.documents = [sourceDocument];
+const secondDocument = {
+  ...sourceDocument,
+  id: 'ocr-recognition-ui-document-second',
+  filePath: '/parent/recognition-ui-second.pdf',
+  fileName: 'recognition-ui-second.pdf',
+  ocr: {
+    ...sourceDocument.ocr,
+    documentId: 'ocr-recognition-ui-document-second',
+    generation: 'ocr-recognition-ui-generation-second',
+  },
+};
+state.documents = [sourceDocument, secondDocument];
 state.activeDocumentIndex = 0;
 
 let receivedStart = null;
@@ -50,6 +61,12 @@ render(() => <DialogHost />, root);
 openDialog('recognize-text');
 
 window.__ocrRecognitionHarness = {
+  switchDocument(index) {
+    state.activeDocumentIndex = index;
+  },
+  reopen() {
+    openDialog('recognize-text');
+  },
   result() {
     return {
       receivedStart: receivedStart ? {

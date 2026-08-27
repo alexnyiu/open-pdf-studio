@@ -551,23 +551,57 @@ async function handleType(params) {
     return { ok: false, error: 'missing or invalid params.text' };
   }
 
+  const framePaced = params?.framePaced === true;
+  const framePacingDelayMs = framePaced ? 5 : 0;
+  const measurePerformance = params?.measurePerformance === true;
+  const paintSamples = [];
+  const typingTaskSamples = [];
+  const longTasks = [];
+  let maximumActiveExactLayoutTasks = 0;
+  let longTaskObserver = null;
+  if (measurePerformance && typeof PerformanceObserver !== 'undefined') {
+    try {
+      longTaskObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) longTasks.push(entry.duration);
+      });
+      longTaskObserver.observe({ type: 'longtask', buffered: false });
+    } catch { /* long-task timing is optional on older WebViews */ }
+  }
+  const layoutScheduler = measurePerformance
+    ? await import('/js/text/native-layout-scheduler.js').catch(() => null)
+    : null;
+  const layoutStore = measurePerformance
+    ? await import('/js/solid/stores/pdfTextEditStore.js').catch(() => null)
+    : null;
+  const placementMetrics = measurePerformance
+    ? await import('/js/text/page-text-edit-metrics.js').catch(() => null)
+    : null;
+  placementMetrics?.resetPageTextEditPlacementMetrics?.();
+
   let typed = 0;
   let lastTarget = document.body;
   let lastEditable = false;
+  let latestInputAt = performance.now();
   for (const ch of text) {
+    const taskStartedAt = performance.now();
     const target = document.activeElement ?? document.body;
     lastTarget = target;
-    const init = makeKeyInit(ch, {});
+    const tag = target.tagName ? target.tagName.toLowerCase() : '';
+    const isEditable = (tag === 'input' || tag === 'textarea' ||
+                       target.isContentEditable === true);
+    const richHardBreak = target.isContentEditable === true && (ch === '\n' || ch === '\r');
+    const init = makeKeyInit(richHardBreak ? 'Enter' : ch, {});
     target.dispatchEvent(new KeyboardEvent('keydown', init));
 
     // beforeinput + input fire on text inputs so framework controls update.
     // We only inject text into editable controls — refusing to mangle
     // arbitrary DOM text content.
-    const tag = target.tagName ? target.tagName.toLowerCase() : '';
-    const isEditable = (tag === 'input' || tag === 'textarea' ||
-                       target.isContentEditable === true);
     lastEditable = isEditable;
-    if (isEditable) {
+    // A newline typed into a contenteditable is an Enter gesture, not an
+    // insertText payload. The production editor owns that key and creates one
+    // canonical hard break. Sending "\n" through execCommand makes WebKit
+    // clone/reorder rich-line DOM and does not model a user action.
+    if (isEditable && !richHardBreak) {
       try {
         target.dispatchEvent(new InputEvent('beforeinput', {
           bubbles: true, cancelable: true,
@@ -597,9 +631,114 @@ async function handleType(params) {
       }
     }
     target.dispatchEvent(new KeyboardEvent('keyup', init));
+    latestInputAt = performance.now();
+    typingTaskSamples.push(latestInputAt - taskStartedAt);
+    maximumActiveExactLayoutTasks = Math.max(
+      maximumActiveExactLayoutTasks,
+      Number(layoutScheduler?.exactLayoutSchedulerState?.().activeTasks) || 0,
+    );
     typed++;
+    // Contenteditable input schedules canonical caret restoration in a
+    // microtask. Let that finish before the next synthetic keystroke so the
+    // acceptance driver follows the same ordered editing path as real input.
+    if (target.isContentEditable === true && !framePaced && !measurePerformance) {
+      await Promise.resolve();
+    }
+    if (framePaced || measurePerformance) {
+      const paintStartedAt = taskStartedAt;
+      await new Promise((resolve) => requestAnimationFrame((timestamp) => {
+        paintSamples.push(Math.max(0, timestamp - paintStartedAt));
+        resolve();
+      }));
+      // Do not dispatch the next synthetic keystroke from inside the same RAF
+      // callback. A short, disclosed offset starts the next artificial input
+      // outside the refresh boundary so this measures editor work-to-paint,
+      // not a full display interval caused by the driver's phase alignment.
+      if (framePaced) await new Promise((resolve) => setTimeout(resolve, framePacingDelayMs));
+    }
   }
-  return { ok: true, typed, target: describeTarget(lastTarget), editable: lastEditable };
+  let exactValidationMs = 0;
+  if (measurePerformance && layoutStore?.editorLayoutState) {
+    const deadline = performance.now() + 5_000;
+    while (layoutStore.editorLayoutState()?.pending && performance.now() < deadline) {
+      maximumActiveExactLayoutTasks = Math.max(
+        maximumActiveExactLayoutTasks,
+        Number(layoutScheduler?.exactLayoutSchedulerState?.().activeTasks) || 0,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    exactValidationMs = performance.now() - latestInputAt;
+  }
+  longTaskObserver?.disconnect();
+  const sortedPaint = [...paintSamples].sort((left, right) => left - right);
+  const p95Index = Math.max(0, Math.ceil(sortedPaint.length * 0.95) - 1);
+  return {
+    ok: true,
+    typed,
+    target: describeTarget(lastTarget),
+    editable: lastEditable,
+    ...(measurePerformance ? {
+      performance: {
+        typingToPaintP95Ms: sortedPaint[p95Index] || 0,
+        warmExactValidationMs: exactValidationMs,
+        maxOrdinaryTypingTaskMs: Math.max(0, ...typingTaskSamples, ...longTasks),
+        activeExactLayoutTasks: maximumActiveExactLayoutTasks,
+        samples: paintSamples.length,
+        framePacingDelayMs,
+        instrumentation: {
+          longTaskObserver: {
+            available: longTaskObserver !== null,
+            failedOpen: false,
+          },
+          exactLayoutScheduler: {
+            available: typeof layoutScheduler?.exactLayoutSchedulerState === 'function',
+            failedOpen: false,
+          },
+          editorLayoutStore: {
+            available: typeof layoutStore?.editorLayoutState === 'function',
+            failedOpen: false,
+          },
+          placementMetrics: {
+            available: typeof placementMetrics?.pageTextEditPlacementMetrics === 'function'
+              && typeof placementMetrics?.resetPageTextEditPlacementMetrics === 'function',
+            failedOpen: false,
+          },
+        },
+      },
+    } : {}),
+  };
+}
+
+async function handlePaste(params) {
+  const text = params?.text;
+  if (typeof text !== 'string') return { ok: false, error: 'missing or invalid params.text' };
+  const target = document.activeElement ?? document.body;
+  const tag = target.tagName ? target.tagName.toLowerCase() : '';
+  const isEditable = tag === 'input' || tag === 'textarea' || target.isContentEditable === true;
+  if (!isEditable) {
+    return { ok: false, error: 'focused element is not editable', target: describeTarget(target) };
+  }
+
+  const clipboardData = {
+    getData(type) {
+      return type === 'text' || type === 'text/plain' ? text : '';
+    },
+    types: ['text/plain'],
+  };
+  const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
+  // WebKit does not expose a constructible DataTransfer in every supported
+  // release. Supplying the read-only payload on the real paste event keeps the
+  // test on the production handler while remaining deterministic.
+  Object.defineProperty(event, 'clipboardData', { value: clipboardData });
+  const dispatched = target.dispatchEvent(event);
+  await Promise.resolve();
+  return {
+    ok: true,
+    target: describeTarget(target),
+    editable: true,
+    textLength: text.length,
+    defaultPrevented: event.defaultPrevented || dispatched === false,
+  };
 }
 
 async function handleGetViewportState() {
@@ -625,9 +764,12 @@ async function handleGetViewportState() {
   // PDFium (NOT PDF.js) is the engine actually drawing the page.
   let renderEngine = null;
   let renderTiming = null;
+  let activeDocId = null;
+  let activeDocGeneration = null;
   let docScale = null;
   let activeDocPath = null;
   let activePageNum = null;
+  let activePageRotation = null;
   let viewMode = null;
   let bookSpread = null;
   let currentTool = null;
@@ -635,17 +777,36 @@ async function handleGetViewportState() {
   let selectedCount = null;
   let pageCount = null;
   let statusMessage = null;
+  let textSelection = null;
   let preloadStatus = null;
+  let editorMetrics = null;
+  let editorSession = null;
+  let ocrWorkflowMetrics = null;
   try {
     const stateMod = await import('/js/core/state.ts');
     renderEngine = stateMod.state?.renderEngine ?? null;
     renderTiming = stateMod.state?.renderTiming ?? null;
     currentTool = stateMod.state?.currentTool ?? null;
     statusMessage = stateMod.state?.statusMessage ?? null;
+    const selection = stateMod.state?.textSelection;
+    if (selection) {
+      const selectedText = String(selection.selectedText || '');
+      textSelection = {
+        hasSelection: selection.hasSelection === true,
+        selectedText: selectedText.slice(0, 2_000),
+        selectedTextLength: selectedText.length,
+        pageNum: selection.pageNum ?? null,
+      };
+    }
     const doc = stateMod.state?.documents?.[stateMod.state.activeDocumentIndex];
+    activeDocId = doc?.id ?? null;
+    activeDocGeneration = doc?.lifecycleGeneration ?? null;
     docScale = doc?.scale ?? null;
     activeDocPath = doc?.filePath ?? null;
     activePageNum = doc?.currentPage ?? null;
+    activePageRotation = doc && Number.isInteger(activePageNum)
+      ? Number(doc.pageRotations?.[activePageNum]) || 0
+      : null;
     viewMode = doc?.viewMode ?? null;
     bookSpread = !!doc?.bookSpread;
     annotationCount = (doc?.annotations || []).length;
@@ -656,6 +817,63 @@ async function handleGetViewportState() {
     // Module may not be loaded yet; leave fields null.
   }
 
+  try {
+    const [placementModule, historyModule, layoutModule] = await Promise.all([
+      import('/js/text/page-text-edit-metrics.js'),
+      import('/js/solid/stores/pdfTextEditStore.js'),
+      import('/js/text/native-layout-scheduler.js'),
+    ]);
+    editorMetrics = {
+      placement: placementModule.pageTextEditPlacementMetrics(),
+      placementDebug: window.__pdfTextEditPlacementDebug
+        ? { ...window.__pdfTextEditPlacementDebug }
+        : null,
+      history: historyModule.richTextHistoryMetrics(),
+      exactLayout: layoutModule.exactLayoutSchedulerState(),
+      layoutState: (() => {
+        const layout = historyModule.getEditorLayoutState?.();
+        if (!layout) return null;
+        return {
+          pending: layout.pending === true,
+          valid: layout.valid === true,
+          message: layout.message || '',
+          requestedFingerprint: layout.requestedFingerprint || null,
+          validatedFingerprint: layout.validatedFingerprint || null,
+          statuses: layout.statuses ? { ...layout.statuses } : null,
+          result: layout.result ? {
+            valid: layout.result.valid === true,
+            requiredHeight: layout.result.requiredHeight ?? null,
+            contentWidth: layout.result.contentWidth ?? null,
+            pageEdgeValid: layout.result.pageEdgeValid ?? null,
+            columnValid: layout.result.columnValid ?? null,
+            rejectionReasons: [...(layout.result.rejectionReasons || [])],
+            overlapWarningCount: layout.result.overlapWarnings?.length || 0,
+          } : null,
+        };
+      })(),
+    };
+  } catch { /* editor may not be initialized yet */ }
+
+  try {
+    const { getActiveTextEditSession } = await import('/js/text/text-edit-session.js');
+    const session = getActiveTextEditSession();
+    if (session) {
+      editorSession = {
+        sessionId: session.sessionId,
+        ownerDocumentId: session.ownerDocumentId,
+        ownerDocumentGeneration: session.ownerDocumentGeneration,
+        pageNum: session.pageNum,
+        kind: session.kind,
+        dirty: Boolean(session.isDirty?.()),
+      };
+    }
+  } catch { /* editor session registry may not be initialized yet */ }
+
+  try {
+    const { ocrWorkflowService } = await import('/js/ocr/workflow-service.js');
+    ocrWorkflowMetrics = ocrWorkflowService.publicationMetrics();
+  } catch { /* OCR workflow service may not be initialized yet */ }
+
   return {
     ok: true,
     // App-level tool + annotation snapshot (used by the button-sweep
@@ -665,14 +883,21 @@ async function handleGetViewportState() {
     selectedCount,
     pageCount,
     statusMessage,
+    textSelection,
+    editorMetrics,
+    editorSession,
+    ocrWorkflowMetrics,
     // Engine + timing — what the user sees in the status-bar chip.
     engine: renderEngine,
     renderTiming,
     // Active document at the moment of the snapshot.
     doc: {
+      id: activeDocId,
+      lifecycleGeneration: activeDocGeneration,
       filePath: activeDocPath,
       scale: docScale,
       currentPage: activePageNum,
+      pageRotation: activePageRotation,
       viewMode,
       bookSpread,
       preloadStatus,
@@ -2045,6 +2270,7 @@ async function handleClickElement(params) {
   return {
     ok: true,
     found: true,
+    matchCount: document.querySelectorAll(selector).length,
     disabled,
     clicked: !disabled,
     activatedTab: found.activatedTab,
@@ -2087,23 +2313,44 @@ async function handleUiState(params) {
     } catch { /* keep rect-based answer */ }
   }
   const pageTextEditLayer = el.closest?.('.pdf-text-edit-layer') || null;
+  const closestTextLayer = el.closest?.('.textLayer') || null;
+  const closestTextLayerRect = closestTextLayer?.getBoundingClientRect?.() || null;
+  let editableValue = typeof el.value === 'string' ? el.value : null;
+  if (editableValue === null && el.isContentEditable === true) {
+    if (el.matches?.('.pdf-text-editor.rich-text-editor')) {
+      try {
+        const { getEditorText } = await import('/js/solid/stores/pdfTextEditStore.js');
+        editableValue = getEditorText();
+      } catch { /* fall through to the rendered contenteditable value */ }
+    }
+    if (editableValue === null && typeof el.innerText === 'string') editableValue = el.innerText;
+  }
   return {
     ok: true,
     found: true,
+    matchCount: document.querySelectorAll(selector).length,
     visible,
     disabled: _isElementDisabled(el),
     focused: document.activeElement === el,
     active: el.classList?.contains('active') === true ||
             el.getAttribute?.('aria-pressed') === 'true',
     text: (el.textContent || '').trim().slice(0, 300),
+    textLength: typeof el.textContent === 'string' ? el.textContent.length : null,
     tag: el.tagName ? el.tagName.toLowerCase() : null,
-    value: typeof el.value === 'string' ? el.value.slice(0, 300) : null,
+    value: editableValue === null ? null : editableValue.slice(0, 300),
+    valueLength: editableValue === null ? null : editableValue.length,
     src: typeof el.currentSrc === 'string' && el.currentSrc
       ? el.currentSrc.slice(0, 500)
       : (typeof el.getAttribute?.('src') === 'string' ? el.getAttribute('src').slice(0, 500) : null),
     dataset: el.dataset ? { ...el.dataset } : {},
     inlineStyle: el.getAttribute?.('style') ?? null,
     computedStyle,
+    layoutMetrics: {
+      clientWidth: el.clientWidth ?? null,
+      clientHeight: el.clientHeight ?? null,
+      scrollWidth: el.scrollWidth ?? null,
+      scrollHeight: el.scrollHeight ?? null,
+    },
     pageTextEditHost: {
       attached: Boolean(pageTextEditLayer),
       documentId: pageTextEditLayer?.dataset?.documentId ?? null,
@@ -2111,6 +2358,16 @@ async function handleUiState(params) {
       parentId: pageTextEditLayer?.parentElement?.id || null,
       parentClass: pageTextEditLayer?.parentElement?.className || null,
     },
+    textLayerHost: closestTextLayer ? {
+      dataset: closestTextLayer.dataset ? { ...closestTextLayer.dataset } : {},
+      inlineStyle: closestTextLayer.getAttribute?.('style') ?? null,
+      rect: closestTextLayerRect ? {
+        left: closestTextLayerRect.left,
+        top: closestTextLayerRect.top,
+        width: closestTextLayerRect.width,
+        height: closestTextLayerRect.height,
+      } : null,
+    } : null,
     rect: {
       x: r.x,
       y: r.y,
@@ -2126,6 +2383,8 @@ async function handleUiState(params) {
       label: el.getAttribute?.('aria-label') ?? null,
       live: el.getAttribute?.('aria-live') ?? null,
       atomic: el.getAttribute?.('aria-atomic') ?? null,
+      multiline: el.getAttribute?.('aria-multiline') ?? null,
+      direction: el.getAttribute?.('dir') ?? null,
       valueMin: el.getAttribute?.('aria-valuemin') ?? null,
       valueMax: el.getAttribute?.('aria-valuemax') ?? null,
       valueNow: el.getAttribute?.('aria-valuenow') ?? null,
@@ -2148,6 +2407,7 @@ const HANDLERS = {
   'mcp:scroll':             handleScroll,
   'mcp:key':                handleKey,
   'mcp:type':               handleType,
+  'mcp:paste':              handlePaste,
   'mcp:get-viewport-state': handleGetViewportState,
   'mcp:get-recent-console': handleGetRecentConsole,
   'mcp:wheel-zoom':         handleWheelZoom,

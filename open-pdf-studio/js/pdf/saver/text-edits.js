@@ -2,7 +2,11 @@ import fontkit from '@pdf-lib/fontkit';
 import { PDFArray, PDFName, PDFRawStream, PDFString, rgb } from 'pdf-lib';
 import { getActiveDocument } from '../../core/state.js';
 import { loadPackagedFaceBytes, shapeRichTextDocument } from '../../text/font-catalog.js';
-import { isTextEditRecordV2, migrateTextEditRecords } from '../../text/rich-text.js';
+import {
+  cloneOwnedTextEditPersistenceState,
+  isTextEditRecordV2,
+  migrateTextEditRecords,
+} from '../../text/rich-text.js';
 import { assertOwnedTextEditStable, writeOwnedTextEditManifest } from '../../text/owned-edit-manifest.js';
 import { hexToRgb } from './utils.js';
 import { isTauri, invoke } from '../../core/platform.js';
@@ -56,11 +60,18 @@ async function prepareRecords(records) {
 }
 
 /** Neutralize provenance-linked native operators before pdf-lib mutates the document. */
-export async function applyNativeTextEditsToBytes(documentBytes, documentState) {
-  const records = documentState?.textEdits || [];
+export async function applyNativeTextEditsToBytes(
+  documentBytes,
+  documentState,
+  { invokeNative = invoke } = {},
+) {
+  // Document collections are Solid proxies in the browser. Detach all native
+  // IPC payloads up front, including the no-native-edit return value, so no
+  // reactive object can cross the Tauri structured-clone boundary.
+  const { records, previousManifest } = cloneOwnedTextEditPersistenceState(documentState);
   const nativeRecords = records.filter((record) => record.original && record.sourceProvenance);
   const currentIds = new Set(records.map((record) => String(record.id)));
-  const removedNativeRecords = (documentState?.textEditManifest?.pages || [])
+  const removedNativeRecords = (previousManifest?.pages || [])
     .flatMap((page) => page.edits || [])
     .filter((record) => record.original && record.sourceProvenance && !currentIds.has(String(record.id)));
   if (nativeRecords.length === 0 && removedNativeRecords.length === 0) {
@@ -69,10 +80,10 @@ export async function applyNativeTextEditsToBytes(documentBytes, documentState) 
   if (!isTauri()) {
     throw new Error('Native source text is read-only in browser preview');
   }
-  const result = await invoke('apply_native_text_edit_plan', {
+  const result = await invokeNative('apply_native_text_edit_plan', {
     documentBytes: Array.from(documentBytes),
     records,
-    previousManifest: documentState.textEditManifest || null,
+    previousManifest,
   });
   if (!result?.pdfBytes?.length || !Array.isArray(result.updatedRecords)) {
     throw new Error('Native text edit plan returned an invalid desktop result');

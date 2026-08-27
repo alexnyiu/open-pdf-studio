@@ -16,16 +16,23 @@ const vite = await createServer({
 });
 
 const {
+  OCR_WORKFLOW_PUBLICATION_INTERVAL_MS,
   OcrWorkflowService,
   ocrWorkflowService,
 } = await vite.ssrLoadModule('/js/ocr/workflow-service.js');
+const {
+  OCR_WORKFLOW_PERFORMANCE_CONTRACT,
+  runOcrWorkflowPerformanceBenchmark,
+} = await vite.ssrLoadModule('/js/ocr/workflow-performance.js');
 const {
   OcrApplicationController,
 } = await vite.ssrLoadModule('/js/ocr/application-controller.js');
 const {
   resolveOcrRecognitionPolicy,
   resolveOcrPageScope,
+  retryDocumentOcr,
   startActiveDocumentOcr,
+  startDocumentOcr,
 } = await vite.ssrLoadModule('/js/ocr/workflow-action.js');
 const {
   CORE_OCR_RECOGNITION_UI_PROFILE,
@@ -75,7 +82,7 @@ function pageSummary(pageNumber, stateName = 'completed', failure = null) {
   return {
     pageNumber,
     state: stateName,
-    fraction: 1,
+    fraction: ['completed', 'skipped', 'unsupported', 'failed', 'cancelled'].includes(stateName) ? 1 : 0,
     attempts: 1,
     retries: 0,
     retryableFailureSeen: false,
@@ -211,6 +218,73 @@ test('the normal macOS application action owns a production controller and calls
   }
 });
 
+test('owner-explicit OCR start survives tab switches and rejects a detached owner after await', async () => {
+  const first = makeDocument('owner-start-first');
+  const second = makeDocument('owner-start-second');
+  state.documents.splice(0, state.documents.length, first, second);
+  state.activeDocumentIndex = 0;
+  const owner = state.documents[0];
+  const modelCheck = deferred();
+  let received = null;
+  const workflow = {
+    requireCurrentModelState: () => modelCheck.promise,
+    start(input) { received = input; return { jobId: 'owner-start-job' }; },
+  };
+
+  const starting = startDocumentOcr(owner.id, { workflow });
+  state.activeDocumentIndex = 1;
+  modelCheck.resolve(modelState());
+  await starting;
+
+  assert.equal(received.document, owner);
+  assert.deepEqual(received.pageNumbers, [2]);
+
+  const detachedCheck = deferred();
+  let detachedStarts = 0;
+  const detachedStart = startDocumentOcr(owner.id, {
+    workflow: {
+      requireCurrentModelState: () => detachedCheck.promise,
+      start() { detachedStarts += 1; },
+    },
+  });
+  state.documents.splice(0, 1);
+  detachedCheck.resolve(modelState());
+  await assert.rejects(detachedStart, (error) => error.code === 'OCR_DOCUMENT_OWNER_CHANGED');
+  assert.equal(detachedStarts, 0);
+  state.documents.splice(0, state.documents.length);
+  state.activeDocumentIndex = -1;
+});
+
+test('owner-explicit retry reuses the failed owner settings instead of the active tab', async () => {
+  const owner = makeDocument('owner-retry-first');
+  const active = makeDocument('owner-retry-second');
+  state.documents.splice(0, state.documents.length, owner, active);
+  state.activeDocumentIndex = 1;
+  let received = null;
+  const recognitionPolicy = resolveOcrRecognitionPolicy({ maximumRetries: 2, useCache: false });
+  const previous = {
+    status: 'failed',
+    finishedAt: '2026-08-26T00:00:00.000Z',
+    failureDetails: [{ pageNumber: 1, code: 'OCR_TRANSIENT', stage: 'recognizing', retryable: true }],
+    pageScope: { kind: 'range', startPage: 1, endPage: 3 },
+    recognitionPolicy,
+  };
+  const workflow = {
+    status(documentId) { return documentId === owner.id ? previous : null; },
+    requireCurrentModelState: async () => modelState(),
+    start(input) { received = input; return { jobId: 'owner-retry-job' }; },
+  };
+
+  await retryDocumentOcr(owner.id, { workflow });
+
+  assert.equal(received.document, owner);
+  assert.deepEqual(received.pageNumbers, [1, 2, 3]);
+  assert.deepEqual(received.pageScope, previous.pageScope);
+  assert.deepEqual(received.recognitionPolicy, previous.recognitionPolicy);
+  state.documents.splice(0, state.documents.length);
+  state.activeDocumentIndex = -1;
+});
+
 test('workflow state publishes progress, failure details, and handle-backed user cancellation', async () => {
   const document = makeDocument('state-document');
   const fake = fakeHandle(document.id, 'state-job');
@@ -245,6 +319,7 @@ test('workflow state publishes progress, failure details, and handle-backed user
   });
   assert.equal(service.status(document.id).pages[0].state, 'recognizing');
   assert.equal(service.status(document.id).progress, 0.4);
+  await new Promise((resolve) => setTimeout(resolve, OCR_WORKFLOW_PUBLICATION_INTERVAL_MS + 20));
   assert.ok(snapshots.length >= 3);
 
   const cancellation = service.cancel(document.id);
@@ -270,6 +345,194 @@ test('workflow state publishes progress, failure details, and handle-backed user
   assert.equal(service.status(document.id).terminalSummary.keepCompletedPages, true);
   assert.equal(service.activeJobs.has(document.id), false);
   unsubscribe();
+});
+
+test('workflow deltas coalesce progress, keep O(1) page indexes, and stop after cancellation', async () => {
+  const document = makeDocument('delta-document');
+  const fake = fakeHandle(document.id, 'delta-job');
+  let startOptions = null;
+  const service = new OcrWorkflowService({
+    controller: {
+      startDocumentJob(options) { startOptions = options; return fake.handle; },
+      cancelDocument: async () => [],
+      cancelAll: async () => [],
+    },
+    modelState: { requireInstalled: async () => modelState() },
+  });
+  const updates = [];
+  const unsubscribe = service.subscribeUpdates((update) => updates.push(update));
+  service.start(startInput(document));
+
+  for (let sequence = 1; sequence <= 50; sequence += 1) {
+    startOptions.onProgress({
+      jobId: fake.handle.jobId,
+      documentId: document.id,
+      sequence,
+      pageNumber: 2,
+      pageState: 'recognizing',
+      pageFraction: sequence / 100,
+      documentFraction: sequence / 100,
+      attempts: 1,
+      retries: 0,
+      failure: null,
+    });
+  }
+  await new Promise((resolve) => setTimeout(resolve, OCR_WORKFLOW_PUBLICATION_INTERVAL_MS + 20));
+
+  const progressDeltas = updates.filter((update) => update.kind === 'progress' && update.progress > 0);
+  assert.equal(progressDeltas.length, 1);
+  assert.equal(progressDeltas[0].progress, 0.5);
+  assert.deepEqual(progressDeltas[0].pages.map((page) => page.pageNumber), [2]);
+  assert.equal(service.activeJobs.get(document.id).pageIndex.get(2).fraction, 0.5);
+  assert.ok(service.publicationMetrics().clonedBytes > 0);
+
+  for (let sequence = 51; sequence <= 60; sequence += 1) {
+    startOptions.onProgress({
+      jobId: fake.handle.jobId,
+      documentId: document.id,
+      sequence,
+      pageNumber: 2,
+      pageState: 'recognizing',
+      pageFraction: sequence / 100,
+      documentFraction: sequence / 100,
+      attempts: 1,
+      retries: 0,
+      failure: null,
+    });
+  }
+  await new Promise((resolve) => setTimeout(resolve, OCR_WORKFLOW_PUBLICATION_INTERVAL_MS + 20));
+  const publicationMetrics = service.publicationMetrics();
+  assert.equal(publicationMetrics.ordinaryDeliveryBatches, 2);
+  assert.ok(publicationMetrics.minimumOrdinaryDeliveryIntervalMs
+    >= OCR_WORKFLOW_PUBLICATION_INTERVAL_MS);
+  assert.ok(publicationMetrics.maximumOrdinaryDeliveryHz <= 10);
+
+  const cancellation = service.cancel(document.id);
+  const publicationsAfterCancel = updates.length;
+  startOptions.onProgress({
+    jobId: fake.handle.jobId,
+    documentId: document.id,
+    sequence: 61,
+    pageNumber: 2,
+    pageState: 'completed',
+    pageFraction: 1,
+    documentFraction: 1,
+    attempts: 1,
+    retries: 0,
+    failure: null,
+  });
+  await new Promise((resolve) => setTimeout(resolve, OCR_WORKFLOW_PUBLICATION_INTERVAL_MS + 20));
+  assert.equal(updates.length, publicationsAfterCancel);
+  assert.equal(service.status(document.id).status, 'cancelling');
+
+  fake.completion.resolve(terminalSummary({
+    jobId: fake.handle.jobId,
+    documentId: document.id,
+    status: 'cancelled',
+    pages: [pageSummary(2, 'cancelled')],
+  }));
+  await cancellation;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(updates.at(-1).terminal, true);
+  unsubscribe();
+});
+
+test('page failures bypass progress coalescing while ordinary progress remains queued', async () => {
+  const document = makeDocument('immediate-failure-document');
+  const fake = fakeHandle(document.id, 'immediate-failure-job');
+  let startOptions = null;
+  const service = new OcrWorkflowService({
+    controller: {
+      startDocumentJob(options) { startOptions = options; return fake.handle; },
+      cancelDocument: async () => [],
+      cancelAll: async () => [],
+    },
+    modelState: { requireInstalled: async () => modelState() },
+  });
+  const updates = [];
+  const unsubscribe = service.subscribeUpdates((update) => updates.push(update));
+  service.start(startInput(document));
+  const publicationsAfterStart = updates.length;
+
+  startOptions.onProgress({
+    jobId: fake.handle.jobId,
+    documentId: document.id,
+    sequence: 1,
+    pageNumber: 2,
+    pageState: 'recognizing',
+    pageFraction: 0.4,
+    documentFraction: 0.4,
+    attempts: 1,
+    retries: 0,
+    failure: null,
+  });
+  assert.equal(updates.length, publicationsAfterStart,
+    'ordinary progress must remain coalesced');
+
+  const failure = { code: 'OCR_PAGE_FAILED', stage: 'recognizing', retryable: true };
+  startOptions.onProgress({
+    jobId: fake.handle.jobId,
+    documentId: document.id,
+    sequence: 2,
+    pageNumber: 2,
+    pageState: 'failed',
+    pageFraction: 1,
+    documentFraction: 1,
+    attempts: 1,
+    retries: 1,
+    failure,
+  });
+  assert.equal(updates.length, publicationsAfterStart + 1,
+    'failure must publish synchronously instead of waiting for the coalescing timer');
+  assert.equal(updates.at(-1).kind, 'delta');
+  assert.equal(updates.at(-1).job.currentPageState, 'failed');
+  assert.deepEqual(updates.at(-1).job.failureDetails, [{ pageNumber: 2, ...failure }]);
+  assert.equal(service.publicationMetrics().ordinaryDeliveryBatches, 0);
+  assert.equal(service.publicationMetrics().immediateDeliveryBatches, 2);
+
+  await new Promise((resolve) => setTimeout(resolve, OCR_WORKFLOW_PUBLICATION_INTERVAL_MS + 20));
+  assert.equal(updates.length, publicationsAfterStart + 1,
+    'the superseded ordinary timer must not publish a duplicate after the failure');
+  fake.completion.resolve(terminalSummary({
+    jobId: fake.handle.jobId,
+    documentId: document.id,
+    status: 'failed',
+    pages: [pageSummary(2, 'failed', failure)],
+  }));
+  await fake.handle.completion;
+  await new Promise((resolve) => setImmediate(resolve));
+  unsubscribe();
+});
+
+test('100-page workflow benchmark reports bounded publication and owner-safe cancellation evidence', async () => {
+  let performanceTick = 0;
+  const report = await runOcrWorkflowPerformanceBenchmark({
+    performanceClock: () => {
+      performanceTick += 0.005;
+      return performanceTick;
+    },
+  });
+
+  assert.equal(report.contract, OCR_WORKFLOW_PERFORMANCE_CONTRACT);
+  assert.equal(report.schemaVersion, 1);
+  assert.equal(report.fixture.pageCount, 100);
+  assert.equal(report.fixture.transitionCount, 600);
+  assert.equal(report.metrics.bookkeepingEvents, 600);
+  assert.equal(
+    report.metrics.maximumPublicationHz,
+    1000 / OCR_WORKFLOW_PUBLICATION_INTERVAL_MS,
+  );
+  assert.ok(report.metrics.averagePublicationHz <= 10);
+  assert.ok(report.metrics.bookkeepingCpuPercent < 1);
+  assert.ok(report.metrics.clonedBytes > 0);
+  assert.ok(report.metrics.clonedBytes < 250_000);
+  assert.deepEqual(report.checks, {
+    publicationAtMost10Hz: true,
+    bookkeepingBelow1Percent: true,
+    progressMonotonic: true,
+    noLatePublicationAfterCancel: true,
+  });
+  assert.equal(report.passed, true);
 });
 
 test('document and application close use controller cancellation and suppress late document state', async () => {

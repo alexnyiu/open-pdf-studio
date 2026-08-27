@@ -14,6 +14,8 @@ import {
   cancelAllNativeOcrJobs,
   cancelNativeOcrDocument,
   cancelNativeOcrJob,
+  cancelNativeOcrPagePrefetch,
+  prefetchNativeOcrPageRaster,
   runNativeOcrPageForDocument,
 } from './native-controller.js';
 import { assertOcrPageGeometryV1 } from './contracts/page-geometry.v1.js';
@@ -27,6 +29,7 @@ import {
 import { getDefaultOcrModelPackState } from './model-state.js';
 import { createApplicationOcrPageRequest } from './application-request.js';
 import { recordAppliedOcrCompound } from './undo-commands.js';
+import { summarizeOcrApplicationPerformance } from './application-performance.js';
 
 export const OCR_APPLICATION_PAGE_STATES = Object.freeze([
   'queued',
@@ -55,6 +58,16 @@ function nowMs() {
 
 function clone(value) {
   return structuredClone(value);
+}
+
+function sameJson(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function documentLifecycleGeneration(document) {
+  return Number.isSafeInteger(document?.lifecycleGeneration)
+    ? document.lifecycleGeneration
+    : 0;
 }
 
 function yieldToEventLoop(_context = null) {
@@ -178,6 +191,16 @@ export class ApplicationOcrJob {
     this.jobId = `ocr-document-job-${Date.now()}-${applicationJobSequence}`;
     this.documentId = options.document.id;
     this.documentGeneration = ensureDocumentOcrState(options.document).generation;
+    this.documentLifecycleGeneration = documentLifecycleGeneration(options.document);
+    this.ownerPdfDocument = options.document.pdfDoc;
+    this.ownerPageCount = options.document.pdfDoc.numPages;
+    this.ownerSourcePdfPath = options.sourcePdfPath;
+    this.ownerDocumentFilePath = typeof options.document.filePath === 'string'
+      ? options.document.filePath
+      : null;
+    this.sourceFingerprint = options.documentFingerprint
+      ? clone(options.documentFingerprint)
+      : null;
     this.status = 'queued';
     this.progress = 0;
     this.progressSequence = 0;
@@ -206,7 +229,24 @@ export class ApplicationOcrJob {
       token: null,
       request: null,
       measuredStageCosts: null,
+      performance: null,
     }]));
+    this.pageFractionSum = 0;
+    this.counts = Object.fromEntries(OCR_APPLICATION_PAGE_STATES.map((state) => [state, 0]));
+    this.counts.queued = this.pages.size;
+    this.prefetchedPage = null;
+    this.activePrefetchReceipt = null;
+    this.prefetchMetrics = {
+      requested: 0,
+      used: 0,
+      discarded: 0,
+      failed: 0,
+      maxBuffered: 0,
+      rasterMs: 0,
+      bytesPrepared: 0,
+      bytesUsed: 0,
+      peakBufferedBytes: 0,
+    };
     this.before = snapshotOcrCommandState(options.document, options.pageNumbers);
     this.completion = null;
   }
@@ -237,28 +277,32 @@ export class ApplicationOcrJob {
       cache: page.cache,
       retained: page.retained,
       measuredStageCosts: page.measuredStageCosts ? clone(page.measuredStageCosts) : null,
+      performance: page.performance ? clone(page.performance) : null,
     }));
   }
 
   summary() {
     const pages = this.pageSummaries();
-    const counts = Object.fromEntries(OCR_APPLICATION_PAGE_STATES.map((state) => [state, 0]));
-    for (const page of pages) counts[page.state] += 1;
     return {
       jobId: this.jobId,
       documentId: this.documentId,
       documentGeneration: this.documentGeneration,
+      documentLifecycleGeneration: this.documentLifecycleGeneration,
       status: this.status,
       progress: this.progress,
       cancellationReason: this.cancellationReason,
       keepCompletedPages: this.options.keepCompletedPages,
       startedAt: this.startedAt,
       finishedAt: this.finishedAt,
-      counts,
+      counts: clone(this.counts),
       pages,
       stageCosts: this.controller.stageCosts.snapshot(),
       appliedPageNumbers: [...this.appliedPageNumbers],
       rolledBackPageNumbers: [...this.rolledBackPageNumbers],
+      prefetch: clone(this.prefetchMetrics),
+      performance: summarizeOcrApplicationPerformance(pages, {
+        prefetch: this.prefetchMetrics,
+      }),
     };
   }
 }
@@ -266,6 +310,8 @@ export class ApplicationOcrJob {
 export class OcrApplicationController {
   constructor({
     runPage = runNativeOcrPageForDocument,
+    prefetchPage = prefetchNativeOcrPageRaster,
+    cancelPrefetch = cancelNativeOcrPagePrefetch,
     cancelPage = cancelNativeOcrJob,
     cancelDocumentNative = cancelNativeOcrDocument,
     cancelAllNative = cancelAllNativeOcrJobs,
@@ -278,6 +324,8 @@ export class OcrApplicationController {
     yieldControl = yieldToEventLoop,
   } = {}) {
     this.runPage = runPage;
+    this.prefetchPage = prefetchPage;
+    this.cancelPrefetch = cancelPrefetch;
     this.cancelPage = cancelPage;
     this.cancelDocumentNative = cancelDocumentNative;
     this.cancelAllNative = cancelAllNative;
@@ -312,6 +360,12 @@ export class OcrApplicationController {
     }
     if (typeof sourcePdfPath !== 'string' || sourcePdfPath.length === 0) {
       throw new TypeError('Application OCR requires a parent-side PDF path');
+    }
+    if (typeof document.filePath === 'string' && document.filePath !== sourcePdfPath) {
+      throw Object.assign(new Error('Application OCR source path does not match the document owner'), {
+        code: 'OCR_SOURCE_IDENTITY_CHANGED',
+        retryable: false,
+      });
     }
     const pages = pageNumbers ?? Array.from({ length: document.pdfDoc.numPages }, (_, index) => index + 1);
     if (!Array.isArray(pages) || pages.length === 0 ||
@@ -358,17 +412,97 @@ export class OcrApplicationController {
     return job;
   }
 
+  ownerIdentityFailure(job) {
+    const { document } = job.options;
+    if (!document || document.id !== job.documentId ||
+        document.pdfDoc !== job.ownerPdfDocument ||
+        documentLifecycleGeneration(document) !== job.documentLifecycleGeneration ||
+        document.pdfDoc?.numPages !== job.ownerPageCount ||
+        ensureDocumentOcrState(document).generation !== job.documentGeneration) {
+      return {
+        code: 'OCR_DOCUMENT_LIFECYCLE_CHANGED',
+        stage: 'scheduling',
+        retryable: false,
+      };
+    }
+    if (job.ownerDocumentFilePath !== null &&
+        (document.filePath !== job.ownerDocumentFilePath ||
+         job.ownerDocumentFilePath !== job.ownerSourcePdfPath)) {
+      return {
+        code: 'OCR_SOURCE_IDENTITY_CHANGED',
+        stage: 'scheduling',
+        retryable: false,
+      };
+    }
+    return null;
+  }
+
+  acceptRequestSourceIdentity(job, request) {
+    const failure = this.ownerIdentityFailure(job);
+    if (failure) return failure;
+    if (!request || request.document?.id !== job.documentId ||
+        request.document?.generation !== job.documentGeneration ||
+        request.document?.pageCount !== job.ownerPageCount ||
+        request.document?.revision !== job.options.documentRevision) {
+      return {
+        code: 'OCR_SOURCE_IDENTITY_CHANGED',
+        stage: 'scheduling',
+        retryable: false,
+      };
+    }
+    if (job.sourceFingerprint === null) {
+      job.sourceFingerprint = clone(request.document.fingerprint);
+    } else if (!sameJson(job.sourceFingerprint, request.document.fingerprint)) {
+      return {
+        code: 'OCR_SOURCE_IDENTITY_CHANGED',
+        stage: 'scheduling',
+        retryable: false,
+      };
+    }
+    return null;
+  }
+
+  rejectStaleOwner(job, page, stage = 'scheduling', pageBefore = null) {
+    const failure = this.ownerIdentityFailure(job) ?? {
+      code: 'OCR_SOURCE_IDENTITY_CHANGED',
+      stage,
+      retryable: false,
+    };
+    failure.stage = stage;
+    page.staleRejected = true;
+    job.requestCancellation(failure.code === 'OCR_DOCUMENT_LIFECYCLE_CHANGED'
+      ? 'document-lifecycle-changed'
+      : 'source-identity-changed');
+    this.discardPagePrefetch(job);
+    this.inferenceGate.cancel(job.jobId);
+    this.restoreCurrentAttempt(job, page, pageBefore);
+    if (!TERMINAL_PAGE_STATES.has(page.state)) {
+      this.transition(job, page, 'failed', { failure });
+    }
+    if (job.currentNativeJobId) {
+      Promise.resolve(this.cancelPage(job.currentNativeJobId)).catch(() => {});
+    }
+    return false;
+  }
+
   transition(job, page, state, detail = {}) {
     if (!OCR_APPLICATION_PAGE_STATES.includes(state)) {
       throw new TypeError('Application OCR page state is unsupported');
     }
+    const previousState = page.state;
+    const previousFraction = page.fraction;
     page.state = state;
     page.fraction = Math.max(page.fraction, this.stageCosts.fractionAtStage(state));
+    if (previousState !== state) {
+      job.counts[previousState] = Math.max(0, job.counts[previousState] - 1);
+      job.counts[state] += 1;
+    }
+    job.pageFractionSum += page.fraction - previousFraction;
     if (detail.failure) page.failure = clone(detail.failure);
     if (page.token && ['queued', 'rasterizing', 'preprocessing', 'recognizing', 'validating', 'applying'].includes(state)) {
       markOcrPageStage(job.options.document, page.token, state);
     }
-    const average = [...job.pages.values()].reduce((sum, entry) => sum + entry.fraction, 0) / job.pages.size;
+    const average = job.pageFractionSum / job.pages.size;
     job.progress = Math.max(job.progress, average);
     job.progressSequence += 1;
     try {
@@ -422,6 +556,7 @@ export class OcrApplicationController {
 
   async prepareDefaults(job) {
     const options = job.options;
+    if (this.ownerIdentityFailure(job)) return false;
     if (options.createPageRequest) return !job.cancelRequested;
     if (!options.documentFingerprint) {
       const fingerprint = await this.waitForCancellable(
@@ -429,11 +564,14 @@ export class OcrApplicationController {
         this.fingerprintDocument(options.sourcePdfPath),
       );
       if (fingerprint === CANCELLED_ASYNC_WAIT) return false;
+      if (this.ownerIdentityFailure(job)) return false;
       options.documentFingerprint = fingerprint;
+      job.sourceFingerprint = clone(fingerprint);
     }
     if (!options.modelPack) {
       const model = await this.waitForCancellable(job, this.modelState.requireInstalled());
       if (model === CANCELLED_ASYNC_WAIT) return false;
+      if (this.ownerIdentityFailure(job)) return false;
       options.modelPack = model.manifest;
     }
     options.createPageRequest = (input) => createApplicationOcrPageRequest({
@@ -445,7 +583,71 @@ export class OcrApplicationController {
       force: options.force,
       keepCompletedPages: options.keepCompletedPages,
     });
-    return !job.cancelRequested;
+    return !job.cancelRequested && !this.ownerIdentityFailure(job);
+  }
+
+  startPagePrefetch(job, pageNumber, recognitionOptions) {
+    if (job.cancelRequested || job.prefetchedPage || !Number.isSafeInteger(pageNumber) ||
+        !job.sourceFingerprint || this.ownerIdentityFailure(job)) return;
+    job.prefetchMetrics.requested += 1;
+    let requested;
+    try {
+      requested = Promise.resolve(this.prefetchPage({
+        sourcePdfPath: job.options.sourcePdfPath,
+        applicationJobId: job.jobId,
+        documentId: job.documentId,
+        documentFingerprint: clone(job.sourceFingerprint),
+        pageNumber,
+        recognitionOptions,
+      }));
+    } catch {
+      requested = Promise.reject(new Error('OCR page prefetch failed before scheduling'));
+    }
+    const prefetch = {
+      pageNumber,
+      promise: requested.then(
+        (receipt) => ({ receipt, failed: false }),
+        () => ({ receipt: null, failed: true }),
+      ),
+    };
+    job.prefetchedPage = prefetch;
+    job.prefetchMetrics.maxBuffered = Math.max(job.prefetchMetrics.maxBuffered, 1);
+  }
+
+  async takePagePrefetch(job, pageNumber) {
+    const prefetch = job.prefetchedPage;
+    if (!prefetch) return null;
+    if (prefetch.pageNumber !== pageNumber) {
+      this.discardPagePrefetch(job);
+      return null;
+    }
+    job.prefetchedPage = null;
+    const prepared = await this.waitForCancellable(job, prefetch.promise);
+    if (prepared === CANCELLED_ASYNC_WAIT || job.cancelRequested) {
+      job.prefetchMetrics.discarded += 1;
+      Promise.resolve(this.cancelPrefetch(job.jobId)).catch(() => {});
+      return null;
+    }
+    if (prepared.failed || !prepared.receipt || prepared.receipt.status !== 'ready') {
+      job.prefetchMetrics.failed += 1;
+      return null;
+    }
+    const bytes = Number(prepared.receipt.byteLength) || 0;
+    job.prefetchMetrics.rasterMs += Number(prepared.receipt.rasterMs) || 0;
+    job.prefetchMetrics.bytesPrepared += bytes;
+    job.prefetchMetrics.bytesUsed += bytes;
+    job.prefetchMetrics.peakBufferedBytes = Math.max(job.prefetchMetrics.peakBufferedBytes, bytes);
+    job.prefetchMetrics.used += 1;
+    job.activePrefetchReceipt = prepared.receipt;
+    return prepared.receipt;
+  }
+
+  discardPagePrefetch(job) {
+    if (!job.prefetchedPage && !job.activePrefetchReceipt) return;
+    job.prefetchedPage = null;
+    job.activePrefetchReceipt = null;
+    job.prefetchMetrics.discarded += 1;
+    Promise.resolve(this.cancelPrefetch(job.jobId)).catch(() => {});
   }
 
   async runJob(job) {
@@ -453,6 +655,12 @@ export class OcrApplicationController {
     try {
       const prepared = await this.prepareDefaults(job);
       if (!prepared) {
+        const ownershipFailure = this.ownerIdentityFailure(job);
+        if (ownershipFailure && !job.cancelRequested) {
+          job.requestCancellation(ownershipFailure.code === 'OCR_DOCUMENT_LIFECYCLE_CHANGED'
+            ? 'document-lifecycle-changed'
+            : 'source-identity-changed');
+        }
         for (const page of job.pages.values()) {
           if (!TERMINAL_PAGE_STATES.has(page.state)) this.transition(job, page, 'cancelled');
         }
@@ -472,21 +680,20 @@ export class OcrApplicationController {
       return job.summary();
     }
 
-    for (const pageNumber of job.options.pageNumbers) {
+    for (let pageIndex = 0; pageIndex < job.options.pageNumbers.length; pageIndex += 1) {
+      const pageNumber = job.options.pageNumbers[pageIndex];
+      const nextPageNumber = job.options.pageNumbers[pageIndex + 1] ?? null;
       const page = job.pages.get(pageNumber);
       if (job.cancelRequested) {
         this.transition(job, page, 'cancelled');
         continue;
       }
-      if (ensureDocumentOcrState(job.options.document).generation !== job.documentGeneration) {
-        page.staleRejected = true;
-        this.transition(job, page, 'failed', {
-          failure: { code: 'OCR_STALE_JOB', stage: 'scheduling', retryable: false },
-        });
+      if (this.ownerIdentityFailure(job)) {
+        this.rejectStaleOwner(job, page, 'scheduling');
         continue;
       }
       try {
-        await this.runPageEntry(job, page);
+        await this.runPageEntry(job, page, nextPageNumber);
       } catch (error) {
         this.restoreCurrentAttempt(job, page);
         this.transition(job, page, 'failed', {
@@ -494,6 +701,8 @@ export class OcrApplicationController {
         });
       }
     }
+
+    this.discardPagePrefetch(job);
 
     for (const page of job.pages.values()) {
       if (!TERMINAL_PAGE_STATES.has(page.state)) this.transition(job, page, 'cancelled');
@@ -517,9 +726,13 @@ export class OcrApplicationController {
     return job.summary();
   }
 
-  async runPageEntry(job, page) {
+  async runPageEntry(job, page, nextPageNumber = null) {
     const { document } = job.options;
     const pageBefore = selectOcrCommandSnapshot(job.before, [page.pageNumber]);
+    if (this.ownerIdentityFailure(job)) {
+      this.rejectStaleOwner(job, page, 'scheduling', pageBefore);
+      return;
+    }
     let attempt;
     try {
       attempt = await beginOcrPageAttempt(document, page.pageNumber, { force: job.options.force });
@@ -529,7 +742,14 @@ export class OcrApplicationController {
       });
       return;
     }
+    if (this.ownerIdentityFailure(job)) {
+      this.rejectStaleOwner(job, page, 'scheduling', pageBefore);
+      return;
+    }
     if (attempt.skipped) {
+      if (job.prefetchedPage?.pageNumber === page.pageNumber) {
+        this.discardPagePrefetch(job);
+      }
       if (attempt.reason === 'stale-before-attempt') {
         page.staleRejected = true;
         this.transition(job, page, 'failed', {
@@ -545,6 +765,15 @@ export class OcrApplicationController {
       return;
     }
     page.token = attempt.token;
+    let prefetchedRaster = await this.takePagePrefetch(job, page.pageNumber);
+    if (job.cancelRequested) {
+      this.cancelCurrentAttempt(job, page, pageBefore);
+      return;
+    }
+    if (this.ownerIdentityFailure(job)) {
+      this.rejectStaleOwner(job, page, 'scheduling', pageBefore);
+      return;
+    }
 
     for (let attemptIndex = 0; attemptIndex <= job.options.maximumRetries; attemptIndex += 1) {
       if (job.cancelRequested) {
@@ -567,6 +796,11 @@ export class OcrApplicationController {
         );
         if (request === CANCELLED_ASYNC_WAIT || job.cancelRequested) {
           this.cancelCurrentAttempt(job, page, pageBefore);
+          return;
+        }
+        const sourceFailure = this.acceptRequestSourceIdentity(job, request);
+        if (sourceFailure) {
+          this.rejectStaleOwner(job, page, 'scheduling', pageBefore);
           return;
         }
         page.request = request;
@@ -600,6 +834,10 @@ export class OcrApplicationController {
           }
           page.cache = cached.status;
           if (cached.status === 'hit') {
+            if (this.ownerIdentityFailure(job)) {
+              this.rejectStaleOwner(job, page, 'validating', pageBefore);
+              return;
+            }
             this.transition(job, page, 'validating');
             if (await this.cancellationWindow(job, page, 'validating')) {
               this.cancelCurrentAttempt(job, page, pageBefore);
@@ -619,6 +857,7 @@ export class OcrApplicationController {
               rebound.pageGeometry,
               validatingMs,
               pageBefore,
+              null,
             );
             return;
           }
@@ -649,17 +888,27 @@ export class OcrApplicationController {
         this.transition(job, page, 'cancelled');
         return;
       }
+      if (this.ownerIdentityFailure(job)) {
+        releaseInference();
+        this.rejectStaleOwner(job, page, 'scheduling', pageBefore);
+        return;
+      }
       let prepared;
       try {
         this.transition(job, page, 'recognizing');
+        this.startPagePrefetch(job, nextPageNumber, request.recognitionOptions);
         job.currentNativeJobId = request.jobId;
         prepared = await this.runPage({
           document,
           sourcePdfPath: job.options.sourcePdfPath,
           request,
           token: page.token,
+          prefetchReceipt: prefetchedRaster,
         });
       } catch (error) {
+        if (prefetchedRaster) {
+          Promise.resolve(this.cancelPrefetch(job.jobId)).catch(() => {});
+        }
         const failure = failureMetadata(error, 'OCR_PAGE_RUN_FAILED', 'recognizing');
         if (failure.retryable && attemptIndex < job.options.maximumRetries && !job.cancelRequested) {
           page.retryableFailureSeen = true;
@@ -670,8 +919,14 @@ export class OcrApplicationController {
         this.transition(job, page, job.cancelRequested ? 'cancelled' : 'failed', { failure });
         return;
       } finally {
+        job.activePrefetchReceipt = null;
+        prefetchedRaster = null;
         job.currentNativeJobId = null;
         releaseInference();
+      }
+      if (this.ownerIdentityFailure(job)) {
+        this.rejectStaleOwner(job, page, 'validating', pageBefore);
+        return;
       }
       const outcome = prepared?.outcome;
       if (!outcome) {
@@ -731,7 +986,18 @@ export class OcrApplicationController {
         this.cancelCurrentAttempt(job, page, pageBefore);
         return;
       }
-      if (!await this.applyValidatedPage(job, page, result, pageGeometry, validatingMs, pageBefore)) return;
+      if (!await this.applyValidatedPage(
+        job,
+        page,
+        result,
+        pageGeometry,
+        validatingMs,
+        pageBefore,
+        {
+          lifecycle: prepared.outcome?.lifecycle ?? [],
+          resources: prepared.outcome?.resources ?? {},
+        },
+      )) return;
       if (job.options.useCache) {
         try {
           const cacheWrite = await this.cache.put(cacheKey, result, pageGeometry, { documentId: document.id });
@@ -757,10 +1023,12 @@ export class OcrApplicationController {
     return restoreOcrCommandState(job.options.document, snapshot, { restoreDocumentState: false });
   }
 
-  async applyValidatedPage(job, page, result, pageGeometry, validatingMs, pageBefore) {
+  async applyValidatedPage(job, page, result, pageGeometry, validatingMs, pageBefore, nativeEvidence = null) {
     if (this.cancelCurrentAttempt(job, page, pageBefore)) return false;
-    if (!isCurrentOcrPageToken(job.options.document, page.token) ||
-        ensureDocumentOcrState(job.options.document).generation !== job.documentGeneration) {
+    if (this.ownerIdentityFailure(job)) {
+      return this.rejectStaleOwner(job, page, 'applying', pageBefore);
+    }
+    if (!isCurrentOcrPageToken(job.options.document, page.token)) {
       page.staleRejected = true;
       this.transition(job, page, 'failed', {
         failure: { code: 'OCR_STALE_PAGE', stage: 'applying', retryable: false },
@@ -771,6 +1039,9 @@ export class OcrApplicationController {
     if (await this.cancellationWindow(job, page, 'applying')) {
       this.cancelCurrentAttempt(job, page, pageBefore);
       return false;
+    }
+    if (this.ownerIdentityFailure(job)) {
+      return this.rejectStaleOwner(job, page, 'applying', pageBefore);
     }
     const applyingStarted = this.clock();
     let stateUpdate;
@@ -794,28 +1065,51 @@ export class OcrApplicationController {
     }
     this.stageCosts.observe(result.metrics, { validatingMs, applyingMs });
     page.measuredStageCosts = this.stageCosts.snapshot();
+    page.performance = {
+      rasterMs: result.metrics.rasterMs,
+      childStartupMs: result.metrics.workerStartupMs,
+      modelStartupMs: result.metrics.modelStartupMs,
+      detectionMs: result.metrics.detectionMs,
+      recognitionMs: result.metrics.recognitionMs,
+      validationMs: validatingMs,
+      applyMs: applyingMs,
+      totalOcrMs: result.metrics.totalOcrMs,
+      lifecycle: clone(nativeEvidence?.lifecycle ?? []),
+      resources: clone(nativeEvidence?.resources ?? {}),
+    };
     job.appliedPageNumbers.push(page.pageNumber);
     this.transition(job, page, result.page.status === 'unsupported' ? 'unsupported' : 'completed');
+    return true;
+  }
+
+  requestJobCancellationSync(job, reason = 'parent-cancelled') {
+    if (!job || !job.requestCancellation(reason)) return false;
+    this.discardPagePrefetch(job);
+    this.inferenceGate.cancel(job.jobId);
+    for (const page of job.pages.values()) {
+      if (page.state === 'queued' && !page.token) this.transition(job, page, 'cancelled');
+    }
+    if (job.currentNativeJobId) {
+      Promise.resolve(this.cancelPage(job.currentNativeJobId)).catch(() => {});
+    }
     return true;
   }
 
   async cancelJob(jobId, reason = 'parent-cancelled') {
     const job = this.jobs.get(jobId);
     if (!job) return null;
-    if (!job.requestCancellation(reason)) return job.completion;
-    this.inferenceGate.cancel(job.jobId);
-    for (const page of job.pages.values()) {
-      if (page.state === 'queued' && !page.token) this.transition(job, page, 'cancelled');
-    }
-    if (job.currentNativeJobId) {
-      try { await this.cancelPage(job.currentNativeJobId); } catch { /* native exit hook is authoritative */ }
-    }
+    this.requestJobCancellationSync(job, reason);
     return job.completion;
   }
 
-  async cancelDocument(documentId, reason = 'document-close') {
+  requestDocumentCancellationSync(documentId, reason = 'document-lifecycle-changed') {
     const jobs = [...this.jobs.values()].filter((job) => job.documentId === documentId);
-    const completions = jobs.map((job) => this.cancelJob(job.jobId, reason));
+    for (const job of jobs) this.requestJobCancellationSync(job, reason);
+    return jobs.map((job) => job.completion);
+  }
+
+  async cancelDocument(documentId, reason = 'document-close') {
+    const completions = this.requestDocumentCancellationSync(documentId, reason);
     try { await this.cancelDocumentNative(documentId); } catch { /* native exit hook is authoritative */ }
     return Promise.all(completions);
   }
@@ -840,6 +1134,20 @@ export async function cancelApplicationOcrDocument(documentId, reason = 'documen
   }
   return Promise.all([...activeApplicationControllers].map((controller) =>
     controller.cancelDocument(documentId, reason)));
+}
+
+/**
+ * Synchronously invalidates JS-owned work before a PDF proxy/content tree is
+ * replaced. Native cancellation is dispatched without awaiting IPC; every
+ * scheduling and apply boundary independently rechecks the captured owner.
+ */
+export function cancelApplicationOcrDocumentSync(documentId, reason = 'document-lifecycle-changed') {
+  if (typeof documentId !== 'string' || documentId.length === 0) return [];
+  const completions = [];
+  for (const controller of activeApplicationControllers) {
+    completions.push(...controller.requestDocumentCancellationSync(documentId, reason));
+  }
+  return completions;
 }
 
 export async function cancelAllApplicationOcrJobs(reason = 'application-close') {

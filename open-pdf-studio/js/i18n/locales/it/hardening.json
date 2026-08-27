@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Modifica {{label}}",
+    "editValueHint": "{{label}}. Fai doppio clic o premi Invio per modificare.",
+    "timezoneHint": "Le date sono visualizzate nel fuso orario {{timezone}} e salvate in formato ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Approva sostituzione del carattere",
+    "sourceFace": "Carattere originale",
+    "sourceFaces": "Caratteri originali",
+    "unknown": "Sconosciuto",
+    "packagedSubstitute": "Carattere sostitutivo incluso",
+    "notAvailable": "Non disponibile",
+    "sampleText": "Esempio",
+    "sampleFallback": "La rapida volpe marrone salta sopra il cane pigro.",
+    "scope": "Si applica a",
+    "scopeAnnotation": "Questa annotazione",
+    "scopeSelection": "Le caselle di testo selezionate",
+    "scopeParagraph": "Questo paragrafo PDF",
+    "scopeFindReplace": "Questa modifica Trova/Sostituisci",
+    "remember": "Ricorda questa approvazione per il documento aperto",
+    "approve": "Usa il sostituto",
+    "cancel": "Annulla"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Modifica testo PDF",
+      "editFormatted": "Modifica testo PDF formattato",
+      "editAnnotation": "Modifica testo {{type}} formattato",
+      "editRegion": "Modifica area di testo PDF formattato: {{text}}",
+      "editScannedLine": "Modifica riga di testo acquisito: {{text}}",
+      "editScannedFixed": "Modifica area fissa di testo acquisito: {{text}}",
+      "editScannedReflow": "Modifica area di ridisposizione del paragrafo acquisito: {{text}}",
+      "selectedOcrParagraph": "Paragrafo OCR selezionato con {{count}} righe"
+    },
+    "handles": {
+      "move": "Sposta casella di testo",
+      "moveHint": "Trascina per spostare la casella di testo",
+      "resize": "Ridimensiona casella di testo",
+      "resizeHint": "Trascina per ridimensionare la casella di testo"
+    },
+    "actions": {
+      "apply": "Applica",
+      "cancel": "Annulla"
+    },
+    "status": {
+      "ocrOverflow": "La bozza OCR completa è visibile oltre l'area approvata. Il salvataggio resta bloccato finché il testo non rientra nella convalida esatta dell'area fissa.",
+      "scannedRegion": "Modifica del testo acquisito all'interno dell'area approvata.",
+      "shaping": "Completamento del layout esatto del testo…",
+      "overlap": "Il testo si sovrappone al contenuto esistente della pagina. È possibile applicare la modifica; gli oggetti originali adiacenti non verranno spostati.",
+      "lowContrast": "I colori originali a basso contrasto hanno uno sfondo visibile solo durante la modifica. I colori salvati restano invariati.",
+      "layoutRejectedPrefix": "Layout del testo rifiutato:",
+      "layoutRejected": "Layout del testo rifiutato: {{reasons}}",
+      "shapingRejected": "Formatura del testo rifiutata: {{reason}}",
+      "nativeManual": "Modifica del testo nativo in una casella con righe manuali. Premi Invio per una nuova riga.",
+      "nativeManualContrast": "Modifica del testo nativo in una casella con righe manuali. Premi Invio per una nuova riga. I colori originali a basso contrasto hanno uno sfondo visibile solo durante la modifica; i colori salvati restano invariati.",
+      "nativeGrowing": "Modifica del testo nativo. La larghezza è fissa e l'area si espande verso il basso.",
+      "nativeGrowingContrast": "Modifica del testo nativo. La larghezza è fissa e l'area si espande verso il basso. I colori originali a basso contrasto hanno uno sfondo visibile solo durante la modifica; i colori salvati restano invariati.",
+      "scannedEstimate": "Modifica del testo acquisito. Le proprietà del carattere sono stimate.",
+      "applyRejected": "Impossibile applicare la modifica del testo: {{reason}}",
+      "cropBoxRejected": "Il testo composto non può essere applicato all'interno del CropBox della pagina.",
+      "layoutTimeout": "Il layout esatto del testo non è stato completato in tempo. L'editor resta aperto.",
+      "scannedRejected": "Modifica del testo acquisito rifiutata: {{reason}}",
+      "lineBreakUnsupported": "Le interruzioni di riga non sono supportate. Usa Command-Invio per applicare questa modifica su una sola riga.",
+      "ocrOneLine": "Modifica di una singola riga isolata di testo acquisito. Le proprietà del carattere sono stimate.",
+      "ocrFixed": "Modifica di più righe OCR in un'unica area originale fissa. Un solo paragrafo viene ridisposto nell'area; le interruzioni di riga esplicite mantengono la modalità a righe fisse. Premi Command-Invio per applicare.",
+      "ocrReflow": "Modifica di un paragrafo nella relativa area OCR originale approvata. Premi Command-Invio per applicare; il testo eccedente viene rifiutato.",
+      "operationFailed": "Impossibile completare l'operazione sul testo. Il documento non è stato modificato.",
+      "staleDraft": "Il documento è cambiato mentre l'editor di testo era aperto. La bozza è stata eliminata.",
+      "multipleOcrParagraphs": "La selezione include più paragrafi OCR. Esamina separatamente i contorni e usa esplicitamente «Unisci». L'unione tra colonne resta disabilitata.",
+      "nativeColumnBoundary": "Questo paragrafo attraversa un limite di colonna originale rilevato. La modifica è stata bloccata e il documento non è stato modificato.",
+      "nativeSourceUnavailable": "Non è stato possibile collegare il testo visibile a operatori sorgente idonei. Il documento non è stato modificato.",
+      "nativeDeleteUnavailable": "Questo testo PDF nativo non può essere eliminato in modo sicuro perché i suoi operatori sorgente esatti sono ambigui. Il documento non è stato modificato.",
+      "readOnly": "Il testo modificato in precedenza è di sola lettura. Il documento non è stato modificato."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Limite di {{limit}} grafemi",
+      "lineThreshold": "Limite di {{limit}} righe",
+      "message": "Testo incollato mantenuto per intero: {{graphemeCount}} grafemi su {{lineCount}} righe. Limite superato: {{thresholds}}. L'anteprima è limitata. Usa Annulla incolla per rimuovere l'intero inserimento.",
+      "messageWithExpansion": "Testo incollato mantenuto per intero: {{graphemeCount}} grafemi su {{lineCount}} righe. Limite superato: {{thresholds}}. L'anteprima è limitata. Usa Annulla incolla per rimuovere l'intero inserimento oppure Espandi casella per adottare i limiti esatti convalidati.",
+      "undo": "Annulla incolla",
+      "expand": "Espandi casella"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Raggruppamento paragrafi OCR",
+    "title": "Raggruppamento",
+    "mergeSelected": "Unisci selezionati",
+    "mergeSelectedParagraphs": "Unisci paragrafi selezionati",
+    "mergePrevious": "Unisci al precedente",
+    "mergePreviousHint": "Unisci al paragrafo OCR precedente",
+    "mergeNext": "Unisci al successivo",
+    "mergeNextHint": "Unisci al paragrafo OCR successivo",
+    "splitBefore": "Dividi prima",
+    "splitAfter": "Dividi dopo",
+    "reset": "Reimposta raggruppamento automatico",
+    "crossColumnDisabled": "Le unioni tra colonne sono disabilitate",
+    "ambiguousBoundariesOnly": "È possibile unire manualmente solo i limiti ambigui nella stessa colonna",
+    "tooManyLines": "Più di 32 righe. Dividi manualmente il paragrafo prima di modificarlo.",
+    "mergeDescription": "I testi esistenti sono separati da un'interruzione di riga forzata mantenuta. L'unione viene applicata solo dopo che la patch sorgente combinata e l'area fissa superano la convalida.",
+    "mergedText": "Testo OCR unito",
+    "splitRegion": "Dividi area OCR",
+    "firstRegion": "Prima area",
+    "secondRegion": "Seconda area",
+    "sourceLines": "Righe sorgente: {{lines}}"
+  }
+}

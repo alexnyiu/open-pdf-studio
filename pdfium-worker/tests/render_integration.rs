@@ -29,7 +29,11 @@ fn render_via_worker_subprocess_matches_in_proc() {
     // 4. Read response
     let mut resp_line = String::new();
     reader.read_line(&mut resp_line).expect("read response");
-    assert!(resp_line.contains("\"ok\":true"), "response was: {}", resp_line);
+    assert!(
+        resp_line.contains("\"ok\":true"),
+        "response was: {}",
+        resp_line
+    );
     assert!(resp_line.contains("\"w\":"));
     assert!(resp_line.contains("\"shm_bytes\":"));
 

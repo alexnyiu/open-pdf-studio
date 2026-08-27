@@ -13,7 +13,15 @@ fn test_2459_bitmap_zoomed() {
     println!("2459 3x: {}x{}", page.width, page.height);
     let img = image::RgbaImage::from_raw(page.width, page.height, page.rgba).unwrap();
     // Crop to the text area (bottom-left quadrant)
-    let crop = image::imageops::crop_imm(&img, 0, page.height * 2 / 3, page.width / 2, page.height / 3);
-    crop.to_image().save("tests/output_2459_text_crop.png").unwrap();
+    let crop = image::imageops::crop_imm(
+        &img,
+        0,
+        page.height * 2 / 3,
+        page.width / 2,
+        page.height / 3,
+    );
+    crop.to_image()
+        .save("tests/output_2459_text_crop.png")
+        .unwrap();
     println!("Saved cropped text area");
 }

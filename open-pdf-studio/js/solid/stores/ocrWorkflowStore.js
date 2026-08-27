@@ -1,12 +1,14 @@
 import { createSignal } from 'solid-js';
-import { getActiveDocument } from '../../core/state.js';
+import { getActiveDocument, state } from '../../core/state.js';
 import {
   DEFAULT_OCR_PAGE_SCOPE,
   DEFAULT_OCR_WORKFLOW_RECOGNITION_POLICY,
   isMacOcrProductionRuntime,
+  retryDocumentOcr,
   startActiveDocumentOcr,
+  startDocumentOcr,
 } from '../../ocr/workflow-action.js';
-import { ocrWorkflowService } from '../../ocr/workflow-service.js';
+import { cancelOcrWorkflow, ocrWorkflowService } from '../../ocr/workflow-service.js';
 
 const [workflowSnapshot, setWorkflowSnapshot] = createSignal(ocrWorkflowService.snapshot());
 const [modelPackState, setModelPackState] = createSignal(ocrWorkflowService.modelStatus());
@@ -18,14 +20,43 @@ const [actionFailure, setActionFailure] = createSignal(null);
 const [collapsedJobIds, setCollapsedJobIds] = createSignal(new Set());
 const [dismissedJobIds, setDismissedJobIds] = createSignal(new Set());
 
-ocrWorkflowService.subscribe((snapshot) => {
-  setWorkflowSnapshot(snapshot);
+ocrWorkflowService.subscribeUpdates((update) => {
+  setWorkflowSnapshot((current) => {
+    if (update.kind === 'snapshot') return update.snapshot;
+    if (update.kind === 'progress') {
+      const existing = current.jobsByDocumentId[update.documentId];
+      if (!existing || existing.jobId !== update.jobId) return current;
+      const changedPages = new Map(update.pages.map((page) => [page.pageNumber, page]));
+      const job = {
+        ...existing,
+        status: update.status,
+        progress: update.progress,
+        pages: existing.pages.map((page) => changedPages.get(page.pageNumber) ?? page),
+        counts: update.counts,
+        currentPageNumber: update.currentPageNumber,
+        currentPageState: update.currentPageState,
+        failureDetails: update.failureDetails,
+        cancellationAvailable: update.cancellationAvailable,
+        cancellationRequested: update.cancellationRequested,
+      };
+      return {
+        jobsByDocumentId: { ...current.jobsByDocumentId, [update.documentId]: job },
+      };
+    }
+    const jobsByDocumentId = { ...current.jobsByDocumentId };
+    if (update.job) jobsByDocumentId[update.documentId] = update.job;
+    else delete jobsByDocumentId[update.documentId];
+    return { jobsByDocumentId };
+  });
+  const snapshot = workflowSnapshot();
   const retainedJobIds = new Set(
     Object.values(snapshot.jobsByDocumentId).map((job) => job.jobId),
   );
   const retainKnownJobs = (current) => {
     const next = new Set([...current].filter((jobId) => retainedJobIds.has(jobId)));
-    return next.size === current.size ? current : next;
+    return next.size === current.size && [...next].every((jobId) => current.has(jobId))
+      ? current
+      : next;
   };
   setCollapsedJobIds(retainKnownJobs);
   setDismissedJobIds(retainKnownJobs);
@@ -41,7 +72,22 @@ export function ocrWorkflowAvailable() {
 
 export function activeDocumentOcrWorkflow() {
   const documentId = getActiveDocument()?.id;
-  return documentId ? workflowSnapshot().jobsByDocumentId[documentId] ?? null : null;
+  return ocrWorkflowForDocument(documentId);
+}
+
+export function ocrWorkflowForDocument(documentId) {
+  return typeof documentId === 'string'
+    ? workflowSnapshot().jobsByDocumentId[documentId] ?? null
+    : null;
+}
+
+export function allOcrWorkflows() {
+  return Object.values(workflowSnapshot().jobsByDocumentId)
+    .sort((left, right) => {
+      const leftTerminal = left.finishedAt === null ? 0 : 1;
+      const rightTerminal = right.finishedAt === null ? 0 : 1;
+      return leftTerminal - rightTerminal || right.startedAt.localeCompare(left.startedAt);
+    });
 }
 
 export function ocrWorkflowCollapsed(jobId) {
@@ -104,23 +150,63 @@ export async function startOcrFromApplicationAction(options = {}) {
   }
 }
 
+export async function startOcrForDocument(documentId, options = {}) {
+  setActionFailure(null);
+  try {
+    return await startDocumentOcr(documentId, {
+      pageScope: options.pageScope ?? selectedPageScope(),
+      recognitionPolicy: options.recognitionPolicy ?? selectedRecognitionPolicy(),
+    });
+  } catch (error) {
+    setActionFailure({
+      documentId,
+      code: typeof error?.code === 'string' ? error.code : 'OCR_WORKFLOW_FAILED',
+      retryable: error?.retryable === true,
+    });
+    throw error;
+  }
+}
+
 export function refreshOcrModelPackState(options = {}) {
   return ocrWorkflowService.refreshModelStatus(options);
 }
 
 export async function cancelActiveDocumentOcr() {
   const documentId = getActiveDocument()?.id;
-  if (!documentId) return null;
-  return ocrWorkflowService.cancel(documentId, 'user-cancelled');
+  return cancelOcrForDocument(documentId);
 }
 
-export async function retryOcrWorkflow(job) {
+export async function cancelOcrForDocument(documentId) {
+  if (typeof documentId !== 'string' || documentId.length === 0) return null;
+  return cancelOcrWorkflow(documentId, 'user-cancelled');
+}
+
+export async function retryOcrForDocument(documentId) {
+  const job = ocrWorkflowForDocument(documentId);
   if (!ocrWorkflowHasRetryableFailure(job)) return null;
   setActionFailure(null);
-  return startOcrFromApplicationAction({
-    pageScope: structuredClone(job.pageScope),
-    recognitionPolicy: structuredClone(job.recognitionPolicy),
-  });
+  try {
+    return await retryDocumentOcr(documentId);
+  } catch (error) {
+    setActionFailure({
+      documentId,
+      code: typeof error?.code === 'string' ? error.code : 'OCR_WORKFLOW_FAILED',
+      retryable: error?.retryable === true,
+    });
+    throw error;
+  }
+}
+
+export function retryOcrWorkflow(job) {
+  return retryOcrForDocument(job?.documentId);
+}
+
+export async function navigateToOcrWorkflowDocument(documentId) {
+  const index = state.documents.findIndex((document) => document.id === documentId);
+  if (index < 0) return false;
+  const { switchToTab } = await import('../../ui/chrome/tabs.js');
+  switchToTab(index);
+  return true;
 }
 
 export function dismissOcrWorkflowFailure() {

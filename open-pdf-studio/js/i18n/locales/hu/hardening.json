@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "{{label}} szerkesztése",
+    "editValueHint": "{{label}}. A szerkesztéshez kattintson duplán, vagy nyomja meg az Enter billentyűt.",
+    "timezoneHint": "A dátumok a(z) {{timezone}} időzónában jelennek meg, és ISO 8601 formátumban lesznek mentve."
+  },
+  "fontSubstitution": {
+    "title": "Betűtípus-helyettesítés jóváhagyása",
+    "sourceFace": "Forrás betűtípus",
+    "sourceFaces": "Forrás betűtípusok",
+    "unknown": "Ismeretlen",
+    "packagedSubstitute": "Beépített helyettesítő betűtípus",
+    "notAvailable": "Nem érhető el",
+    "sampleText": "Minta",
+    "sampleFallback": "A gyors barna róka átugrik a lusta kutya fölött.",
+    "scope": "Alkalmazás erre",
+    "scopeAnnotation": "Ez a jegyzet",
+    "scopeSelection": "A kijelölt szövegdobozok",
+    "scopeParagraph": "Ez a PDF-bekezdés",
+    "scopeFindReplace": "Ez a Keresés/csere módosítás",
+    "remember": "A jóváhagyás megjegyzése ehhez a megnyitott dokumentumhoz",
+    "approve": "Helyettesítő használata",
+    "cancel": "Mégse"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "PDF-szöveg szerkesztése",
+      "editFormatted": "Formázott PDF-szöveg szerkesztése",
+      "editAnnotation": "Formázott {{type}}-szöveg szerkesztése",
+      "editRegion": "Formázott PDF-szövegterület szerkesztése: {{text}}",
+      "editScannedLine": "Beolvasott szövegsor szerkesztése: {{text}}",
+      "editScannedFixed": "Beolvasott szöveg rögzített területének szerkesztése: {{text}}",
+      "editScannedReflow": "Beolvasott szöveg újratördelt bekezdésterületének szerkesztése: {{text}}",
+      "selectedOcrParagraph": "Kijelölt OCR-bekezdés {{count}} sorral"
+    },
+    "handles": {
+      "move": "Szövegdoboz áthelyezése",
+      "moveHint": "Húzza a szövegdoboz áthelyezéséhez",
+      "resize": "Szövegdoboz átméretezése",
+      "resizeHint": "Húzza a szövegdoboz átméretezéséhez"
+    },
+    "actions": {
+      "apply": "Alkalmaz",
+      "cancel": "Mégse"
+    },
+    "status": {
+      "ocrOverflow": "A teljes OCR-vázlat a jóváhagyott területen kívül is látható. A mentés mindaddig letiltva marad, amíg a szöveg nem felel meg a rögzített terület pontos ellenőrzésének.",
+      "scannedRegion": "A beolvasott szöveg szerkesztése a jóváhagyott területen belül történik.",
+      "shaping": "A pontos szövegelrendezés befejezése…",
+      "overlap": "A szöveg átfedi az oldal meglévő tartalmát. A módosítás alkalmazható; a szomszédos forrásobjektumok nem mozdulnak el.",
+      "lowContrast": "Az alacsony kontrasztú forrásszínek csak szerkesztéskor látható hátteret kapnak. A mentett színek változatlanok maradnak.",
+      "layoutRejectedPrefix": "Szövegelrendezés elutasítva:",
+      "layoutRejected": "Szövegelrendezés elutasítva: {{reasons}}",
+      "shapingRejected": "Szövegformázás elutasítva: {{reason}}",
+      "nativeManual": "A natív szöveg kézi sortörésű szövegdobozban szerkeszthető. Új sorhoz nyomja meg az Enter billentyűt.",
+      "nativeManualContrast": "A natív szöveg kézi sortörésű szövegdobozban szerkeszthető. Új sorhoz nyomja meg az Enter billentyűt. Az alacsony kontrasztú forrásszínek csak szerkesztéskor látható hátteret kapnak; a mentett színek változatlanok maradnak.",
+      "nativeGrowing": "Natív szöveg szerkesztése. A szélesség rögzített, a terület pedig lefelé bővül.",
+      "nativeGrowingContrast": "Natív szöveg szerkesztése. A szélesség rögzített, a terület pedig lefelé bővül. Az alacsony kontrasztú forrásszínek csak szerkesztéskor látható hátteret kapnak; a mentett színek változatlanok maradnak.",
+      "scannedEstimate": "Beolvasott szöveg szerkesztése. A betűtulajdonságok becsült értékek.",
+      "applyRejected": "A szövegmódosítás nem alkalmazható: {{reason}}",
+      "cropBoxRejected": "A formázott szöveg nem helyezhető el az oldal CropBox területén.",
+      "layoutTimeout": "A pontos szövegelrendezés nem készült el időben. A szerkesztő nyitva marad.",
+      "scannedRejected": "A beolvasott szöveg módosítása elutasítva: {{reason}}",
+      "lineBreakUnsupported": "A sortörések nem támogatottak. Az egysoros módosítás alkalmazásához nyomja meg a Command-Enter billentyűket.",
+      "ocrOneLine": "Egy elkülönített beolvasott szövegsor szerkesztése. A betűtulajdonságok becsült értékek.",
+      "ocrFixed": "Több OCR-sor szerkesztése egy rögzített eredeti területen belül. Egyetlen bekezdés tördelődik újra ezen a területen; a kézi sortörések megtartják a rögzített soros módot. Alkalmazás: Command-Enter.",
+      "ocrReflow": "Egy bekezdés szerkesztése a jóváhagyott eredeti OCR-területen belül. Alkalmazás: Command-Enter; a túlcsordulás elutasításra kerül.",
+      "operationFailed": "A szövegműveletet nem sikerült befejezni. A dokumentum változatlan maradt.",
+      "staleDraft": "A dokumentum megváltozott, miközben a szövegszerkesztő nyitva volt. A piszkozat el lett vetve.",
+      "multipleOcrParagraphs": "A kijelölés több OCR-bekezdésre terjed ki. Tekintse át a különálló körvonalakat, és kifejezetten használja az Egyesítés műveletet. Az oszlopok közötti egyesítés továbbra is le van tiltva.",
+      "nativeColumnBoundary": "Ez a bekezdés átlép egy észlelt eredeti oszlophatárt. A szerkesztés le lett tiltva, és a dokumentum változatlan maradt.",
+      "nativeSourceUnavailable": "A látható szöveget nem sikerült megfelelő forrásoperátorokhoz kapcsolni. A dokumentum változatlan maradt.",
+      "nativeDeleteUnavailable": "Ez a natív PDF-szöveg nem törölhető biztonságosan, mert a pontos forrásoperátorai nem egyértelműek. A dokumentum változatlan maradt.",
+      "readOnly": "A korábban szerkesztett szöveg írásvédett. A dokumentum változatlan maradt."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "{{limit}} grafémás korlát",
+      "lineThreshold": "{{limit}} soros korlát",
+      "message": "A teljes beillesztés megmaradt: {{graphemeCount}} graféma {{lineCount}} sorban. Túllépett korlát: {{thresholds}}. Az előnézet korlátozott. A teljes beszúrás eltávolításához használja a Beillesztés visszavonása lehetőséget.",
+      "messageWithExpansion": "A teljes beillesztés megmaradt: {{graphemeCount}} graféma {{lineCount}} sorban. Túllépett korlát: {{thresholds}}. Az előnézet korlátozott. A teljes beszúrás eltávolításához használja a Beillesztés visszavonása, a pontosan ellenőrzött határok átvételéhez pedig a Doboz kibővítése lehetőséget.",
+      "undo": "Beillesztés visszavonása",
+      "expand": "Doboz kibővítése"
+    }
+  },
+  "ocrGrouping": {
+    "label": "OCR-bekezdések csoportosítása",
+    "title": "Csoportosítás",
+    "mergeSelected": "Kijelöltek egyesítése",
+    "mergeSelectedParagraphs": "Kijelölt bekezdések egyesítése",
+    "mergePrevious": "Egyesítés az előzővel",
+    "mergePreviousHint": "Egyesítés az előző OCR-bekezdéssel",
+    "mergeNext": "Egyesítés a következővel",
+    "mergeNextHint": "Egyesítés a következő OCR-bekezdéssel",
+    "splitBefore": "Felosztás előtte",
+    "splitAfter": "Felosztás utána",
+    "reset": "Automatikus csoportosítás visszaállítása",
+    "crossColumnDisabled": "Az oszlopok közötti egyesítés le van tiltva",
+    "ambiguousBoundariesOnly": "Kézzel csak az azonos oszlopban lévő bizonytalan határok egyesíthetők",
+    "tooManyLines": "Több mint 32 sor. Szerkesztés előtt ossza fel kézzel ezt a bekezdést.",
+    "mergeDescription": "A meglévő szövegeket egy megőrzött kényszerített sortörés választja el. Az egyesítés csak akkor történik meg, ha az összevont forrásjavítás és a rögzített terület megfelel az ellenőrzésnek.",
+    "mergedText": "Egyesített OCR-szöveg",
+    "splitRegion": "OCR-terület felosztása",
+    "firstRegion": "Első terület",
+    "secondRegion": "Második terület",
+    "sourceLines": "Forrássorok: {{lines}}"
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Edita {{label}}",
+    "editValueHint": "{{label}}. Feu doble clic o premeu Retorn per editar.",
+    "timezoneHint": "Les dates es mostren a la zona horària {{timezone}} i es desen en format ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Aprova la substitució del tipus de lletra",
+    "sourceFace": "Tipus de lletra d'origen",
+    "sourceFaces": "Tipus de lletra d'origen",
+    "unknown": "Desconegut",
+    "packagedSubstitute": "Tipus de lletra substitut inclòs",
+    "notAvailable": "No disponible",
+    "sampleText": "Mostra",
+    "sampleFallback": "La guineu marró ràpida salta per damunt del gos mandrós.",
+    "scope": "S'aplica a",
+    "scopeAnnotation": "Aquesta anotació",
+    "scopeSelection": "Els quadres de text seleccionats",
+    "scopeParagraph": "Aquest paràgraf del PDF",
+    "scopeFindReplace": "Aquesta edició de Cerca/Substitueix",
+    "remember": "Recorda aquesta aprovació per a aquest document obert",
+    "approve": "Fes servir el tipus de lletra substitut",
+    "cancel": "Cancel·la"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Edita text del PDF",
+      "editFormatted": "Edita text amb format del PDF",
+      "editAnnotation": "Edita text de {{type}} amb format",
+      "editRegion": "Edita una regió de text amb format del PDF: {{text}}",
+      "editScannedLine": "Edita una línia de text escanejat: {{text}}",
+      "editScannedFixed": "Edita una regió fixa de text escanejat: {{text}}",
+      "editScannedReflow": "Edita la regió de redistribució d'un paràgraf escanejat: {{text}}",
+      "selectedOcrParagraph": "Paràgraf OCR seleccionat amb {{count}} línies"
+    },
+    "handles": {
+      "move": "Mou el quadre de text",
+      "moveHint": "Arrossega per moure el quadre de text",
+      "resize": "Canvia la mida del quadre de text",
+      "resizeHint": "Arrossega per canviar la mida del quadre de text"
+    },
+    "actions": {
+      "apply": "Aplica",
+      "cancel": "Cancel·la"
+    },
+    "status": {
+      "ocrOverflow": "L'esborrany complet de l'OCR és visible fora de la regió aprovada. El desament continua bloquejat tret que la validació exacta de la regió fixa confirmi que el text hi cap.",
+      "scannedRegion": "S'està editant text escanejat dins de la regió aprovada.",
+      "shaping": "S'està acabant la disposició exacta del text…",
+      "overlap": "El text se superposa al contingut existent de la pàgina. Es permet confirmar el canvi; els objectes d'origen veïns no es mouran.",
+      "lowContrast": "Els colors d'origen amb poc contrast tenen un fons només per a l'edició. Els colors desats no canviaran.",
+      "layoutRejectedPrefix": "S'ha rebutjat la disposició del text:",
+      "layoutRejected": "S'ha rebutjat la disposició del text: {{reasons}}",
+      "shapingRejected": "S'ha rebutjat la composició del text: {{reason}}",
+      "nativeManual": "S'està editant text natiu en un quadre de text amb salts de línia manuals. Premeu Retorn per crear una línia nova.",
+      "nativeManualContrast": "S'està editant text natiu en un quadre de text amb salts de línia manuals. Premeu Retorn per crear una línia nova. Els colors d'origen amb poc contrast tenen un fons només per a l'edició; els colors desats no canviaran.",
+      "nativeGrowing": "S'està editant text natiu. L'amplada és fixa i la regió creix cap avall.",
+      "nativeGrowingContrast": "S'està editant text natiu. L'amplada és fixa i la regió creix cap avall. Els colors d'origen amb poc contrast tenen un fons només per a l'edició; els colors desats no canviaran.",
+      "scannedEstimate": "S'està editant text escanejat. Les propietats del tipus de lletra són estimacions.",
+      "applyRejected": "No s'ha pogut aplicar l'edició de text: {{reason}}",
+      "cropBoxRejected": "El text compost no es pot confirmar dins del CropBox de la pàgina.",
+      "layoutTimeout": "La disposició exacta del text no ha acabat a temps. L'editor continua obert.",
+      "scannedRejected": "S'ha rebutjat el canvi de text escanejat: {{reason}}",
+      "lineBreakUnsupported": "Els salts de línia no són compatibles. Feu servir Ordre-Retorn per aplicar aquesta edició d'una sola línia.",
+      "ocrOneLine": "S'està editant una línia aïllada de text escanejat. Les propietats del tipus de lletra són estimacions.",
+      "ocrFixed": "S'estan editant diverses línies d'OCR dins d'una única regió original fixa. Un sol paràgraf es redistribueix dins d'aquesta regió; els salts de línia explícits conserven el mode de línies fixes. Ordre-Retorn aplica el canvi.",
+      "ocrReflow": "S'està editant un paràgraf dins de la regió d'OCR original aprovada. Ordre-Retorn aplica el canvi; el desbordament es rebutja.",
+      "operationFailed": "No s'ha pogut completar l'operació de text. El document no s'ha modificat.",
+      "staleDraft": "El document ha canviat mentre l'editor de text era obert. S'ha descartat l'esborrany.",
+      "multipleOcrParagraphs": "La selecció s'estén per diversos paràgrafs OCR. Reviseu els contorns separats i feu servir «Combina» explícitament. Les combinacions entre columnes continuen desactivades.",
+      "nativeColumnBoundary": "Aquest paràgraf travessa un límit de columna original detectat. S'ha bloquejat l'edició i el document no s'ha modificat.",
+      "nativeSourceUnavailable": "El text visible no s'ha pogut associar a operadors d'origen aptes. El document no s'ha modificat.",
+      "nativeDeleteUnavailable": "Aquest text PDF natiu no es pot suprimir de manera segura perquè els operadors d'origen exactes són ambigus. El document no s'ha modificat.",
+      "readOnly": "El text editat anteriorment és només de lectura. El document no s'ha modificat."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Límit de {{limit}} grafemes",
+      "lineThreshold": "Límit de {{limit}} línies",
+      "message": "S'ha conservat tot el contingut enganxat: {{graphemeCount}} grafemes en {{lineCount}} línies. S'ha superat el límit: {{thresholds}}. La previsualització està limitada. Feu servir «Desfés l'enganxada» per eliminar tota la inserció.",
+      "messageWithExpansion": "S'ha conservat tot el contingut enganxat: {{graphemeCount}} grafemes en {{lineCount}} línies. S'ha superat el límit: {{thresholds}}. La previsualització està limitada. Feu servir «Desfés l'enganxada» per eliminar tota la inserció o «Amplia el quadre» per adoptar els límits exactes validats.",
+      "undo": "Desfés l'enganxada",
+      "expand": "Amplia el quadre"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Agrupació de paràgrafs d'OCR",
+    "title": "Agrupació",
+    "mergeSelected": "Fusiona la selecció",
+    "mergeSelectedParagraphs": "Fusiona els paràgrafs seleccionats",
+    "mergePrevious": "Fusiona amb l'anterior",
+    "mergePreviousHint": "Fusiona amb el paràgraf d'OCR anterior",
+    "mergeNext": "Fusiona amb el següent",
+    "mergeNextHint": "Fusiona amb el paràgraf d'OCR següent",
+    "splitBefore": "Divideix abans",
+    "splitAfter": "Divideix després",
+    "reset": "Restableix l'agrupació automàtica",
+    "crossColumnDisabled": "Les fusions entre columnes estan desactivades",
+    "ambiguousBoundariesOnly": "Només es poden fusionar manualment els límits ambigus de la mateixa columna",
+    "tooManyLines": "Més de 32 línies. Dividiu aquest paràgraf manualment abans d'editar-lo.",
+    "mergeDescription": "Els textos existents estan separats per un salt de línia forçat que es conserva. La combinació només s'aplica quan el pedaç d'origen combinat i la regió fixa superen la validació.",
+    "mergedText": "Text OCR combinat",
+    "splitRegion": "Divideix la regió OCR",
+    "firstRegion": "Primera regió",
+    "secondRegion": "Segona regió",
+    "sourceLines": "Línies d'origen: {{lines}}"
+  }
+}

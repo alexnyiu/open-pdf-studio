@@ -6,7 +6,10 @@ fn test_pdf(path: &str, name: &str) {
     let renderer = PdfRenderer::new();
     let doc = match renderer.load_document(&bytes) {
         Ok(d) => d,
-        Err(e) => { println!("  ❌ {} — load failed: {}", name, e); return; }
+        Err(e) => {
+            println!("  ❌ {} — load failed: {}", name, e);
+            return;
+        }
     };
 
     let (w, h) = doc.page_dimensions(0).unwrap_or((0.0, 0.0));
@@ -14,15 +17,21 @@ fn test_pdf(path: &str, name: &str) {
     match doc.render_page(0, 1.0, 0) {
         Ok(page) => {
             let elapsed = start.elapsed();
-            let non_white = page.rgba.chunks(4)
+            let non_white = page
+                .rgba
+                .chunks(4)
                 .filter(|px| px[0] != 255 || px[1] != 255 || px[2] != 255)
                 .count();
             let pct = if page.width * page.height > 0 {
                 non_white * 100 / (page.width * page.height) as usize
-            } else { 0 };
+            } else {
+                0
+            };
             let status = if pct > 0 { "✅" } else { "⚠️ WHITE" };
-            println!("  {} {} — {}x{} pt, {}x{} px, {:?}, {}% content",
-                status, name, w as i32, h as i32, page.width, page.height, elapsed, pct);
+            println!(
+                "  {} {} — {}x{} pt, {}x{} px, {:?}, {}% content",
+                status, name, w as i32, h as i32, page.width, page.height, elapsed, pct
+            );
 
             // Save PNG
             let safe_name = name.replace(" ", "_").replace("/", "_");

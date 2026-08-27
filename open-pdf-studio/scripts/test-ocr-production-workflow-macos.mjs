@@ -446,8 +446,8 @@ async function ocrGeometry(mode = 'single') {
     ? '.page-wrapper[data-page="1"] .pdf-canvas'
     : '#pdf-canvas';
   const layerSelector = mode === 'continuous'
-    ? '.page-wrapper[data-page="1"] .textLayer'
-    : '#canvas-container .textLayer';
+    ? '.page-wrapper[data-page="1"] .textLayer:has(span[data-ocr-owner="open-pdf-studio"])'
+    : '#canvas-container .textLayer:has(span[data-ocr-owner="open-pdf-studio"])';
   let observed = null;
   return waitUntil(`settled ${mode} OCR geometry`, async () => {
     const span = await ui(spanSelector);
@@ -476,20 +476,42 @@ async function ocrGeometry(mode = 'single') {
         height: (quarterTurn ? viewport.pageW : viewport.pageH) * viewport.zoom,
       };
     }
-    const normalized = normalizedRect(span.rect, pageRect);
+    // Rotation and view-mode changes update the layer in a RAF. The MCP
+    // probes above are separate requests, so the first span read can precede
+    // that RAF while the layer read follows it. Re-read the span and require
+    // its captured ancestor rect/style to match the layer snapshot before
+    // treating this iteration as settled.
+    const settledSpan = await ui(spanSelector);
+    if (!settledSpan.found || !settledSpan.visible
+        || !settledSpan.rect?.width || !settledSpan.rect?.height) return null;
+    const spanLayerRect = settledSpan.textLayerHost?.rect;
+    const sameLayerSnapshot = settledSpan.textLayerHost?.inlineStyle === layer.inlineStyle
+      && settledSpan.textLayerHost?.dataset?.textLayerRequest
+        === layer.dataset?.textLayerRequest
+      && spanLayerRect
+      && Math.abs(spanLayerRect.left - layer.rect.left) <= 0.5
+      && Math.abs(spanLayerRect.top - layer.rect.top) <= 0.5
+      && Math.abs(spanLayerRect.width - layer.rect.width) <= 0.5
+      && Math.abs(spanLayerRect.height - layer.rect.height) <= 0.5;
+    const normalized = normalizedRect(settledSpan.rect, pageRect);
     const layerAligned = ['left', 'top', 'width', 'height'].every(
       (key) => Math.abs(layer.rect[key] - pageRect[key]) <= 2,
     );
     observed = {
-      span: span.rect,
+      span: settledSpan.rect,
+      spanMatches: settledSpan.matchCount,
+      spanTextLayerHost: settledSpan.textLayerHost,
       layer: layer.rect,
+      layerMatches: layer.matchCount,
+      layerDataset: layer.dataset,
       page: pageRect,
       normalized,
       viewport,
       layerStyle: layer.inlineStyle,
-      spanStyle: span.inlineStyle,
+      spanStyle: settledSpan.inlineStyle,
     };
-    return layerAligned && normalized.left > -0.05 && normalized.top > -0.05
+    return sameLayerSnapshot && layerAligned
+      && normalized.left > -0.05 && normalized.top > -0.05
       && normalized.left + normalized.width < 1.05
       && normalized.top + normalized.height < 1.05
       ? observed
@@ -502,7 +524,8 @@ async function ocrGeometry(mode = 'single') {
 function assertGeometryNear(actual, expected, message, tolerance = 0.065) {
   for (const key of ['left', 'top', 'width', 'height']) {
     assert.ok(Math.abs(actual[key] - expected[key]) <= tolerance,
-      `${message}: ${key} ${actual[key]} vs ${expected[key]}`);
+      `${message}: ${key} ${actual[key]} vs ${expected[key]}; `
+        + `actual=${JSON.stringify(actual)} expected=${JSON.stringify(expected)}`);
   }
 }
 
@@ -760,7 +783,7 @@ try {
   await click('#rotate-right');
   const rotatedGeometry = await ocrGeometry('single');
   assertGeometryNear(rotatedGeometry.normalized, rotatedClockwise(baselineGeometry.normalized),
-    '90-degree OCR alignment', 0.09);
+    `90-degree OCR alignment; observed=${JSON.stringify(rotatedGeometry)}`, 0.09);
   await click('#rotate-left');
   const restoredGeometry = await ocrGeometry('single');
   assertGeometryNear(restoredGeometry.normalized, baselineGeometry.normalized, 'restored OCR alignment');

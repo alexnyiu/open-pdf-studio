@@ -25,7 +25,7 @@ const execFileAsync = promisify(execFile);
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appPath = path.resolve(
   process.env.OPEN_PDF_STUDIO_PACKAGED_APP
-    || path.join(projectDir, '..', 'target', 'release', 'bundle', 'macos', 'Open PDF Studio.app', 'Contents', 'MacOS', 'open-pdf-studio'),
+    || path.join(projectDir, '..', 'target', 'aarch64-apple-darwin', 'release', 'bundle', 'macos', 'Open PDF Studio.app', 'Contents', 'MacOS', 'open-pdf-studio'),
 );
 const sourcePath = path.join(projectDir, 'output', 'pdf', 'open-pdf-studio-ocr-writer-proof.pdf');
 const evidenceDir = path.join(projectDir, 'output', 'ocr-safe-save-packaged');
@@ -133,9 +133,11 @@ await mkdir(renderDir);
 const sourceBaselinePath = path.join(testDir, 'source-baseline.pdf');
 const inPlacePath = path.join(testDir, 'save-in-place.pdf');
 const saveAsPath = path.join(testDir, 'save-as.pdf');
+const readOnlyPath = path.join(testDir, 'read-only-save.pdf');
 await Promise.all([
   copyFile(sourcePath, sourceBaselinePath),
   copyFile(sourcePath, inPlacePath),
+  copyFile(sourcePath, readOnlyPath),
 ]);
 await chmod(inPlacePath, 0o640);
 await execFileAsync('/usr/bin/xattr', ['-w', 'com.openpdfstudio.safe-save-test', 'preserve-me', inPlacePath]);
@@ -177,13 +179,32 @@ try {
   const reopened = await callTool('app_open_pdf', { path: saveAsPath });
   assert.equal(reopened.ok, true, reopened.error);
 
-  const readOnlyBefore = sha256(await readFile(saveAsPath));
-  await chmod(saveAsPath, 0o444);
-  const readOnlySave = await callTool('app_save_pdf');
+  const openedReadOnly = await callTool('app_open_pdf', { path: readOnlyPath });
+  assert.equal(openedReadOnly.ok, true, openedReadOnly.error);
+  const unsavedMutation = await callTool('app_create_annotation', {
+    type: 'box',
+    page: 1,
+    props: { x: 12, y: 12, width: 24, height: 18, lineWidth: 1 },
+  });
+  assert.equal(unsavedMutation.ok, true, unsavedMutation.error);
+  const readOnlyBefore = sha256(await readFile(readOnlyPath));
+  const testDirMode = (await stat(testDir)).mode & 0o777;
+  let readOnlySave;
+  // Atomic replacement is controlled by the destination directory, not the
+  // existing file's mode: a 0444 file can still be replaced when its parent
+  // is writable. Remove directory write permission as well so this exercises
+  // a genuine candidate-creation/replace failure.
+  await chmod(readOnlyPath, 0o444);
+  await chmod(testDir, 0o555);
+  try {
+    readOnlySave = await callTool('app_save_pdf');
+  } finally {
+    await chmod(testDir, testDirMode);
+    await chmod(readOnlyPath, 0o644);
+  }
   assert.equal(readOnlySave.ok, false, 'read-only destination unexpectedly saved');
-  assert.equal(sha256(await readFile(saveAsPath)), readOnlyBefore, 'failed read-only save changed the original');
+  assert.equal(sha256(await readFile(readOnlyPath)), readOnlyBefore, 'failed read-only save changed the original');
   assert.deepEqual(await privateCandidates(testDir), [], 'failed read-only save left private candidates');
-  await chmod(saveAsPath, 0o644);
 
   const [sourceText, inPlaceText, saveAsText] = await Promise.all([
     extractedPages(sourceBaselinePath),
@@ -207,6 +228,8 @@ try {
     saveInPlace: 'pass',
     saveAs: 'pass',
     readOnlyOriginalPreserved: 'pass',
+    destinationDirectoryWriteProtected: 'pass',
+    unsavedMutationBeforeFailure: 'pass',
     permissionsPreserved: 'pass',
     macosExtendedMetadataPreserved: 'pass',
     candidateCleanup: 'pass',

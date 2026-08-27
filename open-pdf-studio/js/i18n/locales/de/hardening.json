@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "{{label}} bearbeiten",
+    "editValueHint": "{{label}}. Zum Bearbeiten doppelklicken oder die Eingabetaste drücken.",
+    "timezoneHint": "Datumsangaben werden in der Zeitzone {{timezone}} angezeigt und im Format ISO 8601 gespeichert."
+  },
+  "fontSubstitution": {
+    "title": "Schriftersetzung genehmigen",
+    "sourceFace": "Originalschriftart",
+    "sourceFaces": "Originalschriftarten",
+    "unknown": "Unbekannt",
+    "packagedSubstitute": "Mitgelieferte Ersatzschrift",
+    "notAvailable": "Nicht verfügbar",
+    "sampleText": "Beispiel",
+    "sampleFallback": "Franz jagt im komplett verwahrlosten Taxi quer durch Bayern.",
+    "scope": "Gilt für",
+    "scopeAnnotation": "Diese Anmerkung",
+    "scopeSelection": "Die ausgewählten Textfelder",
+    "scopeParagraph": "Diesen PDF-Absatz",
+    "scopeFindReplace": "Diese Suchen/Ersetzen-Änderung",
+    "remember": "Diese Genehmigung für das geöffnete Dokument merken",
+    "approve": "Ersatzschrift verwenden",
+    "cancel": "Abbrechen"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "PDF-Text bearbeiten",
+      "editFormatted": "Formatierten PDF-Text bearbeiten",
+      "editAnnotation": "Formatierten {{type}}-Text bearbeiten",
+      "editRegion": "Formatierten PDF-Textbereich bearbeiten: {{text}}",
+      "editScannedLine": "Gescannte Textzeile bearbeiten: {{text}}",
+      "editScannedFixed": "Festgelegten Bereich mit gescanntem Text bearbeiten: {{text}}",
+      "editScannedReflow": "Umbruchbereich eines gescannten Absatzes bearbeiten: {{text}}",
+      "selectedOcrParagraph": "Ausgewählter OCR-Absatz mit {{count}} Zeilen"
+    },
+    "handles": {
+      "move": "Textfeld verschieben",
+      "moveHint": "Zum Verschieben des Textfelds ziehen",
+      "resize": "Textfeldgröße ändern",
+      "resizeHint": "Zum Ändern der Textfeldgröße ziehen"
+    },
+    "actions": {
+      "apply": "Anwenden",
+      "cancel": "Abbrechen"
+    },
+    "status": {
+      "ocrOverflow": "Der vollständige OCR-Entwurf ist außerhalb seines genehmigten Bereichs sichtbar. Das Speichern bleibt gesperrt, bis die exakte Prüfung des festen Bereichs bestätigt, dass der Text hineinpasst.",
+      "scannedRegion": "Der gescannte Text wird innerhalb seines genehmigten Bereichs bearbeitet.",
+      "shaping": "Das exakte Textlayout wird fertiggestellt…",
+      "overlap": "Der Text überlappt vorhandene Seiteninhalte. Die Änderung kann übernommen werden; benachbarte Quellobjekte werden nicht verschoben.",
+      "lowContrast": "Quellfarben mit geringem Kontrast erhalten nur beim Bearbeiten einen Hintergrund. Die gespeicherten Farben bleiben unverändert.",
+      "layoutRejectedPrefix": "Textlayout abgelehnt:",
+      "layoutRejected": "Textlayout abgelehnt: {{reasons}}",
+      "shapingRejected": "Textformung abgelehnt: {{reason}}",
+      "nativeManual": "Nativer Text wird in einem Textfeld mit manuellen Zeilen bearbeitet. Für eine neue Zeile die Eingabetaste drücken.",
+      "nativeManualContrast": "Nativer Text wird in einem Textfeld mit manuellen Zeilen bearbeitet. Für eine neue Zeile die Eingabetaste drücken. Quellfarben mit geringem Kontrast erhalten nur beim Bearbeiten einen Hintergrund; die gespeicherten Farben bleiben unverändert.",
+      "nativeGrowing": "Nativer Text wird bearbeitet. Die Breite ist fest, und der Bereich wächst nach unten.",
+      "nativeGrowingContrast": "Nativer Text wird bearbeitet. Die Breite ist fest, und der Bereich wächst nach unten. Quellfarben mit geringem Kontrast erhalten nur beim Bearbeiten einen Hintergrund; die gespeicherten Farben bleiben unverändert.",
+      "scannedEstimate": "Gescannter Text wird bearbeitet. Die Schrifteigenschaften sind Schätzwerte.",
+      "applyRejected": "Die Textänderung konnte nicht angewendet werden: {{reason}}",
+      "cropBoxRejected": "Der geformte Text kann nicht innerhalb des CropBox-Bereichs der Seite übernommen werden.",
+      "layoutTimeout": "Das exakte Textlayout wurde nicht rechtzeitig fertiggestellt. Der Editor bleibt geöffnet.",
+      "scannedRejected": "Die Änderung des gescannten Texts wurde abgelehnt: {{reason}}",
+      "lineBreakUnsupported": "Zeilenumbrüche werden nicht unterstützt. Mit Befehlstaste-Eingabetaste kann diese einzeilige Änderung angewendet werden.",
+      "ocrOneLine": "Eine einzelne isolierte gescannte Textzeile wird bearbeitet. Die Schrifteigenschaften sind Schätzwerte.",
+      "ocrFixed": "Mehrere OCR-Zeilen werden innerhalb eines festen ursprünglichen Bereichs bearbeitet. Ein einzelner Absatz wird innerhalb dieses Bereichs neu umbrochen; feste Zeilenumbrüche erhalten den Modus mit festen Zeilen. Befehlstaste-Eingabetaste wendet die Änderung an.",
+      "ocrReflow": "Ein Absatz wird innerhalb seines genehmigten ursprünglichen OCR-Bereichs bearbeitet. Befehlstaste-Eingabetaste wendet die Änderung an; Überlauf wird abgelehnt.",
+      "operationFailed": "Der Textvorgang konnte nicht abgeschlossen werden. Das Dokument wurde nicht verändert.",
+      "staleDraft": "Das Dokument wurde geändert, während der Texteditor geöffnet war. Der Entwurf wurde verworfen.",
+      "multipleOcrParagraphs": "Die Auswahl erstreckt sich über mehrere OCR-Absätze. Prüfen Sie die einzelnen Umrisse und verwenden Sie ausdrücklich „Zusammenführen“. Das Zusammenführen über Spalten hinweg bleibt deaktiviert.",
+      "nativeColumnBoundary": "Dieser Absatz überschreitet eine erkannte Spaltengrenze im Original. Die Bearbeitung wurde blockiert und das Dokument wurde nicht verändert.",
+      "nativeSourceUnavailable": "Sichtbarer Text konnte keinen geeigneten Quelloperatoren zugeordnet werden. Das Dokument wurde nicht verändert.",
+      "nativeDeleteUnavailable": "Dieser native PDF-Text kann nicht sicher gelöscht werden, da seine genauen Quelloperatoren nicht eindeutig sind. Das Dokument wurde nicht verändert.",
+      "readOnly": "Zuvor bearbeiteter Text ist schreibgeschützt. Das Dokument wurde nicht verändert."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Grenzwert von {{limit}} Graphemen",
+      "lineThreshold": "Grenzwert von {{limit}} Zeilen",
+      "message": "Der vollständig eingefügte Inhalt wurde beibehalten: {{graphemeCount}} Grapheme in {{lineCount}} Zeilen. Grenzwert überschritten: {{thresholds}}. Die Vorschau ist begrenzt. Mit „Einfügen rückgängig“ kann der gesamte eingefügte Inhalt entfernt werden.",
+      "messageWithExpansion": "Der vollständig eingefügte Inhalt wurde beibehalten: {{graphemeCount}} Grapheme in {{lineCount}} Zeilen. Grenzwert überschritten: {{thresholds}}. Die Vorschau ist begrenzt. Mit „Einfügen rückgängig“ kann der gesamte eingefügte Inhalt entfernt oder mit „Feld erweitern“ können die exakt geprüften Grenzen übernommen werden.",
+      "undo": "Einfügen rückgängig",
+      "expand": "Feld erweitern"
+    }
+  },
+  "ocrGrouping": {
+    "label": "OCR-Absatzgruppierung",
+    "title": "Gruppierung",
+    "mergeSelected": "Auswahl zusammenführen",
+    "mergeSelectedParagraphs": "Ausgewählte Absätze zusammenführen",
+    "mergePrevious": "Mit vorherigem zusammenführen",
+    "mergePreviousHint": "Mit dem vorherigen OCR-Absatz zusammenführen",
+    "mergeNext": "Mit nächstem zusammenführen",
+    "mergeNextHint": "Mit dem nächsten OCR-Absatz zusammenführen",
+    "splitBefore": "Davor teilen",
+    "splitAfter": "Danach teilen",
+    "reset": "Automatische Gruppierung zurücksetzen",
+    "crossColumnDisabled": "Spaltenübergreifendes Zusammenführen ist deaktiviert",
+    "ambiguousBoundariesOnly": "Nur uneindeutige Grenzen innerhalb derselben Spalte können manuell zusammengeführt werden",
+    "tooManyLines": "Mehr als 32 Zeilen. Diesen Absatz vor dem Bearbeiten manuell teilen.",
+    "mergeDescription": "Die vorhandenen Texte sind durch einen beibehaltenen festen Zeilenumbruch getrennt. Die Zusammenführung wird erst angewendet, nachdem der kombinierte Quell-Patch und der feste Bereich die Validierung bestanden haben.",
+    "mergedText": "Zusammengeführter OCR-Text",
+    "splitRegion": "OCR-Bereich teilen",
+    "firstRegion": "Erster Bereich",
+    "secondRegion": "Zweiter Bereich",
+    "sourceLines": "Quellzeilen: {{lines}}"
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "{{label}} bewerken",
+    "editValueHint": "{{label}}. Dubbelklik of druk op Enter om te bewerken.",
+    "timezoneHint": "Datums worden weergegeven in de tijdzone {{timezone}} en opgeslagen in ISO 8601-indeling."
+  },
+  "fontSubstitution": {
+    "title": "Lettertypevervanging goedkeuren",
+    "sourceFace": "Bronlettertype",
+    "sourceFaces": "Bronlettertypen",
+    "unknown": "Onbekend",
+    "packagedSubstitute": "Meegeleverd vervangend lettertype",
+    "notAvailable": "Niet beschikbaar",
+    "sampleText": "Voorbeeld",
+    "sampleFallback": "De snelle bruine vos springt over de luie hond.",
+    "scope": "Van toepassing op",
+    "scopeAnnotation": "Deze annotatie",
+    "scopeSelection": "De geselecteerde tekstvakken",
+    "scopeParagraph": "Deze PDF-alinea",
+    "scopeFindReplace": "Deze Zoeken/vervangen-bewerking",
+    "remember": "Deze goedkeuring onthouden voor het geopende document",
+    "approve": "Vervangend lettertype gebruiken",
+    "cancel": "Annuleren"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "PDF-tekst bewerken",
+      "editFormatted": "Opgemaakte PDF-tekst bewerken",
+      "editAnnotation": "Opgemaakte {{type}}-tekst bewerken",
+      "editRegion": "Gebied met opgemaakte PDF-tekst bewerken: {{text}}",
+      "editScannedLine": "Regel met gescande tekst bewerken: {{text}}",
+      "editScannedFixed": "Vast gebied met gescande tekst bewerken: {{text}}",
+      "editScannedReflow": "Gebied voor herloop van een alinea met gescande tekst bewerken: {{text}}",
+      "selectedOcrParagraph": "Geselecteerde OCR-alinea met {{count}} regels"
+    },
+    "handles": {
+      "move": "Tekstvak verplaatsen",
+      "moveHint": "Sleep om het tekstvak te verplaatsen",
+      "resize": "Formaat van tekstvak wijzigen",
+      "resizeHint": "Sleep om het formaat van het tekstvak te wijzigen"
+    },
+    "actions": {
+      "apply": "Toepassen",
+      "cancel": "Annuleren"
+    },
+    "status": {
+      "ocrOverflow": "De volledige OCR-concepttekst is buiten het goedgekeurde gebied zichtbaar. Opslaan blijft geblokkeerd totdat de tekst volgens de exacte validatie binnen het vaste gebied past.",
+      "scannedRegion": "Gescande tekst wordt binnen het goedgekeurde gebied bewerkt.",
+      "shaping": "Exacte tekstindeling voltooien…",
+      "overlap": "De tekst overlapt bestaande pagina-inhoud. De wijziging kan worden toegepast; aangrenzende bronobjecten worden niet verplaatst.",
+      "lowContrast": "Bronkleuren met laag contrast hebben een achtergrond die alleen tijdens het bewerken zichtbaar is. Opgeslagen kleuren blijven ongewijzigd.",
+      "layoutRejectedPrefix": "Tekstindeling afgewezen:",
+      "layoutRejected": "Tekstindeling afgewezen: {{reasons}}",
+      "shapingRejected": "Tekstvorming afgewezen: {{reason}}",
+      "nativeManual": "Oorspronkelijke tekst wordt bewerkt in een tekstvak met handmatige regels. Druk op Enter voor een nieuwe regel.",
+      "nativeManualContrast": "Oorspronkelijke tekst wordt bewerkt in een tekstvak met handmatige regels. Druk op Enter voor een nieuwe regel. Bronkleuren met laag contrast hebben een achtergrond die alleen tijdens het bewerken zichtbaar is; opgeslagen kleuren blijven ongewijzigd.",
+      "nativeGrowing": "Oorspronkelijke tekst wordt bewerkt. De breedte staat vast en het gebied groeit naar beneden.",
+      "nativeGrowingContrast": "Oorspronkelijke tekst wordt bewerkt. De breedte staat vast en het gebied groeit naar beneden. Bronkleuren met laag contrast hebben een achtergrond die alleen tijdens het bewerken zichtbaar is; opgeslagen kleuren blijven ongewijzigd.",
+      "scannedEstimate": "Gescande tekst wordt bewerkt. De lettertype-eigenschappen zijn schattingen.",
+      "applyRejected": "De tekstbewerking kon niet worden toegepast: {{reason}}",
+      "cropBoxRejected": "De gevormde tekst kan niet binnen de CropBox van de pagina worden vastgelegd.",
+      "layoutTimeout": "De exacte tekstindeling is niet op tijd voltooid. De editor blijft geopend.",
+      "scannedRejected": "Wijziging van gescande tekst afgewezen: {{reason}}",
+      "lineBreakUnsupported": "Regeleinden worden niet ondersteund. Gebruik Command-Enter om deze bewerking van één regel toe te passen.",
+      "ocrOneLine": "Eén afzonderlijke regel met gescande tekst wordt bewerkt. De lettertype-eigenschappen zijn schattingen.",
+      "ocrFixed": "Meerdere OCR-regels worden binnen één vast oorspronkelijk gebied bewerkt. Eén alinea loopt binnen dit gebied opnieuw om; harde regeleinden behouden de modus met vaste regels. Command-Enter past de wijziging toe.",
+      "ocrReflow": "Eén alinea wordt binnen het goedgekeurde oorspronkelijke OCR-gebied bewerkt. Command-Enter past de wijziging toe; overloop wordt afgewezen.",
+      "operationFailed": "De tekstbewerking kon niet worden voltooid. Het document is ongewijzigd gebleven.",
+      "staleDraft": "Het document is gewijzigd terwijl de teksteditor geopend was. Het concept is verwijderd.",
+      "multipleOcrParagraphs": "De selectie beslaat meerdere OCR-alinea's. Controleer de afzonderlijke contouren en gebruik Samenvoegen expliciet. Samenvoegen tussen kolommen blijft uitgeschakeld.",
+      "nativeColumnBoundary": "Deze alinea overschrijdt een gedetecteerde oorspronkelijke kolomgrens. Bewerken is geblokkeerd en het document is ongewijzigd gebleven.",
+      "nativeSourceUnavailable": "Zichtbare tekst kon niet worden gekoppeld aan geschikte bronoperatoren. Het document is ongewijzigd gebleven.",
+      "nativeDeleteUnavailable": "Deze oorspronkelijke PDF-tekst kan niet veilig worden verwijderd omdat de exacte bronoperatoren dubbelzinnig zijn. Het document is ongewijzigd gebleven.",
+      "readOnly": "Eerder bewerkte tekst is alleen-lezen. Het document is ongewijzigd gebleven."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Limiet van {{limit}} grafemen",
+      "lineThreshold": "Limiet van {{limit}} regels",
+      "message": "De volledige plakbewerking is behouden: {{graphemeCount}} grafemen over {{lineCount}} regels. Limiet overschreden: {{thresholds}}. Het voorbeeld is begrensd. Gebruik Plakken ongedaan maken om de volledige invoeging te verwijderen.",
+      "messageWithExpansion": "De volledige plakbewerking is behouden: {{graphemeCount}} grafemen over {{lineCount}} regels. Limiet overschreden: {{thresholds}}. Het voorbeeld is begrensd. Gebruik Plakken ongedaan maken om de volledige invoeging te verwijderen of Vak uitbreiden om de exact gevalideerde grenzen over te nemen.",
+      "undo": "Plakken ongedaan maken",
+      "expand": "Vak uitbreiden"
+    }
+  },
+  "ocrGrouping": {
+    "label": "OCR-alinea's groeperen",
+    "title": "Groepering",
+    "mergeSelected": "Selectie samenvoegen",
+    "mergeSelectedParagraphs": "Geselecteerde alinea's samenvoegen",
+    "mergePrevious": "Samenvoegen met vorige",
+    "mergePreviousHint": "Samenvoegen met de vorige OCR-alinea",
+    "mergeNext": "Samenvoegen met volgende",
+    "mergeNextHint": "Samenvoegen met de volgende OCR-alinea",
+    "splitBefore": "Hiervoor splitsen",
+    "splitAfter": "Hierna splitsen",
+    "reset": "Automatische groepering herstellen",
+    "crossColumnDisabled": "Samenvoegen tussen kolommen is uitgeschakeld",
+    "ambiguousBoundariesOnly": "Alleen onduidelijke grenzen binnen dezelfde kolom kunnen handmatig worden samengevoegd",
+    "tooManyLines": "Meer dan 32 regels. Splits deze alinea handmatig voordat u deze bewerkt.",
+    "mergeDescription": "De bestaande teksten zijn gescheiden door een behouden harde regeleinde. Het samenvoegen wordt pas toegepast nadat de gecombineerde bronpatch en het vaste gebied de validatie hebben doorstaan.",
+    "mergedText": "Samengevoegde OCR-tekst",
+    "splitRegion": "OCR-gebied splitsen",
+    "firstRegion": "Eerste gebied",
+    "secondRegion": "Tweede gebied",
+    "sourceLines": "Bronregels: {{lines}}"
+  }
+}

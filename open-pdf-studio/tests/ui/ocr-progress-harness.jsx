@@ -2,6 +2,7 @@ import { render } from 'solid-js/web';
 
 import { state } from '/js/core/state.ts';
 import { ocrWorkflowService } from '/js/ocr/workflow-service.js';
+import DocumentTabs from '/js/solid/components/DocumentTabs.jsx';
 import OcrProgressToast from '/js/solid/components/OcrProgressToast.jsx';
 
 function deferred() {
@@ -187,7 +188,7 @@ function resolveTerminal(status, { retryable = false } = {}) {
 }
 
 const root = document.getElementById('test-root');
-render(() => <OcrProgressToast />, root);
+render(() => <><DocumentTabs /><OcrProgressToast /></>, root);
 
 let liveMutations = 0;
 const observer = new MutationObserver((records) => {

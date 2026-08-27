@@ -37,8 +37,10 @@ fn load(path: &Path) -> PdfiumDocumentHandle {
 
 fn extracted_pages(handle: &PdfiumDocumentHandle) -> Vec<String> {
     (0..handle.document().pages().len())
-        .map(|index| extract_all_page_text(handle.document(), index as u32)
-            .unwrap_or_else(|error| panic!("load page {index} text: {error}")))
+        .map(|index| {
+            extract_all_page_text(handle.document(), index as u32)
+                .unwrap_or_else(|error| panic!("load page {index} text: {error}"))
+        })
         .collect()
 }
 
@@ -135,9 +137,9 @@ fn invisible_unicode_writer_preserves_pdfium_pixels_and_search_state() {
     let mut last_dense_offset = 0;
     for line_number in 1..=70 {
         let line = format!("Line {line_number:02} value {}", 1000 + line_number);
-        let offset = written_text[2]
-            .find(&line)
-            .unwrap_or_else(|| panic!("PDFium did not extract {line:?} from the non-zero CropBox dense page"));
+        let offset = written_text[2].find(&line).unwrap_or_else(|| {
+            panic!("PDFium did not extract {line:?} from the non-zero CropBox dense page")
+        });
         assert!(
             offset >= last_dense_offset,
             "PDFium dense-page reading order changed at {line:?}"

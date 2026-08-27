@@ -17,6 +17,10 @@ import { clearEditableMetadataPreload, scheduleEditableMetadataPreload } from '.
 import { onPageRendered, clearHighlights } from '../search/find-bar.js';
 import { showPagePlaceholder, hidePagePlaceholderWhenReady } from './page-transition.js';
 import { rawPdfTextLayerViewportOptions } from '../text/text-edit-appearance.js';
+import {
+  bumpDocumentViewportRevision,
+  cancelPendingDocumentZoom,
+} from './document-zoom-scheduler.js';
 
 function scheduleBackgroundMetadata(centerPage, direction) {
   if (state.preferences.preloadEntirePdf) {
@@ -154,8 +158,25 @@ export async function renderPage(pageNum) {
   if (typeof window !== 'undefined') {
     window.__pdfRenderInFlight = (window.__pdfRenderInFlight || 0) + 1;
   }
+  const owner = getActiveDocument();
+  const ownerId = owner?.id || null;
+  const ownerGeneration = Number(owner?.lifecycleGeneration) || 0;
   try {
-    return await _renderPageImpl(pageNum);
+    const result = await _renderPageImpl(pageNum);
+    const current = getActiveDocument();
+    if (current && current.id === ownerId
+        && (Number(current.lifecycleGeneration) || 0) === ownerGeneration
+        && current.currentPage === pageNum
+        && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('opds:page-rendered', {
+        detail: {
+          documentId: ownerId,
+          lifecycleGeneration: ownerGeneration,
+          pageNum,
+        },
+      }));
+    }
+    return result;
   } finally {
     if (typeof window !== 'undefined') {
       window.__pdfRenderInFlight = Math.max(0, (window.__pdfRenderInFlight || 1) - 1);
@@ -1147,14 +1168,36 @@ export function continuousZoomBy(factor, anchorY = null) {
   next = Math.round(next * 1000) / 1000;
   if (next === old) return;
   doc.scale = next;
+  bumpDocumentViewportRevision(doc, 'continuous-zoom');
   _applyContinuousZoomInstant(old, anchorY);
   updateAllStatus(); // zoom % tracks the gesture immediately
   if (_contRerenderTimer) clearTimeout(_contRerenderTimer);
+  const ownerDocumentId = doc.id;
+  const ownerLifecycleGeneration = Number(doc.lifecycleGeneration) || 0;
   _contRerenderTimer = setTimeout(() => {
     _contRerenderTimer = null;
-    if (getActiveDocument()?.viewMode !== 'continuous') return;
+    const owner = getActiveDocument();
+    if (!owner || owner.id !== ownerDocumentId
+        || (Number(owner.lifecycleGeneration) || 0) !== ownerLifecycleGeneration
+        || owner.viewMode !== 'continuous') return;
     reRenderVisibleContinuousPages();
   }, 130);
+}
+
+export function continuousZoomByForDocument(
+  documentId,
+  lifecycleGeneration,
+  pageNum,
+  factor,
+  anchorY = null,
+) {
+  const doc = getActiveDocument();
+  if (!doc || doc.id !== documentId
+      || (Number(doc.lifecycleGeneration) || 0) !== lifecycleGeneration
+      || doc.currentPage !== pageNum
+      || doc.viewMode !== 'continuous') return false;
+  continuousZoomBy(factor, anchorY);
+  return true;
 }
 
 // Absolute variant voor setZoom/fit/actualSize in de doorlopende weergave:
@@ -1164,6 +1207,8 @@ export function continuousZoomBy(factor, anchorY = null) {
 // gooiden een ReferenceError zodat absolute zoom/ware grootte in de
 // doorlopende weergave helemaal niets deed.)
 async function _continuousRezoom(oldScale) {
+  const doc = getActiveDocument();
+  if (doc) bumpDocumentViewportRevision(doc, 'continuous-zoom');
   _applyContinuousZoomInstant(oldScale);
   updateAllStatus();
   if (_contRerenderTimer) clearTimeout(_contRerenderTimer);
@@ -1425,6 +1470,7 @@ function _prevSpreadAnchor(anchor) {
 export async function setViewMode(mode) {
   const doc = getActiveDocument();
   if (!doc?.pdfDoc) return;
+  cancelPendingDocumentZoom();
 
   // 'book' (boekweergave, issue #201) is a LAYOUT VARIANT of continuous:
   // spreads of two pages side by side with page 1 alone on the right, like
@@ -1455,6 +1501,7 @@ export async function setViewMode(mode) {
     doc.facingSpread = false;
     if (mode === 'continuous') doc.bookSpread = false;
   }
+  bumpDocumentViewportRevision(doc, 'view-mode');
   const singleContainer = document.getElementById('canvas-container');
   const continuousContainer = document.getElementById('continuous-container');
   const pdfContainer = document.getElementById('pdf-container');
@@ -1566,6 +1613,7 @@ async function _prefetchOnePage(doc, pageNum, centerPage) {
 export async function goToPage(pageNum) {
   const doc = getActiveDocument();
   if (!doc?.pdfDoc) return;
+  cancelPendingDocumentZoom();
 
   if (pageNum < 1) pageNum = 1;
   if (pageNum > doc.pdfDoc.numPages) pageNum = doc.pdfDoc.numPages;
@@ -1587,6 +1635,7 @@ export async function goToPage(pageNum) {
         : _prevSpreadAnchor(curAnchor);
     }
     doc.currentPage = targetAnchor;
+    bumpDocumentViewportRevision(doc, 'page');
     hideProperties();
     await renderContinuous();
     updateActiveThumbnail();
@@ -1596,6 +1645,7 @@ export async function goToPage(pageNum) {
 
   const direction = pageNum >= doc.currentPage ? 1 : -1;
   if (doc) doc.currentPage = pageNum;
+  bumpDocumentViewportRevision(doc, 'page');
   hideProperties();
 
   if (doc?.viewMode === 'single') {
@@ -1641,6 +1691,60 @@ export async function goToPage(pageNum) {
 // via the legacy PDF.js path will have its change immediately stomped.
 // We must therefore mutate the viewport directly when it's active, and
 // only fall back to the legacy `doc.scale` path otherwise.
+export async function legacyZoomByAtPointForDocument(
+  documentId,
+  lifecycleGeneration,
+  pageNum,
+  factor,
+  clientPoint = null,
+) {
+  const doc = getActiveDocument();
+  if (!doc || doc.id !== documentId
+      || (Number(doc.lifecycleGeneration) || 0) !== lifecycleGeneration
+      || doc.currentPage !== pageNum
+      || doc.viewMode !== 'single'
+      || doc.filePath !== null
+      || !Number.isFinite(factor)
+      || factor <= 0) return false;
+
+  const oldScale = Number(doc.scale) || 1;
+  const nextScale = Math.round(Math.min(24, Math.max(0.05, oldScale * factor)) * 1000) / 1000;
+  if (nextScale === oldScale) return false;
+
+  const container = document.getElementById('pdf-container');
+  const canvas = getPdfCanvas();
+  const beforeRect = canvas?.getBoundingClientRect?.() || null;
+  const point = clientPoint && Number.isFinite(clientPoint.x) && Number.isFinite(clientPoint.y)
+    ? clientPoint
+    : beforeRect
+      ? { x: beforeRect.left + beforeRect.width / 2, y: beforeRect.top + beforeRect.height / 2 }
+      : null;
+  const pagePoint = beforeRect && point ? {
+    x: (point.x - beforeRect.left) / oldScale,
+    y: (point.y - beforeRect.top) / oldScale,
+  } : null;
+
+  doc.scale = nextScale;
+  bumpDocumentViewportRevision(doc, 'blank-document-zoom');
+  await renderPage(pageNum);
+
+  const current = getActiveDocument();
+  if (!current || current.id !== documentId
+      || (Number(current.lifecycleGeneration) || 0) !== lifecycleGeneration
+      || current.currentPage !== pageNum
+      || current.scale !== nextScale) return false;
+
+  // Preserve the PDF-space point under the cursor when the legacy blank-page
+  // canvas supplies usable geometry. Browser scroll clamping handles edges.
+  if (container && canvas && point && pagePoint) {
+    const afterRect = canvas.getBoundingClientRect();
+    container.scrollLeft += afterRect.left + pagePoint.x * nextScale - point.x;
+    container.scrollTop += afterRect.top + pagePoint.y * nextScale - point.y;
+  }
+  updateAllStatus();
+  return true;
+}
+
 export async function zoomIn() {
   const doc = state.documents[state.activeDocumentIndex];
   if (!doc) return;
@@ -2024,6 +2128,10 @@ export async function rotatePage(delta, targetPage) {
   } else {
     await renderPage(pageNum);
   }
+  // Continuous rendering rebuilds every page wrapper. Publish only after the
+  // replacement host exists so an active owner-scoped editor can reattach its
+  // detached portal and project against the new rotation.
+  if (getActiveDocument() === doc) bumpDocumentViewportRevision(doc, 'rotation');
 
   // Update thumbnails
   const { invalidateThumbnail } = await import('../ui/panels/left-panel.js');

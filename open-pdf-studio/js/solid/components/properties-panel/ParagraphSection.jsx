@@ -1,15 +1,26 @@
 import { Show } from 'solid-js';
-import { annotProps, ocrParagraphActions, sectionVis, updateAnnotProp } from '../../stores/propertiesStore.js';
+import {
+  annotProps,
+  ocrParagraphActions,
+  panelMode,
+  sectionVis,
+  updateAnnotProp,
+} from '../../stores/propertiesStore.js';
 import CollapsibleSection from './CollapsibleSection.jsx';
 import PrefComboBox from '../preferences/PrefComboBox.jsx';
 import { useTranslation } from '../../../i18n/useTranslation.js';
 import { mixedFormatState, richTextDocument } from '../../stores/pdfTextEditStore.js';
+import { paragraphRotationControlVisible } from './paragraph-control-policy.js';
 
 export default function ParagraphSection() {
   const { t } = useTranslation('properties');
+  const { t: tHardening } = useTranslation('hardening');
   const isLocked = () => annotProps.locked === true || annotProps.locked === 'mixed';
   const alignment = () => richTextDocument()
     ? (mixedFormatState().alignment ?? 'mixed') : annotProps.textAlign;
+  const lineSpacing = () => richTextDocument()
+    ? (mixedFormatState().lineSpacingMultiplier ?? 'mixed') : annotProps.lineSpacing;
+  const groupingReason = (reason, fallbackKey) => reason || tHardening(fallbackKey);
 
   return (
     <Show when={sectionVis.paragraph}>
@@ -48,7 +59,7 @@ export default function ParagraphSection() {
           <div class="property-group">
             <label>{t('paragraph.lineSpacing')}</label>
             <PrefComboBox
-              value={() => annotProps.lineSpacing}
+              value={lineSpacing}
               setValue={(val) => updateAnnotProp('lineSpacing', val)}
               options={[1, 1.15, 1.5, 2, 2.5, 3]}
               min={0.5} max={5} fallback={1.5} suffix="x"
@@ -56,35 +67,40 @@ export default function ParagraphSection() {
             />
           </div>
 
-          <div class="property-group">
-            <label>{t('paragraph.rotation')}</label>
-            <PrefComboBox
-              value={() => annotProps.rotation}
-              setValue={(val) => updateAnnotProp('rotation', val)}
-              options={[0, 45, 90, 135, 180, 225, 270, 315]}
-              min={-360} max={360} fallback={0} suffix="°"
-              disabled={isLocked}
-            />
-          </div>
+          <Show when={paragraphRotationControlVisible({
+            panelMode: panelMode(),
+            scannedTextEstimate: annotProps.scannedTextEstimate,
+          })}>
+            <div class="property-group">
+              <label>{t('paragraph.rotation')}</label>
+              <PrefComboBox
+                value={() => annotProps.rotation}
+                setValue={(val) => updateAnnotProp('rotation', val)}
+                options={[0, 45, 90, 135, 180, 225, 270, 315]}
+                min={-360} max={360} fallback={0} suffix="°"
+                disabled={isLocked}
+              />
+            </div>
+          </Show>
         </Show>
         <Show when={annotProps.scannedTextEstimate === true && ocrParagraphActions()}>
-          {(actions) => <div class="property-group ocr-paragraph-actions" aria-label="OCR paragraph grouping">
-            <label>Grouping</label>
+          {(actions) => <div class="property-group ocr-paragraph-actions" aria-label={tHardening('ocrGrouping.label')}>
+            <label>{tHardening('ocrGrouping.title')}</label>
             <div class="property-button-grid">
               <button type="button" disabled={!actions().canMergeSelected}
-                onClick={() => actions().mergeSelected()}>Merge Selected</button>
+                onClick={() => actions().mergeSelected()}>{tHardening('ocrGrouping.mergeSelected')}</button>
               <button type="button" disabled={!actions().canMergePrevious}
-                title={actions().mergePreviousReason || 'Merge with the previous OCR paragraph'}
-                onClick={() => actions().mergePrevious()}>Merge Previous</button>
+                title={groupingReason(actions().mergePreviousReason, 'ocrGrouping.mergePreviousHint')}
+                onClick={() => actions().mergePrevious()}>{tHardening('ocrGrouping.mergePrevious')}</button>
               <button type="button" disabled={!actions().canMergeNext}
-                title={actions().mergeNextReason || 'Merge with the next OCR paragraph'}
-                onClick={() => actions().mergeNext()}>Merge Next</button>
+                title={groupingReason(actions().mergeNextReason, 'ocrGrouping.mergeNextHint')}
+                onClick={() => actions().mergeNext()}>{tHardening('ocrGrouping.mergeNext')}</button>
               <button type="button" disabled={!actions().canSplitBefore}
-                onClick={() => actions().splitBefore()}>Split Before</button>
+                onClick={() => actions().splitBefore()}>{tHardening('ocrGrouping.splitBefore')}</button>
               <button type="button" disabled={!actions().canSplitAfter}
-                onClick={() => actions().splitAfter()}>Split After</button>
+                onClick={() => actions().splitAfter()}>{tHardening('ocrGrouping.splitAfter')}</button>
               <button type="button" disabled={!actions().canReset}
-                onClick={() => actions().reset()}>Reset Automatic Grouping</button>
+                onClick={() => actions().reset()}>{tHardening('ocrGrouping.reset')}</button>
             </div>
             <Show when={actions().status}><div class="property-hint" role="status">{actions().status}</div></Show>
           </div>}

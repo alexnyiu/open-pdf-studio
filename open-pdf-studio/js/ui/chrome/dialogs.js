@@ -31,22 +31,36 @@ export function showAboutPanel() {
 // Document Properties Dialog (Solid.js)
 // ============================================
 
+let docPropertiesRequestGeneration = 0;
+
 export async function showDocPropertiesDialog() {
-  if (!getActiveDocument()?.pdfDoc) {
+  const ownerDocument = getActiveDocument();
+  if (!ownerDocument?.pdfDoc) {
     showMessage(i18next.t('noDocumentOpen'));
     return;
   }
 
-  const data = await gatherDocProperties();
-  openDialog('doc-properties', data);
+  const requestGeneration = ++docPropertiesRequestGeneration;
+  const ownerDocumentId = ownerDocument.id;
+  const ownerDocumentGeneration = Number(ownerDocument.lifecycleGeneration) || 0;
+  const ownerPdfDocument = ownerDocument.pdfDoc;
+  const isCurrent = () => {
+    const current = getActiveDocument();
+    return requestGeneration === docPropertiesRequestGeneration
+      && current === ownerDocument
+      && String(current?.id) === String(ownerDocumentId)
+      && (Number(current?.lifecycleGeneration) || 0) === ownerDocumentGeneration
+      && current?.pdfDoc === ownerPdfDocument;
+  };
+  const data = await gatherDocProperties(ownerDocument, isCurrent);
+  if (data && isCurrent()) openDialog('doc-properties', data);
 }
 
 export function hideDocPropertiesDialog() {
   closeDialog('doc-properties');
 }
 
-async function gatherDocProperties() {
-  const doc = getActiveDocument();
+async function gatherDocProperties(doc, isCurrent) {
   const filePath = doc?.filePath || '-';
   const fileName = filePath !== '-' ? filePath.split(/[\\/]/).pop() : '-';
 
@@ -54,8 +68,10 @@ async function gatherDocProperties() {
   if (filePath !== '-' && isTauri() && window.__TAURI__?.fs) {
     try {
       const stats = await window.__TAURI__.fs.stat(filePath);
+      if (!isCurrent()) return null;
       fileSize = formatFileSize(stats.size);
     } catch (e) {
+      if (!isCurrent()) return null;
       fileSize = '-';
     }
   }
@@ -64,9 +80,11 @@ async function gatherDocProperties() {
 
   try {
     const metadata = await doc.pdfDoc.getMetadata();
+    if (!isCurrent()) return null;
     const info = metadata.info || {};
     pdfVersion = info.PDFFormatVersion || '-';
   } catch (e) {
+    if (!isCurrent()) return null;
     console.error('Error getting PDF metadata:', e);
   }
 
@@ -75,17 +93,21 @@ async function gatherDocProperties() {
   let pageSize = '-';
   try {
     const page = await doc.pdfDoc.getPage(1);
+    if (!isCurrent()) return null;
     const viewport = page.getViewport({ scale: 1 });
     const widthMm = (viewport.width / 72 * 25.4).toFixed(1);
     const heightMm = (viewport.height / 72 * 25.4).toFixed(1);
     pageSize = `${viewport.width.toFixed(0)} x ${viewport.height.toFixed(0)} pts (${widthMm} x ${heightMm} mm)`;
   } catch (e) {
+    if (!isCurrent()) return null;
     // keep '-'
   }
 
   return {
+    ownerDocumentId: doc.id,
+    ownerDocumentGeneration: Number(doc.lifecycleGeneration) || 0,
     fileName, filePath, fileSize,
-    metadata: doc.metadata,
+    metadata: { ...(doc.metadata || {}) },
     pdfVersion, pageCount, pageSize,
   };
 }

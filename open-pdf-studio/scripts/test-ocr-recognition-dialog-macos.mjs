@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import net from 'node:net';
 import { chromium } from 'playwright';
+import { startPlaywrightFailureArtifacts } from './playwright-failure-artifacts.mjs';
 
 assert.equal(process.platform, 'darwin', 'recognition dialog UI gate is macOS-only');
 
@@ -49,6 +50,8 @@ vite.stdout.on('data', (chunk) => { serverOutput = (serverOutput + chunk).slice(
 vite.stderr.on('data', (chunk) => { serverOutput = (serverOutput + chunk).slice(-20_000); });
 
 let browser;
+let page;
+let failureArtifacts;
 try {
   await waitForServer(`${origin}/tests/ui/ocr-recognition-dialog.html`, vite);
   let executablePath;
@@ -59,7 +62,8 @@ try {
     await access(executablePath);
   }
   browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
-  const page = await browser.newPage();
+  page = await browser.newPage();
+  failureArtifacts = await startPlaywrightFailureArtifacts(page.context(), 'ocr-recognition-dialog');
   const browserErrors = [];
   page.on('pageerror', (error) => browserErrors.push(error.stack || error.message));
   page.on('console', (message) => {
@@ -69,6 +73,13 @@ try {
   await page.waitForFunction(() => window.__ocrHarnessReady === true);
 
   const dialog = page.getByRole('dialog', { name: 'Recognize Text' });
+  await dialog.waitFor();
+  await page.evaluate(() => window.__ocrRecognitionHarness.switchDocument(1));
+  await dialog.waitFor({ state: 'detached' });
+  await page.evaluate(() => {
+    window.__ocrRecognitionHarness.switchDocument(0);
+    window.__ocrRecognitionHarness.reopen();
+  });
   await dialog.waitFor();
   assert.equal(await dialog.getByRole('combobox', { name: 'Language' }).isDisabled(), true);
   assert.equal(await dialog.getByRole('checkbox', { name: 'Automatic page orientation' }).isDisabled(), true);
@@ -123,9 +134,11 @@ try {
   assert.deepEqual(browserErrors, [], `browser errors:\n${browserErrors.join('\n')}`);
   console.log('macOS OCR recognition dialog integration gate passed');
 } catch (error) {
+  await failureArtifacts?.capture(page);
   if (serverOutput) error.message += `\nVite output:\n${serverOutput}`;
   throw error;
 } finally {
+  await failureArtifacts?.discard();
   await browser?.close();
   if (vite.exitCode === null) vite.kill('SIGTERM');
 }

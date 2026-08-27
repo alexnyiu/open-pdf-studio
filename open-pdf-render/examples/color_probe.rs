@@ -30,8 +30,18 @@ fn pdfium_rgb() -> (u32, u32, Vec<u8>) {
             lib.get(b"FPDFBitmap_Create\0").unwrap();
         let bmp_fill: Symbol<unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int, c_int, u32)> =
             lib.get(b"FPDFBitmap_FillRect\0").unwrap();
-        let render: Symbol<unsafe extern "C" fn(*mut c_void, *mut c_void, c_int, c_int, c_int, c_int, c_int, c_int)> =
-            lib.get(b"FPDF_RenderPageBitmap\0").unwrap();
+        let render: Symbol<
+            unsafe extern "C" fn(
+                *mut c_void,
+                *mut c_void,
+                c_int,
+                c_int,
+                c_int,
+                c_int,
+                c_int,
+                c_int,
+            ),
+        > = lib.get(b"FPDF_RenderPageBitmap\0").unwrap();
         let bmp_buffer: Symbol<unsafe extern "C" fn(*mut c_void) -> *mut c_void> =
             lib.get(b"FPDFBitmap_GetBuffer\0").unwrap();
         let bmp_stride: Symbol<unsafe extern "C" fn(*mut c_void) -> c_int> =
@@ -126,6 +136,16 @@ fn main() {
     top_colors(&r, "PDFium ");
     println!();
     top_colors(&o, "engine ");
-    save_png("C:/Users/rickd/AppData/Local/Temp/colorprobe_pdfium.png", rw, rh, &r);
-    save_png("C:/Users/rickd/AppData/Local/Temp/colorprobe_engine.png", ow, oh, &o);
+    save_png(
+        "C:/Users/rickd/AppData/Local/Temp/colorprobe_pdfium.png",
+        rw,
+        rh,
+        &r,
+    );
+    save_png(
+        "C:/Users/rickd/AppData/Local/Temp/colorprobe_engine.png",
+        ow,
+        oh,
+        &o,
+    );
 }

@@ -12,6 +12,7 @@ import { addRecentFile, getRecentFiles } from '../mobile/recent-files.js';
 import { extractFileName } from '../core/platform.js';
 import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
+import { replaceDocumentPdfProxy } from '../core/document-lifecycle.js';
 
 // Sub-module imports
 import { extractAnnotationColors } from './loader/color-extraction.js';
@@ -104,7 +105,8 @@ export async function reloadDocumentFromBytes(doc, bytes) {
     try { await reloadedPdfDocument.destroy(); } catch {}
     throw error;
   }
-  doc.pdfDoc = reloadedPdfDocument;
+  const previousPdfDocument = replaceDocumentPdfProxy(doc, reloadedPdfDocument, 'reload-from-bytes');
+  try { await previousPdfDocument?.destroy?.(); } catch (_) {}
 
   doc.modified = true;
 }
@@ -122,7 +124,7 @@ export async function installValidatedSavedPdfDocument(doc, filePath, bytes, pre
   const previousPdfJsDocument = doc.pdfDoc;
   doc._sharedPdfLibDoc = null;
   doc._sharedPdfLibDocPromise = null;
-  doc.pdfDoc = preparedPdfJsDocument;
+  replaceDocumentPdfProxy(doc, preparedPdfJsDocument, 'validated-save-install');
   originalBytesCache.set(filePath, bytes.slice());
   _attachPdfDocGetPageRecovery(doc, filePath);
   try {
@@ -200,7 +202,8 @@ function _attachPdfDocGetPageRecovery(doc, filePath) {
           try { await fresh.destroy(); } catch {}
           throw error;
         }
-        doc.pdfDoc = fresh;
+        const previousPdfDocument = replaceDocumentPdfProxy(doc, fresh, 'pdfjs-page-recovery');
+        try { await previousPdfDocument?.destroy?.(); } catch (_) {}
         _attachPdfDocGetPageRecovery(doc, filePath); // protect future calls
         return await doc.pdfDoc.getPage(pageNum);
       }
@@ -422,7 +425,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     }
 
     // Load PDF using pdf.js (this transfers the buffer to a worker)
-    doc.pdfDoc = await pdfjsLib.getDocument({
+    const openedPdfDocument = await pdfjsLib.getDocument({
       data: typedArray,
       cMapUrl: '/pdfjs/web/cmaps/',
       cMapPacked: true,
@@ -430,6 +433,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
       isEvalSupported: false,
       verbosity: 0,
     }).promise;
+    replaceDocumentPdfProxy(doc, openedPdfDocument, 'document-load');
     if (isClosed()) return;
     assertPdfDocumentResourceLimits(doc.pdfDoc);
     console.log(`[PERF] PDF.js getDocument done: ${(performance.now() - _t0).toFixed(0)}ms, pages: ${doc.pdfDoc.numPages}`);
@@ -623,8 +627,9 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     doc._loadRejected = true;
     doc._loadErrorCode = error?.code ?? 'PDF_LOAD_FAILED';
     doc._loadErrorMessage = error?.message ?? String(error);
-    try { await doc.pdfDoc?.destroy?.(); } catch {}
-    doc.pdfDoc = null;
+    const failedPdfDocument = doc.pdfDoc;
+    try { await failedPdfDocument?.destroy?.(); } catch {}
+    replaceDocumentPdfProxy(doc, null, 'document-load-failed');
     originalBytesCache.delete(filePath);
     if (fileLocked && filePath) {
       try { await unlockFile(filePath); } catch {}
@@ -781,7 +786,7 @@ export async function createBlankPDF(widthPt, heightPt, numPages) {
     originalBytesCache.set(memoryKey, typedArray.slice());
 
     // Load into pdf.js for viewing
-    doc.pdfDoc = await pdfjsLib.getDocument({
+    const blankPdfDocument = await pdfjsLib.getDocument({
       data: typedArray,
       cMapUrl: '/pdfjs/web/cmaps/',
       cMapPacked: true,
@@ -789,6 +794,7 @@ export async function createBlankPDF(widthPt, heightPt, numPages) {
       isEvalSupported: false,
       verbosity: 0,
     }).promise;
+    replaceDocumentPdfProxy(doc, blankPdfDocument, 'blank-document-load');
 
     // Reset annotation storage and state
     resetAnnotationStorage();

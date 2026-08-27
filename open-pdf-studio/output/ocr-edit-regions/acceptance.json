@@ -2,10 +2,11 @@
   "status": "pass",
   "platform": "darwin",
   "packagedApp": "/Users/alexander/Personal Projects/open-pdf-studio/target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app",
-  "testDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-edit-regions-XsrY32",
+  "testDir": "/var/folders/9n/gqpht2yn4flc_fdjkm_bwj7r0000gn/T/opds-ocr-edit-regions-rvXJAL",
   "productionEntryPath": true,
   "testOnlyEntryPoint": false,
   "assertions": {
+    "clickAnyOwnedSourceLine": true,
     "undoRedo": true,
     "firstSave": {
       "pdfJsLines": 3,
@@ -31,5 +32,5 @@
       "chromePdfiumCopy": "MACOS ONE MACOS TWO MACOS THREE"
     }
   },
-  "completedAt": "2026-08-25T03:27:15.664Z"
+  "completedAt": "2026-08-27T11:39:18.680Z"
 }

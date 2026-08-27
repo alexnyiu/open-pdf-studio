@@ -1,6 +1,6 @@
 // @ts-check
 
-import { getActiveDocument } from '../core/state.js';
+import { getActiveDocument, getDocumentById } from '../core/state.js';
 import { isTauri } from '../core/platform.js';
 import {
   DEFAULT_OCR_RECOGNITION_OPTIONS,
@@ -83,7 +83,8 @@ export function resolveOcrRecognitionPolicy(policy = {}) {
 }
 
 /**
- * Normal application entry point used by the macOS Organize ribbon action.
+ * Owner-explicit application entry point. The owner is resolved before and
+ * after model verification so a tab switch can never redirect the job.
  * @param {{
  *   pageScope?: import('../types/ocr.js').OcrPageScope,
  *   recognitionPolicy?: Partial<import('../types/ocr.js').OcrWorkflowRecognitionPolicy>,
@@ -91,15 +92,24 @@ export function resolveOcrRecognitionPolicy(policy = {}) {
  *   document?: any,
  * }} [options]
  */
-export async function startActiveDocumentOcr(options = {}) {
+export async function startDocumentOcr(documentId, options = {}) {
   if (!isMacOcrProductionRuntime()) {
     throw workflowError('OCR_MACOS_ONLY', 'Production OCR is available on macOS only');
   }
   const workflow = options.workflow ?? ocrWorkflowService;
-  const document = options.document ?? getActiveDocument();
-  if (!document?.pdfDoc) {
-    throw workflowError('OCR_DOCUMENT_UNAVAILABLE', 'OCR requires an active loaded PDF');
+  const document = options.document ?? getDocumentById(documentId);
+  if (typeof documentId !== 'string' || documentId.length === 0 || document?.id !== documentId) {
+    throw workflowError('OCR_DOCUMENT_UNAVAILABLE', 'OCR requires the selected loaded PDF');
   }
+  if (!document?.pdfDoc) {
+    throw workflowError('OCR_DOCUMENT_UNAVAILABLE', 'OCR requires the selected loaded PDF');
+  }
+  const ownerPdfDocument = document.pdfDoc;
+  const ownerWasOpen = getDocumentById(documentId) === document;
+  const ownerLifecycleGeneration = Number.isSafeInteger(document.lifecycleGeneration)
+    ? document.lifecycleGeneration
+    : null;
+  const ownerOcrGeneration = document.ocr?.generation ?? null;
   const pageCount = document.pdfDoc.numPages;
   const sourcePdfPath = document.filePath;
   if (typeof sourcePdfPath !== 'string' || sourcePdfPath.length === 0) {
@@ -112,6 +122,12 @@ export async function startActiveDocumentOcr(options = {}) {
   });
   const recognitionPolicy = resolveOcrRecognitionPolicy(options.recognitionPolicy);
   const modelState = await workflow.requireCurrentModelState();
+  const stillOpen = (ownerWasOpen || !options.document) ? getDocumentById(documentId) : document;
+  if (!stillOpen || stillOpen !== document || stillOpen.pdfDoc !== ownerPdfDocument ||
+      (ownerLifecycleGeneration !== null && stillOpen.lifecycleGeneration !== ownerLifecycleGeneration) ||
+      (ownerOcrGeneration !== null && stillOpen.ocr?.generation !== ownerOcrGeneration)) {
+    throw workflowError('OCR_DOCUMENT_OWNER_CHANGED', 'The selected OCR document changed before recognition started');
+  }
   return workflow.start({
     document,
     sourcePdfPath,
@@ -120,6 +136,32 @@ export async function startActiveDocumentOcr(options = {}) {
     recognitionPolicy,
     modelState,
     documentRevision: Number.isSafeInteger(document.ocr?.revision) ? document.ocr.revision : 0,
+  });
+}
+
+/** Normal active-document convenience wrapper used by the Organize ribbon. */
+export async function startActiveDocumentOcr(options = {}) {
+  const document = options.document ?? getActiveDocument();
+  if (!document?.id) {
+    throw workflowError('OCR_DOCUMENT_UNAVAILABLE', 'OCR requires an active loaded PDF');
+  }
+  return startDocumentOcr(document.id, options.document ? { ...options, document } : options);
+}
+
+/** Retry the retained failure for one immutable document owner. */
+export async function retryDocumentOcr(documentId, options = {}) {
+  const workflow = options.workflow ?? ocrWorkflowService;
+  const previous = workflow.status?.(documentId) ?? null;
+  const retryable = previous?.status === 'failed' && previous?.finishedAt !== null &&
+    previous.failureDetails?.some((failure) => failure.retryable === true);
+  if (!retryable) {
+    throw workflowError('OCR_RETRY_UNAVAILABLE', 'The selected OCR job has no retryable failure');
+  }
+  return startDocumentOcr(documentId, {
+    ...options,
+    workflow,
+    pageScope: structuredClone(previous.pageScope),
+    recognitionPolicy: structuredClone(previous.recognitionPolicy),
   });
 }
 

@@ -19,8 +19,10 @@ fn load(path: &Path) -> PdfiumDocumentHandle {
 
 fn text_pages(handle: &PdfiumDocumentHandle) -> Vec<String> {
     (0..handle.document().pages().len())
-        .map(|index| extract_all_page_text(handle.document(), index as u32)
-            .unwrap_or_else(|error| panic!("page {index} text: {error}")))
+        .map(|index| {
+            extract_all_page_text(handle.document(), index as u32)
+                .unwrap_or_else(|error| panic!("page {index} text: {error}"))
+        })
         .collect()
 }
 

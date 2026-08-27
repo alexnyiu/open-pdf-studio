@@ -4,7 +4,10 @@ fn main() {
     let pdf = "C:/Users/rickd/Documents/GitHub/verification-files/PDF-bestanden/MV-03_Mechanische ventilatie, 3e verdieping ontwerp ACH van 1,5 naar 2,0.pdf";
     let bytes = std::fs::read(pdf).expect("read");
     let doc = open_pdf_render::DocumentHandle::load(&bytes).expect("load");
-    let buf = doc.extract_draw_commands(0, 0).expect("extract").into_bytes();
+    let buf = doc
+        .extract_draw_commands(0, 0)
+        .expect("extract")
+        .into_bytes();
     let mut counts = [0u64; 22];
     let mut pos = 16usize;
     let d = &buf;
@@ -40,7 +43,30 @@ fn main() {
             _ => 0,
         };
     }
-    let names = ["MoveTo", "LineTo", "CubicTo", "Rect", "Close", "SetStroke", "SetFill", "Stroke", "Fill", "FillEO", "Save", "Restore", "Transform", "Cap", "Join", "Miter", "Dash", "BeginPath", "TextAt", "DrawImage", "Clip", "ClipEO"];
+    let names = [
+        "MoveTo",
+        "LineTo",
+        "CubicTo",
+        "Rect",
+        "Close",
+        "SetStroke",
+        "SetFill",
+        "Stroke",
+        "Fill",
+        "FillEO",
+        "Save",
+        "Restore",
+        "Transform",
+        "Cap",
+        "Join",
+        "Miter",
+        "Dash",
+        "BeginPath",
+        "TextAt",
+        "DrawImage",
+        "Clip",
+        "ClipEO",
+    ];
     for (i, n) in counts.iter().enumerate() {
         if *n > 0 {
             println!("{:>10}  {}", n, names[i]);

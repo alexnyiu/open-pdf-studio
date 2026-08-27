@@ -80,3 +80,18 @@ export const editTextTool = {
     }
   },
 };
+
+export const addTextTool = {
+  name: 'addText',
+  cursor: 'text',
+
+  onPointerDown(ctx, event) {
+    if (event?.button === 2) return;
+    ctx.startInsertedTextEditingAtPoint({
+      x: ctx.x,
+      y: ctx.y,
+      pageNum: ctx.pageNum,
+      canvasEl: ctx.canvas,
+    });
+  },
+};

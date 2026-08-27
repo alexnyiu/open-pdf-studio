@@ -27,8 +27,24 @@ function targetId(target) {
   return null;
 }
 
+export class ScannedTextEditOperationInvalidatedError extends Error {
+  constructor() {
+    super('The scanned-text Apply operation is no longer current');
+    this.name = 'ScannedTextEditOperationInvalidatedError';
+    this.code = 'SCANNED_TEXT_EDIT_OPERATION_INVALIDATED';
+  }
+}
+
+function assertOperationCurrent(operation) {
+  if (operation == null) return;
+  if (typeof operation.isCurrent !== 'function') {
+    throw new TypeError('A scanned-text Apply operation must expose isCurrent()');
+  }
+  if (!operation.isCurrent()) throw new ScannedTextEditOperationInvalidatedError();
+}
+
 /** Evaluate and record one scanned-text eligibility/repair operation atomically. */
-export async function applyScannedTextEditForDocument(doc, input) {
+export async function applyScannedTextEditForDocument(doc, input, { operation = null } = {}) {
   const stableTargetId = targetId(input.target);
   const selectionId = deriveScannedTextEditSelectionId(
     input.result?.page?.id,
@@ -36,11 +52,15 @@ export async function applyScannedTextEditForDocument(doc, input) {
     stableTargetId,
   );
   const { revision, parentRevision } = nextSelectionRevision(doc, selectionId);
+  assertOperationCurrent(operation);
   const evaluation = await evaluateScannedTextEdit({
     ...input,
     revision,
     parentRevision,
   });
+  // Evaluation is intentionally side-effect free. Re-check the immutable
+  // editor operation before the first owner-document mutation.
+  assertOperationCurrent(operation);
   const { before, after } = commitScannedTextEditEvaluation(doc, evaluation, {
     modifiedAt: input.modifiedAt,
   });
@@ -126,6 +146,7 @@ export async function reviseScannedTextEditForDocument(doc, selectionId, {
   reflowFontBytes,
   operationId = `scanned-text-revise-${globalThis.crypto?.randomUUID?.() || Date.now()}`,
   modifiedAt = new Date().toISOString(),
+  operation = null,
 } = {}) {
   const before = doc?.scannedTextEdits
     ? toValidatedScannedTextEditStateV1Json(doc.scannedTextEdits)
@@ -159,7 +180,8 @@ export async function reviseScannedTextEditForDocument(doc, selectionId, {
     : selection.content.scope === SCANNED_TEXT_FIXED_REGION_SCOPE
       ? reviseFixedRegionMultilineContent
       : reviseIsolatedSingleLineContent;
-  selection.content = withScannedRichText(await reviseContent({
+  assertOperationCurrent(operation);
+  const revisedContent = await reviseContent({
     page,
     selection,
     replacementText,
@@ -168,7 +190,11 @@ export async function reviseScannedTextEditForDocument(doc, selectionId, {
     parentRevision,
     renderVisiblePatch,
     reflowFontBytes,
-  }));
+  });
+  // All state above is a detached clone. Do not publish it to the owner after
+  // cancellation, lifecycle replacement, or session supersession.
+  assertOperationCurrent(operation);
+  selection.content = withScannedRichText(revisedContent);
   selection.revision = revision;
   selection.ownership = {
     ...selection.ownership,

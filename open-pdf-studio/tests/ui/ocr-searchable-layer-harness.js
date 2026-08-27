@@ -246,7 +246,7 @@ async function run() {
   const pdfSavePreservedOcrDirty = mainDocument.modified && mainDocument.ocr.dirty;
   mainDocument.textEdits.push({
     id: 'application-text-1', page: 2, originalText: '', newText: 'Application added text',
-    pdfX: 40, pdfY: 700, fontSize: 12, spans: [], original: null,
+    pdfX: 40, pdfY: 700, pdfWidth: 128, fontSize: 12, spans: [], original: null,
   });
 
   await renderContinuousLayers(mainDocument, 1, 0);

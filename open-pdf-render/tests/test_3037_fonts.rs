@@ -6,7 +6,10 @@ fn test_3037_text_and_fonts() {
     let path = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3037 Aanbouw Herenweg 20 Moerkapelle\71_constructie_advies\3037-CP-21 Constructieoverzicht.pdf";
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(_) => { println!("File not found, skipping"); return; }
+        Err(_) => {
+            println!("File not found, skipping");
+            return;
+        }
     };
     let doc = Document::load_mem(&bytes).unwrap();
 
@@ -57,7 +60,10 @@ fn test_3037_text_and_fonts() {
 fn check_xobjects_for_text(doc: &Document, resources: &lopdf::Dictionary) {
     let xobj_ref = match resources.get(b"XObject") {
         Ok(o) => o,
-        _ => { println!("No XObject in resources"); return; }
+        _ => {
+            println!("No XObject in resources");
+            return;
+        }
     };
     let xobj_dict = match xobj_ref {
         Object::Dictionary(d) => d.clone(),
@@ -79,7 +85,11 @@ fn check_xobjects_for_text(doc: &Document, resources: &lopdf::Dictionary) {
             Object::Stream(ref s) => s,
             _ => continue,
         };
-        let subtype = stream.dict.get(b"Subtype").ok().and_then(|s| s.as_name().ok());
+        let subtype = stream
+            .dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|s| s.as_name().ok());
 
         if subtype == Some(b"Form" as &[u8]) {
             if let Ok(content_bytes) = stream.decompressed_content() {
@@ -106,8 +116,10 @@ fn check_xobjects_for_text(doc: &Document, resources: &lopdf::Dictionary) {
                     }
 
                     if text_count > 0 || !nested_do.is_empty() {
-                        println!("  Form '{}': {} text ops, fonts: {:?}, nested Do: {:?}",
-                            name_str, text_count, font_refs, nested_do);
+                        println!(
+                            "  Form '{}': {} text ops, fonts: {:?}, nested Do: {:?}",
+                            name_str, text_count, font_refs, nested_do
+                        );
 
                         // Print fonts in this Form's resources
                         if let Some(form_res) = get_form_resources(&stream.dict, doc) {
@@ -126,8 +138,14 @@ fn print_fonts(doc: &Document, resources: &lopdf::Dictionary, prefix: &str) {
             Object::Dictionary(d) => d.clone(),
             Object::Reference(id) => {
                 if let Ok(obj) = doc.get_object(*id) {
-                    if let Ok(d) = obj.as_dict() { d.clone() } else { return; }
-                } else { return; }
+                    if let Ok(d) = obj.as_dict() {
+                        d.clone()
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
+                }
             }
             _ => return,
         };
@@ -138,8 +156,16 @@ fn print_fonts(doc: &Document, resources: &lopdf::Dictionary, prefix: &str) {
             if let Object::Reference(id) = font_ref {
                 if let Ok(font_obj) = doc.get_object(*id) {
                     if let Ok(fd) = font_obj.as_dict() {
-                        let subtype = fd.get(b"Subtype").ok().and_then(|s| s.as_name().ok()).unwrap_or(b"?");
-                        let base = fd.get(b"BaseFont").ok().and_then(|s| s.as_name().ok()).unwrap_or(b"?");
+                        let subtype = fd
+                            .get(b"Subtype")
+                            .ok()
+                            .and_then(|s| s.as_name().ok())
+                            .unwrap_or(b"?");
+                        let base = fd
+                            .get(b"BaseFont")
+                            .ok()
+                            .and_then(|s| s.as_name().ok())
+                            .unwrap_or(b"?");
                         let has_desc = fd.has(b"FontDescriptor");
 
                         let mut embedded = "none";
@@ -147,9 +173,13 @@ fn print_fonts(doc: &Document, resources: &lopdf::Dictionary, prefix: &str) {
                             if let Ok(Object::Reference(did)) = fd.get(b"FontDescriptor") {
                                 if let Ok(desc) = doc.get_object(*did) {
                                     if let Ok(dd) = desc.as_dict() {
-                                        if dd.has(b"FontFile2") { embedded = "FontFile2 (TrueType)"; }
-                                        else if dd.has(b"FontFile3") { embedded = "FontFile3 (CFF)"; }
-                                        else if dd.has(b"FontFile") { embedded = "FontFile (Type1)"; }
+                                        if dd.has(b"FontFile2") {
+                                            embedded = "FontFile2 (TrueType)";
+                                        } else if dd.has(b"FontFile3") {
+                                            embedded = "FontFile3 (CFF)";
+                                        } else if dd.has(b"FontFile") {
+                                            embedded = "FontFile (Type1)";
+                                        }
                                     }
                                 }
                             }
@@ -158,7 +188,8 @@ fn print_fonts(doc: &Document, resources: &lopdf::Dictionary, prefix: &str) {
                         // Check for DescendantFonts (Type0)
                         let has_descendants = fd.has(b"DescendantFonts");
 
-                        println!("    {} = {} / {} / embedded: {} / descendants: {}",
+                        println!(
+                            "    {} = {} / {} / embedded: {} / descendants: {}",
                             font_name,
                             String::from_utf8_lossy(subtype),
                             String::from_utf8_lossy(base),
@@ -196,7 +227,9 @@ fn get_page_content(doc: &Document, page: &lopdf::Dictionary) -> Option<Vec<u8>>
         Object::Reference(id) => {
             if let Ok(Object::Stream(ref s)) = doc.get_object(*id) {
                 s.decompressed_content().ok()
-            } else { None }
+            } else {
+                None
+            }
         }
         Object::Array(arr) => {
             let mut all = Vec::new();

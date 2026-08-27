@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Hariri {{label}}",
+    "editValueHint": "{{label}}. Bofya mara mbili au bonyeza Enter ili kuhariri.",
+    "timezoneHint": "Tarehe zinaonyeshwa katika saa za eneo {{timezone}} na kuhifadhiwa kwa muundo wa ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Idhinisha ubadilishaji wa fonti",
+    "sourceFace": "Fonti chanzo",
+    "sourceFaces": "Fonti chanzo",
+    "unknown": "Haijulikani",
+    "packagedSubstitute": "Fonti mbadala iliyojumuishwa",
+    "notAvailable": "Haipatikani",
+    "sampleText": "Sampuli",
+    "sampleFallback": "Mbweha mwepesi wa kahawia anaruka juu ya mbwa mvivu.",
+    "scope": "Inatumika kwa",
+    "scopeAnnotation": "Dokezo hili",
+    "scopeSelection": "Visanduku vya maandishi vilivyochaguliwa",
+    "scopeParagraph": "Aya hii ya PDF",
+    "scopeFindReplace": "Hariri hii ya Tafuta/Badilisha",
+    "remember": "Kumbuka idhini hii kwa hati iliyofunguliwa",
+    "approve": "Tumia fonti mbadala",
+    "cancel": "Ghairi"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Hariri maandishi ya PDF",
+      "editFormatted": "Hariri maandishi ya PDF yaliyopangwa",
+      "editAnnotation": "Hariri maandishi ya {{type}} yaliyopangwa",
+      "editRegion": "Hariri eneo la maandishi ya PDF yaliyopangwa: {{text}}",
+      "editScannedLine": "Hariri mstari wa maandishi yaliyochanganuliwa: {{text}}",
+      "editScannedFixed": "Hariri eneo lisilobadilika la maandishi yaliyochanganuliwa: {{text}}",
+      "editScannedReflow": "Hariri eneo la upangaji upya wa aya iliyochanganuliwa: {{text}}",
+      "selectedOcrParagraph": "Aya ya OCR iliyochaguliwa yenye mistari {{count}}"
+    },
+    "handles": {
+      "move": "Hamisha kisanduku cha maandishi",
+      "moveHint": "Buruta ili kuhamisha kisanduku cha maandishi",
+      "resize": "Badilisha ukubwa wa kisanduku cha maandishi",
+      "resizeHint": "Buruta ili kubadilisha ukubwa wa kisanduku cha maandishi"
+    },
+    "actions": {
+      "apply": "Tumia",
+      "cancel": "Ghairi"
+    },
+    "status": {
+      "ocrOverflow": "Rasimu kamili ya OCR inaonekana nje ya eneo lake lililoidhinishwa. Uhifadhi unasalia umezuiwa hadi uthibitishaji sahihi wa eneo lisilobadilika uthibitishe kuwa maandishi yanatoshea.",
+      "scannedRegion": "Maandishi yaliyochanganuliwa yanahaririwa ndani ya eneo lililoidhinishwa.",
+      "shaping": "Mpangilio sahihi wa maandishi unakamilishwa…",
+      "overlap": "Maandishi yanafunika maudhui yaliyopo kwenye ukurasa. Mabadiliko yanaweza kutumika; vipengee chanzo vilivyo karibu havitasogezwa.",
+      "lowContrast": "Rangi chanzo zenye utofautishaji mdogo zina mandharinyuma yanayoonekana wakati wa kuhariri pekee. Rangi zilizohifadhiwa hazitabadilika.",
+      "layoutRejectedPrefix": "Mpangilio wa maandishi umekataliwa:",
+      "layoutRejected": "Mpangilio wa maandishi umekataliwa: {{reasons}}",
+      "shapingRejected": "Uundaji wa maandishi umekataliwa: {{reason}}",
+      "nativeManual": "Maandishi asilia yanahaririwa katika kisanduku chenye mistari ya kuingizwa mwenyewe. Bonyeza Enter kuanza mstari mpya.",
+      "nativeManualContrast": "Maandishi asilia yanahaririwa katika kisanduku chenye mistari ya kuingizwa mwenyewe. Bonyeza Enter kuanza mstari mpya. Rangi chanzo zenye utofautishaji mdogo zina mandharinyuma yanayoonekana wakati wa kuhariri pekee; rangi zilizohifadhiwa hazitabadilika.",
+      "nativeGrowing": "Maandishi asilia yanahaririwa. Upana haubadiliki na eneo linapanuka kuelekea chini.",
+      "nativeGrowingContrast": "Maandishi asilia yanahaririwa. Upana haubadiliki na eneo linapanuka kuelekea chini. Rangi chanzo zenye utofautishaji mdogo zina mandharinyuma yanayoonekana wakati wa kuhariri pekee; rangi zilizohifadhiwa hazitabadilika.",
+      "scannedEstimate": "Maandishi yaliyochanganuliwa yanahaririwa. Sifa za fonti ni makadirio.",
+      "applyRejected": "Hariri ya maandishi haikuweza kutumika: {{reason}}",
+      "cropBoxRejected": "Maandishi yaliyoundwa hayawezi kutumika ndani ya CropBox ya ukurasa.",
+      "layoutTimeout": "Mpangilio sahihi wa maandishi haukukamilika kwa wakati. Kihariri kinasalia wazi.",
+      "scannedRejected": "Mabadiliko ya maandishi yaliyochanganuliwa yamekataliwa: {{reason}}",
+      "lineBreakUnsupported": "Mikatizo ya mistari haitumiki. Tumia Command-Enter kutumia hariri hii ya mstari mmoja.",
+      "ocrOneLine": "Mstari mmoja wa maandishi yaliyochanganuliwa unahaririwa peke yake. Sifa za fonti ni makadirio.",
+      "ocrFixed": "Mistari kadhaa ya OCR inahaririwa ndani ya eneo moja la awali lisilobadilika. Aya moja inapangwa upya ndani ya eneo hili; mikatizo ya mistari iliyowekwa hudumisha hali ya mistari isiyobadilika. Command-Enter hutumia mabadiliko.",
+      "ocrReflow": "Aya moja inahaririwa ndani ya eneo lake la awali la OCR lililoidhinishwa. Command-Enter hutumia mabadiliko; kufurika kunakataliwa.",
+      "operationFailed": "Kitendo cha maandishi hakikuweza kukamilishwa. Hati iliachwa bila kubadilishwa.",
+      "staleDraft": "Hati ilibadilika wakati kihariri cha maandishi kilikuwa wazi. Rasimu ilitupwa.",
+      "multipleOcrParagraphs": "Uteuzi unajumuisha aya nyingi za OCR. Kagua mipaka tofauti na utumie Unganisha waziwazi. Kuunganisha kati ya safu wima bado kumezimwa.",
+      "nativeColumnBoundary": "Aya hii inavuka mpaka wa safu wima asilia uliotambuliwa. Uhariri ulizuiwa na hati iliachwa bila kubadilishwa.",
+      "nativeSourceUnavailable": "Maandishi yanayoonekana hayakuweza kuunganishwa na viendeshaji chanzo vinavyofaa. Hati iliachwa bila kubadilishwa.",
+      "nativeDeleteUnavailable": "Maandishi haya asilia ya PDF hayawezi kufutwa kwa usalama kwa sababu viendeshaji vyake halisi vya chanzo vina utata. Hati iliachwa bila kubadilishwa.",
+      "readOnly": "Maandishi yaliyohaririwa awali ni ya kusoma pekee. Hati iliachwa bila kubadilishwa."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Kikomo cha grafimu {{limit}}",
+      "lineThreshold": "Kikomo cha mistari {{limit}}",
+      "message": "Maudhui yote yaliyobandikwa yamehifadhiwa: grafimu {{graphemeCount}} katika mistari {{lineCount}}. Kikomo kimepitwa: {{thresholds}}. Onyesho la kukagua lina kikomo. Tumia Tendua Kubandika ili kuondoa maudhui yote yaliyoingizwa.",
+      "messageWithExpansion": "Maudhui yote yaliyobandikwa yamehifadhiwa: grafimu {{graphemeCount}} katika mistari {{lineCount}}. Kikomo kimepitwa: {{thresholds}}. Onyesho la kukagua lina kikomo. Tumia Tendua Kubandika ili kuondoa maudhui yote yaliyoingizwa au Panua Kisanduku ili kutumia mipaka sahihi iliyothibitishwa.",
+      "undo": "Tendua Kubandika",
+      "expand": "Panua Kisanduku"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Upangaji wa aya za OCR",
+    "title": "Upangaji",
+    "mergeSelected": "Unganisha zilizochaguliwa",
+    "mergeSelectedParagraphs": "Unganisha aya zilizochaguliwa",
+    "mergePrevious": "Unganisha na iliyotangulia",
+    "mergePreviousHint": "Unganisha na aya ya OCR iliyotangulia",
+    "mergeNext": "Unganisha na inayofuata",
+    "mergeNextHint": "Unganisha na aya ya OCR inayofuata",
+    "splitBefore": "Gawanya kabla",
+    "splitAfter": "Gawanya baada",
+    "reset": "Weka upya upangaji wa kiotomatiki",
+    "crossColumnDisabled": "Uunganishaji kati ya safu wima umezimwa",
+    "ambiguousBoundariesOnly": "Ni mipaka isiyoeleweka katika safu wima moja pekee inayoweza kuunganishwa mwenyewe",
+    "tooManyLines": "Zaidi ya mistari 32. Gawanya aya hii mwenyewe kabla ya kuhariri.",
+    "mergeDescription": "Maandishi yaliyopo yametenganishwa na kikomo kigumu cha mstari kilichohifadhiwa. Kuunganisha kunatumika tu baada ya kiraka cha chanzo kilichounganishwa na eneo lisilobadilika kupita uthibitishaji.",
+    "mergedText": "Maandishi ya OCR yaliyounganishwa",
+    "splitRegion": "Gawanya Eneo la OCR",
+    "firstRegion": "Eneo la kwanza",
+    "secondRegion": "Eneo la pili",
+    "sourceLines": "Mistari chanzo: {{lines}}"
+  }
+}

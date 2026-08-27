@@ -1,9 +1,9 @@
-use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, RwLock};
-use lopdf::ObjectId;
-use crate::{RenderError, RenderedPage};
 use crate::fonts::FontRegistry;
 use crate::interpreter::ImageCache;
+use crate::{RenderError, RenderedPage};
+use lopdf::ObjectId;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// PoC 04 — bounded FIFO cache of fully-rendered page bitmaps.
 ///
@@ -109,7 +109,11 @@ impl DocumentHandle {
     /// PoC 04 diagnostic: report the current pixmap-cache footprint.
     /// Returns (entry_count, total_rgba_bytes).
     pub fn pixmap_cache_stats(&self) -> (usize, usize) {
-        if let Ok(g) = self.pixmap_cache.lock() { g.stats() } else { (0, 0) }
+        if let Ok(g) = self.pixmap_cache.lock() {
+            g.stats()
+        } else {
+            (0, 0)
+        }
     }
 
     pub fn page_count(&self) -> usize {
@@ -142,7 +146,12 @@ impl DocumentHandle {
     /// the PDF's `/Rotate` field plus an optional `extra_rotation` from the
     /// app (e.g. user-applied rotation via the rotate-left/right buttons).
     /// Both rotations are clockwise-when-displayed, in degrees.
-    pub fn render_page(&self, page: usize, scale: f32, extra_rotation: i32) -> Result<RenderedPage, RenderError> {
+    pub fn render_page(
+        &self,
+        page: usize,
+        scale: f32,
+        extra_rotation: i32,
+    ) -> Result<RenderedPage, RenderError> {
         self.render_page_internal(page, scale, extra_rotation, 0)
     }
 
@@ -150,11 +159,23 @@ impl DocumentHandle {
     /// than `max_image_pixels` total pixels are downsampled after decode.
     /// Use for thumbnails: e.g. `max_image_pixels = 250_000` (500×500)
     /// keeps images visible but limits decode cost.
-    pub fn render_page_with_image_limit(&self, page: usize, scale: f32, extra_rotation: i32, max_image_pixels: u32) -> Result<RenderedPage, RenderError> {
+    pub fn render_page_with_image_limit(
+        &self,
+        page: usize,
+        scale: f32,
+        extra_rotation: i32,
+        max_image_pixels: u32,
+    ) -> Result<RenderedPage, RenderError> {
         self.render_page_internal(page, scale, extra_rotation, max_image_pixels)
     }
 
-    fn render_page_internal(&self, page: usize, scale: f32, extra_rotation: i32, max_image_pixels: u32) -> Result<RenderedPage, RenderError> {
+    fn render_page_internal(
+        &self,
+        page: usize,
+        scale: f32,
+        extra_rotation: i32,
+        max_image_pixels: u32,
+    ) -> Result<RenderedPage, RenderError> {
         // PoC 04: pixmap-cache fast path. Only caches full-resolution renders
         // (max_image_pixels == 0) — thumbnail renders downsample images and
         // would pollute the cache with low-quality entries that the main
@@ -200,15 +221,14 @@ impl DocumentHandle {
         // Page-to-pixel transform built using the POST-rotation dimensions.
         // The rotation matrix below is then pre-concatenated so it runs
         // FIRST in user-space, before this transform.
-        state.current.ctm = tiny_skia::Transform::from_row(
-            scale, 0.0, 0.0, -scale,
-            0.0, out_h_pt * scale,
-        );
+        state.current.ctm =
+            tiny_skia::Transform::from_row(scale, 0.0, 0.0, -scale, 0.0, out_h_pt * scale);
 
         // Apply the rotation, OR fall back to the un-rotated MediaBox-origin
         // shift if no rotation is needed (preserves the existing behaviour
         // for AutoCAD-style PDFs with negative-origin MediaBoxes).
-        if let Some(rot_xform) = Self::rotation_transform(total_rot, (x0, y0, x0 + w_pt, y0 + h_pt)) {
+        if let Some(rot_xform) = Self::rotation_transform(total_rot, (x0, y0, x0 + w_pt, y0 + h_pt))
+        {
             state.current.ctm = state.current.ctm.pre_concat(rot_xform);
         } else {
             // No rotation — keep the original MediaBox-origin shift
@@ -218,7 +238,9 @@ impl DocumentHandle {
 
         let content_bytes = self.get_content_stream(page_id)?;
         let resources = self.get_page_resources(page_id)?;
-        let mut font_registry = self.font_registry.lock()
+        let mut font_registry = self
+            .font_registry
+            .lock()
             .map_err(|e| RenderError::RenderError(format!("Font registry poisoned: {}", e)))?;
 
         // Capture the page-to-pixel transform set up above, BEFORE the
@@ -228,9 +250,26 @@ impl DocumentHandle {
         let page_ctm = state.current.ctm;
 
         if max_image_pixels > 0 {
-            crate::interpreter::Interpreter::execute_with_image_limit(&content_bytes, &mut renderer, &mut state, &self.doc, &resources, &mut *font_registry, max_image_pixels, Some(&self.doc_image_cache))?;
+            crate::interpreter::Interpreter::execute_with_image_limit(
+                &content_bytes,
+                &mut renderer,
+                &mut state,
+                &self.doc,
+                &resources,
+                &mut *font_registry,
+                max_image_pixels,
+                Some(&self.doc_image_cache),
+            )?;
         } else {
-            crate::interpreter::Interpreter::execute(&content_bytes, &mut renderer, &mut state, &self.doc, &resources, &mut *font_registry, Some(&self.doc_image_cache))?;
+            crate::interpreter::Interpreter::execute(
+                &content_bytes,
+                &mut renderer,
+                &mut state,
+                &self.doc,
+                &resources,
+                &mut *font_registry,
+                Some(&self.doc_image_cache),
+            )?;
         }
 
         // Iter 29: render page annotations with appearance streams
@@ -251,7 +290,13 @@ impl DocumentHandle {
         state.current.group_stroke_alpha = 1.0;
         state.current.text_render_mode = 0;
         state.current.clip_path = None;
-        self.render_page_annotations(page_id, &mut renderer, &mut state, &mut *font_registry, Some(&self.doc_image_cache));
+        self.render_page_annotations(
+            page_id,
+            &mut renderer,
+            &mut state,
+            &mut *font_registry,
+            Some(&self.doc_image_cache),
+        );
 
         drop(font_registry);
 
@@ -273,7 +318,11 @@ impl DocumentHandle {
             }
         }
 
-        Ok(RenderedPage { width, height, rgba: rendered_rgba })
+        Ok(RenderedPage {
+            width,
+            height,
+            rgba: rendered_rgba,
+        })
     }
 
     /// Render every annotation on the page that has a `/AP /N` appearance
@@ -287,7 +336,11 @@ impl DocumentHandle {
         font_registry: &mut FontRegistry,
         doc_image_cache: Option<&Arc<RwLock<ImageCache>>>,
     ) {
-        let page_dict = match self.doc.get_object(page_id).and_then(|o| o.as_dict().map(|d| d.clone())) {
+        let page_dict = match self
+            .doc
+            .get_object(page_id)
+            .and_then(|o| o.as_dict().map(|d| d.clone()))
+        {
             Ok(d) => d,
             Err(_) => return,
         };
@@ -295,7 +348,11 @@ impl DocumentHandle {
         let annots_arr = match page_dict.get(b"Annots") {
             Ok(lopdf::Object::Array(arr)) => arr.clone(),
             Ok(lopdf::Object::Reference(rid)) => {
-                match self.doc.get_object(*rid).and_then(|o| o.as_array().map(|a| a.clone())) {
+                match self
+                    .doc
+                    .get_object(*rid)
+                    .and_then(|o| o.as_array().map(|a| a.clone()))
+                {
                     Ok(a) => a,
                     Err(_) => return,
                 }
@@ -307,7 +364,11 @@ impl DocumentHandle {
             // Each annot is usually a Reference; could be a direct dict.
             let annot_dict = match annot_obj {
                 lopdf::Object::Reference(rid) => {
-                    match self.doc.get_object(*rid).and_then(|o| o.as_dict().map(|d| d.clone())) {
+                    match self
+                        .doc
+                        .get_object(*rid)
+                        .and_then(|o| o.as_dict().map(|d| d.clone()))
+                    {
                         Ok(d) => d,
                         Err(_) => continue,
                     }
@@ -345,7 +406,11 @@ impl DocumentHandle {
             let ap_dict = match annot_dict.get(b"AP") {
                 Ok(lopdf::Object::Dictionary(d)) => d.clone(),
                 Ok(lopdf::Object::Reference(rid)) => {
-                    match self.doc.get_object(*rid).and_then(|o| o.as_dict().map(|d| d.clone())) {
+                    match self
+                        .doc
+                        .get_object(*rid)
+                        .and_then(|o| o.as_dict().map(|d| d.clone()))
+                    {
                         Ok(d) => d,
                         Err(_) => continue,
                     }
@@ -362,17 +427,21 @@ impl DocumentHandle {
             // (rare for the corpus).
             let stream = match n_obj {
                 lopdf::Object::Stream(s) => s.clone(),
-                lopdf::Object::Reference(rid) => {
-                    match self.doc.get_object(*rid) {
-                        Ok(lopdf::Object::Stream(s)) => s.clone(),
-                        _ => continue,
-                    }
-                }
+                lopdf::Object::Reference(rid) => match self.doc.get_object(*rid) {
+                    Ok(lopdf::Object::Stream(s)) => s.clone(),
+                    _ => continue,
+                },
                 _ => continue,
             };
 
             crate::interpreter::Interpreter::render_annotation_appearance(
-                &stream, rect, renderer, state, &self.doc, font_registry, doc_image_cache,
+                &stream,
+                rect,
+                renderer,
+                state,
+                &self.doc,
+                font_registry,
+                doc_image_cache,
             );
         }
     }
@@ -381,20 +450,28 @@ impl DocumentHandle {
         let pages = self.doc.get_pages();
         let mut sorted: Vec<_> = pages.iter().collect();
         sorted.sort_by_key(|(num, _)| *num);
-        let (_, &page_id) = sorted.get(page)
+        let (_, &page_id) = sorted
+            .get(page)
             .ok_or_else(|| RenderError::ParseError(format!("Page {} not found", page)))?;
         Ok(page_id)
     }
 
     // Returns (x0, y0, width, height) — origin can be non-zero!
-    fn extract_media_box_full(&self, page_id: ObjectId) -> Result<(f32, f32, f32, f32), RenderError> {
-        let page_obj = self.doc.get_object(page_id)
+    fn extract_media_box_full(
+        &self,
+        page_id: ObjectId,
+    ) -> Result<(f32, f32, f32, f32), RenderError> {
+        let page_obj = self
+            .doc
+            .get_object(page_id)
             .map_err(|e| RenderError::ParseError(format!("{}", e)))?;
-        let dict = page_obj.as_dict()
+        let dict = page_obj
+            .as_dict()
             .map_err(|_| RenderError::ParseError("Page is not a dict".into()))?;
 
         // Use CropBox if available, otherwise MediaBox
-        let box_arr = dict.get(b"CropBox")
+        let box_arr = dict
+            .get(b"CropBox")
             .or_else(|_| dict.get(b"MediaBox"))
             .map_err(|_| RenderError::ParseError("No MediaBox/CropBox".into()))?
             .as_array()
@@ -413,33 +490,40 @@ impl DocumentHandle {
     }
 
     fn get_page_resources(&self, page_id: ObjectId) -> Result<lopdf::Dictionary, RenderError> {
-        let page_obj = self.doc.get_object(page_id)
+        let page_obj = self
+            .doc
+            .get_object(page_id)
             .map_err(|e| RenderError::ParseError(format!("{}", e)))?;
-        let dict = page_obj.as_dict()
+        let dict = page_obj
+            .as_dict()
             .map_err(|_| RenderError::ParseError("Page is not a dict".into()))?;
 
         match dict.get(b"Resources") {
-            Ok(res) => {
-                match res {
-                    lopdf::Object::Dictionary(d) => Ok(d.clone()),
-                    lopdf::Object::Reference(id) => {
-                        let resolved = self.doc.get_object(*id)
-                            .map_err(|e| RenderError::ParseError(format!("{}", e)))?;
-                        resolved.as_dict()
-                            .map(|d| d.clone())
-                            .map_err(|_| RenderError::ParseError("Resources is not a dict".into()))
-                    }
-                    _ => Ok(lopdf::Dictionary::new()),
+            Ok(res) => match res {
+                lopdf::Object::Dictionary(d) => Ok(d.clone()),
+                lopdf::Object::Reference(id) => {
+                    let resolved = self
+                        .doc
+                        .get_object(*id)
+                        .map_err(|e| RenderError::ParseError(format!("{}", e)))?;
+                    resolved
+                        .as_dict()
+                        .map(|d| d.clone())
+                        .map_err(|_| RenderError::ParseError("Resources is not a dict".into()))
                 }
-            }
+                _ => Ok(lopdf::Dictionary::new()),
+            },
             Err(_) => Ok(lopdf::Dictionary::new()),
         }
     }
 
     fn get_content_stream(&self, page_id: ObjectId) -> Result<Vec<u8>, RenderError> {
-        let page_obj = self.doc.get_object(page_id)
+        let page_obj = self
+            .doc
+            .get_object(page_id)
             .map_err(|e| RenderError::ParseError(format!("{}", e)))?;
-        let dict = page_obj.as_dict()
+        let dict = page_obj
+            .as_dict()
             .map_err(|_| RenderError::ParseError("Page is not a dict".into()))?;
 
         let contents = match dict.get(b"Contents") {
@@ -448,9 +532,7 @@ impl DocumentHandle {
         };
 
         match contents {
-            lopdf::Object::Reference(id) => {
-                self.decode_stream(*id)
-            }
+            lopdf::Object::Reference(id) => self.decode_stream(*id),
             lopdf::Object::Array(arr) => {
                 let mut all_bytes = Vec::new();
                 for item in arr {
@@ -465,23 +547,25 @@ impl DocumentHandle {
                 }
                 Ok(all_bytes)
             }
-            lopdf::Object::Stream(stream) => {
-                stream.decompressed_content()
-                    .map_err(|e| RenderError::ParseError(format!("Decompress: {}", e)))
-            }
+            lopdf::Object::Stream(stream) => stream
+                .decompressed_content()
+                .map_err(|e| RenderError::ParseError(format!("Decompress: {}", e))),
             _ => Ok(Vec::new()),
         }
     }
 
     fn decode_stream(&self, id: ObjectId) -> Result<Vec<u8>, RenderError> {
-        let obj = self.doc.get_object(id)
+        let obj = self
+            .doc
+            .get_object(id)
             .map_err(|e| RenderError::ParseError(format!("{}", e)))?;
         match obj {
-            lopdf::Object::Stream(stream) => {
-                stream.decompressed_content()
-                    .map_err(|e| RenderError::ParseError(format!("Decompress: {}", e)))
-            }
-            _ => Err(RenderError::ParseError("Contents ref is not a stream".into())),
+            lopdf::Object::Stream(stream) => stream
+                .decompressed_content()
+                .map_err(|e| RenderError::ParseError(format!("Decompress: {}", e))),
+            _ => Err(RenderError::ParseError(
+                "Contents ref is not a stream".into(),
+            )),
         }
     }
 
@@ -521,7 +605,9 @@ impl DocumentHandle {
                                 lopdf::Object::Real(r) => *r as i32,
                                 _ => 0,
                             }
-                        } else { 0 }
+                        } else {
+                            0
+                        }
                     }
                     _ => 0,
                 };
@@ -532,8 +618,14 @@ impl DocumentHandle {
                 Ok(lopdf::Object::Reference(id)) => self.doc.get_object(*id),
                 _ => break,
             };
-            let parent_obj = match parent { Ok(p) => p, Err(_) => break };
-            let parent_dict = match parent_obj.as_dict() { Ok(d) => d, Err(_) => break };
+            let parent_obj = match parent {
+                Ok(p) => p,
+                Err(_) => break,
+            };
+            let parent_dict = match parent_obj.as_dict() {
+                Ok(d) => d,
+                Err(_) => break,
+            };
             current = parent_dict.clone();
         }
         0
@@ -548,7 +640,10 @@ impl DocumentHandle {
     /// rotated page bounding box has its bottom-left at (0, 0).
     ///
     /// `mb` is the original (un-rotated) MediaBox: (x0, y0, x1, y1).
-    fn rotation_transform(rotation_deg: i32, mb: (f32, f32, f32, f32)) -> Option<tiny_skia::Transform> {
+    fn rotation_transform(
+        rotation_deg: i32,
+        mb: (f32, f32, f32, f32),
+    ) -> Option<tiny_skia::Transform> {
         let (x0, y0, x1, y1) = mb;
         match ((rotation_deg % 360) + 360) % 360 {
             0 => None,
@@ -608,10 +703,11 @@ impl DocumentHandle {
         if let Ok(xobj_obj) = resources.get(b"XObject") {
             let xobj_dict_opt = match xobj_obj {
                 lopdf::Object::Dictionary(d) => Some(d.clone()),
-                lopdf::Object::Reference(id) => {
-                    self.doc.get_object(*id).ok()
-                        .and_then(|o| o.as_dict().ok().cloned())
-                }
+                lopdf::Object::Reference(id) => self
+                    .doc
+                    .get_object(*id)
+                    .ok()
+                    .and_then(|o| o.as_dict().ok().cloned()),
                 _ => None,
             };
             if let Some(xobj_dict) = xobj_dict_opt {
@@ -634,21 +730,34 @@ impl DocumentHandle {
                     let Some(stream) = stream_obj else { continue };
 
                     // Must be /Subtype /Image
-                    let is_image = stream.dict.get(b"Subtype").ok()
+                    let is_image = stream
+                        .dict
+                        .get(b"Subtype")
+                        .ok()
                         .and_then(|o| o.as_name().ok())
                         .map(|n| n == b"Image")
                         .unwrap_or(false);
-                    if !is_image { continue; }
+                    if !is_image {
+                        continue;
+                    }
 
                     image_count += 1;
                     if image_count > MAX_IMAGE_COUNT {
                         return Ok(crate::PageType::Tile);
                     }
 
-                    let w = stream.dict.get(b"Width").ok()
-                        .and_then(|o| o.as_i64().ok()).unwrap_or(0) as u64;
-                    let h = stream.dict.get(b"Height").ok()
-                        .and_then(|o| o.as_i64().ok()).unwrap_or(0) as u64;
+                    let w = stream
+                        .dict
+                        .get(b"Width")
+                        .ok()
+                        .and_then(|o| o.as_i64().ok())
+                        .unwrap_or(0) as u64;
+                    let h = stream
+                        .dict
+                        .get(b"Height")
+                        .ok()
+                        .and_then(|o| o.as_i64().ok())
+                        .unwrap_or(0) as u64;
                     if w * h > MAX_SINGLE_IMAGE_PIXELS {
                         return Ok(crate::PageType::Tile);
                     }
@@ -703,7 +812,11 @@ impl DocumentHandle {
     /// for fonts seen on previous pages is reused. The first page that uses
     /// a given font pays the parse cost; subsequent pages are ~free for that
     /// font's text.
-    pub fn extract_draw_commands(&self, page: usize, extra_rotation: i32) -> Result<crate::DrawCommandBuffer, RenderError> {
+    pub fn extract_draw_commands(
+        &self,
+        page: usize,
+        extra_rotation: i32,
+    ) -> Result<crate::DrawCommandBuffer, RenderError> {
         let page_id = self.get_page_id(page)?;
         let (x0, y0, w_pt, h_pt) = self.extract_media_box_full(page_id)?;
         let content_bytes = self.get_content_stream(page_id)?;
@@ -729,7 +842,8 @@ impl DocumentHandle {
         // rotation matrix so every operator that follows is implicitly
         // applied AFTER the rotation. This produces draw commands in the
         // post-rotation coordinate system.
-        if let Some(rot_xform) = Self::rotation_transform(total_rot, (x0, y0, x0 + w_pt, y0 + h_pt)) {
+        if let Some(rot_xform) = Self::rotation_transform(total_rot, (x0, y0, x0 + w_pt, y0 + h_pt))
+        {
             state.current.ctm = rot_xform;
         }
 
@@ -740,16 +854,31 @@ impl DocumentHandle {
         // GraphicsStateStack rotation above is for the interpreter's bbox
         // tracking; the buffer's transform command is what JS actually
         // executes when it replays the commands onto canvas.
-        if let Some(rot_xform) = Self::rotation_transform(total_rot, (x0, y0, x0 + w_pt, y0 + h_pt)) {
-            cmds.transform(rot_xform.sx, rot_xform.ky, rot_xform.kx, rot_xform.sy, rot_xform.tx, rot_xform.ty);
+        if let Some(rot_xform) = Self::rotation_transform(total_rot, (x0, y0, x0 + w_pt, y0 + h_pt))
+        {
+            cmds.transform(
+                rot_xform.sx,
+                rot_xform.ky,
+                rot_xform.kx,
+                rot_xform.sy,
+                rot_xform.tx,
+                rot_xform.ty,
+            );
         }
 
         let resources = self.get_page_resources(page_id)?;
 
-        let mut font_registry = self.font_registry.lock()
+        let mut font_registry = self
+            .font_registry
+            .lock()
             .map_err(|e| RenderError::RenderError(format!("Font registry poisoned: {}", e)))?;
         crate::interpreter::Interpreter::extract_commands(
-            &content_bytes, &mut cmds, &mut state, &self.doc, &resources, &mut *font_registry,
+            &content_bytes,
+            &mut cmds,
+            &mut state,
+            &self.doc,
+            &resources,
+            &mut *font_registry,
         )?;
         drop(font_registry);
 
@@ -791,13 +920,20 @@ impl DocumentHandle {
 
         let mut state = crate::graphics_state::GraphicsStateStack::new();
         let mut cmds = crate::draw_commands::DrawCommandBuffer::new();
-        let mut font_registry = self.font_registry.lock()
+        let mut font_registry = self
+            .font_registry
+            .lock()
             .map_err(|e| RenderError::RenderError(format!("Font registry poisoned: {}", e)))?;
         let mut text_spans = Vec::new();
 
         crate::interpreter::Interpreter::extract_commands_with_text(
-            &content_bytes, &mut cmds, &mut state, &self.doc, &resources,
-            &mut *font_registry, Some(&mut text_spans),
+            &content_bytes,
+            &mut cmds,
+            &mut state,
+            &self.doc,
+            &resources,
+            &mut *font_registry,
+            Some(&mut text_spans),
         )?;
 
         let json_spans: Vec<String> = text_spans.iter().map(|s| s.to_json()).collect();
@@ -808,9 +944,15 @@ impl DocumentHandle {
     /// Used for adjacent-page prefetch and bulk warm-up. Returns one result
     /// per requested page in the same order. Each (page, extra_rotation)
     /// pair is independent so different pages can have different user rotation.
-    pub fn extract_draw_commands_batch(&self, pages: &[(usize, i32)]) -> Vec<Result<crate::DrawCommandBuffer, RenderError>> {
+    pub fn extract_draw_commands_batch(
+        &self,
+        pages: &[(usize, i32)],
+    ) -> Vec<Result<crate::DrawCommandBuffer, RenderError>> {
         use rayon::prelude::*;
-        pages.par_iter().map(|&(p, rot)| self.extract_draw_commands(p, rot)).collect()
+        pages
+            .par_iter()
+            .map(|&(p, rot)| self.extract_draw_commands(p, rot))
+            .collect()
     }
 
     /// Classify many pages in parallel using rayon. Used for a one-shot
@@ -819,9 +961,15 @@ impl DocumentHandle {
     /// with the lib.rs-side `PageTypeCache`). With the size-shortcut in
     /// analyze_page_type, huge content-stream pages return in microseconds,
     /// so a 7-page batch is typically <50 ms total even on construction PDFs.
-    pub fn analyze_page_types_batch(&self, pages: &[usize]) -> Vec<Result<crate::PageType, RenderError>> {
+    pub fn analyze_page_types_batch(
+        &self,
+        pages: &[usize],
+    ) -> Vec<Result<crate::PageType, RenderError>> {
         use rayon::prelude::*;
-        pages.par_iter().map(|&p| self.analyze_page_type(p)).collect()
+        pages
+            .par_iter()
+            .map(|&p| self.analyze_page_type(p))
+            .collect()
     }
 
     /// Extract dimensions for ALL pages in parallel. Faster than the

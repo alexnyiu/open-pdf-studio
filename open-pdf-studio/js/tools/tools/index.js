@@ -15,7 +15,7 @@ import { measureDistanceTool, measureAreaTool, measurePerimeterTool, addHoleTool
 import { filledAreaTool } from './filled-area-tool.js';
 import { systeemrasterTool } from './systeemraster-tool.js';
 import { measureAngleTool } from './angle-tool.js';
-import { commentTool, stampTool, signatureTool, editTextTool } from './text-tool.js';
+import { addTextTool, commentTool, stampTool, signatureTool, editTextTool } from './text-tool.js';
 import { calibrationPickTool } from './calibration-pick-tool.js';
 import { scaleMeasureTool } from './scale-measure-tool.js';
 import { pluginClickTool } from './plugin-tool.js';
@@ -106,6 +106,7 @@ export function registerAllTools() {
   registerTool('stamp', stampTool);
   registerTool('signature', signatureTool);
   registerTool('editText', editTextTool);
+  registerTool('addText', addTextTool);
 
   // Viewports
   registerTool('viewport', viewportTool);

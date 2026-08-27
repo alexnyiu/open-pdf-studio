@@ -8,6 +8,7 @@ import {
   documentMetadataFieldToEditorValue,
   documentMetadataFromPdfInfo,
   documentMetadataWithEditorField,
+  normalizeDocumentMetadata,
 } from './document-metadata.js';
 
 const metadata = {
@@ -88,6 +89,10 @@ test('inline editor values share exact string and local date conversion', () => 
   assert.equal(documentMetadataFieldFromEditorValue('keywords', 'alpha, beta'), 'alpha, beta');
   const local = documentMetadataFieldToEditorValue('creationDate', metadata.creationDate);
   assert.equal(documentMetadataFieldFromEditorValue('creationDate', local), metadata.creationDate);
+  const fractional = '2026-08-25T10:11:12.987Z';
+  const fractionalLocal = documentMetadataFieldToEditorValue('creationDate', fractional);
+  assert.match(fractionalLocal, /\.987$/u);
+  assert.equal(documentMetadataFieldFromEditorValue('creationDate', fractionalLocal), fractional);
   assert.throws(
     () => documentMetadataFieldFromEditorValue('modificationDate', 'not-a-date'),
     /Invalid modificationDate/u,
@@ -95,4 +100,17 @@ test('inline editor values share exact string and local date conversion', () => 
   const cleared = documentMetadataWithEditorField(metadata, 'subject', '');
   assert.equal(cleared.subject, '');
   assert.equal(cleared.author, metadata.author);
+  const sourcePrecision = {
+    ...metadata,
+    creationDate: '2026-08-25T10:11:12.123456Z',
+    modificationDate: '2026-08-25T13:14:15.250+02:00',
+  };
+  const updatedTitle = documentMetadataWithEditorField(sourcePrecision, 'title', 'Changed');
+  assert.equal(updatedTitle.creationDate, sourcePrecision.creationDate);
+  assert.equal(updatedTitle.modificationDate, sourcePrecision.modificationDate);
+  assert.equal(
+    normalizeDocumentMetadata({ creationDate: '2026-08-25 10:11:12Z' }).creationDate,
+    '2026-08-25T10:11:12.000Z',
+    'non-ISO date input remains canonicalized',
+  );
 });

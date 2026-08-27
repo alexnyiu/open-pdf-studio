@@ -489,6 +489,79 @@ test('application and operation ownership retain monotonic state and target revi
   assertScannedTextEditStateV1(doc.scannedTextEdits);
 });
 
+test('invalidated Apply operation cannot publish evaluation state or an undo command', async () => {
+  const { entry, raster } = await loadVisualFixture('flat-color');
+  const fixture = ocrFor(entry, 'invalidated-apply-operation');
+  const doc = documentFor(fixture.result);
+  const before = structuredClone(doc.scannedTextEdits);
+  let checks = 0;
+  const operation = {
+    isCurrent() {
+      checks += 1;
+      return checks === 1;
+    },
+  };
+
+  await assert.rejects(
+    applyScannedTextEditForDocument(doc, {
+      ...fixture,
+      raster: boundRaster(raster, fixture.result),
+      target: { kind: 'line', lineId: entry.ocrLine.id },
+      replacementText: 'EDIT',
+      renderVisiblePatch: deterministicVisiblePatch,
+      contextPaddingPx: 24,
+      operationId: 'invalidated-apply-operation',
+      modifiedAt: FIXED_TIME,
+    }, { operation }),
+    (error) => error?.code === 'SCANNED_TEXT_EDIT_OPERATION_INVALIDATED',
+  );
+
+  assert.equal(checks, 2);
+  assert.deepEqual(doc.scannedTextEdits, before);
+  assert.equal(doc.undoStack.length, 0);
+  assert.equal(doc.ocr.dirty, false);
+});
+
+test('invalidated revision operation cannot publish rendered content or an undo command', async () => {
+  const { entry, raster } = await loadVisualFixture('flat-color');
+  const fixture = ocrFor(entry, 'invalidated-revision-operation');
+  const doc = documentFor(fixture.result);
+  const applied = await applyScannedTextEditForDocument(doc, {
+    ...fixture,
+    raster: boundRaster(raster, fixture.result),
+    target: { kind: 'line', lineId: entry.ocrLine.id },
+    replacementText: 'EDIT',
+    renderVisiblePatch: deterministicVisiblePatch,
+    contextPaddingPx: 24,
+    operationId: 'invalidated-revision-operation-apply',
+    modifiedAt: FIXED_TIME,
+  });
+  const before = structuredClone(doc.scannedTextEdits);
+  const undoDepth = doc.undoStack.length;
+  let checks = 0;
+  const operation = {
+    isCurrent() {
+      checks += 1;
+      return checks === 1;
+    },
+  };
+
+  await assert.rejects(
+    reviseScannedTextEditForDocument(doc, applied.selection.id, {
+      replacementText: 'REVISED',
+      renderVisiblePatch: deterministicVisiblePatch,
+      operationId: 'invalidated-revision-operation-revise',
+      modifiedAt: '2026-08-20T12:01:00.000Z',
+      operation,
+    }),
+    (error) => error?.code === 'SCANNED_TEXT_EDIT_OPERATION_INVALIDATED',
+  );
+
+  assert.equal(checks, 2);
+  assert.deepEqual(doc.scannedTextEdits, before);
+  assert.equal(doc.undoStack.length, undoDepth);
+});
+
 test('stale concurrent target revisions are rejected before document state changes', async () => {
   const { entry, raster } = await loadVisualFixture('flat-color');
   const fixture = ocrFor(entry, 'concurrent-revision');

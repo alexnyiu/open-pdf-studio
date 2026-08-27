@@ -1,4 +1,4 @@
-import { state, getActiveDocument } from '../core/state.js';
+import { getActiveDocument } from '../core/state.js';
 import { createAnnotation } from '../annotations/factory.js';
 import { redrawAnnotations, redrawContinuous } from '../annotations/rendering.js';
 import { getSelectionRectsForAnnotation, getSelectionQuadPoints } from './text-selection.js';
@@ -152,24 +152,14 @@ export function createCalloutFromSelection() {
     opacity: 1
   });
 
-  const doc = getActiveDocument();
-  if (doc) doc.annotations.push(annotation);
-  recordAdd(annotation);
-
-  if (doc) { doc.selectedAnnotations = [annotation]; doc.selectedAnnotation = annotation; }
-
-  if (getActiveDocument()?.viewMode === 'continuous') {
-    redrawContinuous();
-  } else {
-    redrawAnnotations();
-  }
-
   // Start inline text editing so the user can type into the empty balloon.
+  // The annotation remains detached until owner-scoped Apply completes (via
+  // the visible action, keyboard shortcut, or an ordinary click-away).
   // Requires the select tool to be active to receive keyboard input.
   import('../tools/manager.js').then(m => {
     m.setTool('select');
     import('../tools/text-editing.js').then(({ startTextEditing }) => {
-      startTextEditing(annotation);
+      void startTextEditing(annotation, { isNew: true });
     });
   });
 

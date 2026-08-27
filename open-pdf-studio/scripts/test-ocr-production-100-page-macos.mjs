@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 
+import { validateOcrApplicationPerformanceSummary } from '../js/ocr/application-performance.js';
 import { inspectOwnedInvisibleOcrLayer } from '../js/ocr/pdf-writer-proof.js';
 import { startPackagedApp } from './lib/macos-packaged-app.mjs';
 
@@ -58,6 +59,11 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+async function gitHead() {
+  const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repoDir });
+  return stdout.trim();
+}
+
 function normalize(value) {
   return String(value || '').normalize('NFKC').replace(/\s+/gu, ' ').trim();
 }
@@ -79,6 +85,41 @@ function metrics(values) {
     p95Ms: percentile(values, 0.95),
     maxMs: values.length ? Math.max(...values) : null,
   };
+}
+
+function productionWorkflowPublication(value, { uiSubscriberMounted = false } = {}) {
+  const maximumOrdinaryDeliveryHz = Number(value?.maximumOrdinaryDeliveryHz);
+  const bookkeepingCpuPercent = Number(value?.bookkeepingCpuPercent);
+  const clonedBytes = Number(value?.clonedBytes);
+  const instrumentationAvailable = Number.isFinite(maximumOrdinaryDeliveryHz)
+    && Number.isFinite(bookkeepingCpuPercent)
+    && Number.isFinite(clonedBytes);
+  return {
+    ...(value && typeof value === 'object' ? value : {}),
+    maximumOrdinaryDeliveryHz,
+    bookkeepingCpuPercent,
+    clonedBytes,
+    instrumentationAvailable,
+    uiSubscriberMounted,
+    realClock: true,
+    syntheticEvents: false,
+    virtualTime: false,
+    serviceOnly: false,
+    failedOpen: !instrumentationAvailable || !uiSubscriberMounted,
+  };
+}
+
+function parsePackagedControllerPerformance(value) {
+  const serialized = value?.dataset?.ocrPerformance;
+  assert.equal(typeof serialized, 'string',
+    'packaged OCR job card did not expose terminal controller performance evidence');
+  let parsed;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch (error) {
+    throw new Error(`packaged OCR controller performance evidence is invalid JSON: ${error.message}`);
+  }
+  return parsed;
 }
 
 async function sha256(filePath) {
@@ -232,6 +273,13 @@ async function readCounts(controls, jobId) {
   return counts;
 }
 
+async function readControllerPerformance(controls, jobId, { required = true } = {}) {
+  const card = await controls.ui(`.ocr-progress-toast[data-job-id="${attributeValue(jobId)}"]`);
+  assert.equal(card.found, true, 'packaged OCR job card disappeared before performance collection');
+  if (!card.dataset?.ocrPerformance && !required) return null;
+  return parsePackagedControllerPerformance(card);
+}
+
 async function waitForOwnership(app, controls, expected, timeoutMs = 30_000) {
   const states = ['none', 'unowned', 'pending', 'saved', 'saved-with-pending-changes', 'pending-removal'];
   return waitUntil(`OCR ownership ${expected}`, async () => {
@@ -276,6 +324,27 @@ async function copyVisibleText(app, controls, expectedText) {
   const endX = rect.right - Math.max(1, Math.min(3, rect.width * 0.05));
   const token = normalize(expectedText).split(' ')[0];
   let latest = { status: 'empty', text: '' };
+  const diagnostics = [];
+  const runCopyHelper = async (arguments_) => {
+    const { stdout } = await execFileAsync(copyHelper, [String(app.processId), ...arguments_], {
+      maxBuffer: 1024 * 1024,
+    });
+    return JSON.parse(stdout);
+  };
+  const inspectSelection = async (gesture, copyResult) => {
+    const viewport = await app.callTool('app_get_viewport_state');
+    const selection = viewport.textSelection || null;
+    diagnostics.push({ gesture, copyResult, selection });
+    if (copyResult.status === 'pass' && normalize(copyResult.text).includes(token)) {
+      return normalize(copyResult.text);
+    }
+    if (!selection?.hasSelection || !normalize(selection.selectedText).includes(token)) return null;
+    const retry = await runCopyHelper(['copy']);
+    diagnostics.push({ gesture: { mode: 'copy-existing-selection' }, copyResult: retry, selection });
+    return retry.status === 'pass' && normalize(retry.text).includes(token)
+      ? normalize(retry.text)
+      : null;
+  };
   const attempts = [
     { fraction: 0.55, contentOffsetY: 28 },
     { fraction: 0.4, contentOffsetY: 28 },
@@ -288,31 +357,29 @@ async function copyVisibleText(app, controls, expectedText) {
     const y = rect.top + candidate.contentOffsetY
       + Math.max(1, Math.min(rect.height - 1, rect.height * candidate.fraction));
     const [fromX, toX] = attempt === 1 ? [endX, startX] : [startX, endX];
-    const { stdout } = await execFileAsync(copyHelper, [
-      String(app.processId),
+    latest = await runCopyHelper([
       'drag',
       String(fromX),
       String(y),
       String(toX),
       String(y),
-    ], { maxBuffer: 1024 * 1024 });
-    latest = JSON.parse(stdout);
-    if (latest.status === 'pass' && normalize(latest.text).includes(token)) return normalize(latest.text);
+    ]);
+    const copied = await inspectSelection({ mode: 'drag', fromX, toX, y }, latest);
+    if (copied) return copied;
     await delay(200);
   }
-  const { stdout } = await execFileAsync(copyHelper, [
-    String(app.processId),
+  latest = await runCopyHelper([
     'all',
     String(rect.left + rect.width / 2),
     String(rect.top + rect.height / 2),
-  ], { maxBuffer: 1024 * 1024 });
-  latest = JSON.parse(stdout);
-  if (latest.status === 'pass' && normalize(latest.text).includes(token)) return normalize(latest.text);
+  ]);
+  const copied = await inspectSelection({ mode: 'all' }, latest);
+  if (copied) return copied;
   if (latest.status !== 'pass') {
     const error = new Error(
-      `trusted macOS copy produced no text after bounded selection attempts: ${JSON.stringify(latest)}`,
+      `trusted macOS copy produced no text after bounded selection attempts: ${JSON.stringify({ latest, diagnostics })}`,
     );
-    error.copyResult = latest;
+    error.copyResult = { latest, diagnostics };
     throw error;
   }
   assert.ok(normalize(latest.text).includes(token),
@@ -370,6 +437,7 @@ async function sampleJob({ app, controls, jobId, stopWhen, timeoutMs }) {
   let previousCompletionAt = started;
   let lastUiAt = 0;
   let latestCounts = null;
+  let latestWorkflowMetrics = null;
   while (Date.now() - started <= timeoutMs) {
     const processes = await readProcesses();
     const snapshot = processSnapshot(processes, app.processId);
@@ -386,6 +454,8 @@ async function sampleJob({ app, controls, jobId, stopWhen, timeoutMs }) {
       );
       const tabs = await app.callTool('app_list_tabs');
       assert.equal(tabs.ok, true, tabs.error);
+      const viewport = await app.callTool('app_get_viewport_state');
+      latestWorkflowMetrics = viewport.ocrWorkflowMetrics || latestWorkflowMetrics;
       uiLatencies.push(Date.now() - uiStarted);
       const valueNow = Number(progress.accessibility?.valueNow);
       if (Number.isFinite(valueNow)) {
@@ -404,6 +474,7 @@ async function sampleJob({ app, controls, jobId, stopWhen, timeoutMs }) {
       lastUiAt = Date.now();
       const stopped = await stopWhen({ counts: latestCounts, snapshot, elapsedMs: Date.now() - started });
       if (stopped) {
+        const controllerPerformance = await readControllerPerformance(controls, jobId, { required: false });
         return {
           elapsedMs: Date.now() - started,
           counts: latestCounts,
@@ -419,6 +490,10 @@ async function sampleJob({ app, controls, jobId, stopWhen, timeoutMs }) {
             last: progressValues.at(-1) ?? null,
             monotonic: true,
           },
+          workflowPublication: productionWorkflowPublication(latestWorkflowMetrics, {
+            uiSubscriberMounted: latestCounts !== null,
+          }),
+          controllerPerformance,
           snapshot,
         };
       }
@@ -478,6 +553,15 @@ async function completeRun(filePath, sourceHash) {
     assert.equal(sampled.childPids.length, 100, 'one disposable production child was not observed per page');
     assert.ok(sampled.uiResponsiveness.maxMs < 5_000, 'production UI stopped responding during OCR');
     assert.ok(sampled.progress.last === 100, 'production progress did not reach 100%');
+    assert.ok(sampled.workflowPublication?.maximumOrdinaryDeliveryHz <= 10,
+      `production OCR UI publication exceeded 10 Hz: ${sampled.workflowPublication?.maximumOrdinaryDeliveryHz}`);
+    assert.ok(sampled.workflowPublication?.bookkeepingCpuPercent < 1,
+      'production OCR bookkeeping exceeded 1 percent CPU');
+    assert.deepEqual(validateOcrApplicationPerformanceSummary(sampled.controllerPerformance, {
+      expectedPageCount: 100,
+      requireCompleteCoverage: true,
+      requireCompleteResources: true,
+    }), [], 'production OCR controller stage/resource evidence is incomplete');
     await waitForNoChildren(app.processId);
     const completionParentRssBytes = await parentRss(app.processId);
     const cacheAfterCompletion = await cacheEvidence(cacheDir);
@@ -501,6 +585,8 @@ async function completeRun(filePath, sourceHash) {
       childProcessesObserved: sampled.childPids.length,
       childProcessesSurviving: 0,
       progress: sampled.progress,
+      workflowPublication: sampled.workflowPublication,
+      controllerPerformance: sampled.controllerPerformance,
       processingTimeMs: sampled.elapsedMs,
       pageTiming: sampled.pageTiming,
       uiResponsiveness: sampled.uiResponsiveness,
@@ -601,6 +687,8 @@ async function completeRun(filePath, sourceHash) {
       childProcessesObserved: sampled.childPids.length,
       childProcessesSurviving: 0,
       progress: sampled.progress,
+      workflowPublication: sampled.workflowPublication,
+      controllerPerformance: sampled.controllerPerformance,
       processingTimeMs: sampled.elapsedMs,
       pageTiming: sampled.pageTiming,
       uiResponsiveness: sampled.uiResponsiveness,
@@ -684,14 +772,32 @@ async function cancellationRun(filePath, sourceHash) {
     assert.equal(terminalCounts.failed, 0);
 
     const countsAtTerminal = structuredClone(terminalCounts);
+    const workflowAtTerminal = productionWorkflowPublication(
+      (await app.callTool('app_get_viewport_state')).ocrWorkflowMetrics,
+      { uiSubscriberMounted: true },
+    );
+    const controllerPerformance = await readControllerPerformance(controls, jobId);
+    assert.deepEqual(validateOcrApplicationPerformanceSummary(controllerPerformance, {
+      expectedPageCount: 100,
+      requireCompleteCoverage: false,
+      requireCompleteResources: true,
+    }), [], 'cancelled OCR controller stage/resource evidence is incomplete');
     const pidsAtTerminal = new Set(beforeCancel.childPids);
     await delay(10_000);
     const lateProcesses = processSnapshot(await readProcesses(), app.processId).children;
     const countsAfterSettling = await readCounts(controls, jobId);
+    const workflowAfterSettling = productionWorkflowPublication(
+      (await app.callTool('app_get_viewport_state')).ocrWorkflowMetrics,
+      { uiSubscriberMounted: true },
+    );
     assert.deepEqual(countsAfterSettling, countsAtTerminal, 'page counts changed after cancellation became terminal');
     assert.deepEqual(lateProcesses, [], 'OCR child survived or started after terminal cancellation');
     assert.equal((await readProcesses()).some((entry) => entry.pid === activeAtCancel.pid), false,
       'active cancellation child was not reaped');
+    assert.equal(workflowAfterSettling.publications, workflowAtTerminal.publications,
+      'OCR workflow published after cancellation became terminal');
+    assert.equal(workflowAfterSettling.deliveryBatches, workflowAtTerminal.deliveryBatches,
+      'OCR workflow delivered a UI batch after cancellation became terminal');
 
     await controls.click('[data-panel="ocr-review"]');
     await controls.waitUi('#ocr-review-panel.active');
@@ -720,6 +826,9 @@ async function cancellationRun(filePath, sourceHash) {
       activeChildReaped: true,
       queuedPagesStopped: true,
       lateResultsApplied: false,
+      workflowPublicationAtTerminal: workflowAtTerminal,
+      workflowPublicationAfterSettling: workflowAfterSettling,
+      controllerPerformance,
       childProcessesSurviving: 0,
       childPidsObservedBeforeCancel: [...pidsAtTerminal],
       countsAtTerminal,
@@ -748,6 +857,7 @@ let report = {
   startedAt,
   finishedAt: null,
   status: 'FAIL',
+  head: await gitHead(),
   platform: { operatingSystem: process.platform, architecture: process.arch },
   appBinary,
   automation: {
@@ -769,6 +879,7 @@ let report = {
   fixture: null,
   completion: null,
   cancellation: null,
+  performance: null,
   error: null,
 };
 
@@ -813,6 +924,26 @@ try {
   if (qualificationMode !== 'completion-only') {
     report.cancellation = await cancellationRun(cancellationPath, cancellationHash);
   }
+  report.performance = {
+    applicationController: report.completion?.controllerPerformance
+      ?? report.cancellation?.controllerPerformance
+      ?? null,
+    cancellationApplicationController: report.cancellation?.controllerPerformance ?? null,
+    workflowPublication: (report.completion?.workflowPublication
+      ?? report.cancellation?.workflowPublicationAfterSettling)
+      ? {
+        ...(report.completion?.workflowPublication
+          ?? report.cancellation?.workflowPublicationAfterSettling),
+        latePublicationAfterCancel: report.cancellation
+          ? report.cancellation.lateResultsApplied !== false
+          : null,
+      }
+      : null,
+    progressMonotonic: qualificationMode === 'cancellation-only'
+      ? report.cancellation?.countsAtTerminal?.completed === report.cancellation?.countsAfterSettling?.completed
+      : report.completion?.progress?.monotonic === true,
+    lateResultsApplied: report.cancellation?.lateResultsApplied ?? null,
+  };
   const completionPass = qualificationMode === 'cancellation-only' || report.completion?.status === 'PASS';
   const cancellationPass = qualificationMode === 'completion-only' || report.cancellation?.status === 'PASS';
   report.status = completionPass && cancellationPass ? 'PASS' : 'FAIL';

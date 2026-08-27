@@ -22,6 +22,13 @@ import {
   OCR_SOURCE_RASTER_SPACE,
   mapPolygonBetweenSpaces,
 } from '../ocr/contracts/geometry.js';
+import {
+  captureTextLayerOwner,
+  createTextLayerRequestRegistry,
+  stampTextLayerOwner,
+  textLayerElementMatchesOwner,
+  textLayerOwnerMatchesDocument,
+} from './text-layer-lifecycle.js';
 
 /**
  * Text Layer Management Module
@@ -31,6 +38,24 @@ import {
 // Store references to text layers for cleanup
 const textLayers = new Map();
 const pageFontResolutionPromises = new WeakMap();
+const textLayerRequests = createTextLayerRequestRegistry();
+
+function textLayerRequestIsCurrent(request) {
+  return Boolean(
+    request
+      && request.container?.isConnected !== false
+      && textLayerRequests.isCurrent(request, getActiveDocument()),
+  );
+}
+
+function removeSupersededTextLayer(textLayerDiv, request) {
+  if (!textLayerDiv) return;
+  // A newer request may deliberately reuse a container, but never this
+  // request's newly-created element. Remove only the exact stale subtree.
+  if (!request || Number(textLayerDiv.dataset?.textLayerRequest) === request.generation) {
+    textLayerDiv.remove?.();
+  }
+}
 
 /** @param {HTMLElement} textLayerDiv @param {any} context */
 export function setOcrTextLayerProjection(textLayerDiv, context) {
@@ -95,7 +120,10 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
     .forEach((node) => node.remove());
 
   const doc = getActiveDocument();
-  if (!doc || textLayerDiv._opdsOcrProjection?.documentId !== doc.id) return;
+  const projection = textLayerDiv._opdsOcrProjection;
+  if (!doc || projection?.documentId !== doc.id
+      || Number(projection?.lifecycleGeneration) !== (Number(doc.lifecycleGeneration) || 0)
+      || projection?.viewMode !== (doc.viewMode || 'single')) return;
   const pendingItems = getPendingOcrTextItems(doc, pageNum);
   const editPage = doc.scannedTextEdits?.pages?.find((page) => page.index === pageNum - 1);
   const appliedEdits = (editPage?.selections || []).filter((selection) =>
@@ -282,7 +310,9 @@ export function injectPendingOcrTextSpans(textLayerDiv, pageNum) {
 /** @param {number} pageNum */
 export function refreshPendingOcrTextLayer(pageNum) {
   const entry = textLayers.get(pageNum);
-  if (!entry?.element) return false;
+  const doc = getActiveDocument();
+  if (!entry?.element || !textLayerOwnerMatchesDocument(entry.owner, doc)
+      || !textLayerElementMatchesOwner(entry.element, entry.owner)) return false;
   injectPendingOcrTextSpans(entry.element, pageNum);
   ensureEndOfContent(entry.element);
   return true;
@@ -537,30 +567,36 @@ export function ensureEndOfContent(textLayerDiv) {
  * @param {Object} viewport - PDF.js viewport
  * @param {HTMLElement} container - Container element to append text layer to
  * @param {number} pageNum - Page number for tracking
- * @returns {Promise<HTMLElement>} The created text layer element
+ * @param {{owner?: any, request?: any}} [lifecycle]
+ * @returns {Promise<HTMLElement|null>} The created text layer element
  */
-export async function createTextLayer(page, viewport, container, pageNum) {
+export async function createTextLayer(page, viewport, container, pageNum, lifecycle = {}) {
   const activeDocument = getActiveDocument();
+  const owner = lifecycle.owner || captureTextLayerOwner(activeDocument, pageNum);
+  const request = lifecycle.request || textLayerRequests.begin(container, owner);
+  if (!owner || !request || !textLayerOwnerMatchesDocument(owner, activeDocument)
+      || !textLayerRequestIsCurrent(request)) return null;
   const { getPrefetchedEditableMetadata } = await import('../pdf/editable-metadata-preload.js');
+  if (!textLayerRequestIsCurrent(request)) return null;
   const prefetched = getPrefetchedEditableMetadata(pageNum, activeDocument);
   const textContent = prefetched?.textContent || await page.getTextContent();
-  if (activeDocument) {
-    recordOcrExistingTextAssessment(
-      activeDocument,
-      pageNum,
-      assessPdfJsTextContent(textContent),
-    );
-  }
+  if (!textLayerRequestIsCurrent(request)) return null;
+  recordOcrExistingTextAssessment(
+    activeDocument,
+    pageNum,
+    assessPdfJsTextContent(textContent),
+  );
 
   const textLayerDiv = document.createElement('div');
   textLayerDiv.className = 'textLayer';
-  textLayerDiv.dataset.page = pageNum;
+  stampTextLayerOwner(textLayerDiv, owner, request.generation);
 
   // Ensure --total-scale-factor is set (renderer usually sets this on parent)
   if (container) {
     container.style.setProperty('--total-scale-factor', viewport.scale);
   }
 
+  if (!textLayerRequestIsCurrent(request)) return null;
   container.appendChild(textLayerDiv);
 
   // Use PDF.js built-in TextLayer for accurate positioning
@@ -573,17 +609,32 @@ export async function createTextLayer(page, viewport, container, pageNum) {
     });
     await textLayer.render();
   } catch (err) {
+    if (!textLayerRequestIsCurrent(request)) {
+      removeSupersededTextLayer(textLayerDiv, request);
+      return null;
+    }
     // A damaged native text stream must not make an already validated pending
     // OCR result disappear. Keep the empty layer and publish only owned OCR.
-    textLayers.set(pageNum, { element: textLayerDiv, textLayer: null });
+    textLayers.set(pageNum, {
+      element: textLayerDiv,
+      textLayer: null,
+      owner,
+      requestGeneration: request.generation,
+    });
     setOcrTextLayerProjection(textLayerDiv, {
       kind: 'pdfjs',
       viewport,
-      documentId: activeDocument?.id,
+      documentId: owner.documentId,
+      lifecycleGeneration: owner.lifecycleGeneration,
+      viewMode: owner.viewMode,
     });
     injectPendingOcrTextSpans(textLayerDiv, pageNum);
     ensureEndOfContent(textLayerDiv);
     return textLayerDiv;
+  }
+  if (!textLayerRequestIsCurrent(request)) {
+    removeSupersededTextLayer(textLayerDiv, request);
+    return null;
   }
 
   // Build font info cache from page.commonObjs
@@ -623,6 +674,10 @@ export async function createTextLayer(page, viewport, container, pageNum) {
   // The matcher is ordered and atomic; any partial/ambiguous span remains
   // without provenance and therefore read-only in the Edit Text tool.
   await attachNativeTextProvenance(textItems, textDivs, pageNum, prefetched?.sourceMap || null);
+  if (!textLayerRequestIsCurrent(request)) {
+    removeSupersededTextLayer(textLayerDiv, request);
+    return null;
+  }
   const ownedNativeEdits = (activeDocument?.textEdits || [])
     .filter((record) => record.page === pageNum && record.original)
     .map(projectTextEditRecord);
@@ -639,11 +694,18 @@ export async function createTextLayer(page, viewport, container, pageNum) {
   // selectie: losse streepjes in de marge en tussen kolommen).
   tagWhitespaceSpans(textLayerDiv);
 
-  textLayers.set(pageNum, { element: textLayerDiv, textLayer });
+  textLayers.set(pageNum, {
+    element: textLayerDiv,
+    textLayer,
+    owner,
+    requestGeneration: request.generation,
+  });
   setOcrTextLayerProjection(textLayerDiv, {
     kind: 'pdfjs',
     viewport,
-    documentId: activeDocument?.id,
+    documentId: owner.documentId,
+    lifecycleGeneration: owner.lifecycleGeneration,
+    viewMode: owner.viewMode,
   });
 
   // Enable text selection when select or editText tool is active
@@ -717,7 +779,13 @@ export function injectSyntheticTextSpans(textLayerDiv, pageNum, pageWidth, pageH
     // Map fontFamily to CSS font
     const ff = (edit.fontFamily || 'Helvetica').toLowerCase();
     let cssFontFamily;
-    if (ff.includes('courier')) {
+    if (ff.includes('liberation')) {
+      cssFontFamily = ff.includes('mono')
+        ? '"Liberation Mono", monospace'
+        : ff.includes('serif') && !ff.includes('sans')
+          ? '"Liberation Serif", serif'
+          : '"Liberation Sans", sans-serif';
+    } else if (ff.includes('courier')) {
       cssFontFamily = '"Courier New", Courier, monospace';
     } else if (ff.includes('times')) {
       cssFontFamily = '"Times New Roman", Times, serif';
@@ -830,11 +898,15 @@ export async function createSinglePageTextLayer(page, viewport) {
   const container = document.getElementById('canvas-container');
   if (!container) return;
 
+  const doc = getActiveDocument();
+  const pageNum = Number(doc?.currentPage) || 1;
+  const owner = captureTextLayerOwner(doc, pageNum);
+  if (!owner || !textLayerOwnerMatchesDocument(owner, doc)) return null;
+
   // Remove existing text layer for current page
   clearSinglePageTextLayer();
-
-  const doc = getActiveDocument();
-  await createTextLayer(page, viewport, container, doc ? doc.currentPage : 1);
+  const request = textLayerRequests.begin(container, owner);
+  return createTextLayer(page, viewport, container, pageNum, { owner, request });
 }
 
 /**
@@ -843,6 +915,8 @@ export async function createSinglePageTextLayer(page, viewport) {
 export function clearSinglePageTextLayer() {
   const container = document.getElementById('canvas-container');
   if (!container) return;
+
+  textLayerRequests.invalidateContainer(container);
 
   const existingLayer = container.querySelector('.textLayer');
   if (existingLayer) {
@@ -858,6 +932,7 @@ export function clearSinglePageTextLayer() {
  * Clears all text layers (for re-render or cleanup)
  */
 export function clearTextLayers() {
+  textLayerRequests.invalidateAll();
   document.querySelectorAll('.textLayer').forEach(layer => {
     layer.remove();
   });
@@ -873,7 +948,10 @@ export function clearTextLayers() {
  */
 export function getTextLayer(pageNum) {
   const entry = textLayers.get(pageNum);
-  return entry ? entry.element : null;
+  return entry
+    && textLayerOwnerMatchesDocument(entry.owner, getActiveDocument())
+    && textLayerElementMatchesOwner(entry.element, entry.owner)
+    ? entry.element : null;
 }
 
 /**
@@ -893,8 +971,14 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
   try {
     const doc = getActiveDocument();
     if (!doc || !doc.filePath) return false;
+    const owner = captureTextLayerOwner(doc, pageNum);
+    const request = textLayerRequests.begin(container, owner);
+    if (!owner || !request || !textLayerRequestIsCurrent(request)) return false;
 
     const sourceMap = await inspectNativeTextSourcesForPage(pageNum);
+    // Superseded extraction is already owned by a newer render. Report it as
+    // handled so the stale caller cannot start a PDF.js fallback request.
+    if (!textLayerRequestIsCurrent(request)) return true;
     const spans = (sourceMap?.runs || []).filter((span) => span.decodedText);
     if (!spans || spans.length === 0) {
       // Rust returned no text for this page → drop any stale textLayer
@@ -909,25 +993,22 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
       return false;
     }
 
-    let textLayerDiv = container.querySelector('.textLayer');
-    if (!textLayerDiv) {
-      textLayerDiv = document.createElement('div');
-      textLayerDiv.className = 'textLayer';
-      textLayerDiv.dataset.page = pageNum;
-      container.appendChild(textLayerDiv);
-    } else {
-      // Reusing a textLayer that was created for a different page (e.g. user
-      // navigated from page 1 to page 11 in vector mode). The DOM element is
-      // recycled but the data-page attribute and the textLayers map entry
-      // must be updated so downstream lookups (find-bar, edit-text-tool,
-      // undo-manager) still resolve to the right page.
-      const prevPage = parseInt(textLayerDiv.dataset.page);
-      if (Number.isFinite(prevPage) && prevPage !== pageNum) {
-        textLayers.delete(prevPage);
+    // Never mutate an element that an older asynchronous request may still
+    // reference. Publish a fresh, request-stamped layer and retire the prior
+    // container child synchronously.
+    const previousLayer = container.querySelector('.textLayer');
+    if (previousLayer) {
+      const previousPage = parseInt(previousLayer.dataset.page, 10);
+      if (Number.isFinite(previousPage)
+          && textLayers.get(previousPage)?.element === previousLayer) {
+        textLayers.delete(previousPage);
       }
-      textLayerDiv.dataset.page = pageNum;
+      previousLayer.remove();
     }
-    textLayerDiv.innerHTML = '';
+    const textLayerDiv = document.createElement('div');
+    textLayerDiv.className = 'textLayer';
+    stampTextLayerOwner(textLayerDiv, owner, request.generation);
+    container.appendChild(textLayerDiv);
 
     // The textLayer is sized + transformed by pdf-viewport.js so it sits in
     // PDF user space (origin top-left after Y flip), 1 CSS px = 1 PDF point.
@@ -939,7 +1020,9 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
     textLayerDiv.style.height = `${pageHeight}px`;
     setOcrTextLayerProjection(textLayerDiv, {
       kind: 'cropped-display',
-      documentId: doc.id,
+      documentId: owner.documentId,
+      lifecycleGeneration: owner.lifecycleGeneration,
+      viewMode: owner.viewMode,
       pageGeometry: doc.ocr?.pages?.[pageNum]?.recognition?.geometry
         || doc.scannedTextEdits?.pages?.find((page) => page.index === pageNum - 1)?.pageGeometry
         || null,
@@ -1021,7 +1104,15 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
     // one definition across all view modes.
     try {
       const pdfPage = await doc.pdfDoc?.getPage(pageNum);
+      if (!textLayerRequestIsCurrent(request)) {
+        removeSupersededTextLayer(textLayerDiv, request);
+        return true;
+      }
       const pdfTextContent = await pdfPage?.getTextContent();
+      if (!textLayerRequestIsCurrent(request)) {
+        removeSupersededTextLayer(textLayerDiv, request);
+        return true;
+      }
       if (pdfTextContent) {
         recordOcrExistingTextAssessment(doc, pageNum, assessPdfJsTextContent(pdfTextContent));
       }
@@ -1029,12 +1120,22 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
       // Rendering remains available; search extraction will retry assessment.
     }
 
+    if (!textLayerRequestIsCurrent(request)) {
+      removeSupersededTextLayer(textLayerDiv, request);
+      return true;
+    }
+
     injectPendingOcrTextSpans(textLayerDiv, pageNum);
 
     // endOfContent-marker als laatste kind (mitigatie omgekeerde sleep)
     ensureEndOfContent(textLayerDiv);
 
-    textLayers.set(pageNum, { element: textLayerDiv, textLayer: null });
+    textLayers.set(pageNum, {
+      element: textLayerDiv,
+      textLayer: null,
+      owner,
+      requestGeneration: request.generation,
+    });
     return true;
   } catch (e) {
     console.warn('[text-layer] Rust text extraction failed:', e);

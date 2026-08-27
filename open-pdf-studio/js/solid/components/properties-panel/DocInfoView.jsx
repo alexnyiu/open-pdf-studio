@@ -32,6 +32,8 @@ function InlineMetadataValue(props) {
   const [draft, setDraft] = createSignal('');
   const [error, setError] = createSignal('');
   const [ownerDocumentId, setOwnerDocumentId] = createSignal(null);
+  const [ownerDocumentGeneration, setOwnerDocumentGeneration] = createSignal(0);
+  const [initialDraft, setInitialDraft] = createSignal('');
   let inputRef;
   let settling = false;
 
@@ -40,10 +42,13 @@ function InlineMetadataValue(props) {
     const documentState = getActiveDocument();
     if (!documentState) return;
     setOwnerDocumentId(documentState.id);
-    setDraft(documentMetadataFieldToEditorValue(
+    setOwnerDocumentGeneration(Number(documentState.lifecycleGeneration) || 0);
+    const editorValue = documentMetadataFieldToEditorValue(
       props.field,
       documentState.metadata?.[props.field],
-    ));
+    );
+    setInitialDraft(editorValue);
+    setDraft(editorValue);
     setError('');
     setEditing(true);
     queueMicrotask(() => {
@@ -59,12 +64,18 @@ function InlineMetadataValue(props) {
     queueMicrotask(() => { settling = false; });
   };
 
-  const commit = async () => {
+  const commit = async ({ retainFocusOnFailure = false } = {}) => {
     if (!editing() || settling) return false;
     settling = true;
     try {
+      if (draft() === initialDraft()) {
+        setError('');
+        setEditing(false);
+        return true;
+      }
       const result = await commitDocumentMetadataField({
         documentId: ownerDocumentId(),
+        documentGeneration: ownerDocumentGeneration(),
         field: props.field,
         value: draft(),
       });
@@ -77,7 +88,7 @@ function InlineMetadataValue(props) {
       return true;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
-      queueMicrotask(() => inputRef?.focus());
+      if (retainFocusOnFailure) queueMicrotask(() => inputRef?.focus());
       return false;
     } finally {
       settling = false;
@@ -87,16 +98,16 @@ function InlineMetadataValue(props) {
   const moveAfterCommit = async (direction) => {
     const current = EDITABLE_METADATA_FIELDS.indexOf(props.field);
     const next = current + direction;
-    if (next < 0 || next >= EDITABLE_METADATA_FIELDS.length) {
-      await commit();
-      return;
+    if (await commit({ retainFocusOnFailure: true })) {
+      queueMicrotask(() => focusMetadataField(EDITABLE_METADATA_FIELDS[next]));
     }
-    if (await commit()) queueMicrotask(() => focusMetadataField(EDITABLE_METADATA_FIELDS[next]));
   };
 
   createEffect(() => {
     props.displayValue;
-    if (editing() && String(getActiveDocument()?.id) !== String(ownerDocumentId())) cancel();
+    const active = getActiveDocument();
+    if (editing() && (String(active?.id) !== String(ownerDocumentId())
+      || (Number(active?.lifecycleGeneration) || 0) !== ownerDocumentGeneration())) cancel();
   });
 
   return (
@@ -106,7 +117,7 @@ function InlineMetadataValue(props) {
         role="button"
         tabIndex="0"
         data-metadata-field={props.field}
-        aria-label={`${props.label}. Double-click or press Enter to edit.`}
+        aria-label={props.editHint}
         onDblClick={startEditing}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -121,22 +132,27 @@ function InlineMetadataValue(props) {
           ref={inputRef}
           class="doc-metadata-inline-input"
           type={DATE_FIELDS.has(props.field) ? 'datetime-local' : 'text'}
-          step={DATE_FIELDS.has(props.field) ? '1' : undefined}
+          step={DATE_FIELDS.has(props.field) ? '0.001' : undefined}
           value={draft()}
           data-metadata-editor={props.field}
-          aria-label={`Edit ${props.label}`}
+          aria-label={props.editLabel}
           aria-invalid={error() ? 'true' : 'false'}
           aria-describedby={error() ? `doc-metadata-error-${props.field}` : undefined}
-          onInput={(event) => setDraft(event.currentTarget.value)}
-          onBlur={() => { if (!settling) void commit(); }}
+          onInput={(event) => {
+            setDraft(event.currentTarget.value);
+          }}
+          onBlur={() => { if (!settling) void commit({ retainFocusOnFailure: false }); }}
           onKeyDown={(event) => {
             if (event.key === 'Escape') {
               event.preventDefault();
               cancel();
             } else if (event.key === 'Enter') {
               event.preventDefault();
-              void commit();
+              void commit({ retainFocusOnFailure: true });
             } else if (event.key === 'Tab') {
+              const current = EDITABLE_METADATA_FIELDS.indexOf(props.field);
+              const next = current + (event.shiftKey ? -1 : 1);
+              if (next < 0 || next >= EDITABLE_METADATA_FIELDS.length) return;
               event.preventDefault();
               void moveAfterCommit(event.shiftKey ? -1 : 1);
             }
@@ -155,6 +171,7 @@ function InlineMetadataValue(props) {
 export default function DocInfoView() {
   const { t } = useTranslation('properties');
   const { t: tDialogs } = useTranslation('dialogs');
+  const { t: tHardening } = useTranslation('hardening');
   const metadataFields = [
     ['title', 'title'],
     ['author', 'author'],
@@ -185,9 +202,16 @@ export default function DocInfoView() {
                 label={t(`docInfo.${label}`)}
                 displayValue={docInfo[field]}
                 invalidMessage={tDialogs('docProperties.invalidDate')}
+                editLabel={tHardening('metadata.editValue', { label: t(`docInfo.${label}`) })}
+                editHint={tHardening('metadata.editValueHint', { label: t(`docInfo.${label}`) })}
               />
             </div>
           )}</For>
+          <div class="doc-metadata-timezone-hint">
+            {tHardening('metadata.timezoneHint', {
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'local',
+            })}
+          </div>
           <div class="property-group"><label>{t('docInfo.pdfVersion')}</label><span class="prop-info-value" data-metadata-readonly="pdfVersion">{docInfo.version}</span></div>
         </CollapsibleSection>
 

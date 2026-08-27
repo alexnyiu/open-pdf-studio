@@ -3,7 +3,7 @@ import RibbonGroup from './RibbonGroup.jsx';
 import AdaptiveGroups from './AdaptiveGroups.jsx';
 import RibbonButton from './RibbonButton.jsx';
 import RibbonButtonStack from './RibbonButtonStack.jsx';
-import { insertPageIcon, deletePageIcon, extractPagesIcon, mergePdfsIcon, watermarkIcon, headerFooterIcon, manageWatermarksIcon, editTextIcon, textboxIcon, cropMarginsIcon, resizePagesIcon, rotateLeftIcon, rotateRightIcon } from '../../data/ribbonIcons.js';
+import { insertPageIcon, deletePageIcon, extractPagesIcon, mergePdfsIcon, watermarkIcon, headerFooterIcon, manageWatermarksIcon, editTextIcon, addTextIcon, textboxIcon, cropMarginsIcon, resizePagesIcon, rotateLeftIcon, rotateRightIcon } from '../../data/ribbonIcons.js';
 import { state, noPdf, getActiveDocument, getPageRotation } from '../../../core/state.js';
 import { isPdfAReadOnly } from '../../../pdf/loader.js';
 import { showInsertPageDialog, showExtractPagesDialog, showMergePdfsDialog } from '../../../ui/chrome/dialogs.js';
@@ -26,6 +26,17 @@ const recognizeTextIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentC
 export default function OrganizeTab() {
   const { t } = useTranslation('ribbon');
   const ro = () => noPdf() || isPdfAReadOnly();
+
+  function openRecognizeTextDialog() {
+    const owner = getActiveDocument();
+    if (!owner?.pdfDoc) return;
+    openDialog('recognize-text', {
+      ownerDocumentId: owner.id,
+      ownerDocumentGeneration: Number(owner.lifecycleGeneration) || 0,
+      currentPage: owner.currentPage,
+      pageCount: owner.pdfDoc.numPages,
+    });
+  }
 
   // Pagina-rotatie bewerkt het document (undo-baar, wordt opgeslagen) en
   // hoort daarom bij de pagina-bewerkingen — verplaatst uit de Beeld-groep
@@ -59,13 +70,15 @@ export default function OrganizeTab() {
         <RibbonGroup label={t('home.edit')}>
           <RibbonButton id="ep-edit-text" title={t('home.editText')} icon={editTextIcon} label={t('home.editText')}
             disabled={ro()} active={state.currentTool === 'editText'} onClick={() => setTool('editText')} />
-          <RibbonButton id="ep-add-text" title={t('comment.textBox')} icon={textboxIcon} label={t('comment.textBox')}
+          <RibbonButton id="ep-add-text" title={t('home.addText')} icon={addTextIcon} label={t('home.addText')}
+            disabled={ro()} active={state.currentTool === 'addText'} onClick={() => setTool('addText')} />
+          <RibbonButton id="ep-text-box" title={t('comment.textBox')} icon={textboxIcon} label={t('comment.textBox')}
             disabled={ro()} active={state.currentTool === 'textbox'} onClick={() => setTool('textbox')} />
           <Show when={ocrWorkflowAvailable()}>
             <RibbonButton id="ep-recognize-text" title={t('organize.recognizeCurrentPage')}
               icon={recognizeTextIcon} label={t('organize.recognizeText')}
               disabled={ro() || activeDocumentOcrWorkflow()?.finishedAt === null}
-              onClick={() => openDialog('recognize-text')} />
+              onClick={openRecognizeTextDialog} />
           </Show>
           <RibbonButton id="ep-crop-margins" title={t('home.cropMargins')} icon={cropMarginsIcon} label={t('home.crop')}
             disabled={ro()} onClick={() => {

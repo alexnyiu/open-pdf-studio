@@ -14,6 +14,7 @@ import { resetAnnotationStorage } from './form-layer.js';
 import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
 import { resetDocumentOcrGeneration } from '../ocr/document-state.js';
+import { replaceDocumentPdfProxy } from '../core/document-lifecycle.js';
 
 // Page clipboard for cut/copy/paste
 let pageClipboard = null; // { bytes: Uint8Array, cut: boolean, sourcePageNum: number }
@@ -223,7 +224,7 @@ export async function reloadFromBytes(newBytes, annotations, rotations, targetPa
   resetAnnotationStorage();
 
   // Load new bytes into pdf.js (slice to prevent buffer detachment of the original)
-  doc.pdfDoc = await pdfjsLib.getDocument({
+  const replacementPdfDocument = await pdfjsLib.getDocument({
     data: newBytes.slice(),
     cMapUrl: '/pdfjs/web/cmaps/',
     cMapPacked: true,
@@ -231,6 +232,8 @@ export async function reloadFromBytes(newBytes, annotations, rotations, targetPa
     isEvalSupported: false,
     verbosity: 0,
   }).promise;
+  const previousPdfDocument = replaceDocumentPdfProxy(doc, replacementPdfDocument, 'page-structure-reload');
+  try { await previousPdfDocument?.destroy?.(); } catch (_) {}
 
   // Page identities and geometry changed. Invalidate pending OCR atomically so
   // a late child result from the previous document generation cannot publish.

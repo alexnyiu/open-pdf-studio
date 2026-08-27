@@ -1,5 +1,9 @@
 # macOS release-hardening evidence
 
+The current CI policy, exact required check names, evidence schema, and the
+external branch-protection step are defined in
+[`OCR_RELEASE_HARDENING_GATE.md`](./OCR_RELEASE_HARDENING_GATE.md).
+
 This record covers Open PDF Studio 1.85.0 on the
 `ocr-release-hardening` working tree on 2026-08-24. It distinguishes local
 hardened-runtime evidence from identity-backed distribution evidence.

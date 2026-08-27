@@ -28,7 +28,9 @@ pub fn pick_idle_worker(depths: &[usize]) -> Option<usize> {
 pub fn pick_worker(path: &str, page_index: u32, depths: &[usize], pin: bool) -> usize {
     assert!(!depths.is_empty(), "depths cannot be empty");
 
-    let alive: Vec<usize> = depths.iter().enumerate()
+    let alive: Vec<usize> = depths
+        .iter()
+        .enumerate()
         .filter(|(_, &d)| d != usize::MAX)
         .map(|(i, _)| i)
         .collect();
@@ -71,7 +73,11 @@ mod tests {
             picks.insert(pick_worker("foo.pdf", p, &depths, false));
         }
         // 20 pages across 5 workers should hit at least 3 different slots
-        assert!(picks.len() >= 3, "got only {} distinct workers", picks.len());
+        assert!(
+            picks.len() >= 3,
+            "got only {} distinct workers",
+            picks.len()
+        );
     }
 
     #[test]

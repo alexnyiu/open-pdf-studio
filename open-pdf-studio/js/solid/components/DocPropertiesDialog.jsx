@@ -24,13 +24,23 @@ function PropRow(props) {
 export default function DocPropertiesDialog(props) {
   const { t } = useTranslation('dialogs');
   const { t: tCommon } = useTranslation('common');
-  const d = props.data;
-  const ownerDocumentId = getActiveDocument()?.id;
+  const { t: tHardening } = useTranslation('hardening');
+  const d = props.data || {};
+  const activeOwner = getActiveDocument();
+  const ownerDocumentId = d.ownerDocumentId ?? activeOwner?.id;
+  const ownerDocumentGeneration = d.ownerDocumentGeneration
+    ?? (Number(activeOwner?.lifecycleGeneration) || 0);
   const initial = cloneDocumentMetadata(d.metadata);
+  const initialCreationEditorValue = documentMetadataFieldToEditorValue(
+    'creationDate', initial.creationDate,
+  );
+  const initialModificationEditorValue = documentMetadataFieldToEditorValue(
+    'modificationDate', initial.modificationDate,
+  );
   const [form, setForm] = createStore({
     ...initial,
-    creationDate: documentMetadataFieldToEditorValue('creationDate', initial.creationDate),
-    modificationDate: documentMetadataFieldToEditorValue('modificationDate', initial.modificationDate),
+    creationDate: initialCreationEditorValue,
+    modificationDate: initialModificationEditorValue,
   });
   const fields = [
     ['title', 'docTitle'],
@@ -45,8 +55,12 @@ export default function DocPropertiesDialog(props) {
     try {
       return normalizeDocumentMetadata({
         ...form,
-        creationDate: documentMetadataFieldFromEditorValue('creationDate', form.creationDate),
-        modificationDate: documentMetadataFieldFromEditorValue('modificationDate', form.modificationDate),
+        creationDate: form.creationDate === initialCreationEditorValue
+          ? initial.creationDate
+          : documentMetadataFieldFromEditorValue('creationDate', form.creationDate),
+        modificationDate: form.modificationDate === initialModificationEditorValue
+          ? initial.modificationDate
+          : documentMetadataFieldFromEditorValue('modificationDate', form.modificationDate),
       });
     } catch {
       return null;
@@ -57,7 +71,11 @@ export default function DocPropertiesDialog(props) {
   const save = async () => {
     const metadata = parsed();
     if (!metadata || ownerDocumentId == null) return;
-    const result = await commitDocumentMetadata({ documentId: ownerDocumentId, metadata });
+    const result = await commitDocumentMetadata({
+      documentId: ownerDocumentId,
+      documentGeneration: ownerDocumentGeneration,
+      metadata,
+    });
     if (result.stale) return;
     close();
   };
@@ -99,12 +117,17 @@ export default function DocPropertiesDialog(props) {
         )}</For>
         <label class="doc-props-edit-row">
           <span class="doc-props-label">{t('docProperties.creationDate')}</span>
-          <input type="datetime-local" step="1" value={form.creationDate} onInput={(event) => setForm('creationDate', event.currentTarget.value)} />
+          <input type="datetime-local" step="0.001" value={form.creationDate} onInput={(event) => setForm('creationDate', event.currentTarget.value)} />
         </label>
         <label class="doc-props-edit-row">
           <span class="doc-props-label">{t('docProperties.modifiedDate')}</span>
-          <input type="datetime-local" step="1" value={form.modificationDate} onInput={(event) => setForm('modificationDate', event.currentTarget.value)} />
+          <input type="datetime-local" step="0.001" value={form.modificationDate} onInput={(event) => setForm('modificationDate', event.currentTarget.value)} />
         </label>
+        <div class="doc-metadata-timezone-hint">
+          {tHardening('metadata.timezoneHint', {
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'local',
+          })}
+        </div>
         <Show when={!parsed()}><div class="doc-props-error">{t('docProperties.invalidDate')}</div></Show>
       </div>
       <div class="doc-props-section">

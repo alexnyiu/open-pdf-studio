@@ -83,6 +83,14 @@ export interface PreloadStatus {
 
 export interface DocumentState {
   id: string;
+  /**
+   * Runtime-only identity for the currently installed PDF proxy/content tree.
+   * Async editor, render, metadata, and OCR work must match this generation
+   * before it may publish or mutate document-owned state.
+   */
+  lifecycleGeneration: number;
+  /** Runtime-only font substitutions approved for this open document. */
+  fontSubstitutionApprovals: Map<string, boolean>;
   filePath: string | null;
   fileName: string;
   pdfDoc: any; // pdfjs-dist PDFDocumentProxy

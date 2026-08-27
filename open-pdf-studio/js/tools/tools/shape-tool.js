@@ -97,17 +97,16 @@ export const shapeTool = {
       : ctx.createAnnotationFromTool(tool, state.startX, state.startY, endX, endY, e);
     if (ann) {
       const doc = state.documents[state.activeDocumentIndex];
-      if (doc) doc.annotations.push(ann);
-      if (!['textbox', 'callout'].includes(ann.type)) ctx.recordAdd(ann);
+      if (!['textbox', 'callout'].includes(ann.type)) {
+        if (doc) doc.annotations.push(ann);
+        ctx.recordAdd(ann);
+      }
     }
     ctx.redraw();
 
     // Auto-start text editing for textbox/callout
     if (ann && ['textbox', 'callout'].includes(ann.type)) {
-      const doc = state.documents[state.activeDocumentIndex];
-      if (doc) { doc.selectedAnnotations = [ann]; doc.selectedAnnotation = ann; }
-      ctx.showProperties(ann);
-      ctx.startTextEditing(ann, { isNew: true });
+      void ctx.startTextEditing(ann, { isNew: true });
     }
 
     // Auto-reset to select tool

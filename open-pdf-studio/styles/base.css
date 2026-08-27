@@ -28,11 +28,32 @@
 .ribbon-container, .ribbon-container *,
 .status-bar, .status-bar *,
 .left-panel, .left-panel *,
-.properties-panel, .properties-panel *,
+.properties-panel,
 .app-menu-overlay, .app-menu-overlay *,
 .context-menu, .context-menu *,
 .document-tabs, .document-tabs * {
   cursor: default !important;
+}
+
+.properties-panel input[type="text"],
+.properties-panel input[type="number"],
+.properties-panel input[type="search"],
+.properties-panel input[type="datetime-local"],
+.properties-panel textarea,
+.properties-panel [contenteditable="true"] {
+  cursor: text;
+}
+
+.properties-panel button:not(:disabled),
+.properties-panel select:not(:disabled),
+.properties-panel input[type="checkbox"]:not(:disabled),
+.properties-panel input[type="radio"]:not(:disabled),
+.properties-panel [role="button"]:not(.doc-metadata-inline-value) {
+  cursor: pointer;
+}
+
+.properties-panel :disabled {
+  cursor: default;
 }
 
 body {

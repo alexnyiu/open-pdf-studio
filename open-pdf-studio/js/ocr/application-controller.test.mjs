@@ -27,6 +27,10 @@ const {
   cancelApplicationOcrDocument,
 } = await vite.ssrLoadModule('/js/ocr/application-controller.js');
 const {
+  summarizeOcrApplicationPerformance,
+  validateOcrApplicationPerformanceSummary,
+} = await vite.ssrLoadModule('/js/ocr/application-performance.js');
+const {
   beginOcrPageAttempt,
   createDocumentOcrState,
   getPendingOcrTextItems,
@@ -38,6 +42,7 @@ const {
   removeApplicationOwnedOcr,
 } = await vite.ssrLoadModule('/js/ocr/undo-commands.js');
 const { state } = await vite.ssrLoadModule('/js/core/state.js');
+const { replaceDocumentPdfProxy } = await vite.ssrLoadModule('/js/core/document-lifecycle.js');
 const { redo, undo } = await vite.ssrLoadModule('/js/core/undo-manager.js');
 const {
   textCacheSnapshot,
@@ -54,6 +59,7 @@ function makeDocument(id, pageTextItems) {
   const pdfDoc = fakePdfDocument(pageTextItems);
   return {
     id,
+    lifecycleGeneration: 0,
     pdfDoc,
     currentPage: 1,
     viewMode: 'single',
@@ -210,6 +216,365 @@ test('multi-page orchestration serializes inference and records one compound OCR
     .every((stage) => progress.some((event) => event.pageState === stage)));
   assert.ok(progress.every((event, index) => index === 0 ||
     event.documentFraction >= progress[index - 1].documentFraction));
+  controller.dispose();
+});
+
+test('page summaries retain separate native, validation, apply, lifecycle, and resource metrics', async () => {
+  const document = makeDocument('document-performance-evidence', [[]]);
+  const fixtures = new Map();
+  let clock = 0;
+  const controller = new OcrApplicationController({
+    clock: () => {
+      clock += 2;
+      return clock;
+    },
+    runPage: async ({ request }) => {
+      const fixture = fixtures.get(request.jobId);
+      return {
+        outcome: {
+          status: 'completed',
+          result: fixture.result,
+          lifecycle: [{ event: 'child-spawned', atMs: 3 }],
+          resources: { peakRssBytes: 1_048_576 },
+        },
+        pageGeometry: fixture.pageGeometry,
+      };
+    },
+  });
+
+  const summary = await startJob(controller, document, fixtures).completion;
+
+  assert.deepEqual(summary.pages[0].performance, {
+    rasterMs: 1,
+    childStartupMs: 1,
+    modelStartupMs: 1,
+    detectionMs: 1,
+    recognitionMs: 1,
+    validationMs: 2,
+    applyMs: 2,
+    totalOcrMs: 5,
+    lifecycle: [{ event: 'child-spawned', atMs: 3 }],
+    resources: { peakRssBytes: 1_048_576 },
+  });
+  assert.deepEqual(validateOcrApplicationPerformanceSummary(summary.performance, {
+    expectedPageCount: 1,
+  }), []);
+  assert.deepEqual(summary.performance.stageOrder, [
+    'rasterization', 'childStartup', 'modelStartup', 'inference', 'detection',
+    'recognition', 'validation', 'apply', 'totalOcr',
+  ]);
+  assert.deepEqual(summary.performance.stages.inference, {
+    source: 'detectionMs + recognitionMs',
+    samples: 1,
+    totalMs: 2,
+    meanMs: 2,
+    medianMs: 2,
+    p95Ms: 2,
+    maxMs: 2,
+  });
+  assert.equal(summary.performance.resourceLifecycle.pagesWithLifecycle, 1);
+  assert.equal(summary.performance.resourceLifecycle.pagesWithResources, 1);
+  controller.dispose();
+});
+
+test('application performance aggregation has stable stage percentiles and fails closed on gaps', () => {
+  const pages = [1, 2, 3, 4].map((pageNumber) => ({
+    pageNumber,
+    performance: {
+      rasterMs: pageNumber,
+      childStartupMs: pageNumber + 1,
+      modelStartupMs: pageNumber + 2,
+      detectionMs: pageNumber * 2,
+      recognitionMs: pageNumber * 3,
+      validationMs: pageNumber + 3,
+      applyMs: pageNumber + 4,
+      totalOcrMs: pageNumber * 10,
+      lifecycle: [{ stage: 'child-spawned' }],
+      resources: { maximumAdapterInstances: 1 },
+    },
+  }));
+  const summary = summarizeOcrApplicationPerformance(pages, {
+    prefetch: { requested: 3, used: 3, maxBuffered: 1 },
+  });
+
+  assert.deepEqual(summary.stages.rasterization, {
+    source: 'rasterMs',
+    samples: 4,
+    totalMs: 10,
+    meanMs: 2.5,
+    medianMs: 2,
+    p95Ms: 4,
+    maxMs: 4,
+  });
+  assert.deepEqual(summary.stages.inference, {
+    source: 'detectionMs + recognitionMs',
+    samples: 4,
+    totalMs: 50,
+    meanMs: 12.5,
+    medianMs: 10,
+    p95Ms: 20,
+    maxMs: 20,
+  });
+  assert.equal(summary.prefetch.boundedBuffer, true);
+  assert.deepEqual(validateOcrApplicationPerformanceSummary(summary, {
+    expectedPageCount: 4,
+  }), []);
+
+  pages[3].performance.recognitionMs = Number.NaN;
+  const incomplete = summarizeOcrApplicationPerformance(pages);
+  assert.equal(incomplete.instrumentationAvailable, false);
+  assert.match(
+    validateOcrApplicationPerformanceSummary(incomplete, { expectedPageCount: 4 }).join(' '),
+    /instrumentation is unavailable|sample count is invalid/u,
+  );
+});
+
+test('next-page native raster prefetch is bounded and never starts a second inference', async () => {
+  const document = makeDocument('document-prefetch', [[], [], []]);
+  const fixtures = new Map();
+  const prefetchedReceipts = new Map();
+  const receivedReceipts = new Map();
+  let activeInference = 0;
+  let maximumActiveInference = 0;
+  let prefetchResolvedDuringInference = false;
+  const controller = new OcrApplicationController({
+    async prefetchPage({ pageNumber, applicationJobId, documentId }) {
+      const receipt = {
+        contract: 'open-pdf-studio.ocr.native-raster-prefetch',
+        status: 'ready',
+        applicationJobId,
+        documentId,
+        pageIndex: pageNumber - 1,
+        token: `prefetch-${pageNumber}`,
+        widthPx: 10,
+        heightPx: 10,
+        byteLength: 400,
+        rasterMs: 2,
+      };
+      prefetchedReceipts.set(pageNumber, receipt);
+      await new Promise((resolve) => setImmediate(resolve));
+      prefetchResolvedDuringInference ||= activeInference === 1;
+      return receipt;
+    },
+    async runPage({ request, prefetchReceipt }) {
+      const pageNumber = request.page.index + 1;
+      receivedReceipts.set(pageNumber, prefetchReceipt ?? null);
+      activeInference += 1;
+      maximumActiveInference = Math.max(maximumActiveInference, activeInference);
+      await new Promise((resolve) => setImmediate(resolve));
+      activeInference -= 1;
+      const fixture = fixtures.get(request.jobId);
+      return { outcome: { status: 'completed', result: fixture.result }, pageGeometry: fixture.pageGeometry };
+    },
+  });
+
+  const summary = await startJob(controller, document, fixtures).completion;
+
+  assert.equal(maximumActiveInference, 1);
+  assert.equal(prefetchResolvedDuringInference, true);
+  assert.equal(receivedReceipts.get(1), null);
+  assert.equal(receivedReceipts.get(2), prefetchedReceipts.get(2));
+  assert.equal(receivedReceipts.get(3), prefetchedReceipts.get(3));
+  assert.deepEqual(summary.prefetch, {
+    requested: 2,
+    used: 2,
+    discarded: 0,
+    failed: 0,
+    maxBuffered: 1,
+    rasterMs: 4,
+    bytesPrepared: 800,
+    bytesUsed: 800,
+    peakBufferedBytes: 400,
+  });
+  controller.dispose();
+});
+
+test('cancellation discards a pending next-page prefetch without starting another inference', async () => {
+  const document = makeDocument('document-prefetch-cancel', [[], []]);
+  const fixtures = new Map();
+  const prefetchStarted = deferred();
+  const prefetchResult = deferred();
+  const nativeStarted = deferred();
+  const nativeResult = deferred();
+  let inferenceCalls = 0;
+  const controller = new OcrApplicationController({
+    prefetchPage: async () => {
+      prefetchStarted.resolve();
+      return prefetchResult.promise;
+    },
+    runPage: async () => {
+      inferenceCalls += 1;
+      nativeStarted.resolve();
+      return nativeResult.promise;
+    },
+    cancelPage: async () => {
+      nativeResult.resolve({ outcome: { status: 'cancelled' }, pageGeometry: null });
+    },
+  });
+  const job = startJob(controller, document, fixtures);
+  await Promise.all([prefetchStarted.promise, nativeStarted.promise]);
+
+  const summary = await job.cancel('user-cancelled');
+  prefetchResult.resolve({ prefetchedPageNumber: 2 });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(inferenceCalls, 1);
+  assert.deepEqual(summary.pages.map((page) => page.state), ['cancelled', 'cancelled']);
+  assert.deepEqual(summary.prefetch, {
+    requested: 1,
+    used: 0,
+    discarded: 1,
+    failed: 0,
+    maxBuffered: 1,
+    rasterMs: 0,
+    bytesPrepared: 0,
+    bytesUsed: 0,
+    peakBufferedBytes: 0,
+  });
+  controller.dispose();
+});
+
+test('a failed next-page prefetch falls back without failing the OCR page', async () => {
+  const document = makeDocument('document-prefetch-fallback', [[], []]);
+  const fixtures = new Map();
+  const receivedReceipts = [];
+  const controller = new OcrApplicationController({
+    prefetchPage() {
+      throw new Error('fixture prefetch failure');
+    },
+    async runPage({ request, prefetchReceipt }) {
+      receivedReceipts.push(prefetchReceipt ?? null);
+      const fixture = fixtures.get(request.jobId);
+      return { outcome: { status: 'completed', result: fixture.result }, pageGeometry: fixture.pageGeometry };
+    },
+  });
+
+  const summary = await startJob(controller, document, fixtures).completion;
+
+  assert.equal(summary.status, 'completed');
+  assert.deepEqual(receivedReceipts, [null, null]);
+  assert.deepEqual(summary.prefetch, {
+    requested: 1,
+    used: 0,
+    discarded: 0,
+    failed: 1,
+    maxBuffered: 1,
+    rasterMs: 0,
+    bytesPrepared: 0,
+    bytesUsed: 0,
+    peakBufferedBytes: 0,
+  });
+  controller.dispose();
+});
+
+test('save/reload proxy replacement synchronously cancels an active OCR owner before apply', async () => {
+  const document = makeDocument('document-save-reload-cancel', [[]]);
+  document.filePath = '/parent-only-test-source.pdf';
+  const originalPdfDocument = document.pdfDoc;
+  const replacementPdfDocument = fakePdfDocument([[]]);
+  const fixtures = new Map();
+  const nativeStarted = deferred();
+  const nativeResult = deferred();
+  let cancelCalls = 0;
+  const controller = new OcrApplicationController({
+    runPage: async () => {
+      nativeStarted.resolve();
+      return nativeResult.promise;
+    },
+    cancelPage: async () => {
+      cancelCalls += 1;
+      nativeResult.resolve({ outcome: { status: 'cancelled' }, pageGeometry: null });
+    },
+  });
+  const job = startJob(controller, document, fixtures);
+  await nativeStarted.promise;
+
+  const previous = replaceDocumentPdfProxy(document, replacementPdfDocument, 'validated-save-install');
+  const summary = await job.completion;
+
+  assert.equal(previous, originalPdfDocument);
+  assert.equal(document.pdfDoc, replacementPdfDocument);
+  assert.equal(document.lifecycleGeneration, 1);
+  assert.equal(cancelCalls, 1);
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(summary.cancellationReason, 'validated-save-install');
+  assert.deepEqual(summary.appliedPageNumbers, []);
+  assert.equal(document.ocr.pages[1]?.recognition.result ?? null, null);
+  controller.dispose();
+});
+
+test('an unannounced lifecycle/source replacement is rejected at the post-inference boundary', async () => {
+  const document = makeDocument('document-lifecycle-stale-result', [[]]);
+  document.filePath = '/parent-only-test-source.pdf';
+  const fixtures = new Map();
+  const controller = new OcrApplicationController({
+    runPage: async ({ request }) => {
+      document.lifecycleGeneration += 1;
+      document.pdfDoc = fakePdfDocument([[]]);
+      const fixture = fixtures.get(request.jobId);
+      return { outcome: { status: 'completed', result: fixture.result }, pageGeometry: fixture.pageGeometry };
+    },
+  });
+
+  const summary = await startJob(controller, document, fixtures).completion;
+
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(summary.cancellationReason, 'document-lifecycle-changed');
+  assert.equal(summary.pages[0].staleRejected, true);
+  assert.equal(summary.pages[0].failure.code, 'OCR_DOCUMENT_LIFECYCLE_CHANGED');
+  assert.deepEqual(summary.appliedPageNumbers, []);
+  assert.equal(document.ocr.pages[1]?.recognition.result ?? null, null);
+  controller.dispose();
+});
+
+test('a changed parent source path is rejected before a completed result can apply', async () => {
+  const document = makeDocument('document-source-path-stale', [[]]);
+  document.filePath = '/parent-only-test-source.pdf';
+  const fixtures = new Map();
+  const controller = new OcrApplicationController({
+    runPage: async ({ request }) => {
+      document.filePath = '/replacement-after-save.pdf';
+      const fixture = fixtures.get(request.jobId);
+      return { outcome: { status: 'completed', result: fixture.result }, pageGeometry: fixture.pageGeometry };
+    },
+  });
+
+  const summary = await startJob(controller, document, fixtures).completion;
+
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(summary.cancellationReason, 'source-identity-changed');
+  assert.equal(summary.pages[0].staleRejected, true);
+  assert.equal(summary.pages[0].failure.code, 'OCR_SOURCE_IDENTITY_CHANGED');
+  assert.deepEqual(summary.appliedPageNumbers, []);
+  controller.dispose();
+});
+
+test('a later page request cannot replace the captured document fingerprint', async () => {
+  const document = makeDocument('document-source-fingerprint-stale', [[], []]);
+  const fixtures = new Map();
+  const createRequest = requestFactory(fixtures);
+  let inferenceCalls = 0;
+  const controller = new OcrApplicationController({
+    runPage: completedRunPage(fixtures, async () => { inferenceCalls += 1; }),
+    prefetchPage: async () => { throw new Error('prefetch intentionally unavailable'); },
+  });
+  const job = startJob(controller, document, fixtures, {
+    createPageRequest: async (input) => {
+      const request = await createRequest(input);
+      if (input.pageNumber === 2) request.document.fingerprint.value = 'f'.repeat(64);
+      return request;
+    },
+  });
+
+  const summary = await job.completion;
+
+  assert.equal(inferenceCalls, 1);
+  assert.equal(summary.status, 'cancelled');
+  assert.equal(summary.cancellationReason, 'source-identity-changed');
+  assert.equal(summary.pages[1].staleRejected, true);
+  assert.equal(summary.pages[1].failure.code, 'OCR_SOURCE_IDENTITY_CHANGED');
+  assert.deepEqual(summary.appliedPageNumbers, [1]);
   controller.dispose();
 });
 

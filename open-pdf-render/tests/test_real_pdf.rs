@@ -20,14 +20,20 @@ fn test_real_bouwtekening() {
     let page = doc.render_page(0, 1.0, 0).expect("Failed to render page");
     let elapsed = start.elapsed();
 
-    println!("Rendered: {}x{} pixels in {:?}", page.width, page.height, elapsed);
+    println!(
+        "Rendered: {}x{} pixels in {:?}",
+        page.width, page.height, elapsed
+    );
     println!("RGBA bytes: {}", page.rgba.len());
 
     // Check it's not all white
-    let non_white_pixels = page.rgba.chunks(4)
+    let non_white_pixels = page
+        .rgba
+        .chunks(4)
         .filter(|px| px[0] != 255 || px[1] != 255 || px[2] != 255)
         .count();
-    println!("Non-white pixels: {} / {} ({}%)",
+    println!(
+        "Non-white pixels: {} / {} ({}%)",
         non_white_pixels,
         page.width * page.height,
         non_white_pixels * 100 / (page.width * page.height) as usize
@@ -35,10 +41,14 @@ fn test_real_bouwtekening() {
 
     // Save as PNG for visual inspection
     let img = image::RgbaImage::from_raw(page.width, page.height, page.rgba).unwrap();
-    img.save("tests/output_real.png").expect("Failed to save PNG");
+    img.save("tests/output_real.png")
+        .expect("Failed to save PNG");
     println!("Saved to tests/output_real.png");
 
-    assert!(non_white_pixels > 0, "Page is entirely white - no content rendered!");
+    assert!(
+        non_white_pixels > 0,
+        "Page is entirely white - no content rendered!"
+    );
 }
 
 #[test]
@@ -65,6 +75,11 @@ fn test_extract_draw_commands() {
     let elapsed = t0.elapsed();
 
     let data = cmds.into_bytes();
-    println!("Draw commands: {} bytes ({} KB) in {:?}", data.len(), data.len() / 1024, elapsed);
+    println!(
+        "Draw commands: {} bytes ({} KB) in {:?}",
+        data.len(),
+        data.len() / 1024,
+        elapsed
+    );
     assert!(data.len() > 8, "Should have commands beyond header");
 }

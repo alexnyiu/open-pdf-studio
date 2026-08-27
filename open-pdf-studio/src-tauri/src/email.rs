@@ -18,8 +18,8 @@ pub async fn email_pdf(path: String, subject: Option<String>) -> Result<(), Stri
 #[cfg(target_os = "windows")]
 fn email_impl(path: &str, subject: &str) -> Result<(), String> {
     use std::ffi::CString;
-    use std::path::Path;
     use std::os::raw::{c_char, c_void};
+    use std::path::Path;
 
     // Simple MAPI structs (ANSI). Layout must match mapi.h exactly.
     #[repr(C)]

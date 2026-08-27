@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use app_lib::pdfium_renderer::{
-    init_pdfium, get_or_load_pdfium_doc_with_bytes, render_page_to_rgba, PdfiumDocCache,
+    get_or_load_pdfium_doc_with_bytes, init_pdfium, render_page_to_rgba, PdfiumDocCache,
 };
 
 #[test]
@@ -35,11 +35,10 @@ fn pdfium_renders_barn_page_one() {
     let arc_bytes = Arc::new(bytes);
 
     let cache = PdfiumDocCache::default();
-    let handle = get_or_load_pdfium_doc_with_bytes(&pdf_path, arc_bytes, &cache)
-        .expect("load pdfium doc");
+    let handle =
+        get_or_load_pdfium_doc_with_bytes(&pdf_path, arc_bytes, &cache).expect("load pdfium doc");
 
-    let (w, h, rgba) = render_page_to_rgba(handle.document(), 0, 1.0, 0)
-        .expect("render page");
+    let (w, h, rgba) = render_page_to_rgba(handle.document(), 0, 1.0, 0).expect("render page");
 
     assert!(w > 100, "width should be reasonable, got {}", w);
     assert!(h > 100, "height should be reasonable, got {}", h);
@@ -49,7 +48,13 @@ fn pdfium_renders_barn_page_one() {
         .chunks(4)
         .filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255)
         .count();
-    assert!(non_white > 100, "Page is mostly white — render likely empty");
+    assert!(
+        non_white > 100,
+        "Page is mostly white — render likely empty"
+    );
 
-    println!("BARN page 1 rendered: {}x{} px, {} non-white pixels", w, h, non_white);
+    println!(
+        "BARN page 1 rendered: {}x{} px, {} non-white pixels",
+        w, h, non_white
+    );
 }

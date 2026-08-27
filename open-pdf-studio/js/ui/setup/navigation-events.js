@@ -1,7 +1,11 @@
 import { state, getActiveDocument } from '../../core/state.js';
 import { goToPage } from '../../pdf/renderer.js';
-import { viewport, zoomAtPoint, suppressNextFit, addPanVelocity, stopPanMomentum } from '../../pdf/pdf-viewport.js';
-import { normalizedWheelDelta, smoothWheelZoomFactor } from '../../pdf/zoom-gesture.js';
+import { viewport, bumpViewportRevision, suppressNextFit, addPanVelocity, stopPanMomentum } from '../../pdf/pdf-viewport.js';
+import { normalizedWheelDelta } from '../../pdf/zoom-gesture.js';
+import {
+  cancelPendingDocumentZoom,
+  scheduleDocumentZoom,
+} from '../../pdf/document-zoom-scheduler.js';
 import { getTool } from '../../tools/tool-registry.js';
 
 // ─── Wheel Zoom + Pan + Page Navigation ───────────────────────────────────
@@ -16,24 +20,6 @@ let _pageNavCooldown = false;
 // Pixels of slack at the page edge before we treat the page as "at the edge"
 // and trigger a page change. Without this, sub-pixel float offsets prevent nav.
 const EDGE_SLACK = 1;
-
-// Wheel and pinch events can arrive faster than the display refresh. Coalesce
-// them to one cursor-anchored zoom update per animation frame.
-let _zoomFrame = 0;
-let _zoomDelta = 0;
-let _zoomPoint = { x: 0, y: 0 };
-function _scheduleSmoothZoom(x, y, delta) {
-  _zoomPoint = { x, y };
-  _zoomDelta += delta;
-  if (_zoomFrame) return;
-  _zoomFrame = requestAnimationFrame(() => {
-    const pending = _zoomDelta;
-    const point = _zoomPoint;
-    _zoomDelta = 0;
-    _zoomFrame = 0;
-    if (pending) zoomAtPoint(point.x, point.y, smoothWheelZoomFactor(pending));
-  });
-}
 
 export function setupWheelZoom() {
   document.querySelector('.main-view')?.addEventListener('wheel', async (e) => {
@@ -68,9 +54,7 @@ export function setupWheelZoom() {
             // page follows the cursor immediately instead of jumping a fixed
             // chunk per notch. Clamp per event so a high-res wheel can't
             // slingshot through several zoom levels at once.
-            const zf = smoothWheelZoomFactor(contDy);
-            const m = await import('../../pdf/renderer.js');
-            m.continuousZoomBy(zf, anchorY);
+            scheduleDocumentZoom({ delta: contDy, anchorY });
           }
           return;
         }
@@ -82,10 +66,12 @@ export function setupWheelZoom() {
         // to the legacy zoomIn/zoomOut path (loses cursor anchor, but at
         // least the user can zoom).
         if (activeDoc.pdfDoc && activeDoc.filePath === null) {
-          const wheelDy = e.deltaY || 0;
+          const wheelDy = normalizedWheelDelta(e.deltaY, e.deltaMode, window.innerHeight);
           if (wheelDy !== 0) {
-            const m = await import('../../pdf/renderer.js');
-            if (wheelDy < 0) await m.zoomIn(); else await m.zoomOut();
+            scheduleDocumentZoom({
+              delta: wheelDy,
+              clientPoint: { x: e.clientX, y: e.clientY },
+            });
           }
         }
         return;
@@ -103,7 +89,7 @@ export function setupWheelZoom() {
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
       const dy = normalizedWheelDelta(e.deltaY, e.deltaMode, window.innerHeight);
-      if (dy) _scheduleSmoothZoom(sx, sy, dy);
+      if (dy) scheduleDocumentZoom({ delta: dy, screenPoint: { x: sx, y: sy } });
       return;
     }
 
@@ -126,8 +112,8 @@ export function setupWheelZoom() {
       const pdfCanvas = document.getElementById('pdf-canvas');
       if (!pdfCanvas) return;
 
-      const dx = e.deltaX || 0;
-      const dy = e.deltaY || 0;
+      const dx = normalizedWheelDelta(e.deltaX, e.deltaMode, window.innerHeight);
+      const dy = normalizedWheelDelta(e.deltaY, e.deltaMode, window.innerHeight);
       const pageScreenH = viewport.pageH * viewport.zoom;
       const pageScreenW = viewport.pageW * viewport.zoom;
       // CSS-pixels, niet de backing-store. viewport.offsetY/zoom rekenen in
@@ -246,6 +232,7 @@ function alignPageToTop() {
     ? (vpH - pageScreenH) / 2
     : 0;
   viewport.dirty = true;
+  bumpViewportRevision('page-align-top');
 }
 
 // After going back via wheel, snap the new page so its BOTTOM is at the
@@ -258,8 +245,9 @@ function alignPageToBottom() {
     ? (vpH - pageScreenH) / 2
     : vpH - pageScreenH;
   viewport.dirty = true;
+  bumpViewportRevision('page-align-bottom');
 }
 
 export function cancelPendingZoom() {
-  // No-op — viewport zoom is instant, no pending renders
+  cancelPendingDocumentZoom();
 }

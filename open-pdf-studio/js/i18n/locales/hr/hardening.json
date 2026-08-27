@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Uredi {{label}}",
+    "editValueHint": "{{label}}. Za uređivanje dvaput kliknite ili pritisnite Enter.",
+    "timezoneHint": "Datumi se prikazuju u vremenskoj zoni {{timezone}} i spremaju u formatu ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Odobri zamjenu fonta",
+    "sourceFace": "Izvorni font",
+    "sourceFaces": "Izvorni fontovi",
+    "unknown": "Nepoznato",
+    "packagedSubstitute": "Priloženi zamjenski font",
+    "notAvailable": "Nije dostupno",
+    "sampleText": "Uzorak",
+    "sampleFallback": "Brza smeđa lisica preskače lijenog psa.",
+    "scope": "Primjenjuje se na",
+    "scopeAnnotation": "Ovu bilješku",
+    "scopeSelection": "Odabrane tekstne okvire",
+    "scopeParagraph": "Ovaj odlomak PDF-a",
+    "scopeFindReplace": "Ovu izmjenu Pronađi/Zamijeni",
+    "remember": "Zapamti ovo odobrenje za ovaj otvoreni dokument",
+    "approve": "Upotrijebi zamjenski font",
+    "cancel": "Odustani"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Uredi tekst PDF-a",
+      "editFormatted": "Uredi oblikovani tekst PDF-a",
+      "editAnnotation": "Uredi oblikovani tekst vrste {{type}}",
+      "editRegion": "Uredi područje oblikovanog teksta PDF-a: {{text}}",
+      "editScannedLine": "Uredi redak skeniranog teksta: {{text}}",
+      "editScannedFixed": "Uredi fiksno područje skeniranog teksta: {{text}}",
+      "editScannedReflow": "Uredi područje ponovnog prijeloma odlomka skeniranog teksta: {{text}}",
+      "selectedOcrParagraph": "Odabrani OCR odlomak s {{count}} redaka"
+    },
+    "handles": {
+      "move": "Premjesti tekstni okvir",
+      "moveHint": "Povucite za premještanje tekstnog okvira",
+      "resize": "Promijeni veličinu tekstnog okvira",
+      "resizeHint": "Povucite za promjenu veličine tekstnog okvira"
+    },
+    "actions": {
+      "apply": "Primijeni",
+      "cancel": "Odustani"
+    },
+    "status": {
+      "ocrOverflow": "Cijeli nacrt OCR-a vidljiv je izvan odobrenog područja. Spremanje ostaje blokirano dok tekst ne stane prema točnoj provjeri fiksnog područja.",
+      "scannedRegion": "Skenirani tekst uređuje se unutar odobrenog područja.",
+      "shaping": "Dovršavanje točnog rasporeda teksta…",
+      "overlap": "Tekst se preklapa s postojećim sadržajem stranice. Primjena je dopuštena; susjedni izvorni objekti neće se pomaknuti.",
+      "lowContrast": "Izvorne boje niskog kontrasta imaju pozadinu samo za uređivanje. Spremljene boje ostaju nepromijenjene.",
+      "layoutRejectedPrefix": "Raspored teksta odbijen:",
+      "layoutRejected": "Raspored teksta odbijen: {{reasons}}",
+      "shapingRejected": "Oblikovanje teksta odbijeno: {{reason}}",
+      "nativeManual": "Izvorni tekst uređuje se u tekstnom okviru s ručnim prijelomom redaka. Pritisnite Enter za novi redak.",
+      "nativeManualContrast": "Izvorni tekst uređuje se u tekstnom okviru s ručnim prijelomom redaka. Pritisnite Enter za novi redak. Izvorne boje niskog kontrasta imaju pozadinu samo za uređivanje; spremljene boje ostaju nepromijenjene.",
+      "nativeGrowing": "Izvorni tekst se uređuje. Širina je fiksna, a područje raste prema dolje.",
+      "nativeGrowingContrast": "Izvorni tekst se uređuje. Širina je fiksna, a područje raste prema dolje. Izvorne boje niskog kontrasta imaju pozadinu samo za uređivanje; spremljene boje ostaju nepromijenjene.",
+      "scannedEstimate": "Skenirani tekst se uređuje. Svojstva fonta su procijenjena.",
+      "applyRejected": "Izmjenu teksta nije bilo moguće primijeniti: {{reason}}",
+      "cropBoxRejected": "Oblikovani tekst nije moguće primijeniti unutar okvira CropBox stranice.",
+      "layoutTimeout": "Točan raspored teksta nije dovršen na vrijeme. Uređivač ostaje otvoren.",
+      "scannedRejected": "Izmjena skeniranog teksta odbijena: {{reason}}",
+      "lineBreakUnsupported": "Prijelomi redaka nisu podržani. Za primjenu ove izmjene jednog retka pritisnite Command-Enter.",
+      "ocrOneLine": "Uređuje se jedan izdvojeni redak skeniranog teksta. Svojstva fonta su procijenjena.",
+      "ocrFixed": "Uređuje se više OCR redaka unutar jednog fiksnog izvornog područja. Jedan odlomak prelama se unutar tog područja; čvrsti prijelomi redaka zadržavaju način fiksnih redaka. Primijenite tipkama Command-Enter.",
+      "ocrReflow": "Jedan odlomak uređuje se unutar odobrenog izvornog OCR područja. Primijenite tipkama Command-Enter; prekoračenje se odbija.",
+      "operationFailed": "Tekstnu radnju nije bilo moguće dovršiti. Dokument je ostao nepromijenjen.",
+      "staleDraft": "Dokument se promijenio dok je uređivač teksta bio otvoren. Skica je odbačena.",
+      "multipleOcrParagraphs": "Odabir obuhvaća više OCR odlomaka. Pregledajte zasebne obrise i izričito upotrijebite Spoji. Spajanje između stupaca i dalje je onemogućeno.",
+      "nativeColumnBoundary": "Ovaj odlomak prelazi otkrivenu granicu izvornog stupca. Uređivanje je blokirano i dokument je ostao nepromijenjen.",
+      "nativeSourceUnavailable": "Vidljivi tekst nije bilo moguće povezati s prihvatljivim izvornim operatorima. Dokument je ostao nepromijenjen.",
+      "nativeDeleteUnavailable": "Ovaj izvorni PDF tekst nije moguće sigurno izbrisati jer su njegovi točni izvorni operatori dvosmisleni. Dokument je ostao nepromijenjen.",
+      "readOnly": "Prethodno uređeni tekst samo je za čitanje. Dokument je ostao nepromijenjen."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Ograničenje od {{limit}} grafema",
+      "lineThreshold": "Ograničenje od {{limit}} redaka",
+      "message": "Zadržan je cijeli zalijepljeni sadržaj: {{graphemeCount}} grafema u {{lineCount}} redaka. Prekoračeno ograničenje: {{thresholds}}. Pretpregled je ograničen. Upotrijebite Poništi lijepljenje kako biste uklonili cijeli umetnuti sadržaj.",
+      "messageWithExpansion": "Zadržan je cijeli zalijepljeni sadržaj: {{graphemeCount}} grafema u {{lineCount}} redaka. Prekoračeno ograničenje: {{thresholds}}. Pretpregled je ograničen. Upotrijebite Poništi lijepljenje za uklanjanje cijelog umetnutog sadržaja ili Proširi okvir za prihvaćanje točnih provjerenih granica.",
+      "undo": "Poništi lijepljenje",
+      "expand": "Proširi okvir"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Grupiranje OCR odlomaka",
+    "title": "Grupiranje",
+    "mergeSelected": "Spoji odabrano",
+    "mergeSelectedParagraphs": "Spoji odabrane odlomke",
+    "mergePrevious": "Spoji s prethodnim",
+    "mergePreviousHint": "Spoji s prethodnim OCR odlomkom",
+    "mergeNext": "Spoji sa sljedećim",
+    "mergeNextHint": "Spoji sa sljedećim OCR odlomkom",
+    "splitBefore": "Razdijeli prije",
+    "splitAfter": "Razdijeli poslije",
+    "reset": "Vrati automatsko grupiranje",
+    "crossColumnDisabled": "Spajanje između stupaca je onemogućeno",
+    "ambiguousBoundariesOnly": "Ručno se mogu spojiti samo nejasne granice unutar istog stupca",
+    "tooManyLines": "Više od 32 retka. Ručno razdijelite ovaj odlomak prije uređivanja.",
+    "mergeDescription": "Postojeći tekstovi odvojeni su sačuvanim čvrstim prijelomom retka. Spajanje se primjenjuje tek nakon što kombinirana izvorna zakrpa i fiksno područje prođu provjeru.",
+    "mergedText": "Spojeni OCR tekst",
+    "splitRegion": "Podijeli OCR područje",
+    "firstRegion": "Prvo područje",
+    "secondRegion": "Drugo područje",
+    "sourceLines": "Izvorni redci: {{lines}}"
+  }
+}

@@ -8,7 +8,11 @@ import { redrawAnnotations, redrawContinuous, renderAnnotationsForPage, snapToGr
 import { showProperties, hideProperties, showMultiSelectionProperties } from '../ui/panels/properties-panel.js';
 import { startTextEditing, finishTextEditing, addComment } from './text-editing.js';
 import { openStickyPopup } from '../bridge.js';
-import { findTextEditAtPosition, startTextEditEditing } from './text-edit-tool.js';
+import {
+  findTextEditAtPosition,
+  startInsertedTextEditingAtPoint,
+  startTextEditEditing,
+} from './text-edit-tool.js';
 import { markDocumentModified } from '../ui/chrome/tabs.js';
 import { recordAdd, recordModify, recordBulkModify } from '../core/undo-manager.js';
 import { showStampPicker, placeOverrideStamp } from '../annotations/stamps.js';
@@ -225,6 +229,7 @@ export function buildToolContext(e, coords) {
     addComment,
     openStickyPopup,
     findTextEditAtPosition,
+    startInsertedTextEditingAtPoint,
     startTextEditEditing,
 
     // Stamps and signatures

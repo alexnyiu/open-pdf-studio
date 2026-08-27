@@ -26,7 +26,7 @@ assert.equal(process.platform, 'darwin', `${reflowMode ? 'paragraph reflow' : 'f
 const execFileAsync = promisify(execFile);
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appPath = path.resolve(process.env.OPEN_PDF_STUDIO_PACKAGED_APP || path.join(
-  projectDir, '..', 'target', 'release', 'bundle', 'macos',
+  projectDir, '..', 'target', 'aarch64-apple-darwin', 'release', 'bundle', 'macos',
   'Open PDF Studio.app', 'Contents', 'MacOS', 'open-pdf-studio',
 ));
 const appBundlePath = path.resolve(appPath, '..', '..', '..');
@@ -175,14 +175,38 @@ async function startRegionEditor(expectedText, sourceLineId = null) {
   const selector = sourceLineId
     ? `.textLayer span[data-ocr-region-id][data-scanned-text-edit-hit-only="true"][data-ocr-line-id="${sourceLineId}"]`
     : '.textLayer span[data-ocr-region-id][data-scanned-text-edit-hit-only="true"]';
-  await waitUi(selector, (value) => value.found && value.visible
+  const hit = await waitUi(selector, (value) => value.found && value.visible
     && normalize(value.accessibility?.label) === normalize(expectedText)
     && value.rect.width > 5 && value.rect.height > 5, 60_000);
   await click(selector);
-  const editor = await waitUi(
-    '.pdf-text-editor[aria-multiline="true"][dir="ltr"]',
-    (value) => value.found && value.visible && value.focused && value.value === expectedText,
-  );
+  let editor;
+  try {
+    editor = await waitUi(
+      '.pdf-text-editor',
+      (value) => value.found && value.visible && value.focused && value.value === expectedText,
+    );
+    assert.equal(editor.accessibility.multiline, 'true');
+    assert.equal(editor.accessibility.direction, 'ltr');
+  } catch (error) {
+    const [genericEditor, messageDialog, editorStatus, viewport, recentConsole] = await Promise.all([
+      ui('.pdf-text-editor').catch(() => null),
+      ui('.message-dialog').catch(() => null),
+      ui('#scanned-text-edit-status').catch(() => null),
+      callTool('app_get_viewport_state').catch(() => null),
+      callTool('app_get_recent_console', { tail: 100 }).catch(() => null),
+    ]);
+    const diagnostics = {
+      selector,
+      hit,
+      genericEditor,
+      messageDialog,
+      editorStatus,
+      editorSession: viewport?.editorSession || null,
+      editorMetrics: viewport?.editorMetrics || null,
+      recentConsole,
+    };
+    throw new Error(`${error.message}\nOCR editor opening diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
   return { editor, hit };
 }
 
@@ -272,6 +296,30 @@ async function copyAllFromReader(pid, reader) {
       latest = JSON.parse(stdout);
       return latest.status === 'pass'
         && replacementTokens.every((token) => normalize(latest.text).includes(normalize(token)))
+        ? latest : null;
+    } catch {
+      return null;
+    }
+  }, 30_000, 500);
+  return normalize(latest.text);
+}
+
+async function copyFromRect(pid, reader, rect) {
+  let latest = { status: 'empty', text: '' };
+  await waitUntil(`${reader} selected native text`, async () => {
+    try {
+      const y = rect.top + rect.height * 0.55;
+      const { stdout } = await execFileAsync(copyHelper, [
+        String(pid),
+        'drag',
+        String(rect.left + 1),
+        String(y),
+        String(rect.right - 1),
+        String(y),
+      ], { maxBuffer: 4 * 1024 * 1024 });
+      latest = JSON.parse(stdout);
+      return latest.status === 'pass'
+        && replacementTokens.some((token) => normalize(latest.text).includes(normalize(token)))
         ? latest : null;
     } catch {
       return null;
@@ -402,7 +450,18 @@ try {
   const { editor } = await startRegionEditor('REGION ONE\nREGION TWO\nREGION THREE', 'region-line-1');
   assert.match(editor.accessibility.label, /fixed region/iu);
   const status = await waitUi('#scanned-text-edit-status',
-    (value) => value.found && value.visible && /fixed original region/iu.test(value.text));
+    (value) => value.found && value.visible && /fixed original region/iu.test(value.text))
+    .catch(async (error) => {
+      const [genericEditor, scannedStatus, nativeStatus, viewport] = await Promise.all([
+        ui('.pdf-text-editor'),
+        ui('#scanned-text-edit-status'),
+        ui('#native-text-edit-status'),
+        callTool('app_get_viewport_state'),
+      ]);
+      throw new Error(`${error.message}; editor=${JSON.stringify(genericEditor)}; `
+        + `scannedStatus=${JSON.stringify(scannedStatus)}; nativeStatus=${JSON.stringify(nativeStatus)}; `
+        + `viewport=${JSON.stringify(viewport)}`);
+    });
   assert.equal(status.accessibility.role, 'status');
   assert.equal(status.accessibility.live, 'polite');
   assert.equal(status.accessibility.atomic, 'true');
@@ -479,9 +538,11 @@ try {
   const nativeRegion = await waitUi('.textLayer span:not([data-ocr-owner])',
     (value) => value.found && value.visible && replacementTokens.some((token) => normalize(value.text).includes(normalize(token)))
       && value.rect.width > 5 && value.rect.height > 5);
+  const selectTool = await callTool('app_set_tool', { tool: 'select' });
+  assert.equal(selectTool.current, 'select');
   evidence.assertions.reopenAndCopy = {
     ownedEditor: true,
-    copiedText: await copyAllFromReader(applicationPid, 'Open PDF Studio'),
+    copiedText: await copyFromRect(applicationPid, 'Open PDF Studio', nativeRegion.rect),
   };
 
   await saveInPlace();
@@ -549,6 +610,21 @@ try {
   evidence.status = 'fail';
   evidence.error = error instanceof Error ? error.stack || error.message : String(error);
   evidence.logs = logs.join('').slice(-20_000);
+  if (endpoint && !applicationState?.exited) {
+    evidence.runtimeDiagnostics = await Promise.all([
+      ui('.pdf-text-editor').catch(() => null),
+      ui('.message-dialog').catch(() => null),
+      ui('#scanned-text-edit-status').catch(() => null),
+      callTool('app_get_viewport_state').catch(() => null),
+      callTool('app_get_recent_console', { tail: 200 }).catch(() => null),
+    ]).then(([editor, messageDialog, editorStatus, viewport, recentConsole]) => ({
+      editor,
+      messageDialog,
+      editorStatus,
+      viewport,
+      recentConsole,
+    }));
+  }
   await writeFile(reportPath, `${JSON.stringify(evidence, null, 2)}\n`).catch(() => {});
   throw error;
 } finally {

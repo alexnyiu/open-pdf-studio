@@ -3,7 +3,9 @@
 // Reactive via solid-js signals so UI re-renders when fields change.
 
 import { createSignal } from 'solid-js';
-import { state } from '../core/state.js';
+import { state, getActiveDocument } from '../core/state.js';
+import { cancelTextEditingForDocument } from '../text/text-edit-session.js';
+import { cancelPendingZoom } from '../ui/setup/navigation-events.js';
 
 const [active, setActive] = createSignal(false);
 const [oldPath, setOldPath] = createSignal(null);
@@ -151,6 +153,9 @@ function _resetPairDiff() {
 }
 
 export function startCompare({ oldFilePath, newFilePath, mode: m, oldPage: op = 1, newPage: np = 1 }) {
+  const activeDocument = getActiveDocument();
+  if (activeDocument) cancelTextEditingForDocument(activeDocument.id, 'compare-entry');
+  cancelPendingZoom();
   setOldPath(oldFilePath);
   setNewPath(newFilePath);
   setMode(m || 'overlay');

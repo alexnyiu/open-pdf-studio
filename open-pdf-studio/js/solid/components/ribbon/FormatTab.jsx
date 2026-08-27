@@ -2,16 +2,16 @@ import { For, Show, createSignal, onMount, onCleanup } from 'solid-js';
 import RibbonGroup from './RibbonGroup.jsx';
 import AdaptiveGroups from './AdaptiveGroups.jsx';
 import ColorPickerButton from './ColorPickerButton.jsx';
-import Dialog from '../Dialog.jsx';
 import {
   fillColor, strokeColor, fmtLineWidth, opacity, borderStyle, blendMode,
   arrowStart, arrowEnd, isLocked, isSingleSymbolStamp,
   STYLE_DEFS, applyToSelected, syncFormatStore
 } from '../../stores/formatStore.js';
 import {
-  getStylePresets, createStylePreset, deleteStylePreset, renameStylePreset,
+  getStylePresets,
   applyStylePresetById, copyStyleFromSelection, pasteStyleToSelection, copiedStyle,
 } from '../../stores/stylePresetsStore.js';
+import { openDialog } from '../../stores/dialogStore.js';
 import { openSymbolTypeEditor } from '../../stores/symbolEditStore.js';
 import { state, getActiveDocument } from '../../../core/state.js';
 import { showProperties, showMultiSelectionProperties, closePropertiesPanel } from '../../../ui/panels/properties-panel.js';
@@ -65,12 +65,8 @@ export default function FormatTab() {
   // stijl-gereedschappen-menu (fmt-style-tools), issue #313.
   const [moreOpen, setMoreOpen] = createSignal(false);
   const [toolsOpen, setToolsOpen] = createSignal(false);
-  const [createOpen, setCreateOpen] = createSignal(false);
-  const [manageOpen, setManageOpen] = createSignal(false);
-  const [presetName, setPresetName] = createSignal('');
   let moreRef;
   let toolsRef;
-  let nameInputRef;
 
   onMount(() => {
     const handler = (e) => {
@@ -85,12 +81,7 @@ export default function FormatTab() {
 
   const openCreateDialog = () => {
     setToolsOpen(false);
-    setPresetName(`${tp('stylePresets.defaultName')} ${presets().length + 1}`);
-    setCreateOpen(true);
-    requestAnimationFrame(() => { nameInputRef?.focus(); nameInputRef?.select(); });
-  };
-  const confirmCreate = () => {
-    if (createStylePreset(presetName())) setCreateOpen(false);
+    openDialog('style-preset-create');
   };
 
   return (
@@ -351,7 +342,7 @@ export default function FormatTab() {
                   {tp('stylePresets.create')}…
                 </button>
                 <button class="ribbon-menu-item" disabled={presets().length === 0}
-                  onClick={() => { setToolsOpen(false); setManageOpen(true); }}>
+                  onClick={() => { setToolsOpen(false); openDialog('style-preset-manage'); }}>
                   {tp('stylePresets.manage')}…
                 </button>
                 <Show when={presets().length > 0}>
@@ -428,71 +419,6 @@ export default function FormatTab() {
         </RibbonGroup>
       </AdaptiveGroups>
 
-      {/* Naam-dialoog voor "Lijnstijl maken" — zelfde gedrag als in het
-          Eigenschappen-paneel (Windows-stijl, verplaatsbaar, Dialog.jsx). */}
-      <Show when={createOpen()}>
-        <Dialog
-          title={tp('stylePresets.createTitle')}
-          dialogClass="style-preset-dialog"
-          onClose={() => setCreateOpen(false)}
-          footer={
-            <>
-              <button class="pref-btn pref-btn-secondary" onClick={() => setCreateOpen(false)}>
-                {tc('cancel')}
-              </button>
-              <button class="pref-btn pref-btn-primary" disabled={!presetName().trim()} onClick={confirmCreate}>
-                {tc('ok')}
-              </button>
-            </>
-          }
-        >
-          <div class="style-preset-name-row">
-            <label for="fmt-style-preset-name-input">{tp('stylePresets.nameLabel')}</label>
-            <input
-              id="fmt-style-preset-name-input"
-              ref={nameInputRef}
-              type="text"
-              value={presetName()}
-              onInput={(e) => setPresetName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && presetName().trim()) confirmCreate(); }}
-            />
-          </div>
-        </Dialog>
-      </Show>
-
-      {/* Beheer-dialoog: hernoemen (inline) en verwijderen. */}
-      <Show when={manageOpen()}>
-        <Dialog
-          title={tp('stylePresets.manageTitle')}
-          dialogClass="style-preset-dialog"
-          onClose={() => setManageOpen(false)}
-          footer={
-            <button class="pref-btn pref-btn-primary" onClick={() => setManageOpen(false)}>
-              {tc('close')}
-            </button>
-          }
-        >
-          <div class="style-preset-list">
-            <For each={presets()}>
-              {(p) => (
-                <div class="style-preset-list-row">
-                  <input
-                    type="text"
-                    value={p.name}
-                    onChange={(e) => renameStylePreset(p.id, e.target.value)}
-                  />
-                  <button class="pref-btn" onClick={() => deleteStylePreset(p.id)}>
-                    {tc('delete')}
-                  </button>
-                </div>
-              )}
-            </For>
-            <Show when={presets().length === 0}>
-              <div class="style-preset-empty">{tp('stylePresets.noPresets')}</div>
-            </Show>
-          </div>
-        </Dialog>
-      </Show>
     </div>
   );
 }

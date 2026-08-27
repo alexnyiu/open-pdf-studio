@@ -51,7 +51,10 @@ struct Fpdf {
     bmp_create: Symbol<'static, unsafe extern "C" fn(c_int, c_int, c_int) -> *mut c_void>,
     bmp_destroy: Symbol<'static, unsafe extern "C" fn(*mut c_void)>,
     bmp_fill: Symbol<'static, unsafe extern "C" fn(*mut c_void, c_int, c_int, c_int, c_int, u32)>,
-    render: Symbol<'static, unsafe extern "C" fn(*mut c_void, *mut c_void, c_int, c_int, c_int, c_int, c_int, c_int)>,
+    render: Symbol<
+        'static,
+        unsafe extern "C" fn(*mut c_void, *mut c_void, c_int, c_int, c_int, c_int, c_int, c_int),
+    >,
     bmp_buffer: Symbol<'static, unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
     bmp_stride: Symbol<'static, unsafe extern "C" fn(*mut c_void) -> c_int>,
 }
@@ -65,25 +68,44 @@ impl Fpdf {
             init();
             Ok(Fpdf {
                 load_doc: lib.get(b"FPDF_LoadDocument\0").map_err(|e| e.to_string())?,
-                close_doc: lib.get(b"FPDF_CloseDocument\0").map_err(|e| e.to_string())?,
+                close_doc: lib
+                    .get(b"FPDF_CloseDocument\0")
+                    .map_err(|e| e.to_string())?,
                 page_count: lib.get(b"FPDF_GetPageCount\0").map_err(|e| e.to_string())?,
                 load_page: lib.get(b"FPDF_LoadPage\0").map_err(|e| e.to_string())?,
                 close_page: lib.get(b"FPDF_ClosePage\0").map_err(|e| e.to_string())?,
                 page_w: lib.get(b"FPDF_GetPageWidth\0").map_err(|e| e.to_string())?,
-                page_h: lib.get(b"FPDF_GetPageHeight\0").map_err(|e| e.to_string())?,
+                page_h: lib
+                    .get(b"FPDF_GetPageHeight\0")
+                    .map_err(|e| e.to_string())?,
                 bmp_create: lib.get(b"FPDFBitmap_Create\0").map_err(|e| e.to_string())?,
-                bmp_destroy: lib.get(b"FPDFBitmap_Destroy\0").map_err(|e| e.to_string())?,
-                bmp_fill: lib.get(b"FPDFBitmap_FillRect\0").map_err(|e| e.to_string())?,
-                render: lib.get(b"FPDF_RenderPageBitmap\0").map_err(|e| e.to_string())?,
-                bmp_buffer: lib.get(b"FPDFBitmap_GetBuffer\0").map_err(|e| e.to_string())?,
-                bmp_stride: lib.get(b"FPDFBitmap_GetStride\0").map_err(|e| e.to_string())?,
+                bmp_destroy: lib
+                    .get(b"FPDFBitmap_Destroy\0")
+                    .map_err(|e| e.to_string())?,
+                bmp_fill: lib
+                    .get(b"FPDFBitmap_FillRect\0")
+                    .map_err(|e| e.to_string())?,
+                render: lib
+                    .get(b"FPDF_RenderPageBitmap\0")
+                    .map_err(|e| e.to_string())?,
+                bmp_buffer: lib
+                    .get(b"FPDFBitmap_GetBuffer\0")
+                    .map_err(|e| e.to_string())?,
+                bmp_stride: lib
+                    .get(b"FPDFBitmap_GetStride\0")
+                    .map_err(|e| e.to_string())?,
                 _lib: lib,
             })
         }
     }
 
     /// Render pagina → RGB op witte achtergrond + (w, h, pt-afmetingen).
-    fn render_rgb(&self, path: &str, page: usize, scale: f32) -> Result<(u32, u32, Vec<u8>), String> {
+    fn render_rgb(
+        &self,
+        path: &str,
+        page: usize,
+        scale: f32,
+    ) -> Result<(u32, u32, Vec<u8>), String> {
         unsafe {
             let cpath = CString::new(path).map_err(|e| e.to_string())?;
             let doc = (self.load_doc)(cpath.as_ptr(), std::ptr::null());
@@ -152,7 +174,9 @@ fn collect_pdfs(args: &[String]) -> Vec<PathBuf> {
             if let Ok(rd) = std::fs::read_dir(p) {
                 for e in rd.flatten() {
                     let f = e.path();
-                    if f.extension().map_or(false, |x| x.eq_ignore_ascii_case("pdf")) {
+                    if f.extension()
+                        .map_or(false, |x| x.eq_ignore_ascii_case("pdf"))
+                    {
                         out.push(f);
                     }
                 }
@@ -205,17 +229,23 @@ fn op_counts(d: &[u8]) -> OpCounts {
             13 | 14 => 1,
             15 => 4,
             16 => {
-                if pos >= d.len() { break; }
+                if pos >= d.len() {
+                    break;
+                }
                 let n = d[pos] as usize;
                 1 + n * 4 + 4
             }
             18 => {
-                if pos + 17 > d.len() { break; }
+                if pos + 17 > d.len() {
+                    break;
+                }
                 let len = d[pos + 12 + 4] as usize;
                 12 + 4 + 1 + len
             }
             19 => {
-                if pos + 8 > d.len() { break; }
+                if pos + 8 > d.len() {
+                    break;
+                }
                 let dlen = u32::from_le_bytes(d[pos + 4..pos + 8].try_into().unwrap()) as usize;
                 8 + dlen
             }
@@ -231,9 +261,15 @@ fn op_counts(d: &[u8]) -> OpCounts {
 fn content_stream_bytes(doc: &lopdf::Document, page_index: usize) -> u64 {
     use lopdf::Object;
     let pages = doc.get_pages();
-    let Some(page_id) = pages.values().nth(page_index).copied() else { return 0 };
-    let Ok(page) = doc.get_dictionary(page_id) else { return 0 };
-    let Ok(contents) = page.get(b"Contents") else { return 0 };
+    let Some(page_id) = pages.values().nth(page_index).copied() else {
+        return 0;
+    };
+    let Ok(page) = doc.get_dictionary(page_id) else {
+        return 0;
+    };
+    let Ok(contents) = page.get(b"Contents") else {
+        return 0;
+    };
     let mut ids: Vec<lopdf::ObjectId> = Vec::new();
     match contents {
         Object::Reference(id) => ids.push(*id),
@@ -259,21 +295,41 @@ fn content_stream_bytes(doc: &lopdf::Document, page_index: usize) -> u64 {
 ///      anders PDFium (de basis-engine).
 ///   2) Rust-gate: buffer > 400 MB, > 1 MB embedded images of > 25 clips/MB
 ///      → weigering, pagina valt blijvend terug op PDFium.
-fn router_choice(content: u64, buffer_len: usize, image_bytes: u64, clip_ops: u64) -> (&'static str, String) {
+fn router_choice(
+    content: u64,
+    buffer_len: usize,
+    image_bytes: u64,
+    clip_ops: u64,
+) -> (&'static str, String) {
     if content < SCENE_CONTENT_BYTES {
-        return ("PDFium", format!("voorfilter: content {:.1} MB < 6 MB", content as f64 / 1e6));
+        return (
+            "PDFium",
+            format!("voorfilter: content {:.1} MB < 6 MB", content as f64 / 1e6),
+        );
     }
     if buffer_len > GATE_BUFFER_MAX {
-        return ("PDFium", format!("gate: scene {} MB > 400 MB", buffer_len / 1_048_576));
+        return (
+            "PDFium",
+            format!("gate: scene {} MB > 400 MB", buffer_len / 1_048_576),
+        );
     }
     if image_bytes > GATE_IMAGE_BYTES {
-        return ("PDFium", format!("gate: {:.1} MB embedded images > 1 MB", image_bytes as f64 / 1e6));
+        return (
+            "PDFium",
+            format!(
+                "gate: {:.1} MB embedded images > 1 MB",
+                image_bytes as f64 / 1e6
+            ),
+        );
     }
     let mb = ((buffer_len / 1_048_576) as u64).max(1);
     if clip_ops / mb > GATE_CLIPS_PER_MB {
         return ("PDFium", format!("gate: {} clips/MB > 25", clip_ops / mb));
     }
-    ("AEC-PDF v1", format!("content {:.1} MB ≥ 6 MB en gate ok", content as f64 / 1e6))
+    (
+        "AEC-PDF v1",
+        format!("content {:.1} MB ≥ 6 MB en gate ok", content as f64 / 1e6),
+    )
 }
 
 fn save_png_rgb(path: &Path, w: u32, h: u32, rgb: &[u8]) {
@@ -354,11 +410,18 @@ fn diff_vis_rgb(refr: &[u8], ours: &[u8]) -> Vec<u8> {
 
 /// Bestandsnaam-veilige stam met vast volgnummer: "f03_3131-clt-set".
 fn safe_stem(name: &str, idx: usize) -> String {
-    let base = name.strip_suffix(".pdf").or_else(|| name.strip_suffix(".PDF")).unwrap_or(name);
+    let base = name
+        .strip_suffix(".pdf")
+        .or_else(|| name.strip_suffix(".PDF"))
+        .unwrap_or(name);
     let mut s = String::new();
     for c in base.chars() {
         let c = c.to_ascii_lowercase();
-        let mapped = if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' };
+        let mapped = if c.is_ascii_alphanumeric() || c == '-' {
+            c
+        } else {
+            '_'
+        };
         if mapped == '_' && s.ends_with('_') {
             continue;
         }
@@ -443,7 +506,10 @@ fn main() {
 
     let pdfs = collect_pdfs(&args);
     println!("corpus: {} bestanden\n", pdfs.len());
-    println!("{:<44} {:>5} {:>9} {:>9} {:>8} {:>8} {:>8}", "bestand", "pag", "ref ms", "tile ms", ">16 %", "gem d", "status");
+    println!(
+        "{:<44} {:>5} {:>9} {:>9} {:>8} {:>8} {:>8}",
+        "bestand", "pag", "ref ms", "tile ms", ">16 %", "gem d", "status"
+    );
 
     let mut worst: Vec<(f64, String)> = Vec::new();
     let mut csv = String::from("bestand	pagina	content_bytes	buffer_bytes	ref_ms	extract_ms	index_ms	render_ms	diff_pct	ds_diff_pct	inkt_ref_pct	inkt_ours_pct	engine
@@ -455,7 +521,10 @@ fn main() {
         let stem = safe_stem(&name, fi);
         let bytes = match std::fs::read(pdf) {
             Ok(b) => b,
-            Err(e) => { println!("{:<44} {:>5} lees-fout: {}", short, "-", e); continue; }
+            Err(e) => {
+                println!("{:<44} {:>5} lees-fout: {}", short, "-", e);
+                continue;
+            }
         };
         let file_bytes = bytes.len();
 
@@ -486,14 +555,22 @@ fn main() {
         for &pg in &test_pages {
             let (w_pt, h_pt) = match doc.page_dimensions(pg) {
                 Ok(d) => d,
-                Err(e) => { println!("{:<44} {:>5} dims-fout: {:?}", short, pg + 1, e); fouten.push(format!("p{}: dims {:?}", pg + 1, e)); continue; }
+                Err(e) => {
+                    println!("{:<44} {:>5} dims-fout: {:?}", short, pg + 1, e);
+                    fouten.push(format!("p{}: dims {:?}", pg + 1, e));
+                    continue;
+                }
             };
             let scale = (TARGET_LONG_PX / w_pt.max(h_pt)).min(2.0);
 
             let tr = Instant::now();
             let refr = match fpdf.render_rgb(&pdf.to_string_lossy(), pg, scale) {
                 Ok(r) => r,
-                Err(e) => { println!("{:<44} {:>5} ref-fout: {}", short, pg + 1, e); fouten.push(format!("p{}: ref {}", pg + 1, e)); continue; }
+                Err(e) => {
+                    println!("{:<44} {:>5} ref-fout: {}", short, pg + 1, e);
+                    fouten.push(format!("p{}: ref {}", pg + 1, e));
+                    continue;
+                }
             };
             let ref_ms = tr.elapsed().as_millis();
 
@@ -507,10 +584,18 @@ fn main() {
                     let ti = Instant::now();
                     match TileScene::build(bytes) {
                         Ok(sc) => (Some(sc), n, ti.elapsed().as_millis(), ops),
-                        Err(e) => { println!("{:<44} {:>5} scene-fout: {}", short, pg + 1, e); fouten.push(format!("p{}: scene {}", pg + 1, e)); continue; }
+                        Err(e) => {
+                            println!("{:<44} {:>5} scene-fout: {}", short, pg + 1, e);
+                            fouten.push(format!("p{}: scene {}", pg + 1, e));
+                            continue;
+                        }
                     }
                 }
-                Err(e) => { println!("{:<44} {:>5} extract-fout: {:?}", short, pg + 1, e); fouten.push(format!("p{}: extract {:?}", pg + 1, e)); continue; }
+                Err(e) => {
+                    println!("{:<44} {:>5} extract-fout: {:?}", short, pg + 1, e);
+                    fouten.push(format!("p{}: extract {:?}", pg + 1, e));
+                    continue;
+                }
             };
             let scene = scene.unwrap();
             let tr2 = Instant::now();
@@ -519,8 +604,23 @@ fn main() {
             let tile_ms = extract_ms + index_ms + render_ms;
 
             if ours.width != refr.0 || ours.height != refr.1 {
-                println!("{:<44} {:>5} maten verschillen: {}x{} vs {}x{}", short, pg + 1, ours.width, ours.height, refr.0, refr.1);
-                fouten.push(format!("p{}: maten {}x{} vs {}x{}", pg + 1, ours.width, ours.height, refr.0, refr.1));
+                println!(
+                    "{:<44} {:>5} maten verschillen: {}x{} vs {}x{}",
+                    short,
+                    pg + 1,
+                    ours.width,
+                    ours.height,
+                    refr.0,
+                    refr.1
+                );
+                fouten.push(format!(
+                    "p{}: maten {}x{} vs {}x{}",
+                    pg + 1,
+                    ours.width,
+                    ours.height,
+                    refr.0,
+                    refr.1
+                ));
                 continue;
             }
             let ours_rgb = ours_rgb(&ours);
@@ -532,11 +632,20 @@ fn main() {
             // verraadt niet-weggeclipte vlakken. Voedt de duiding per blad.
             let (mut ink_ref, mut ink_ours) = (0usize, 0usize);
             for (a, b) in refr.2.chunks_exact(3).zip(ours_rgb.chunks_exact(3)) {
-                let d = (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).max().unwrap();
+                let d = (0..3)
+                    .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                    .max()
+                    .unwrap();
                 sum += d as u64;
-                if d > DELTA_THRESH { over += 1; }
-                if a.iter().any(|&c| c < 245) { ink_ref += 1; }
-                if b.iter().any(|&c| c < 245) { ink_ours += 1; }
+                if d > DELTA_THRESH {
+                    over += 1;
+                }
+                if a.iter().any(|&c| c < 245) {
+                    ink_ref += 1;
+                }
+                if b.iter().any(|&c| c < 245) {
+                    ink_ours += 1;
+                }
             }
             let pct = 100.0 * over as f64 / total as f64;
             let mean = sum as f64 / total as f64;
@@ -547,47 +656,106 @@ fn main() {
             let mut ds_over = 0usize;
             for by in 0..dh {
                 for bx in 0..dw {
-                    let (mut ra, mut ga, mut ba, mut rb, mut gb, mut bb, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+                    let (mut ra, mut ga, mut ba, mut rb, mut gb, mut bb, mut n) =
+                        (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
                     for y in by * 4..((by * 4 + 4).min(refr.1 as usize)) {
                         for x in bx * 4..((bx * 4 + 4).min(refr.0 as usize)) {
                             let i = (y * refr.0 as usize + x) * 3;
-                            ra += refr.2[i] as u32; ga += refr.2[i + 1] as u32; ba += refr.2[i + 2] as u32;
-                            rb += ours_rgb[i] as u32; gb += ours_rgb[i + 1] as u32; bb += ours_rgb[i + 2] as u32;
+                            ra += refr.2[i] as u32;
+                            ga += refr.2[i + 1] as u32;
+                            ba += refr.2[i + 2] as u32;
+                            rb += ours_rgb[i] as u32;
+                            gb += ours_rgb[i + 1] as u32;
+                            bb += ours_rgb[i + 2] as u32;
                             n += 1;
                         }
                     }
-                    if n == 0 { continue; }
-                    let d = ((ra / n) as i32 - (rb / n) as i32).abs()
+                    if n == 0 {
+                        continue;
+                    }
+                    let d = ((ra / n) as i32 - (rb / n) as i32)
+                        .abs()
                         .max(((ga / n) as i32 - (gb / n) as i32).abs())
                         .max(((ba / n) as i32 - (bb / n) as i32).abs());
-                    if d > 12 { ds_over += 1; }
+                    if d > 12 {
+                        ds_over += 1;
+                    }
                 }
             }
             let ds_pct = 100.0 * ds_over as f64 / (dw * dh) as f64;
             let _ = mean;
             let ink_ref_pct = 100.0 * ink_ref as f64 / total as f64;
             let ink_ours_pct = 100.0 * ink_ours as f64 / total as f64;
-            let content = lodoc.as_ref().map(|d| content_stream_bytes(d, pg)).unwrap_or(0);
-            let (engine, reason) = router_choice(content, buf_len, scene.image_bytes, scene.clip_ops);
+            let content = lodoc
+                .as_ref()
+                .map(|d| content_stream_bytes(d, pg))
+                .unwrap_or(0);
+            let (engine, reason) =
+                router_choice(content, buf_len, scene.image_bytes, scene.clip_ops);
             let status = if ds_pct <= 2.0 { "OK" } else { "AFWIJKEND" };
-            println!("{:<44} {:>5} {:>9} {:>9} {:>7.2}% {:>7.2}% {:>8}", short, pg + 1, ref_ms, tile_ms, pct, ds_pct, status);
-            csv.push_str(&format!("{}	{}	{}	{}	{}	{}	{}	{}	{:.3}	{:.3}	{:.3}	{:.3}	{}
+            println!(
+                "{:<44} {:>5} {:>9} {:>9} {:>7.2}% {:>7.2}% {:>8}",
+                short,
+                pg + 1,
+                ref_ms,
+                tile_ms,
+                pct,
+                ds_pct,
+                status
+            );
+            csv.push_str(&format!(
+                "{}	{}	{}	{}	{}	{}	{}	{}	{:.3}	{:.3}	{:.3}	{:.3}	{}
 ",
-                name, pg + 1, content, buf_len, ref_ms, extract_ms, index_ms, render_ms, pct, ds_pct, ink_ref_pct, ink_ours_pct, engine));
+                name,
+                pg + 1,
+                content,
+                buf_len,
+                ref_ms,
+                extract_ms,
+                index_ms,
+                render_ms,
+                pct,
+                ds_pct,
+                ink_ref_pct,
+                ink_ours_pct,
+                engine
+            ));
             worst.push((ds_pct, format!("{} p{}", name, pg + 1)));
 
             if let Some(dir) = &dump_dir {
                 // Drie thumbnails per pagina (halve resolutie, max 700 px lange zijde).
                 let (tw, th, tref) = thumb_rgb(refr.0, refr.1, &refr.2, THUMB_LONG_PX, false);
-                save_png_rgb(&dir.join(format!("{}_p{}_ref.png", stem, pg + 1)), tw, th, &tref);
+                save_png_rgb(
+                    &dir.join(format!("{}_p{}_ref.png", stem, pg + 1)),
+                    tw,
+                    th,
+                    &tref,
+                );
                 let (_, _, tours) = thumb_rgb(refr.0, refr.1, &ours_rgb, THUMB_LONG_PX, false);
-                save_png_rgb(&dir.join(format!("{}_p{}_ours.png", stem, pg + 1)), tw, th, &tours);
+                save_png_rgb(
+                    &dir.join(format!("{}_p{}_ours.png", stem, pg + 1)),
+                    tw,
+                    th,
+                    &tours,
+                );
                 let dv = diff_vis_rgb(&refr.2, &ours_rgb);
                 let (_, _, tdiff) = thumb_rgb(refr.0, refr.1, &dv, THUMB_LONG_PX, true);
-                save_png_rgb(&dir.join(format!("{}_p{}_diff.png", stem, pg + 1)), tw, th, &tdiff);
+                save_png_rgb(
+                    &dir.join(format!("{}_p{}_diff.png", stem, pg + 1)),
+                    tw,
+                    th,
+                    &tdiff,
+                );
 
                 // Kandidaten voor het volle-resolutie-drieluik bijhouden.
-                let mk = |ds: f64| FullCand { ds, page: pg + 1, w: refr.0, h: refr.1, refr: refr.2.clone(), ours: ours_rgb.clone() };
+                let mk = |ds: f64| FullCand {
+                    ds,
+                    page: pg + 1,
+                    w: refr.0,
+                    h: refr.1,
+                    refr: refr.2.clone(),
+                    ours: ours_rgb.clone(),
+                };
                 if worst_c.as_ref().map_or(true, |c| ds_pct > c.ds) {
                     worst_c = Some(mk(ds_pct));
                 }
@@ -622,18 +790,38 @@ fn main() {
         if let Some(dir) = &dump_dir {
             // Volle resolutie voor de slechtste én beste pagina (klikbare originelen).
             let write_full = |c: &FullCand| {
-                save_png_rgb(&dir.join(format!("{}_p{}_ref_full.png", stem, c.page)), c.w, c.h, &c.refr);
-                save_png_rgb(&dir.join(format!("{}_p{}_ours_full.png", stem, c.page)), c.w, c.h, &c.ours);
+                save_png_rgb(
+                    &dir.join(format!("{}_p{}_ref_full.png", stem, c.page)),
+                    c.w,
+                    c.h,
+                    &c.refr,
+                );
+                save_png_rgb(
+                    &dir.join(format!("{}_p{}_ours_full.png", stem, c.page)),
+                    c.w,
+                    c.h,
+                    &c.ours,
+                );
                 let dv = diff_vis_rgb(&c.refr, &c.ours);
-                save_png_rgb(&dir.join(format!("{}_p{}_diff_full.png", stem, c.page)), c.w, c.h, &dv);
+                save_png_rgb(
+                    &dir.join(format!("{}_p{}_diff_full.png", stem, c.page)),
+                    c.w,
+                    c.h,
+                    &dv,
+                );
             };
             let worst_page = worst_c.as_ref().map(|c| c.page);
             let best_page = best_c.as_ref().map(|c| c.page);
-            if let Some(c) = &worst_c { write_full(c); }
-            if let (Some(c), true) = (&best_c, best_page != worst_page) { write_full(c); }
+            if let Some(c) = &worst_c {
+                write_full(c);
+            }
+            if let (Some(c), true) = (&best_c, best_page != worst_page) {
+                write_full(c);
+            }
 
             let pages_json: Vec<String> = rows.iter().map(|r| r.to_json()).collect();
-            let fouten_json: Vec<String> = fouten.iter().map(|f| format!("\"{}\"", jesc(f))).collect();
+            let fouten_json: Vec<String> =
+                fouten.iter().map(|f| format!("\"{}\"", jesc(f))).collect();
             files_json.push(format!(
                 "{{\"bestand\":\"{}\",\"stam\":\"{}\",\"bestand_bytes\":{},\"paginas_totaal\":{},\"slechtste_pagina\":{},\"beste_pagina\":{},\"fouten\":[{}],\"paginas\":[\n{}\n]}}",
                 jesc(&name), stem, file_bytes, pages_total,
@@ -645,8 +833,10 @@ fn main() {
         }
     }
     let _ = std::fs::write("C:/Users/rickd/AppData/Local/Temp/corpus_bench.tsv", &csv);
-    println!("
-csv: C:/Users/rickd/AppData/Local/Temp/corpus_bench.tsv");
+    println!(
+        "
+csv: C:/Users/rickd/AppData/Local/Temp/corpus_bench.tsv"
+    );
     if let Some(dir) = &dump_dir {
         let unix = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Edytuj {{label}}",
+    "editValueHint": "{{label}}. Kliknij dwukrotnie lub naciśnij Enter, aby edytować.",
+    "timezoneHint": "Daty są wyświetlane w strefie czasowej {{timezone}} i zapisywane w formacie ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Zatwierdź zastąpienie czcionki",
+    "sourceFace": "Czcionka źródłowa",
+    "sourceFaces": "Czcionki źródłowe",
+    "unknown": "Nieznana",
+    "packagedSubstitute": "Dołączona czcionka zastępcza",
+    "notAvailable": "Niedostępna",
+    "sampleText": "Przykład",
+    "sampleFallback": "Szybki brązowy lis przeskakuje nad leniwym psem.",
+    "scope": "Dotyczy",
+    "scopeAnnotation": "Tej adnotacji",
+    "scopeSelection": "Wybranych pól tekstowych",
+    "scopeParagraph": "Tego akapitu PDF",
+    "scopeFindReplace": "Tej zmiany Znajdź/Zamień",
+    "remember": "Zapamiętaj to zatwierdzenie dla otwartego dokumentu",
+    "approve": "Użyj czcionki zastępczej",
+    "cancel": "Anuluj"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Edytuj tekst PDF",
+      "editFormatted": "Edytuj sformatowany tekst PDF",
+      "editAnnotation": "Edytuj sformatowany tekst {{type}}",
+      "editRegion": "Edytuj obszar sformatowanego tekstu PDF: {{text}}",
+      "editScannedLine": "Edytuj wiersz zeskanowanego tekstu: {{text}}",
+      "editScannedFixed": "Edytuj stały obszar zeskanowanego tekstu: {{text}}",
+      "editScannedReflow": "Edytuj obszar ponownego przepływu akapitu zeskanowanego tekstu: {{text}}",
+      "selectedOcrParagraph": "Liczba wierszy w wybranym akapicie OCR: {{count}}"
+    },
+    "handles": {
+      "move": "Przenieś pole tekstowe",
+      "moveHint": "Przeciągnij, aby przenieść pole tekstowe",
+      "resize": "Zmień rozmiar pola tekstowego",
+      "resizeHint": "Przeciągnij, aby zmienić rozmiar pola tekstowego"
+    },
+    "actions": {
+      "apply": "Zastosuj",
+      "cancel": "Anuluj"
+    },
+    "status": {
+      "ocrOverflow": "Pełna wersja robocza OCR jest widoczna poza zatwierdzonym obszarem. Zapisywanie pozostaje zablokowane, dopóki tekst nie zmieści się po dokładnej walidacji stałego obszaru.",
+      "scannedRegion": "Zeskanowany tekst jest edytowany w zatwierdzonym obszarze.",
+      "shaping": "Kończenie dokładnego układu tekstu…",
+      "overlap": "Tekst nakłada się na istniejącą zawartość strony. Zmianę można zastosować; sąsiednie obiekty źródłowe nie zostaną przesunięte.",
+      "lowContrast": "Kolory źródłowe o niskim kontraście mają tło widoczne tylko podczas edycji. Zapisane kolory pozostaną bez zmian.",
+      "layoutRejectedPrefix": "Układ tekstu odrzucony:",
+      "layoutRejected": "Układ tekstu odrzucony: {{reasons}}",
+      "shapingRejected": "Kształtowanie tekstu odrzucone: {{reason}}",
+      "nativeManual": "Tekst natywny jest edytowany w polu z ręcznymi podziałami wierszy. Naciśnij Enter, aby utworzyć nowy wiersz.",
+      "nativeManualContrast": "Tekst natywny jest edytowany w polu z ręcznymi podziałami wierszy. Naciśnij Enter, aby utworzyć nowy wiersz. Kolory źródłowe o niskim kontraście mają tło widoczne tylko podczas edycji; zapisane kolory pozostaną bez zmian.",
+      "nativeGrowing": "Tekst natywny jest edytowany. Szerokość jest stała, a obszar powiększa się w dół.",
+      "nativeGrowingContrast": "Tekst natywny jest edytowany. Szerokość jest stała, a obszar powiększa się w dół. Kolory źródłowe o niskim kontraście mają tło widoczne tylko podczas edycji; zapisane kolory pozostaną bez zmian.",
+      "scannedEstimate": "Zeskanowany tekst jest edytowany. Właściwości czcionki są szacunkowe.",
+      "applyRejected": "Nie można zastosować zmiany tekstu: {{reason}}",
+      "cropBoxRejected": "Ukształtowanego tekstu nie można zatwierdzić wewnątrz obszaru CropBox strony.",
+      "layoutTimeout": "Dokładny układ tekstu nie został ukończony na czas. Edytor pozostaje otwarty.",
+      "scannedRejected": "Zmiana zeskanowanego tekstu odrzucona: {{reason}}",
+      "lineBreakUnsupported": "Podziały wierszy nie są obsługiwane. Użyj Command-Enter, aby zastosować tę jednowierszową zmianę.",
+      "ocrOneLine": "Edytowany jest jeden odizolowany wiersz zeskanowanego tekstu. Właściwości czcionki są szacunkowe.",
+      "ocrFixed": "W jednym stałym obszarze źródłowym edytowanych jest wiele wierszy OCR. Pojedynczy akapit przepływa ponownie w tym obszarze; wymuszone podziały wierszy zachowują tryb stałych wierszy. Command-Enter stosuje zmianę.",
+      "ocrReflow": "Jeden akapit jest edytowany w zatwierdzonym źródłowym obszarze OCR. Command-Enter stosuje zmianę; przepełnienie jest odrzucane.",
+      "operationFailed": "Nie udało się ukończyć operacji na tekście. Dokument pozostał bez zmian.",
+      "staleDraft": "Dokument zmienił się, gdy edytor tekstu był otwarty. Wersja robocza została odrzucona.",
+      "multipleOcrParagraphs": "Zaznaczenie obejmuje wiele akapitów OCR. Przejrzyj osobne obrysy i jawnie użyj opcji Scal. Scalanie między kolumnami pozostaje wyłączone.",
+      "nativeColumnBoundary": "Ten akapit przekracza wykrytą granicę kolumny w oryginale. Edycja została zablokowana, a dokument pozostał bez zmian.",
+      "nativeSourceUnavailable": "Widocznego tekstu nie udało się powiązać z odpowiednimi operatorami źródłowymi. Dokument pozostał bez zmian.",
+      "nativeDeleteUnavailable": "Tego natywnego tekstu PDF nie można bezpiecznie usunąć, ponieważ jego dokładne operatory źródłowe są niejednoznaczne. Dokument pozostał bez zmian.",
+      "readOnly": "Wcześniej edytowany tekst jest tylko do odczytu. Dokument pozostał bez zmian."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Limit {{limit}} grafemów",
+      "lineThreshold": "Limit {{limit}} wierszy",
+      "message": "Zachowano pełną wklejoną zawartość: {{graphemeCount}} grafemów w {{lineCount}} wierszach. Przekroczony limit: {{thresholds}}. Podgląd jest ograniczony. Użyj opcji Cofnij wklejenie, aby usunąć całą wstawioną zawartość.",
+      "messageWithExpansion": "Zachowano pełną wklejoną zawartość: {{graphemeCount}} grafemów w {{lineCount}} wierszach. Przekroczony limit: {{thresholds}}. Podgląd jest ograniczony. Użyj opcji Cofnij wklejenie, aby usunąć całą wstawioną zawartość, lub Rozszerz pole, aby przyjąć dokładne zweryfikowane granice.",
+      "undo": "Cofnij wklejenie",
+      "expand": "Rozszerz pole"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Grupowanie akapitów OCR",
+    "title": "Grupowanie",
+    "mergeSelected": "Scal zaznaczone",
+    "mergeSelectedParagraphs": "Scal zaznaczone akapity",
+    "mergePrevious": "Scal z poprzednim",
+    "mergePreviousHint": "Scal z poprzednim akapitem OCR",
+    "mergeNext": "Scal z następnym",
+    "mergeNextHint": "Scal z następnym akapitem OCR",
+    "splitBefore": "Podziel przed",
+    "splitAfter": "Podziel po",
+    "reset": "Zresetuj automatyczne grupowanie",
+    "crossColumnDisabled": "Scalanie między kolumnami jest wyłączone",
+    "ambiguousBoundariesOnly": "Ręcznie można scalać tylko niejednoznaczne granice w tej samej kolumnie",
+    "tooManyLines": "Więcej niż 32 wiersze. Przed edycją ręcznie podziel ten akapit.",
+    "mergeDescription": "Istniejące teksty są oddzielone zachowanym twardym podziałem wiersza. Scalanie jest stosowane dopiero po pomyślnym sprawdzeniu połączonej poprawki źródłowej i stałego obszaru.",
+    "mergedText": "Scalony tekst OCR",
+    "splitRegion": "Podziel obszar OCR",
+    "firstRegion": "Pierwszy obszar",
+    "secondRegion": "Drugi obszar",
+    "sourceLines": "Wiersze źródłowe: {{lines}}"
+  }
+}

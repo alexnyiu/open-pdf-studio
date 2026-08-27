@@ -4,17 +4,18 @@
  * and accurate text replacement via the text-edit-tool infrastructure.
  */
 
-import { state, getActiveDocument } from '../core/state.js';
+import { state, getActiveDocument, getDocumentById } from '../core/state.js';
 import {
   createTextEditRecordV2,
   projectTextEditRecord,
   replaceFirstRichTextMatch,
   richTextFromPlainText,
 } from '../text/rich-text.js';
-import { proposeFontSubstitution, resolvePackagedFace } from '../text/font-catalog.js';
+import { resolvePackagedFace } from '../text/font-catalog.js';
+import { requestFontSubstitutionApproval } from '../text/font-substitution-approval.js';
 import { inspectNativeTextSourcesForPage, matchNativeTextSources } from '../text/native-text-provenance.js';
-import { execute } from '../core/undo-manager.js';
-import { markDocumentModified } from '../ui/chrome/tabs.js';
+import { executeForDocument } from '../core/undo-manager.js';
+import { markDocumentModifiedForDocument } from '../ui/chrome/tabs.js';
 import { invalidateTextCache } from './text-cache.js';
 import { extractPageText } from './text-extraction.js';
 
@@ -347,10 +348,20 @@ let _replacing = false;
 async function replaceInPdfContent(doc, result, replaceText) {
   if (_replacing) return null;
   _replacing = true;
+  const ownerGeneration = Number(doc.lifecycleGeneration) || 0;
+  const ownerPdfDocument = doc.pdfDoc;
+  const isCurrentOwner = () => getActiveDocument() === doc
+    && getDocumentById(doc.id) === doc
+    && doc.pdfDoc === ownerPdfDocument
+    && (Number(doc.lifecycleGeneration) || 0) === ownerGeneration;
   try {
+    if (!isCurrentOwner()) return null;
     const page = await doc.pdfDoc?.getPage(result.pageNum);
+    if (!isCurrentOwner()) return null;
     const textContent = await page?.getTextContent();
+    if (!isCurrentOwner()) return null;
     const sourceMap = await inspectNativeTextSourcesForPage(result.pageNum);
+    if (!isCurrentOwner()) return null;
     if (!textContent || !sourceMap?.runs?.length) return null;
     const textItems = textContent.items.filter((item) => item.str !== undefined);
     const mappings = matchNativeTextSources(textItems, sourceMap.runs);
@@ -381,11 +392,13 @@ async function replaceInPdfContent(doc, result, replaceText) {
     const right = Math.max(...sources.map((source) => (Number(source.geometry?.[0]) || 0) + (Number(source.geometry?.[2]) || 0)));
     const sourceFont = sources[0].fontName || 'Unknown font';
     const face = resolvePackagedFace(sourceFont, false, false);
-    const approved = window.confirm(
-      `This PDF uses ${sourceFont}. Find/Replace will embed the packaged substitute ${face.family}. Continue?`,
-    );
-    if (!approved) return null;
-    const substitution = { ...proposeFontSubstitution(sourceFont, false, false), approved: true, approvedAt: new Date().toISOString() };
+    const substitution = await requestFontSubstitutionApproval({
+      documentState: doc,
+      sourceFonts: [sourceFont],
+      sampleText: sourceText,
+      scope: 'findReplace',
+    });
+    if (!substitution || !isCurrentOwner()) return null;
     const style = {
       faceId: face.id, size: fontSize, color: '#000000', bold: false, italic: false,
       underline: false, strikeout: false, baselineAdvance: fontSize * 1.2,
@@ -403,8 +416,8 @@ async function replaceInPdfContent(doc, result, replaceText) {
     });
     if (!doc.textEdits) doc.textEdits = [];
     doc.textEdits.push(record);
-    execute({ type: 'addTextEdit', textEdit: structuredClone(record) });
-    markDocumentModified();
+    executeForDocument(doc, { type: 'addTextEdit', textEdit: structuredClone(record) });
+    markDocumentModifiedForDocument(doc);
     return { type: 'textEdit', id: record.id, oldText: sourceText, newText: replacementText };
   } catch (err) {
     console.error('[replaceInPdfContent]', err);

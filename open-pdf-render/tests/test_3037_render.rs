@@ -3,7 +3,10 @@ fn test_3037_content_stream_operators() {
     let path = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3037 Aanbouw Herenweg 20 Moerkapelle\71_constructie_advies\3037-CP-21 Constructieoverzicht.pdf";
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(_) => { println!("File not found"); return; }
+        Err(_) => {
+            println!("File not found");
+            return;
+        }
     };
     let doc = lopdf::Document::load_mem(&bytes).unwrap();
     let pages = doc.get_pages();
@@ -51,7 +54,10 @@ fn test_3037_content_stream_operators() {
     let tj_count = op_counts.get("Tj").unwrap_or(&0);
     let tj_array_count = op_counts.get("TJ").unwrap_or(&0);
     let bt_count = op_counts.get("BT").unwrap_or(&0);
-    println!("\nText: BT={}, Tj={}, TJ={}", bt_count, tj_count, tj_array_count);
+    println!(
+        "\nText: BT={}, Tj={}, TJ={}",
+        bt_count, tj_count, tj_array_count
+    );
 }
 
 #[test]
@@ -59,7 +65,10 @@ fn test_3037_draw_commands() {
     let path = r"C:\3BM\50_projecten\3_3BM_bouwtechniek\3037 Aanbouw Herenweg 20 Moerkapelle\71_constructie_advies\3037-CP-21 Constructieoverzicht.pdf";
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(_) => { println!("File not found"); return; }
+        Err(_) => {
+            println!("File not found");
+            return;
+        }
     };
 
     let renderer = open_pdf_render::PdfRenderer::new();
@@ -79,31 +88,60 @@ fn test_3037_draw_commands() {
             0 | 1 => pos += 8,
             2 => pos += 24,
             3 => pos += 16,
-            4 => {},
+            4 => {}
             5 => pos += 8,
             6 => pos += 4,
-            7 | 8 | 9 | 10 | 11 => {},
+            7 | 8 | 9 | 10 | 11 => {}
             12 => pos += 24,
             13 | 14 => pos += 1,
             15 => pos += 4,
-            16 => { let c = cmd_bytes[pos] as usize; pos += 1 + c * 4 + 4; },
-            17 => {},
-            18 => { pos += 16; let l = cmd_bytes[pos] as usize; pos += 1 + l; },
+            16 => {
+                let c = cmd_bytes[pos] as usize;
+                pos += 1 + c * 4 + 4;
+            }
+            17 => {}
+            18 => {
+                pos += 16;
+                let l = cmd_bytes[pos] as usize;
+                pos += 1 + l;
+            }
             19 => {
                 pos += 4; // w, h
-                let dl = u32::from_le_bytes([cmd_bytes[pos], cmd_bytes[pos+1], cmd_bytes[pos+2], cmd_bytes[pos+3]]) as usize;
+                let dl = u32::from_le_bytes([
+                    cmd_bytes[pos],
+                    cmd_bytes[pos + 1],
+                    cmd_bytes[pos + 2],
+                    cmd_bytes[pos + 3],
+                ]) as usize;
                 pos += 4 + dl;
-            },
-            20 | 21 => {},
-            _ => { println!("Unknown opcode {} at {}", op, pos - 1); break; }
+            }
+            20 | 21 => {}
+            _ => {
+                println!("Unknown opcode {} at {}", op, pos - 1);
+                break;
+            }
         }
     }
 
     let names = [
-        (0, "MoveTo"), (1, "LineTo"), (2, "CubicTo"), (3, "Rect"), (4, "Close"),
-        (5, "SetStroke"), (6, "SetFill"), (7, "Stroke"), (8, "Fill"), (9, "FillEvenOdd"),
-        (10, "Save"), (11, "Restore"), (12, "Transform"), (17, "BeginPath"),
-        (18, "TextAt"), (19, "DrawImage"), (20, "Clip"), (21, "ClipEvenOdd"),
+        (0, "MoveTo"),
+        (1, "LineTo"),
+        (2, "CubicTo"),
+        (3, "Rect"),
+        (4, "Close"),
+        (5, "SetStroke"),
+        (6, "SetFill"),
+        (7, "Stroke"),
+        (8, "Fill"),
+        (9, "FillEvenOdd"),
+        (10, "Save"),
+        (11, "Restore"),
+        (12, "Transform"),
+        (17, "BeginPath"),
+        (18, "TextAt"),
+        (19, "DrawImage"),
+        (20, "Clip"),
+        (21, "ClipEvenOdd"),
     ];
     for (op, name) in &names {
         if let Some(count) = counts.get(op) {
@@ -113,5 +151,9 @@ fn test_3037_draw_commands() {
 
     // Check: are there any glyph-related commands (MoveTo/LineTo/CubicTo inside Save/Restore with small transforms)?
     let has_text = counts.get(&0).unwrap_or(&0) > &10; // Many MoveTo = likely glyphs
-    println!("\nHas text glyphs: {} (MoveTo count: {})", has_text, counts.get(&0).unwrap_or(&0));
+    println!(
+        "\nHas text glyphs: {} (MoveTo count: {})",
+        has_text,
+        counts.get(&0).unwrap_or(&0)
+    );
 }

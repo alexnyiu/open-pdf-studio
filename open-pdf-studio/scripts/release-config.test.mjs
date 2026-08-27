@@ -6,6 +6,14 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { PDFDocument } from 'pdf-lib';
 import { createRenderFixture } from './create-render-fixture.mjs';
+import {
+  EDITOR_COVERAGE_DIMENSIONS,
+  PACKAGED_EDITOR_REQUIRED_SUITES,
+  REQUIRED_CHECK_NAMES,
+  REQUIRED_EDITOR_LIFECYCLE_CASE_COUNT,
+  REQUIRED_GATE_IDS,
+  REQUIRED_UPSTREAM_JOB_IDS,
+} from './ocr-release-hardening-policy.mjs';
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoDir = path.resolve(projectDir, '..');
@@ -32,6 +40,7 @@ test('quality tests do not depend on shell glob expansion', async () => {
   for (const name of [
     'native-runtime.test.mjs',
     'release-config.test.mjs',
+    'evaluate-ocr-release-hardening.test.mjs',
     'square-image-annotation.test.mjs',
   ]) {
     assert.match(pkg.scripts['test:quality'], new RegExp(name.replaceAll('.', '\\.')));
@@ -160,8 +169,115 @@ test('macOS production CI packages arm64 and runs live release-hardening gates',
   assert.match(workflow, /--target aarch64-apple-darwin --bundles app/);
   assert.match(workflow, /test-macos-release-hardening\.mjs/);
   assert.match(workflow, /test-macos-filesystem-edge-cases\.mjs/);
-  assert.match(workflow, /ocr-release-hardening-artifact\.json/);
-  assert.match(workflow, /ocr-release-hardening-filesystem\.json/);
+  assert.match(workflow, /test-artifacts\/release-hardening\/macos-artifact\.json/);
+  assert.match(workflow, /test-artifacts\/release-hardening\/macos-filesystem\.json/);
+  for (const scriptName of [
+    'test-macos-release-hardening.mjs',
+    'test-macos-filesystem-edge-cases.mjs',
+    'evaluate-ocr-phase-a-macos-report.mjs',
+    'test-ocr-adversarial-macos.mjs',
+  ]) {
+    const producer = await readFile(path.join(projectDir, 'scripts', scriptName), 'utf8');
+    assert.match(producer, /head: await gitHead\(\)/);
+  }
+});
+
+test('CI makes every hardening branch and protected-main gate explicit', async () => {
+  const workflow = await readFile(path.join(repoDir, '.github', 'workflows', 'ci.yml'), 'utf8');
+  assert.match(workflow, /push:[\s\S]*?branches:[\s\S]*?- main[\s\S]*?- ocr-release-hardening/);
+  assert.match(workflow, /pull_request:[\s\S]*?branches:[\s\S]*?- main/);
+  for (const checkName of REQUIRED_CHECK_NAMES.filter((name) => !name.startsWith('Desktop build ('))) {
+    assert.match(workflow, new RegExp(`name: ${checkName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`));
+  }
+  assert.match(workflow, /name: Desktop build \(\$\{\{ matrix\.platform \}\}\)/);
+  for (const platform of ['ubuntu-22.04', 'windows-latest', 'macos-26']) {
+    assert.ok(workflow.includes(`platform: '${platform}'`));
+  }
+  for (const command of [
+    'npm ci',
+    'npm run typecheck',
+    'npm run test',
+    'npm run build',
+    'git diff --check',
+    'cargo test -p open-pdf-studio',
+    'cargo test -p pdfium-worker',
+    'npm run test:native-text-editing:ui',
+    'npm run test:metadata-editing:ui',
+    'npm run test:modal-hardening:ui',
+    'npm run test:editor-coverage:macos',
+    'npm run test:editor-acceptance:macos',
+    'npm run test:ocr-production-100-page:macos',
+    'npm run test:editor-performance:macos',
+  ]) {
+    assert.match(workflow, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')));
+  }
+  for (const gateId of REQUIRED_GATE_IDS.filter((id) => !id.startsWith('desktop-build-'))) {
+    assert.match(workflow, new RegExp(gateId));
+  }
+  assert.match(workflow, /pattern: ocr-release-hardening-evidence-\*/);
+  assert.match(workflow, /OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME:.*browser_acceptance\.outcome/);
+  assert.match(workflow, /OPEN_PDF_STUDIO_EDITOR_COVERAGE_MANIFEST:.*editor-coverage-manifest\.json/);
+  assert.match(workflow, /OPEN_PDF_STUDIO_OCR_100_PAGE_REPORT:.*ocr-production-100-page\.json/);
+  assert.match(workflow, /if: always\(\)[\s\S]*?Upload final release decision/);
+  for (const dependency of REQUIRED_UPSTREAM_JOB_IDS) {
+    assert.match(
+      workflow,
+      new RegExp(`--required-job-result "${dependency}=\\$\\{\\{ needs\\.${dependency}\\.result \\}\\}"`),
+    );
+  }
+  assert.match(workflow, /--expected-repository "\$GITHUB_REPOSITORY"/);
+  assert.match(workflow, /repos\/\$GITHUB_REPOSITORY\/rules\/branches\/main\?per_page=100/);
+  assert.match(
+    workflow,
+    /if node -e '[^']*Array\.isArray\(rules\) && rules\.length === 0[^']*' "\$ACTIVE_RULES_PATH"; then[\s\S]*?repos\/\$GITHUB_REPOSITORY\/branches\/main\/protection/,
+  );
+  assert.match(workflow, /FALLBACK_ARGS=\(\)/);
+  assert.match(workflow, /FALLBACK_ARGS=\(--classic-fallback-input "\$CLASSIC_PROTECTION_PATH"\)/);
+  assert.match(workflow, /ACTIVE_RULES_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(workflow, /CLASSIC_PROTECTION_TOKEN: \$\{\{ secrets\.REPOSITORY_CONTROLS_TOKEN \}\}/);
+  assert.match(workflow, /Authorization: Bearer \$ACTIVE_RULES_TOKEN/);
+  assert.match(workflow, /Authorization: Bearer \$CLASSIC_PROTECTION_TOKEN/);
+  assert.match(workflow, /--active-rules-input "\$ACTIVE_RULES_PATH"/);
+  assert.match(workflow, /"\$\{FALLBACK_ARGS\[@\]\}"/);
+  assert.match(workflow, /id: ocr_adversarial[\s\S]*?test:ocr-adversarial:macos/);
+  assert.match(workflow, /adversarial-latest\.json[\s\S]*?adversarial-packaged\.json/);
+  assert.match(workflow, /ADVERSARIAL_OUTCOME:.*steps\.ocr_adversarial\.outcome/);
+  assert.match(workflow, /OCR_100_PAGE_OUTCOME:.*steps\.ocr_100_page_performance\.outcome/);
+  assert.match(workflow, /test "\$ADVERSARIAL_OUTCOME" = success/);
+  assert.match(workflow, /test "\$OCR_100_PAGE_OUTCOME" = success/);
+  assert.match(
+    workflow,
+    /cp -R "\$RUNNER_TEMP\/release-hardening-evidence\/\." "\$RUNNER_TEMP\/test-artifacts\/"/,
+  );
+  assert.match(workflow, /output\/ocr-release-hardening\/acceptance\.json/);
+});
+
+test('release reports preserve editor coverage and 100-page producer command provenance', async () => {
+  const [editorAcceptance, editorPerformance] = await Promise.all([
+    readFile(path.join(projectDir, 'scripts', 'run-editor-acceptance-macos.mjs'), 'utf8'),
+    readFile(path.join(projectDir, 'scripts', 'test-editor-performance-macos.mjs'), 'utf8'),
+  ]);
+  assert.match(editorAcceptance, /testCommands:[\s\S]*npm run test:editor-coverage:macos/u);
+  assert.match(editorPerformance, /testCommands:[\s\S]*npm run test:ocr-production-100-page:macos/u);
+});
+
+test('editor lifecycle policy requires click-away commit for every editor family', () => {
+  assert.equal(EDITOR_COVERAGE_DIMENSIONS.editorFamilies.length, 8);
+  assert.equal(EDITOR_COVERAGE_DIMENSIONS.lifecycleScenarios.length, 9);
+  assert.ok(EDITOR_COVERAGE_DIMENSIONS.lifecycleScenarios.includes('click-away-commit'));
+  assert.equal(REQUIRED_EDITOR_LIFECYCLE_CASE_COUNT, 72);
+});
+
+test('branch-protection policy is documented as external repository state', async () => {
+  const guide = await readFile(path.join(projectDir, 'docs', 'ocr', 'OCR_RELEASE_HARDENING_GATE.md'), 'utf8');
+  for (const checkName of REQUIRED_CHECK_NAMES) assert.match(guide, new RegExp(checkName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')));
+  assert.match(guide, /cannot\s+enable or prove that setting/);
+  assert.match(guide, /evaluate-github-branch-protection\.mjs/);
+  assert.match(guide, /ad-hoc signed/);
+  assert.match(guide, /not evidence of Developer ID signing, Apple notarization/);
+  assert.match(guide, /exactly 384 view cases and 72\s+lifecycle cases/);
+  assert.match(guide, /outside the editor portal and properties-panel focus boundary/);
+  assert.match(guide, /MACOS OCR RELEASE HARDENING NO-GO/);
 });
 
 test('release-hardening filesystem infrastructure uses disposable real volumes and fail-closed iCloud evidence', async () => {
@@ -192,6 +308,145 @@ test('release-hardening scripts and machine evidence are wired without committin
   assert.match(pkg.scripts['test:ocr-packaged:macos'], /test:ocr-packaged:macos:stages/);
   assert.match(pkg.scripts['test:ocr-packaged:macos'], /OPEN_PDF_STUDIO_PACKAGED_APP=.*aarch64-apple-darwin/);
   assert.match(pkg.scripts['test:ocr-packaged:macos'], /OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE=.*aarch64-apple-darwin/);
+  assert.equal(pkg.scripts['test:editor-acceptance:macos'], 'node scripts/run-editor-acceptance-macos.mjs');
+  assert.equal(pkg.scripts['test:editor-coverage:macos'], 'node scripts/test-editor-coverage-macos.mjs');
+  assert.equal(
+    pkg.scripts['test:annotation-text-editing:macos'],
+    'node scripts/test-annotation-text-editing-macos.mjs',
+  );
+  assert.equal(PACKAGED_EDITOR_REQUIRED_SUITES.includes('test:annotation-text-editing:macos'), true);
+  assert.equal(PACKAGED_EDITOR_REQUIRED_SUITES.includes('test:ocr-workflow:macos'), true);
+  assert.equal(PACKAGED_EDITOR_REQUIRED_SUITES.includes('test:ocr-ui:macos'), false);
+  const packagedAggregate = await readFile(
+    path.join(projectDir, 'scripts', 'run-editor-acceptance-macos.mjs'),
+    'utf8',
+  );
+  assert.match(packagedAggregate, /const failedSuites = report\.suites\.filter/);
+  assert.match(packagedAggregate, /report\.failures = \[[\s\S]*failedSuites\.map/);
+  assert.match(packagedAggregate, /browserAcceptance\.status === 'PASS'/);
+  assert.match(packagedAggregate, /validateEditorCoverageManifest/);
+  assert.match(packagedAggregate, /validateAnnotationEvidence\(outputDir, report\.head\)/);
+  assert.match(packagedAggregate, /annotation evidence HEAD does not match the aggregate/);
+  const coverageProducer = await readFile(
+    path.join(projectDir, 'scripts', 'test-editor-coverage-macos.mjs'),
+    'utf8',
+  );
+  assert.match(coverageProducer, /startPackagedApp/);
+  assert.match(coverageProducer, /activateTool\('#ep-edit-text', 'editText'\)/);
+  assert.match(coverageProducer, /call\('app_mouse_click', point\)/);
+  assert.match(coverageProducer, /call\('app_paste', \{ text: pasteText \}\)/);
+  assert.match(coverageProducer, /\.document-tab\[data-index=/);
+  assert.match(coverageProducer, /\.unsaved-close-cancel/);
+  assert.match(coverageProducer, /\.unsaved-close-dont-save/);
+  assert.match(coverageProducer, /\.quick-access-btn\[data-action="undo"\]/);
+  assert.match(coverageProducer, /\.quick-access-btn\[data-action="redo"\]/);
+  assert.match(coverageProducer, /clickAtElement\('\.status-page-input'\)/);
+  assert.match(coverageProducer, /recordLifecycle\(adapter, 'click-away-commit'/);
+  assert.match(coverageProducer, /EDITOR_COVERAGE_DIMENSIONS\.editorFamilies/);
+  assert.match(coverageProducer, /EDITOR_COVERAGE_DIMENSIONS\.lifecycleScenarios/);
+  assert.match(coverageProducer, /assert\.equal\(matrixCases\.length, REQUIRED_EDITOR_MATRIX_CASE_COUNT\)/);
+  assert.match(coverageProducer, /assert\.equal\(lifecycleCases\.length, REQUIRED_EDITOR_LIFECYCLE_CASE_COUNT\)/);
+  assert.match(coverageProducer, /rm\(options\.outputPath, \{ force: true \}\)/);
+  assert.match(coverageProducer, /rename\(temporaryManifestPath, options\.outputPath\)/);
+  assert.doesNotMatch(coverageProducer, /app_create_annotation|state\.documents|activeDocumentIndex/);
+  assert.doesNotMatch(coverageProducer, /call\('app_(?:switch_tab|undo|redo)'/);
+  const annotationTextAcceptance = await readFile(
+    path.join(projectDir, 'scripts', 'test-annotation-text-editing-macos.mjs'),
+    'utf8',
+  );
+  for (const productionAction of [
+    "callTool('app_new_blank_pdf'",
+    "callTool('app_set_tool', { tool: 'addText' })",
+    "createAnnotationText('textbox'",
+    "createAnnotationText('callout'",
+    "callTool('app_mouse_click'",
+    "callTool('app_mouse_drag'",
+    "clickVisible('.pdf-text-editor-apply')",
+    "clickVisible('.pdf-text-editor-cancel')",
+    "callTool('app_save_pdf'",
+    "callTool('app_open_pdf'",
+  ]) {
+    assert.match(
+      annotationTextAcceptance,
+      new RegExp(productionAction.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')),
+      `packaged annotation acceptance must use ${productionAction}`,
+    );
+  }
+  assert.match(annotationTextAcceptance, /double: true/);
+  assert.match(annotationTextAcceptance, /productionUiOnly: true/);
+  assert.match(annotationTextAcceptance, /syntheticStateSeeding: false/);
+  assert.match(annotationTextAcceptance, /testOnlyEntryPoint: false/);
+  assert.doesNotMatch(annotationTextAcceptance, /app_create_annotation/);
+  assert.doesNotMatch(annotationTextAcceptance, /core\/state|state\.documents|activeDocumentIndex/);
+  assert.match(pkg.scripts['test:ocr-ui:macos'], /test:ocr-ui:browser:macos.*test:ocr-workflow:macos/);
+  const workflow = await readFile(path.join(repoDir, '.github', 'workflows', 'ci.yml'), 'utf8');
+  assert.ok(
+    workflow.indexOf('Run genuine packaged editor coverage matrix')
+      < workflow.indexOf('Run production packaged editor acceptance'),
+    'real editor coverage must run before packaged acceptance consumes its manifest',
+  );
+  assert.match(workflow, /test:editor-coverage:macos[\s\S]*editor-coverage-manifest\.json/);
+  assert.match(workflow, /OPEN_PDF_STUDIO_TEST_ARTIFACT_DIR:.*test-artifacts\/browser-ui/);
+  assert.match(workflow, /test:ocr-ui:browser:macos.*tee.*test-artifacts\/browser-ui\/ocr-ui\.log/);
+  assert.match(workflow, /id: browser_acceptance\s+continue-on-error: true/);
+  assert.match(workflow, /browser_status=0[\s\S]*exit "\$browser_status"/);
+  assert.match(workflow, /Run production packaged editor acceptance\s+if: always\(\)/);
+  assert.match(workflow, /steps\.browser_acceptance\.outcome != 'success'/);
+  assert.match(workflow, /test:ocr-production-100-page:macos/);
+  assert.match(workflow, /test:editor-performance:macos[\s\S]*test-artifacts\/editor-performance\/console\.log/);
+  assert.match(workflow, /Evaluate authoritative PR or fail-closed diagnostic decision/);
+  assert.match(
+    workflow,
+    /continue-on-error: \$\{\{ github\.event_name != 'pull_request' \|\| github\.base_ref != 'main' \}\}/,
+  );
+  for (const releaseContextArgument of [
+    '--event-name', '--base-ref', '--head-ref', '--github-ref',
+    '--event-repository', '--event-payload', '--local-diagnostic',
+  ]) {
+    assert.match(workflow, new RegExp(releaseContextArgument));
+  }
+  assert.match(workflow, /GITHUB_EVENT_PATH/);
+  const hardeningGateDocumentation = await readFile(
+    path.join(projectDir, 'docs', 'ocr', 'OCR_RELEASE_HARDENING_GATE.md'),
+    'utf8',
+  );
+  assert.match(hardeningGateDocumentation, /authoritative-release-context/);
+  assert.match(hardeningGateDocumentation, /--local-diagnostic/);
+  assert.match(hardeningGateDocumentation, /open `pull_request` targeting `main`/);
+  const playwrightArtifacts = await readFile(
+    path.join(projectDir, 'scripts', 'playwright-failure-artifacts.mjs'),
+    'utf8',
+  );
+  assert.match(playwrightArtifacts, /failure\.png/);
+  assert.match(playwrightArtifacts, /failure-trace\.zip/);
+  for (const scriptName of [
+    'test-native-paragraph-editing.mjs',
+    'test-inline-document-metadata.mjs',
+    'test-modal-font-substitution.mjs',
+    'test-ocr-searchable-layer-macos.mjs',
+    'test-ocr-recognition-dialog-macos.mjs',
+    'test-ocr-progress-macos.mjs',
+    'test-ocr-review-macos.mjs',
+  ]) {
+    const browserScript = await readFile(path.join(projectDir, 'scripts', scriptName), 'utf8');
+    assert.match(browserScript, /startPlaywrightFailureArtifacts/);
+  }
+  assert.match(pkg.scripts['test:editor-performance:macos'], /test-editor-performance-macos\.mjs/);
+  assert.match(pkg.scripts['test:editor-performance:macos'], /verify-editor-performance-report\.mjs/);
+  const performanceProducer = await readFile(
+    path.join(projectDir, 'scripts', 'test-editor-performance-macos.mjs'),
+    'utf8',
+  );
+  assert.match(performanceProducer, /contract: 'open-pdf-studio\.editor-performance'/);
+  assert.match(performanceProducer, /gateId: 'macos-editor-ocr-performance'/);
+  assert.match(performanceProducer, /framePaced: true/);
+  assert.match(performanceProducer, /measurePerformance: true/);
+  assert.match(performanceProducer, /OPEN_PDF_STUDIO_OCR_100_PAGE_REPORT/);
+  assert.match(performanceProducer, /ocrProduction100Page/);
+  assert.doesNotMatch(performanceProducer, /workflow-performance\.js/);
+  assert.match(pkg.scripts['test:editor-lifecycle:unit'], /document-lifecycle\.test\.mjs/);
+  assert.match(pkg.scripts['test:editor-lifecycle:unit'], /text-edit-session\.test\.mjs/);
+  assert.equal(pkg.scripts['evaluate:ocr-release-hardening'], 'node scripts/evaluate-ocr-release-hardening.mjs');
   const packager = await readFile(path.join(projectDir, 'scripts', 'package-macos-release-arm64.mjs'), 'utf8');
   assert.match(packager, /aarch64-apple-darwin/);
   assert.match(packager, /x86_64-apple-darwin/);
@@ -202,6 +457,7 @@ test('release-hardening scripts and machine evidence are wired without committin
   assert.match(packager, /createUpdaterArtifacts/);
   const ignore = await readFile(path.join(repoDir, '.gitignore'), 'utf8');
   assert.match(ignore, /open-pdf-studio\/output\/ocr-release-hardening\//);
+  assert.match(ignore, /open-pdf-studio\/test-artifacts\//);
   assert.match(ignore, /\*\*\/binaries\/macos-universal\//);
   assert.match(ignore, /\*\*\/binaries\/pdfium-worker-\*/);
 });
@@ -241,6 +497,8 @@ test('100-page and adversarial release qualification stay on the visible product
     'utf8',
   );
   assert.match(adversarial, /#ep-recognize-text/);
+  assert.match(adversarial, /head: await gitHead\(\)/);
+  assert.match(adversarial, /platform: \{ operatingSystem: process\.platform, architecture: process\.arch \}/);
   assert.match(adversarial, /testOnlyOcrEntryPointUsed: false/);
   assert.doesNotMatch(adversarial, /app_ocr_phase_a_spike/);
 

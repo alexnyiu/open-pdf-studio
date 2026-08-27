@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import net from 'node:net';
 import { chromium } from 'playwright';
+import { startPlaywrightFailureArtifacts } from './playwright-failure-artifacts.mjs';
 
 assert.equal(process.platform, 'darwin', 'searchable OCR UI gate is macOS-only');
 
@@ -49,6 +50,8 @@ vite.stdout.on('data', (chunk) => { serverOutput = (serverOutput + chunk).slice(
 vite.stderr.on('data', (chunk) => { serverOutput = (serverOutput + chunk).slice(-20_000); });
 
 let browser;
+let page;
+let failureArtifacts;
 try {
   await waitForServer(`${origin}/tests/ui/ocr-searchable-layer.html`, vite);
   let executablePath;
@@ -61,7 +64,8 @@ try {
   browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
   const context = await browser.newContext();
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
-  const page = await context.newPage();
+  page = await context.newPage();
+  failureArtifacts = await startPlaywrightFailureArtifacts(context, 'ocr-searchable-layer');
   const browserErrors = [];
   page.on('pageerror', (error) => browserErrors.push(error.stack || error.message));
   page.on('console', (message) => {
@@ -114,9 +118,11 @@ try {
   assert.deepEqual(browserErrors, [], `browser errors:\n${browserErrors.join('\n')}`);
   console.log('macOS searchable OCR UI integration gate passed');
 } catch (error) {
+  await failureArtifacts?.capture(page);
   if (serverOutput) error.message += `\nVite output:\n${serverOutput}`;
   throw error;
 } finally {
+  await failureArtifacts?.discard();
   await browser?.close();
   if (vite.exitCode === null) vite.kill('SIGTERM');
 }

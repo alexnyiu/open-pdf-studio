@@ -1,17 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createMutable as createBrowserMutable } from 'solid-js/store/dist/store.js';
 import {
   applyTextFormat,
   assertRichTextDocumentV2,
+  cloneOwnedTextEditPersistenceState,
+  cloneRichTextDocument,
+  cloneTextEditRecord,
   createRichTextDocument,
   createTextLine,
   createTextRun,
   graphemeLength,
   migrateLegacyTextEditRecord,
+  removeTextEditRecordFromDocument,
   replaceTextRange,
   richTextInsertionContext,
   richTextFromPlainText,
   richTextToPlainText,
+  shouldInsertRichHardBreak,
   textFormatState,
 } from './rich-text.js';
 
@@ -34,6 +40,100 @@ function fixture() {
     ], { id: 'line-1', baseline: 80, baselineAdvance: 17, alignment: 'left' }),
   ], { x: 10, y: 60, width: 240, height: 30, rotation: 0 });
 }
+
+test('plain Enter inserts rich hard breaks only for multiline editors', () => {
+  assert.equal(shouldInsertRichHardBreak({ key: 'Enter' }), true);
+  assert.equal(shouldInsertRichHardBreak({ key: 'Enter' }, { singleLine: true }), false);
+  assert.equal(shouldInsertRichHardBreak({ key: 'Enter', metaKey: true }), false);
+  assert.equal(shouldInsertRichHardBreak({ key: 'Enter', ctrlKey: true }), false);
+  assert.equal(shouldInsertRichHardBreak({ key: 'a' }), false);
+});
+
+test('reactive rich-text proxies are normalized before persistence', () => {
+  const document = fixture();
+  const reactiveProxy = new Proxy(document, {});
+  assert.throws(() => structuredClone(reactiveProxy), { name: 'DataCloneError' });
+
+  const copy = cloneRichTextDocument(reactiveProxy);
+  assert.deepEqual(copy, document);
+  assert.notEqual(copy, reactiveProxy);
+  assert.doesNotThrow(() => structuredClone(copy));
+});
+
+test('owned text edit removal snapshots a browser Solid proxy before mutation and remains undoable', () => {
+  const record = {
+    id: 'inserted-delete-1',
+    page: 1,
+    richText: fixture(),
+    original: null,
+  };
+  const documentState = createBrowserMutable({ textEdits: [record] });
+  assert.throws(() => structuredClone(documentState.textEdits[0]), { name: 'DataCloneError' });
+
+  const commands = [];
+  const removed = removeTextEditRecordFromDocument(
+    documentState,
+    record.id,
+    (snapshot, index) => {
+      commands.push({ type: 'removeTextEdit', textEdit: snapshot, index });
+      return true;
+    },
+  );
+  assert.equal(removed, true);
+  assert.equal(documentState.textEdits.length, 0);
+  assert.equal(commands.length, 1);
+  assert.doesNotThrow(() => structuredClone(commands[0].textEdit));
+  assert.deepEqual(commands[0].textEdit, cloneTextEditRecord(record));
+
+  // Undo restores the detached record at its exact owner index; a subsequent
+  // removal (redo-equivalent) must remain proxy-safe.
+  documentState.textEdits.splice(commands[0].index, 0, commands[0].textEdit);
+  assert.deepEqual(cloneTextEditRecord(documentState.textEdits[0]), cloneTextEditRecord(record));
+  assert.equal(removeTextEditRecordFromDocument(documentState, record.id, () => true), true);
+  assert.equal(documentState.textEdits.length, 0);
+});
+
+test('failed owned text edit removal recording restores the original owner record', () => {
+  const record = { id: 'inserted-delete-rollback', page: 1, richText: fixture(), original: null };
+  const documentState = createBrowserMutable({ textEdits: [record] });
+  const removed = removeTextEditRecordFromDocument(documentState, record.id, () => false);
+  assert.equal(removed, false);
+  assert.equal(documentState.textEdits.length, 1);
+  assert.deepEqual(cloneTextEditRecord(documentState.textEdits[0]), cloneTextEditRecord(record));
+});
+
+test('native text persistence payload detaches Solid records and manifest before mocked IPC', async () => {
+  const record = {
+    id: 'native-ipc-1',
+    page: 1,
+    richText: fixture(),
+    original: fixture(),
+    sourceProvenance: [{ streamObjectId: 4, operatorIndex: 2 }],
+  };
+  const manifest = {
+    schema: 'open-pdf-studio.owned-text-edit-manifest',
+    version: 3,
+    pages: [{ page: 1, edits: [record] }],
+  };
+  const documentState = createBrowserMutable({ textEdits: [record], textEditManifest: manifest });
+  assert.throws(() => structuredClone(documentState.textEdits), { name: 'DataCloneError' });
+  assert.throws(() => structuredClone(documentState.textEditManifest), { name: 'DataCloneError' });
+
+  const plain = cloneOwnedTextEditPersistenceState(documentState);
+  const invokeNative = async (command, payload) => {
+    assert.equal(command, 'apply_native_text_edit_plan');
+    assert.doesNotThrow(() => structuredClone(payload));
+    return { pdfBytes: [1, 2, 3], updatedRecords: payload.records };
+  };
+  const result = await invokeNative('apply_native_text_edit_plan', {
+    documentBytes: [37, 80, 68, 70],
+    records: plain.records,
+    previousManifest: plain.previousManifest,
+  });
+
+  assert.deepEqual(result.updatedRecords, [cloneTextEditRecord(record)]);
+  assert.deepEqual(plain.previousManifest, cloneTextEditRecord(manifest));
+});
 
 test('selection formatting splits only at grapheme boundaries and preserves untouched runs', () => {
   const document = fixture();
@@ -64,6 +164,29 @@ test('mixed selection exposes indeterminate formatting and collapsed caret chang
   assert.equal(collapsed.collapsed, true);
   assert.deepEqual(collapsed.document, document);
   assert.deepEqual(collapsed.typingStyle, { italic: true, faceId: 'liberation-sans-italic' });
+});
+
+test('selection formatting reports canonical line-spacing multipliers including mixed paragraphs', () => {
+  const document = createRichTextDocument([
+    createTextLine([createTextRun('First', { ...normal, size: 10 })], {
+      id: 'spacing-a', baseline: 80, baselineAdvance: 15, alignment: 'left', breakAfter: 'hard',
+    }),
+    createTextLine([createTextRun('Second', { ...normal, size: 8 })], {
+      id: 'spacing-b', baseline: 65, baselineAdvance: 12, alignment: 'left', breakAfter: 'hard',
+    }),
+  ], { x: 10, y: 45, width: 240, height: 50 });
+  const uniform = textFormatState(document, {
+    anchor: { line: 0, offset: 0 },
+    focus: { line: 1, offset: 6 },
+  });
+  assert.equal(uniform.lineSpacingMultiplier, 1.5);
+
+  document.lines[1].baselineAdvance = 16;
+  const mixed = textFormatState(document, {
+    anchor: { line: 0, offset: 0 },
+    focus: { line: 1, offset: 6 },
+  });
+  assert.equal(mixed.lineSpacingMultiplier, null);
 });
 
 test('replacement preserves surrounding run styles and supports editor-local multiline insertion', () => {
@@ -112,7 +235,11 @@ test('caret insertion context is backward-biased at mixed-format run boundaries'
   assert.equal(atBoundary.sourceRunId, 'run-a');
   assert.equal(atBoundary.runStyle.color, normal.color);
   assert.equal(atStart.sourceRunId, 'run-a');
-  assert.deepEqual(atBoundary.lineStyle, { alignment: 'left', baselineAdvance: 17 });
+  assert.deepEqual(atBoundary.lineStyle, {
+    alignment: 'left',
+    baselineAdvance: 17,
+    lineSpacingMultiplier: 1.4166667,
+  });
 });
 
 test('Enter preserves caret formatting and stable surrounding identities', () => {

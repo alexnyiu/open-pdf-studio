@@ -1,7 +1,17 @@
 import { createSignal } from 'solid-js';
-import { getActiveDocument } from '../../core/state.js';
+import { getActiveDocument, state } from '../../core/state.js';
 import { applyToSelected } from './formatStore.js';
-import { annotProps, updateAnnotProp } from './propertiesStore.js';
+import { annotProps, storeShowProperties, updateAnnotProp } from './propertiesStore.js';
+import {
+  getActiveTextEditSession,
+  textEditSessionOwnerIsCurrent,
+} from '../../text/text-edit-session.js';
+import {
+  ANNOTATION_STYLE_PRESET_KEYS,
+  applyAnnotationStyle,
+  captureAnnotationStyle,
+  resolveAnnotationStyleActionTarget,
+} from '../../text/annotation-style-presets.js';
 
 /**
  * Named line-style presets (WEERGAVE-stijlen).
@@ -23,40 +33,11 @@ import { annotProps, updateAnnotProp } from './propertiesStore.js';
  */
 
 // Keys a preset may carry. Anything else in a loaded preset is ignored.
-export const STYLE_PRESET_KEYS = [
-  'fillColor', 'strokeColor', 'color', 'opacity', 'lineWidth',
-  'borderStyle', 'startHead', 'endHead', 'headSize',
-];
-
-// Mirror of propertiesStore's stroke-colour-driven types: for these,
-// setting 'color' must also set strokeColor (rendering resolves
-// `strokeColor || color`).
-const _STROKE_COLOR_DRIVEN = new Set([
-  'parametricSymbol', 'polyline', 'cloudPolyline', 'spline', 'draw',
-]);
-
-// Types that carry line endings.
-const _HEAD_TYPES = new Set(['arrow', 'line', 'polyline', 'measureDistance']);
+export const STYLE_PRESET_KEYS = ANNOTATION_STYLE_PRESET_KEYS;
 
 // ---------------------------------------------------------------------------
 // Capture
 // ---------------------------------------------------------------------------
-
-function _captureFromAnnotation(ann) {
-  const props = {};
-  // fillColor: null is meaningful ("no fill"), so copy it verbatim when the
-  // annotation has the concept of a fill at all.
-  if ('fillColor' in ann) props.fillColor = ann.fillColor ?? null;
-  if (ann.strokeColor !== undefined) props.strokeColor = ann.strokeColor;
-  if (ann.color !== undefined) props.color = ann.color;
-  if (ann.opacity !== undefined) props.opacity = Math.round(ann.opacity * 100);
-  if (ann.lineWidth !== undefined) props.lineWidth = parseFloat(ann.lineWidth);
-  if (ann.borderStyle !== undefined) props.borderStyle = ann.borderStyle;
-  if (ann.startHead !== undefined) props.startHead = ann.startHead;
-  if (ann.endHead !== undefined) props.endHead = ann.endHead;
-  if (ann.headSize !== undefined) props.headSize = ann.headSize;
-  return props;
-}
 
 function _captureFromPanel() {
   // Tool-defaults mode (or no selection): capture the panel values.
@@ -71,6 +52,16 @@ function _captureFromPanel() {
   return props;
 }
 
+function _currentStyleActionTarget(doc = getActiveDocument()) {
+  const session = getActiveTextEditSession();
+  return resolveAnnotationStyleActionTarget({
+    activeDocument: doc,
+    editorState: state,
+    activeSession: session,
+    sessionOwnerIsCurrent: textEditSessionOwnerIsCurrent(session),
+  });
+}
+
 /**
  * Capture the current appearance as a plain props object, from the first
  * selected annotation, or from the panel values when nothing is selected
@@ -78,9 +69,11 @@ function _captureFromPanel() {
  */
 export function captureCurrentStyle() {
   const doc = getActiveDocument();
-  const sel = doc ? doc.selectedAnnotations : [];
-  const ann = (sel && sel.length > 0) ? sel[0] : doc?.selectedAnnotation;
-  const props = ann ? _captureFromAnnotation(ann) : _captureFromPanel();
+  const target = _currentStyleActionTarget(doc);
+  if (target.mode === 'stale-text-draft') return null;
+  const props = target.annotation
+    ? captureAnnotationStyle(target.annotation)
+    : _captureFromPanel();
   // Drop 'mixed' leftovers defensively.
   for (const k of Object.keys(props)) {
     if (props[k] === 'mixed') delete props[k];
@@ -93,37 +86,6 @@ export function captureCurrentStyle() {
 // Apply
 // ---------------------------------------------------------------------------
 
-// Write preset props onto one annotation with the same semantics as
-// propertiesStore.updateAnnotProp's switch.
-function _applyPropsToAnnotation(ann, props) {
-  if (props.color !== undefined) {
-    ann.color = props.color;
-    if (_STROKE_COLOR_DRIVEN.has(ann.type)) ann.strokeColor = props.color;
-  }
-  if (props.strokeColor !== undefined) {
-    ann.strokeColor = props.strokeColor;
-    if (ann.type === 'parametricSymbol') ann.color = props.strokeColor;
-  }
-  if (props.fillColor !== undefined && 'fillColor' in ann) ann.fillColor = props.fillColor;
-  if (props.opacity !== undefined) {
-    const op = Math.max(0, Math.min(100, parseInt(props.opacity)));
-    if (!isNaN(op)) ann.opacity = op / 100;
-  }
-  if (props.lineWidth !== undefined) {
-    const lw = parseFloat(props.lineWidth);
-    if (!isNaN(lw)) ann.lineWidth = lw;
-  }
-  if (props.borderStyle !== undefined) ann.borderStyle = props.borderStyle;
-  // Line endings: only where they make sense.
-  const takesHeads = _HEAD_TYPES.has(ann.type) ||
-    ann.startHead !== undefined || ann.endHead !== undefined;
-  if (takesHeads) {
-    if (props.startHead !== undefined) ann.startHead = props.startHead;
-    if (props.endHead !== undefined) ann.endHead = props.endHead;
-    if (props.headSize !== undefined) ann.headSize = props.headSize;
-  }
-}
-
 /**
  * Apply a style-props object to the current selection (single undo step via
  * formatStore.applyToSelected). Without a selection, routes through
@@ -132,9 +94,22 @@ function _applyPropsToAnnotation(ann, props) {
 export function applyStyleToSelection(props) {
   if (!props) return;
   const doc = getActiveDocument();
+  const target = _currentStyleActionTarget(doc);
+  if (target.mode === 'stale-text-draft') return;
+  if (target.mode === 'text-draft') {
+    const draft = target.annotation;
+    if (draft.locked) return;
+    if (applyAnnotationStyle(draft, props)) {
+      draft.modifiedAt = new Date().toISOString();
+      // Refresh the copied panel values without recording an annotation
+      // mutation. The draft remains detached until the editor's Apply action.
+      storeShowProperties(draft);
+    }
+    return;
+  }
   const sel = doc ? doc.selectedAnnotations : [];
   if (sel && sel.length > 0) {
-    applyToSelected((ann) => _applyPropsToAnnotation(ann, props));
+    applyToSelected((ann) => applyAnnotationStyle(ann, props));
     return;
   }
   // Tool-defaults mode: the panel shows a synthetic annotation; updateAnnotProp

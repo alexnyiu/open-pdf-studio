@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Upraviť {{label}}",
+    "editValueHint": "{{label}}. Upravte dvojitým kliknutím alebo stlačením klávesu Enter.",
+    "timezoneHint": "Dátumy sa zobrazujú v časovom pásme {{timezone}} a ukladajú sa vo formáte ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Schváliť náhradu písma",
+    "sourceFace": "Zdrojové písmo",
+    "sourceFaces": "Zdrojové písma",
+    "unknown": "Neznáme",
+    "packagedSubstitute": "Pribalené náhradné písmo",
+    "notAvailable": "Nie je k dispozícii",
+    "sampleText": "Ukážka",
+    "sampleFallback": "Rýchla hnedá líška preskočí lenivého psa.",
+    "scope": "Platí pre",
+    "scopeAnnotation": "Túto anotáciu",
+    "scopeSelection": "Vybrané textové polia",
+    "scopeParagraph": "Tento odsek PDF",
+    "scopeFindReplace": "Túto úpravu Nájsť/Nahradiť",
+    "remember": "Zapamätať toto schválenie pre otvorený dokument",
+    "approve": "Použiť náhradné písmo",
+    "cancel": "Zrušiť"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Upraviť text PDF",
+      "editFormatted": "Upraviť formátovaný text PDF",
+      "editAnnotation": "Upraviť formátovaný text {{type}}",
+      "editRegion": "Upraviť oblasť formátovaného textu PDF: {{text}}",
+      "editScannedLine": "Upraviť riadok naskenovaného textu: {{text}}",
+      "editScannedFixed": "Upraviť pevnú oblasť naskenovaného textu: {{text}}",
+      "editScannedReflow": "Upraviť oblasť preformátovania naskenovaného odseku: {{text}}",
+      "selectedOcrParagraph": "Vybratý odsek OCR s počtom riadkov: {{count}}"
+    },
+    "handles": {
+      "move": "Presunúť textové pole",
+      "moveHint": "Potiahnutím presuňte textové pole",
+      "resize": "Zmeniť veľkosť textového poľa",
+      "resizeHint": "Potiahnutím zmeňte veľkosť textového poľa"
+    },
+    "actions": {
+      "apply": "Použiť",
+      "cancel": "Zrušiť"
+    },
+    "status": {
+      "ocrOverflow": "Celý návrh OCR je viditeľný mimo schválenej oblasti. Uloženie zostane zablokované, kým presná kontrola pevnej oblasti nepotvrdí, že sa do nej text zmestí.",
+      "scannedRegion": "Upravuje sa naskenovaný text v schválenej oblasti.",
+      "shaping": "Dokončuje sa presné rozloženie textu…",
+      "overlap": "Text prekrýva existujúci obsah strany. Potvrdenie je povolené; susedné zdrojové objekty sa nepresunú.",
+      "lowContrast": "Zdrojové farby s nízkym kontrastom majú pozadie iba počas úprav. Uložené farby zostanú nezmenené.",
+      "layoutRejectedPrefix": "Rozloženie textu bolo odmietnuté:",
+      "layoutRejected": "Rozloženie textu bolo odmietnuté: {{reasons}}",
+      "shapingRejected": "Tvarovanie textu bolo odmietnuté: {{reason}}",
+      "nativeManual": "Upravuje sa pôvodný text v textovom poli s ručnými riadkami. Nový riadok vložíte stlačením klávesu Enter.",
+      "nativeManualContrast": "Upravuje sa pôvodný text v textovom poli s ručnými riadkami. Nový riadok vložíte stlačením klávesu Enter. Zdrojové farby s nízkym kontrastom majú pozadie iba počas úprav; uložené farby zostanú nezmenené.",
+      "nativeGrowing": "Upravuje sa pôvodný text. Šírka je pevná a oblasť sa rozširuje smerom nadol.",
+      "nativeGrowingContrast": "Upravuje sa pôvodný text. Šírka je pevná a oblasť sa rozširuje smerom nadol. Zdrojové farby s nízkym kontrastom majú pozadie iba počas úprav; uložené farby zostanú nezmenené.",
+      "scannedEstimate": "Upravuje sa naskenovaný text. Vlastnosti písma sú odhadované.",
+      "applyRejected": "Úpravu textu sa nepodarilo použiť: {{reason}}",
+      "cropBoxRejected": "Vytvarovaný text nemožno potvrdiť vnútri CropBoxu strany.",
+      "layoutTimeout": "Presné rozloženie textu sa nedokončilo včas. Editor zostáva otvorený.",
+      "scannedRejected": "Zmena naskenovaného textu bola odmietnutá: {{reason}}",
+      "lineBreakUnsupported": "Zalomenia riadkov nie sú podporované. Túto jednoriadkovú úpravu použijete kombináciou Command-Enter.",
+      "ocrOneLine": "Upravuje sa jeden samostatný riadok naskenovaného textu. Vlastnosti písma sú odhadované.",
+      "ocrFixed": "Upravuje sa niekoľko riadkov OCR v jednej pevnej pôvodnej oblasti. Jeden odsek sa v tejto oblasti preformátuje; pevné zalomenia riadkov zachovajú režim pevných riadkov. Command-Enter použije zmenu.",
+      "ocrReflow": "Upravuje sa jeden odsek v schválenej pôvodnej oblasti OCR. Command-Enter použije zmenu; pretečenie bude odmietnuté.",
+      "operationFailed": "Textovú operáciu sa nepodarilo dokončiť. Dokument zostal nezmenený.",
+      "staleDraft": "Dokument sa zmenil, kým bol textový editor otvorený. Koncept bol zahodený.",
+      "multipleOcrParagraphs": "Výber zahŕňa viacero odsekov OCR. Skontrolujte samostatné obrysy a výslovne použite Zlúčiť. Zlučovanie medzi stĺpcami zostáva vypnuté.",
+      "nativeColumnBoundary": "Tento odsek prekračuje zistenú hranicu pôvodného stĺpca. Úpravy boli zablokované a dokument zostal nezmenený.",
+      "nativeSourceUnavailable": "Viditeľný text sa nepodarilo prepojiť s vhodnými zdrojovými operátormi. Dokument zostal nezmenený.",
+      "nativeDeleteUnavailable": "Tento pôvodný text PDF nemožno bezpečne odstrániť, pretože jeho presné zdrojové operátory sú nejednoznačné. Dokument zostal nezmenený.",
+      "readOnly": "Predtým upravený text je iba na čítanie. Dokument zostal nezmenený."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Limit {{limit}} grafém",
+      "lineThreshold": "Limit {{limit}} riadkov",
+      "message": "Celý vložený obsah sa zachoval: {{graphemeCount}} grafém v {{lineCount}} riadkoch. Prekročený limit: {{thresholds}}. Ukážka je obmedzená. Celé vloženie odstránite pomocou možnosti „Vrátiť vloženie“.",
+      "messageWithExpansion": "Celý vložený obsah sa zachoval: {{graphemeCount}} grafém v {{lineCount}} riadkoch. Prekročený limit: {{thresholds}}. Ukážka je obmedzená. Celé vloženie odstránite pomocou možnosti „Vrátiť vloženie“ alebo možnosťou „Rozšíriť pole“ prevezmete presné overené hranice.",
+      "undo": "Vrátiť vloženie",
+      "expand": "Rozšíriť pole"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Zoskupovanie odsekov OCR",
+    "title": "Zoskupovanie",
+    "mergeSelected": "Zlúčiť vybrané",
+    "mergeSelectedParagraphs": "Zlúčiť vybrané odseky",
+    "mergePrevious": "Zlúčiť s predchádzajúcim",
+    "mergePreviousHint": "Zlúčiť s predchádzajúcim odsekom OCR",
+    "mergeNext": "Zlúčiť s nasledujúcim",
+    "mergeNextHint": "Zlúčiť s nasledujúcim odsekom OCR",
+    "splitBefore": "Rozdeliť pred",
+    "splitAfter": "Rozdeliť za",
+    "reset": "Obnoviť automatické zoskupovanie",
+    "crossColumnDisabled": "Zlučovanie medzi stĺpcami je zakázané",
+    "ambiguousBoundariesOnly": "Ručne možno zlúčiť iba nejednoznačné hranice v rovnakom stĺpci",
+    "tooManyLines": "Viac než 32 riadkov. Pred úpravou tento odsek ručne rozdeľte.",
+    "mergeDescription": "Existujúce texty sú oddelené zachovaným pevným zalomením riadka. Zlúčenie sa použije až po úspešnom overení kombinovanej opravy zdroja a pevnej oblasti.",
+    "mergedText": "Zlúčený text OCR",
+    "splitRegion": "Rozdeliť oblasť OCR",
+    "firstRegion": "Prvá oblasť",
+    "secondRegion": "Druhá oblasť",
+    "sourceLines": "Zdrojové riadky: {{lines}}"
+  }
+}

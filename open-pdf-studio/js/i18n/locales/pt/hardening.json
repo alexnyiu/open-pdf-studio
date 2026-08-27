@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Editar {{label}}",
+    "editValueHint": "{{label}}. Clique duas vezes ou pressione Enter para editar.",
+    "timezoneHint": "As datas são exibidas no fuso horário {{timezone}} e salvas no formato ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Aprovar substituição de fonte",
+    "sourceFace": "Fonte original",
+    "sourceFaces": "Fontes originais",
+    "unknown": "Desconhecida",
+    "packagedSubstitute": "Fonte substituta incluída",
+    "notAvailable": "Não disponível",
+    "sampleText": "Exemplo",
+    "sampleFallback": "A rápida raposa marrom salta sobre o cão preguiçoso.",
+    "scope": "Aplicável a",
+    "scopeAnnotation": "Esta anotação",
+    "scopeSelection": "As caixas de texto selecionadas",
+    "scopeParagraph": "Este parágrafo do PDF",
+    "scopeFindReplace": "Esta edição de Localizar/Substituir",
+    "remember": "Lembrar esta aprovação para o documento aberto",
+    "approve": "Usar fonte substituta",
+    "cancel": "Cancelar"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Editar texto do PDF",
+      "editFormatted": "Editar texto formatado do PDF",
+      "editAnnotation": "Editar texto formatado de {{type}}",
+      "editRegion": "Editar região de texto formatado do PDF: {{text}}",
+      "editScannedLine": "Editar linha de texto digitalizado: {{text}}",
+      "editScannedFixed": "Editar região fixa de texto digitalizado: {{text}}",
+      "editScannedReflow": "Editar região de refluxo do parágrafo digitalizado: {{text}}",
+      "selectedOcrParagraph": "Parágrafo de OCR selecionado com {{count}} linhas"
+    },
+    "handles": {
+      "move": "Mover caixa de texto",
+      "moveHint": "Arraste para mover a caixa de texto",
+      "resize": "Redimensionar caixa de texto",
+      "resizeHint": "Arraste para redimensionar a caixa de texto"
+    },
+    "actions": {
+      "apply": "Aplicar",
+      "cancel": "Cancelar"
+    },
+    "status": {
+      "ocrOverflow": "O rascunho completo do OCR está visível fora da região aprovada. O salvamento permanece bloqueado até que o texto caiba na validação exata da região fixa.",
+      "scannedRegion": "Editando texto digitalizado dentro da região aprovada.",
+      "shaping": "Concluindo o layout exato do texto…",
+      "overlap": "O texto se sobrepõe ao conteúdo existente da página. A alteração pode ser aplicada; os objetos originais vizinhos não serão movidos.",
+      "lowContrast": "As cores originais de baixo contraste têm um fundo visível somente durante a edição. As cores salvas permanecem inalteradas.",
+      "layoutRejectedPrefix": "Layout do texto rejeitado:",
+      "layoutRejected": "Layout do texto rejeitado: {{reasons}}",
+      "shapingRejected": "Formatação do texto rejeitada: {{reason}}",
+      "nativeManual": "Editando texto nativo em uma caixa com linhas manuais. Pressione Enter para criar uma nova linha.",
+      "nativeManualContrast": "Editando texto nativo em uma caixa com linhas manuais. Pressione Enter para criar uma nova linha. As cores originais de baixo contraste têm um fundo visível somente durante a edição; as cores salvas permanecem inalteradas.",
+      "nativeGrowing": "Editando texto nativo. A largura é fixa e a região cresce para baixo.",
+      "nativeGrowingContrast": "Editando texto nativo. A largura é fixa e a região cresce para baixo. As cores originais de baixo contraste têm um fundo visível somente durante a edição; as cores salvas permanecem inalteradas.",
+      "scannedEstimate": "Editando texto digitalizado. As propriedades da fonte são estimadas.",
+      "applyRejected": "Não foi possível aplicar a edição do texto: {{reason}}",
+      "cropBoxRejected": "O texto formatado não pode ser aplicado dentro do CropBox da página.",
+      "layoutTimeout": "O layout exato do texto não foi concluído a tempo. O editor permanece aberto.",
+      "scannedRejected": "Alteração do texto digitalizado rejeitada: {{reason}}",
+      "lineBreakUnsupported": "Quebras de linha não são compatíveis. Use Command-Enter para aplicar esta edição de uma linha.",
+      "ocrOneLine": "Editando uma linha isolada de texto digitalizado. As propriedades da fonte são estimadas.",
+      "ocrFixed": "Editando várias linhas de OCR dentro de uma única região original fixa. Um único parágrafo reflui dentro dessa região; quebras de linha explícitas mantêm o modo de linhas fixas. Command-Enter aplica a alteração.",
+      "ocrReflow": "Editando um parágrafo dentro da região original aprovada do OCR. Command-Enter aplica a alteração; o excesso é rejeitado.",
+      "operationFailed": "Não foi possível concluir a operação de texto. O documento não foi alterado.",
+      "staleDraft": "O documento foi alterado enquanto o editor de texto estava aberto. O rascunho foi descartado.",
+      "multipleOcrParagraphs": "A seleção abrange vários parágrafos de OCR. Reveja os contornos separados e use explicitamente «Unir». A união entre colunas continua desativada.",
+      "nativeColumnBoundary": "Este parágrafo atravessa um limite de coluna original detetado. A edição foi bloqueada e o documento não foi alterado.",
+      "nativeSourceUnavailable": "O texto visível não pôde ser associado a operadores de origem elegíveis. O documento não foi alterado.",
+      "nativeDeleteUnavailable": "Este texto PDF nativo não pode ser eliminado em segurança porque os operadores de origem exatos são ambíguos. O documento não foi alterado.",
+      "readOnly": "O texto editado anteriormente é só de leitura. O documento não foi alterado."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Limite de {{limit}} grafemas",
+      "lineThreshold": "Limite de {{limit}} linhas",
+      "message": "Todo o conteúdo colado foi mantido: {{graphemeCount}} grafemas em {{lineCount}} linhas. Limite excedido: {{thresholds}}. A visualização é limitada. Use Desfazer colagem para remover toda a inserção.",
+      "messageWithExpansion": "Todo o conteúdo colado foi mantido: {{graphemeCount}} grafemas em {{lineCount}} linhas. Limite excedido: {{thresholds}}. A visualização é limitada. Use Desfazer colagem para remover toda a inserção ou Expandir caixa para adotar os limites exatos validados.",
+      "undo": "Desfazer colagem",
+      "expand": "Expandir caixa"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Agrupamento de parágrafos do OCR",
+    "title": "Agrupamento",
+    "mergeSelected": "Mesclar selecionados",
+    "mergeSelectedParagraphs": "Mesclar parágrafos selecionados",
+    "mergePrevious": "Mesclar com o anterior",
+    "mergePreviousHint": "Mesclar com o parágrafo anterior do OCR",
+    "mergeNext": "Mesclar com o próximo",
+    "mergeNextHint": "Mesclar com o próximo parágrafo do OCR",
+    "splitBefore": "Dividir antes",
+    "splitAfter": "Dividir depois",
+    "reset": "Redefinir agrupamento automático",
+    "crossColumnDisabled": "A mesclagem entre colunas está desativada",
+    "ambiguousBoundariesOnly": "Somente limites ambíguos na mesma coluna podem ser mesclados manualmente",
+    "tooManyLines": "Mais de 32 linhas. Divida este parágrafo manualmente antes de editar.",
+    "mergeDescription": "Os textos existentes estão separados por uma quebra de linha fixa preservada. A união só é aplicada depois de a correção de origem combinada e a região fixa passarem na validação.",
+    "mergedText": "Texto OCR unido",
+    "splitRegion": "Dividir região OCR",
+    "firstRegion": "Primeira região",
+    "secondRegion": "Segunda região",
+    "sourceLines": "Linhas de origem: {{lines}}"
+  }
+}

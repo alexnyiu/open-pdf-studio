@@ -17,6 +17,7 @@ import {
   OCR_NATIVE_SCHEMA_VERSION,
   assertNativeOcrPageRequestV1,
 } from './contracts/native-job.v1.js';
+import { fingerprintOcrDocument } from './cache.js';
 
 const MODEL_PACK_URL = '/ocr/pp-ocrv6-small/manifest.json';
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
@@ -153,7 +154,11 @@ export async function createPhaseACompatibilityJob({
  * native controller request. The local path is hashed here and is never added
  * to the request that crosses into the disposable child.
  */
-export async function createPhaseACompatibilityNativeRequest({ source, modelPack = null }) {
+export async function createPhaseACompatibilityNativeRequest({
+  source,
+  modelPack = null,
+  fingerprintDocument = fingerprintOcrDocument,
+}) {
   if (!source || source.kind !== 'pdf-page' || typeof source.path !== 'string' || !source.path) {
     throw new TypeError('OCR compatibility request requires a PDF page source');
   }
@@ -164,6 +169,7 @@ export async function createPhaseACompatibilityNativeRequest({ source, modelPack
   const pack = modelPack ?? await loadBundledModelPack();
   const packIdentity = modelPackIdentity(pack);
   const documentDigest = await sha256(`phase-a-evidence-document:${source.path}`);
+  const documentFingerprint = await fingerprintDocument(source.path);
   const configurationDigest = await sha256(JSON.stringify({
     pack: packIdentity,
     scale: source.scale,
@@ -185,7 +191,7 @@ export async function createPhaseACompatibilityNativeRequest({ source, modelPack
     modelPack: packIdentity,
     document: {
       id: `phase-a-document-${documentDigest.slice(0, 32)}`,
-      fingerprint: fingerprint(documentDigest),
+      fingerprint: structuredClone(documentFingerprint),
       revision: 0,
       generation: `phase-a-generation-${documentDigest.slice(0, 32)}`,
       pageCount: source.pageIndex + 1,

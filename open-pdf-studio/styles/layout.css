@@ -914,36 +914,153 @@ body.pdf-cursor-override #canvas-container * {
   display: block;
   box-sizing: border-box;
   padding: 0;
-  border: 1px solid #ffffff;
-  background: #0078d7;
-  box-shadow: 0 0 0 1px #0078d7;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   pointer-events: auto;
   touch-action: none;
 }
 
+.pdf-text-editor-move-handle::before,
+.pdf-text-editor-resize-handle::before {
+  content: '';
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--theme-surface, #ffffff);
+  background: var(--theme-accent, #0078d7);
+  box-shadow: 0 0 0 1px var(--theme-accent, #0078d7);
+}
+
 .pdf-text-editor-move-handle {
-  top: -6px;
+  top: -16px;
   left: 50%;
   width: 28px;
-  height: 8px;
-  border-radius: 4px;
+  height: 24px;
   transform: translateX(-50%);
   cursor: move;
 }
 
+.pdf-text-editor-move-handle::before {
+  inset: 8px 0;
+  border-radius: 4px;
+}
+
 .pdf-text-editor-resize-handle {
-  right: -5px;
-  bottom: -5px;
-  width: 11px;
-  height: 11px;
+  right: -12px;
+  bottom: -12px;
+  width: 24px;
+  height: 24px;
+  cursor: var(--text-edit-resize-cursor, nwse-resize);
+}
+
+.pdf-text-editor-resize-handle::before {
+  inset: 6px;
   border-radius: 2px;
-  cursor: nwse-resize;
 }
 
 .pdf-text-editor-move-handle:focus-visible,
 .pdf-text-editor-resize-handle:focus-visible {
   outline: 2px solid #ffffff;
   outline-offset: 2px;
+}
+
+.pdf-text-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+  white-space: normal;
+}
+
+.pdf-text-editor-actions button {
+  min-width: 64px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--theme-border, #8a8a8a);
+  border-radius: 4px;
+  color: var(--theme-text, #1f1f1f);
+  background: var(--theme-surface, #ffffff);
+  cursor: pointer;
+}
+
+.pdf-text-editor-actions .pdf-text-editor-apply {
+  color: var(--theme-on-accent, #ffffff);
+  border-color: var(--theme-accent, #0078d7);
+  background: var(--theme-accent, #0078d7);
+}
+
+.pdf-text-editor-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.pdf-text-editor-pathological-paste {
+  contain: content;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.pdf-text-editor-paste-recovery {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  flex: 1 0 100%;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--theme-warning-border, #b45309);
+  border-radius: 4px;
+  color: var(--theme-text, #1f1f1f);
+  background: var(--theme-warning-surface, #fff7ed);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.pdf-text-editor-paste-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.pdf-text-editor-paste-actions button {
+  min-width: max-content;
+}
+
+.pdf-text-editor-actions button:focus-visible {
+  outline: 2px solid var(--theme-accent, #0078d7);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .pdf-text-editor-paste-recovery {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pdf-text-editor-paste-actions { justify-content: flex-start; }
+}
+
+@media (pointer: coarse) {
+  .pdf-text-editor-move-handle,
+  .pdf-text-editor-resize-handle {
+    min-width: 36px;
+    min-height: 36px;
+  }
+  .pdf-text-editor-resize-handle { right: -18px; bottom: -18px; }
+}
+
+@media (forced-colors: active) {
+  .pdf-text-editor,
+  .pdf-text-editor-actions button,
+  .pdf-text-editor-paste-recovery,
+  .pdf-text-editor-move-handle::before,
+  .pdf-text-editor-resize-handle::before {
+    forced-color-adjust: auto;
+    border-color: ButtonText;
+  }
+  .pdf-text-editor { outline-color: Highlight; }
 }
 
 .pdf-text-edit-commit-bounds {

@@ -1,4 +1,5 @@
 import fontkit from '@pdf-lib/fontkit';
+import { cloneRichTextDocument } from './rich-text.js';
 
 const ROOT = '/pdfjs/web/standard_fonts';
 
@@ -31,6 +32,10 @@ export const PACKAGED_FONT_FACES = Object.freeze(definitions.map((entry) => Obje
 const faceById = new Map(PACKAGED_FONT_FACES.map((face) => [face.id, face]));
 const bytesCache = new Map();
 const parsedCache = new Map();
+const shapedRunCache = new Map();
+const SHAPED_RUN_CACHE_ENTRIES = 4096;
+const SHAPED_RUN_CACHE_BYTES = 16 * 1024 * 1024;
+let shapedRunCacheBytes = 0;
 let assetLoaderOverride = null;
 
 /** Test/runtime host hook for environments that cannot fetch packaged URLs. */
@@ -38,6 +43,8 @@ export function setPackagedFontAssetLoader(loader) {
   assetLoaderOverride = typeof loader === 'function' ? loader : null;
   bytesCache.clear();
   parsedCache.clear();
+  shapedRunCache.clear();
+  shapedRunCacheBytes = 0;
 }
 
 async function sha256Hex(bytes) {
@@ -131,7 +138,7 @@ function rejectUnsupportedText(text) {
   }
 }
 
-export async function shapeTextRun(run) {
+async function shapeTextRunUncached(run) {
   if (run.direction !== 'ltr') throw new Error('Unsupported shaping or text direction');
   rejectUnsupportedText(run.text);
   const font = await parsedPackagedFace(run.faceId);
@@ -194,8 +201,53 @@ export async function shapeTextRun(run) {
   };
 }
 
+function shapedRunCacheKey(run) {
+  return JSON.stringify([
+    run.faceId,
+    Number(run.size),
+    run.direction || 'ltr',
+    run.bold === true,
+    run.italic === true,
+    run.underline === true,
+    run.strikeout === true,
+    String(run.text || ''),
+  ]);
+}
+
+function retainShapedRun(key, shaped) {
+  const bytes = key.length * 2 + JSON.stringify(shaped).length * 2;
+  if (bytes > SHAPED_RUN_CACHE_BYTES) return;
+  shapedRunCache.set(key, { shaped, bytes });
+  shapedRunCacheBytes += bytes;
+  while (shapedRunCache.size > SHAPED_RUN_CACHE_ENTRIES
+      || shapedRunCacheBytes > SHAPED_RUN_CACHE_BYTES) {
+    const oldestKey = shapedRunCache.keys().next().value;
+    const oldest = shapedRunCache.get(oldestKey);
+    shapedRunCache.delete(oldestKey);
+    shapedRunCacheBytes -= oldest?.bytes || 0;
+  }
+}
+
+/** Shape one maximal same-style run through a bounded module-local LRU. */
+export async function shapeTextRun(run) {
+  const key = shapedRunCacheKey(run);
+  const cached = shapedRunCache.get(key);
+  if (cached) {
+    shapedRunCache.delete(key);
+    shapedRunCache.set(key, cached);
+    return cached.shaped;
+  }
+  const shaped = await shapeTextRunUncached(run);
+  retainShapedRun(key, shaped);
+  return shaped;
+}
+
+export function shapedRunCacheMetrics() {
+  return { entries: shapedRunCache.size, bytes: shapedRunCacheBytes };
+}
+
 export async function shapeRichTextDocument(document, { antialiasMargin = 1 } = {}) {
-  const output = structuredClone(document);
+  const output = cloneRichTextDocument(document);
   const rejectionReasons = [];
   let maximumWidth = 0;
   let minimumTop = Number.POSITIVE_INFINITY;

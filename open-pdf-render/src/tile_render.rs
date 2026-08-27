@@ -24,8 +24,8 @@
 
 use rayon::prelude::*;
 use tiny_skia::{
-    FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke,
-    StrokeDash, Transform,
+    FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, StrokeDash,
+    Transform,
 };
 
 const CHUNK_PAINTS: usize = 64;
@@ -136,15 +136,21 @@ fn axis_aligned_rect_of(path: &tiny_skia::Path) -> Option<(f32, f32, f32, f32)> 
     for seg in path.segments() {
         match seg {
             PathSegment::MoveTo(p) => {
-                if !pts.is_empty() { return None; } // meerdere subpaden
+                if !pts.is_empty() {
+                    return None;
+                } // meerdere subpaden
                 pts.push((p.x, p.y));
             }
             PathSegment::LineTo(p) => {
-                if pts.is_empty() || pts.len() > 4 || closed { return None; }
+                if pts.is_empty() || pts.len() > 4 || closed {
+                    return None;
+                }
                 pts.push((p.x, p.y));
             }
             PathSegment::Close => {
-                if closed { return None; }
+                if closed {
+                    return None;
+                }
                 closed = true;
             }
             _ => return None, // curves: geen rechthoek
@@ -152,21 +158,35 @@ fn axis_aligned_rect_of(path: &tiny_skia::Path) -> Option<(f32, f32, f32, f32)> 
     }
     // 4 hoekpunten, of 5 waarbij het laatste het eerste herhaalt.
     if pts.len() == 5 {
-        if pts[4] != pts[0] { return None; }
+        if pts[4] != pts[0] {
+            return None;
+        }
         pts.truncate(4);
     }
-    if pts.len() != 4 { return None; }
+    if pts.len() != 4 {
+        return None;
+    }
     // Opeenvolgende zijden moeten afwisselend horizontaal/verticaal zijn.
     for i in 0..4 {
         let (x0, y0) = pts[i];
         let (x1, y1) = pts[(i + 1) % 4];
-        if x0 != x1 && y0 != y1 { return None; }
+        if x0 != x1 && y0 != y1 {
+            return None;
+        }
     }
     let xs: Vec<f32> = pts.iter().map(|p| p.0).collect();
     let ys: Vec<f32> = pts.iter().map(|p| p.1).collect();
-    let (x0, x1) = (xs.iter().cloned().fold(f32::MAX, f32::min), xs.iter().cloned().fold(f32::MIN, f32::max));
-    let (y0, y1) = (ys.iter().cloned().fold(f32::MAX, f32::min), ys.iter().cloned().fold(f32::MIN, f32::max));
-    if x0 >= x1 || y0 >= y1 { return None; }
+    let (x0, x1) = (
+        xs.iter().cloned().fold(f32::MAX, f32::min),
+        xs.iter().cloned().fold(f32::MIN, f32::max),
+    );
+    let (y0, y1) = (
+        ys.iter().cloned().fold(f32::MAX, f32::min),
+        ys.iter().cloned().fold(f32::MIN, f32::max),
+    );
+    if x0 >= x1 || y0 >= y1 {
+        return None;
+    }
     Some((x0, y0, x1, y1))
 }
 
@@ -229,19 +249,34 @@ struct BboxAcc {
 
 impl BboxAcc {
     fn new() -> Self {
-        BboxAcc { min_x: f32::MAX, min_y: f32::MAX, max_x: f32::MIN, max_y: f32::MIN }
+        BboxAcc {
+            min_x: f32::MAX,
+            min_y: f32::MAX,
+            max_x: f32::MIN,
+            max_y: f32::MIN,
+        }
     }
     #[inline(always)]
     fn add(&mut self, t: &Transform, x: f32, y: f32) {
         let dx = t.sx * x + t.kx * y + t.tx;
         let dy = t.ky * x + t.sy * y + t.ty;
-        if dx < self.min_x { self.min_x = dx }
-        if dy < self.min_y { self.min_y = dy }
-        if dx > self.max_x { self.max_x = dx }
-        if dy > self.max_y { self.max_y = dy }
+        if dx < self.min_x {
+            self.min_x = dx
+        }
+        if dy < self.min_y {
+            self.min_y = dy
+        }
+        if dx > self.max_x {
+            self.max_x = dx
+        }
+        if dy > self.max_y {
+            self.max_y = dy
+        }
     }
     fn merge_into(&self, out: &mut (f32, f32, f32, f32), pad: f32) {
-        if self.min_x > self.max_x { return; }
+        if self.min_x > self.max_x {
+            return;
+        }
         out.0 = out.0.min(self.min_x - pad);
         out.1 = out.1.min(self.min_y - pad);
         out.2 = out.2.max(self.max_x + pad);
@@ -254,7 +289,9 @@ impl TileScene {
     /// (x0, y0, w, h — zoals extract_draw_commands hem oplevert).
     pub fn build(buffer: Vec<u8>) -> Result<TileScene, crate::RenderError> {
         if buffer.len() < 16 {
-            return Err(crate::RenderError::RenderError("tile: buffer te kort".into()));
+            return Err(crate::RenderError::RenderError(
+                "tile: buffer te kort".into(),
+            ));
         }
         let x0 = f32::from_le_bytes(buffer[0..4].try_into().unwrap());
         let y0 = f32::from_le_bytes(buffer[4..8].try_into().unwrap());
@@ -271,9 +308,8 @@ impl TileScene {
         // hele pagina 2*|y0| in device-Y buiten het canvas, waardoor het blad
         // (vrijwel) leeg raste. De X-as gebruikte al correct -x0.
         // post_concat: eerst translate-matrix, dan flip erover heen.
-        let base = Transform::from_translate(-x0, -y0).post_concat(Transform::from_row(
-            1.0, 0.0, 0.0, -1.0, 0.0, h,
-        ));
+        let base = Transform::from_translate(-x0, -y0)
+            .post_concat(Transform::from_row(1.0, 0.0, 0.0, -1.0, 0.0, h));
 
         let mut scene = TileScene {
             data: buffer,
@@ -292,7 +328,10 @@ impl TileScene {
     /// PRE-PASS: state-machine + chunking. Paint-ops: Stroke/Fill/FillEO/
     /// TextAt/DrawImage. Pad-bbox wordt bij opbouw geaccumuleerd.
     fn index(&mut self) -> Result<(), crate::RenderError> {
-        let mut r = CmdReader { data: &self.data, pos: 16 };
+        let mut r = CmdReader {
+            data: &self.data,
+            pos: 16,
+        };
         let mut state = GState::new(self.base);
         let mut stack: Vec<GState> = Vec::new();
 
@@ -312,24 +351,32 @@ impl TileScene {
             let op_pos = r.pos;
             let op = r.u8();
             match op {
-                0 | 1 => { // MoveTo / LineTo
+                0 | 1 => {
+                    // MoveTo / LineTo
                     let x = r.f32();
                     let y = r.f32();
                     path_acc.add(&state.ctm, x, y);
                     last_pt = (x, y);
                 }
-                2 => { // CubicTo — controlepunten meenemen is conservatief-correct
-                    let x1 = r.f32(); let y1 = r.f32();
-                    let x2 = r.f32(); let y2 = r.f32();
-                    let x3 = r.f32(); let y3 = r.f32();
+                2 => {
+                    // CubicTo — controlepunten meenemen is conservatief-correct
+                    let x1 = r.f32();
+                    let y1 = r.f32();
+                    let x2 = r.f32();
+                    let y2 = r.f32();
+                    let x3 = r.f32();
+                    let y3 = r.f32();
                     path_acc.add(&state.ctm, x1, y1);
                     path_acc.add(&state.ctm, x2, y2);
                     path_acc.add(&state.ctm, x3, y3);
                     last_pt = (x3, y3);
                 }
-                3 => { // Rect
-                    let x = r.f32(); let y = r.f32();
-                    let w = r.f32(); let h = r.f32();
+                3 => {
+                    // Rect
+                    let x = r.f32();
+                    let y = r.f32();
+                    let w = r.f32();
+                    let h = r.f32();
                     path_acc.add(&state.ctm, x, y);
                     path_acc.add(&state.ctm, x + w, y);
                     path_acc.add(&state.ctm, x, y + h);
@@ -337,43 +384,76 @@ impl TileScene {
                     last_pt = (x, y);
                 }
                 4 => {} // ClosePath
-                5 => { state.stroke_rgba = r.u32(); state.stroke_width = r.f32(); }
-                6 => { state.fill_rgba = r.u32(); }
-                7 => { // Stroke — paint: bbox verruimen met halve lijndikte (+miter-marge)
-                    let pad = 0.5 * state.stroke_width * uniform_scale(&state.ctm)
+                5 => {
+                    state.stroke_rgba = r.u32();
+                    state.stroke_width = r.f32();
+                }
+                6 => {
+                    state.fill_rgba = r.u32();
+                }
+                7 => {
+                    // Stroke — paint: bbox verruimen met halve lijndikte (+miter-marge)
+                    let pad = 0.5
+                        * state.stroke_width
+                        * uniform_scale(&state.ctm)
                         * state.miter_limit.max(1.0);
                     path_acc.merge_into(&mut chunk_bbox, pad.max(1.0));
                     paints += 1;
                 }
-                8 | 9 => { // Fill / FillEvenOdd
+                8 | 9 => {
+                    // Fill / FillEvenOdd
                     path_acc.merge_into(&mut chunk_bbox, 1.0);
                     paints += 1;
                 }
                 10 => stack.push(state.clone()),
-                11 => { if let Some(s) = stack.pop() { state = s; } }
+                11 => {
+                    if let Some(s) = stack.pop() {
+                        state = s;
+                    }
+                }
                 12 => {
-                    let a = r.f32(); let b = r.f32(); let c = r.f32();
-                    let d = r.f32(); let e = r.f32(); let f = r.f32();
+                    let a = r.f32();
+                    let b = r.f32();
+                    let c = r.f32();
+                    let d = r.f32();
+                    let e = r.f32();
+                    let f = r.f32();
                     // Canvas2D ctx.transform = pre-concat op de CTM.
                     state.ctm = Transform::from_row(a, b, c, d, e, f).post_concat(state.ctm);
                 }
-                13 => { state.line_cap = r.u8(); }
-                14 => { state.line_join = r.u8(); }
-                15 => { state.miter_limit = r.f32(); }
+                13 => {
+                    state.line_cap = r.u8();
+                }
+                14 => {
+                    state.line_join = r.u8();
+                }
+                15 => {
+                    state.miter_limit = r.f32();
+                }
                 16 => {
                     let n = r.u8() as usize;
                     let mut pat = Vec::with_capacity(n);
-                    for _ in 0..n { pat.push(r.f32()); }
+                    for _ in 0..n {
+                        pat.push(r.f32());
+                    }
                     let phase = r.f32();
-                    state.dash = if pat.is_empty() { None } else { Some((pat, phase)) };
+                    state.dash = if pat.is_empty() {
+                        None
+                    } else {
+                        Some((pat, phase))
+                    };
                 }
-                17 => { // BeginPath
+                17 => {
+                    // BeginPath
                     path_acc = BboxAcc::new();
                     path_start = Some((op_pos, state.ctm));
                 }
-                18 => { // TextAt
-                    let x = r.f32(); let y = r.f32();
-                    let fs = r.f32(); let _rgba = r.u32();
+                18 => {
+                    // TextAt
+                    let x = r.f32();
+                    let y = r.f32();
+                    let fs = r.f32();
+                    let _rgba = r.u32();
                     let len = r.u8() as usize;
                     r.pos += len;
                     let mut acc = BboxAcc::new();
@@ -382,8 +462,10 @@ impl TileScene {
                     acc.merge_into(&mut chunk_bbox, 1.0);
                     paints += 1;
                 }
-                19 => { // DrawImage in 1×1 unit-square onder de CTM
-                    let _w = r.u16(); let _h = r.u16();
+                19 => {
+                    // DrawImage in 1×1 unit-square onder de CTM
+                    let _w = r.u16();
+                    let _h = r.u16();
                     let dlen = r.u32() as usize;
                     self.image_bytes += dlen as u64;
                     r.pos += dlen;
@@ -395,7 +477,8 @@ impl TileScene {
                     acc.merge_into(&mut chunk_bbox, 1.0);
                     paints += 1;
                 }
-                20 | 21 => { // Clip / ClipEvenOdd: pad-range als clip-referentie
+                20 | 21 => {
+                    // Clip / ClipEvenOdd: pad-range als clip-referentie
                     self.clip_ops += 1;
                     // De clip hoort bij het pad dat sinds de laatste BeginPath
                     // is opgebouwd: range [BeginPath, clip-op). Zonder actief
@@ -405,12 +488,18 @@ impl TileScene {
                     // alleen; bbox van volgende paints wordt er niet groter
                     // door.
                     let (ps, pctm) = path_start.unwrap_or((op_pos, state.ctm));
-                    state.clips.push(ClipRef { start: ps, end: op_pos, even_odd: op == 21, ctm: pctm });
+                    state.clips.push(ClipRef {
+                        start: ps,
+                        end: op_pos,
+                        even_odd: op == 21,
+                        ctm: pctm,
+                    });
                     let _ = last_pt;
                 }
                 other => {
                     return Err(crate::RenderError::RenderError(format!(
-                        "tile: onbekende opcode {} op {}", other, op_pos
+                        "tile: onbekende opcode {} op {}",
+                        other, op_pos
                     )));
                 }
             }
@@ -435,7 +524,13 @@ impl TileScene {
             }
         }
         if chunk_start < r.pos {
-            chunks.push(Chunk { start: chunk_start, end: r.pos, bbox: chunk_bbox, snap: chunk_snap, snap_stack: chunk_snap_stack });
+            chunks.push(Chunk {
+                start: chunk_start,
+                end: r.pos,
+                bbox: chunk_bbox,
+                snap: chunk_snap,
+                snap_stack: chunk_snap_stack,
+            });
         }
         self.chunks = chunks;
         Ok(())
@@ -452,7 +547,15 @@ impl TileScene {
     }
 
     #[doc(hidden)]
-    pub fn render_tile_debug(&self, scale: f32, tx: u32, ty: u32, tw: u32, th: u32, cull: bool) -> Pixmap {
+    pub fn render_tile_debug(
+        &self,
+        scale: f32,
+        tx: u32,
+        ty: u32,
+        tw: u32,
+        th: u32,
+        cull: bool,
+    ) -> Pixmap {
         self.render_tile_impl(scale, tx, ty, tw, th, cull)
     }
 
@@ -463,7 +566,15 @@ impl TileScene {
         pm
     }
 
-    fn render_tile_impl(&self, scale: f32, tx: u32, ty: u32, tw: u32, th: u32, cull: bool) -> Pixmap {
+    fn render_tile_impl(
+        &self,
+        scale: f32,
+        tx: u32,
+        ty: u32,
+        tw: u32,
+        th: u32,
+        cull: bool,
+    ) -> Pixmap {
         let mut pixmap = Pixmap::new(tw, th).expect("tile pixmap");
         self.replay_onto(&mut pixmap, scale, tx, ty, tw, th, cull);
         pixmap
@@ -471,7 +582,16 @@ impl TileScene {
 
     /// Replay alle relevante chunks van een tegel op een bestaande pixmap
     /// (transparant óf voorgevuld met papier-wit).
-    fn replay_onto(&self, pixmap: &mut Pixmap, scale: f32, tx: u32, ty: u32, tw: u32, th: u32, cull: bool) {
+    fn replay_onto(
+        &self,
+        pixmap: &mut Pixmap,
+        scale: f32,
+        tx: u32,
+        ty: u32,
+        tw: u32,
+        th: u32,
+        cull: bool,
+    ) {
         // volledige-pagina-CTM = scale · base. De tegel-verschuiving gaat NIET
         // de CTM in maar als aparte integer-translate in de paint-aanroepen:
         // paden krijgen zo exact dezelfde float-coördinaten als de volledige
@@ -490,7 +610,9 @@ impl TileScene {
 
         for chunk in &self.chunks {
             let (bx0, by0, bx1, by1) = chunk.bbox;
-            if bx0 > bx1 { continue; } // chunk zonder paints
+            if bx0 > bx1 {
+                continue;
+            } // chunk zonder paints
             if cull && (bx1 < t_min_x || bx0 > t_max_x || by1 < t_min_y || by0 > t_max_y) {
                 continue;
             }
@@ -501,7 +623,13 @@ impl TileScene {
     /// Replay één chunk op een pixmap. `ctm_base` vervangt de scene-basis
     /// (bevat scale + tegel-translatie); de chunk-snapshot-CTM is relatief
     /// aan de scene-basis en wordt daarop omgehangen.
-    fn replay_range(&self, chunk: &Chunk, ctm_base: Transform, tile_shift: Transform, pixmap: &mut Pixmap) {
+    fn replay_range(
+        &self,
+        chunk: &Chunk,
+        ctm_base: Transform,
+        tile_shift: Transform,
+        pixmap: &mut Pixmap,
+    ) {
         // snapshot-CTM = (relatief t.o.v. self.base) · self.base. Om hem onder
         // ctm_base te hangen: rel = snap.ctm · base⁻¹; ctm = rel · ctm_base.
         let inv_base = match self.base.invert() {
@@ -522,18 +650,29 @@ impl TileScene {
                 g2
             })
             .collect();
-        let base_state = if let Some(bottom) = stack.first() { bottom.clone() } else { state.clone() };
+        let base_state = if let Some(bottom) = stack.first() {
+            bottom.clone()
+        } else {
+            state.clone()
+        };
 
         // Actief clip-masker (tegel-lokaal). Start = snapshot-clips van de
         // chunk; in-chunk ops 20/21 versmallen hem incrementeel, save/restore
         // bewaart/herstelt hem via mask_stack (parallel aan replay-lokale
         // pushes op `stack`). None = geen beperking.
         let mut cur_mask: Option<std::rc::Rc<tiny_skia::Mask>> = self.build_clip_mask_refs(
-            &chunk.snap.clips, &rehome, tile_shift, pixmap.width(), pixmap.height(),
+            &chunk.snap.clips,
+            &rehome,
+            tile_shift,
+            pixmap.width(),
+            pixmap.height(),
         );
         let mut mask_stack: Vec<Option<std::rc::Rc<tiny_skia::Mask>>> = Vec::new();
 
-        let mut r = CmdReader { data: &self.data, pos: chunk.start };
+        let mut r = CmdReader {
+            data: &self.data,
+            pos: chunk.start,
+        };
         let mut pb = PathBuilder::new();
         let mut cur = (0.0f32, 0.0f32);
 
@@ -542,25 +681,44 @@ impl TileScene {
         while r.pos < chunk.end {
             let op = r.u8();
             match op {
-                0 => { let x = r.f32(); let y = r.f32(); let p = dev(&state.ctm, x, y); pb.move_to(p.0, p.1); cur = p; }
+                0 => {
+                    let x = r.f32();
+                    let y = r.f32();
+                    let p = dev(&state.ctm, x, y);
+                    pb.move_to(p.0, p.1);
+                    cur = p;
+                }
                 1 => {
-                    let x = r.f32(); let y = r.f32(); let p = dev(&state.ctm, x, y);
-                    if pb.is_empty() { pb.move_to(cur.0, cur.1); }
-                    pb.line_to(p.0, p.1); cur = p;
+                    let x = r.f32();
+                    let y = r.f32();
+                    let p = dev(&state.ctm, x, y);
+                    if pb.is_empty() {
+                        pb.move_to(cur.0, cur.1);
+                    }
+                    pb.line_to(p.0, p.1);
+                    cur = p;
                 }
                 2 => {
-                    let x1 = r.f32(); let y1 = r.f32();
-                    let x2 = r.f32(); let y2 = r.f32();
-                    let x3 = r.f32(); let y3 = r.f32();
+                    let x1 = r.f32();
+                    let y1 = r.f32();
+                    let x2 = r.f32();
+                    let y2 = r.f32();
+                    let x3 = r.f32();
+                    let y3 = r.f32();
                     let p1 = dev(&state.ctm, x1, y1);
                     let p2 = dev(&state.ctm, x2, y2);
                     let p3 = dev(&state.ctm, x3, y3);
-                    if pb.is_empty() { pb.move_to(cur.0, cur.1); }
+                    if pb.is_empty() {
+                        pb.move_to(cur.0, cur.1);
+                    }
                     pb.cubic_to(p1.0, p1.1, p2.0, p2.1, p3.0, p3.1);
                     cur = p3;
                 }
                 3 => {
-                    let x = r.f32(); let y = r.f32(); let w = r.f32(); let h = r.f32();
+                    let x = r.f32();
+                    let y = r.f32();
+                    let w = r.f32();
+                    let h = r.f32();
                     let p0 = dev(&state.ctm, x, y);
                     let p1 = dev(&state.ctm, x + w, y);
                     let p2 = dev(&state.ctm, x + w, y + h);
@@ -573,9 +731,15 @@ impl TileScene {
                     cur = p0;
                 }
                 4 => pb.close(),
-                5 => { state.stroke_rgba = r.u32(); state.stroke_width = r.f32(); }
-                6 => { state.fill_rgba = r.u32(); }
-                7 => { // Stroke
+                5 => {
+                    state.stroke_rgba = r.u32();
+                    state.stroke_width = r.f32();
+                }
+                6 => {
+                    state.fill_rgba = r.u32();
+                }
+                7 => {
+                    // Stroke
                     if let Some(path) = pb.clone().finish() {
                         let mut paint = Paint::default();
                         paint.set_color(rgba_to_color(state.stroke_rgba));
@@ -590,8 +754,16 @@ impl TileScene {
                         let mut stroke = Stroke {
                             width: floored.max(0.05),
                             miter_limit: state.miter_limit,
-                            line_cap: match state.line_cap { 1 => LineCap::Round, 2 => LineCap::Square, _ => LineCap::Butt },
-                            line_join: match state.line_join { 1 => LineJoin::Round, 2 => LineJoin::Bevel, _ => LineJoin::Miter },
+                            line_cap: match state.line_cap {
+                                1 => LineCap::Round,
+                                2 => LineCap::Square,
+                                _ => LineCap::Butt,
+                            },
+                            line_join: match state.line_join {
+                                1 => LineJoin::Round,
+                                2 => LineJoin::Bevel,
+                                _ => LineJoin::Miter,
+                            },
                             dash: None,
                         };
                         if let Some((pat, phase)) = &state.dash {
@@ -601,12 +773,17 @@ impl TileScene {
                         pixmap.stroke_path(&path, &paint, &stroke, tile_shift, cur_mask.as_deref());
                     }
                 }
-                8 | 9 => { // Fill / FillEvenOdd
+                8 | 9 => {
+                    // Fill / FillEvenOdd
                     if let Some(path) = pb.clone().finish() {
                         let mut paint = Paint::default();
                         paint.set_color(rgba_to_color(state.fill_rgba));
                         paint.anti_alias = true;
-                        let rule = if op == 9 { FillRule::EvenOdd } else { FillRule::Winding };
+                        let rule = if op == 9 {
+                            FillRule::EvenOdd
+                        } else {
+                            FillRule::Winding
+                        };
                         pixmap.fill_path(&path, &paint, rule, tile_shift, cur_mask.as_deref());
                     }
                 }
@@ -622,33 +799,61 @@ impl TileScene {
                     cur_mask = match mask_stack.pop() {
                         Some(m) => m,
                         None => self.build_clip_mask_refs(
-                            &state.clips, &rehome, tile_shift, pixmap.width(), pixmap.height(),
+                            &state.clips,
+                            &rehome,
+                            tile_shift,
+                            pixmap.width(),
+                            pixmap.height(),
                         ),
                     };
                 }
                 12 => {
-                    let a = r.f32(); let b = r.f32(); let c = r.f32();
-                    let d = r.f32(); let e = r.f32(); let f = r.f32();
+                    let a = r.f32();
+                    let b = r.f32();
+                    let c = r.f32();
+                    let d = r.f32();
+                    let e = r.f32();
+                    let f = r.f32();
                     state.ctm = Transform::from_row(a, b, c, d, e, f).post_concat(state.ctm);
                 }
-                13 => { state.line_cap = r.u8(); }
-                14 => { state.line_join = r.u8(); }
-                15 => { state.miter_limit = r.f32(); }
+                13 => {
+                    state.line_cap = r.u8();
+                }
+                14 => {
+                    state.line_join = r.u8();
+                }
+                15 => {
+                    state.miter_limit = r.f32();
+                }
                 16 => {
                     let n = r.u8() as usize;
                     let mut pat = Vec::with_capacity(n);
-                    for _ in 0..n { pat.push(r.f32()); }
+                    for _ in 0..n {
+                        pat.push(r.f32());
+                    }
                     let phase = r.f32();
-                    state.dash = if pat.is_empty() { None } else { Some((pat, phase)) };
+                    state.dash = if pat.is_empty() {
+                        None
+                    } else {
+                        Some((pat, phase))
+                    };
                 }
-                17 => { pb = PathBuilder::new(); }
-                18 => { // TextAt — legacy, vrijwel ongebruikt: overslaan
-                    let _x = r.f32(); let _y = r.f32(); let _fs = r.f32(); let _c = r.u32();
+                17 => {
+                    pb = PathBuilder::new();
+                }
+                18 => {
+                    // TextAt — legacy, vrijwel ongebruikt: overslaan
+                    let _x = r.f32();
+                    let _y = r.f32();
+                    let _fs = r.f32();
+                    let _c = r.u32();
                     let len = r.u8() as usize;
                     r.pos += len;
                 }
-                19 => { // DrawImage in 1×1 unit-square onder de CTM
-                    let w = r.u16(); let h = r.u16();
+                19 => {
+                    // DrawImage in 1×1 unit-square onder de CTM
+                    let w = r.u16();
+                    let h = r.u16();
                     let dlen = r.u32() as usize;
                     let img = &self.data[r.pos..r.pos + dlen];
                     r.pos += dlen;
@@ -664,11 +869,16 @@ impl TileScene {
                         pixmap.draw_pixmap(0, 0, src.as_ref(), &paint, t, cur_mask.as_deref());
                     }
                 }
-                20 | 21 => { // Clip / ClipEvenOdd: huidig pad versmalt het masker
+                20 | 21 => {
+                    // Clip / ClipEvenOdd: huidig pad versmalt het masker
                     let path = pb.clone().finish();
                     cur_mask = Self::intersect_clip(
-                        cur_mask, path.as_ref(), op == 21, tile_shift,
-                        pixmap.width(), pixmap.height(),
+                        cur_mask,
+                        path.as_ref(),
+                        op == 21,
+                        tile_shift,
+                        pixmap.width(),
+                        pixmap.height(),
                     );
                 }
                 _ => return, // corrupt: stop deze chunk
@@ -707,31 +917,53 @@ impl TileScene {
         }
         let mut ctm = rehome(c.ctm);
         let mut ctm_stack: Vec<Transform> = Vec::new();
-        let mut r = CmdReader { data: &self.data, pos: c.start };
+        let mut r = CmdReader {
+            data: &self.data,
+            pos: c.start,
+        };
         let mut pb = PathBuilder::new();
         let mut cur = (0.0f32, 0.0f32);
         while r.pos < c.end {
             let op = r.u8();
             match op {
-                0 => { let x = r.f32(); let y = r.f32(); let p = dev_pt(&ctm, x, y); pb.move_to(p.0, p.1); cur = p; }
+                0 => {
+                    let x = r.f32();
+                    let y = r.f32();
+                    let p = dev_pt(&ctm, x, y);
+                    pb.move_to(p.0, p.1);
+                    cur = p;
+                }
                 1 => {
-                    let x = r.f32(); let y = r.f32(); let p = dev_pt(&ctm, x, y);
-                    if pb.is_empty() { pb.move_to(cur.0, cur.1); }
-                    pb.line_to(p.0, p.1); cur = p;
+                    let x = r.f32();
+                    let y = r.f32();
+                    let p = dev_pt(&ctm, x, y);
+                    if pb.is_empty() {
+                        pb.move_to(cur.0, cur.1);
+                    }
+                    pb.line_to(p.0, p.1);
+                    cur = p;
                 }
                 2 => {
-                    let x1 = r.f32(); let y1 = r.f32();
-                    let x2 = r.f32(); let y2 = r.f32();
-                    let x3 = r.f32(); let y3 = r.f32();
+                    let x1 = r.f32();
+                    let y1 = r.f32();
+                    let x2 = r.f32();
+                    let y2 = r.f32();
+                    let x3 = r.f32();
+                    let y3 = r.f32();
                     let p1 = dev_pt(&ctm, x1, y1);
                     let p2 = dev_pt(&ctm, x2, y2);
                     let p3 = dev_pt(&ctm, x3, y3);
-                    if pb.is_empty() { pb.move_to(cur.0, cur.1); }
+                    if pb.is_empty() {
+                        pb.move_to(cur.0, cur.1);
+                    }
                     pb.cubic_to(p1.0, p1.1, p2.0, p2.1, p3.0, p3.1);
                     cur = p3;
                 }
                 3 => {
-                    let x = r.f32(); let y = r.f32(); let w = r.f32(); let h = r.f32();
+                    let x = r.f32();
+                    let y = r.f32();
+                    let w = r.f32();
+                    let h = r.f32();
                     let p0 = dev_pt(&ctm, x, y);
                     let p1 = dev_pt(&ctm, x + w, y);
                     let p2 = dev_pt(&ctm, x + w, y + h);
@@ -744,31 +976,56 @@ impl TileScene {
                     cur = p0;
                 }
                 4 => pb.close(),
-                5 => { r.u32(); r.f32(); }
-                6 => { r.u32(); }
-                7 | 8 | 9 => {}
-                10 => ctm_stack.push(ctm),
-                11 => { if let Some(t) = ctm_stack.pop() { ctm = t; } }
-                12 => {
-                    let a = r.f32(); let b = r.f32(); let cc = r.f32();
-                    let d = r.f32(); let e = r.f32(); let f = r.f32();
-                    ctm = Transform::from_row(a, b, cc, d, e, f).post_concat(ctm);
-                }
-                13 | 14 => { r.u8(); }
-                15 => { r.f32(); }
-                16 => {
-                    let n = r.u8() as usize;
-                    for _ in 0..n { r.f32(); }
+                5 => {
+                    r.u32();
                     r.f32();
                 }
-                17 => { pb = PathBuilder::new(); }
+                6 => {
+                    r.u32();
+                }
+                7 | 8 | 9 => {}
+                10 => ctm_stack.push(ctm),
+                11 => {
+                    if let Some(t) = ctm_stack.pop() {
+                        ctm = t;
+                    }
+                }
+                12 => {
+                    let a = r.f32();
+                    let b = r.f32();
+                    let cc = r.f32();
+                    let d = r.f32();
+                    let e = r.f32();
+                    let f = r.f32();
+                    ctm = Transform::from_row(a, b, cc, d, e, f).post_concat(ctm);
+                }
+                13 | 14 => {
+                    r.u8();
+                }
+                15 => {
+                    r.f32();
+                }
+                16 => {
+                    let n = r.u8() as usize;
+                    for _ in 0..n {
+                        r.f32();
+                    }
+                    r.f32();
+                }
+                17 => {
+                    pb = PathBuilder::new();
+                }
                 18 => {
-                    r.f32(); r.f32(); r.f32(); r.u32();
+                    r.f32();
+                    r.f32();
+                    r.f32();
+                    r.u32();
                     let len = r.u8() as usize;
                     r.pos += len;
                 }
                 19 => {
-                    r.u16(); r.u16();
+                    r.u16();
+                    r.u16();
                     let dlen = r.u32() as usize;
                     r.pos += dlen;
                 }
@@ -803,7 +1060,11 @@ impl TileScene {
                 return cur;
             }
         }
-        let rule = if even_odd { FillRule::EvenOdd } else { FillRule::Winding };
+        let rule = if even_odd {
+            FillRule::EvenOdd
+        } else {
+            FillRule::Winding
+        };
         match cur {
             None => {
                 let mut m = tiny_skia::Mask::new(w, h)?;
@@ -888,7 +1149,11 @@ impl TileScene {
         }
         // Zelfde conventie als renderer.rs::into_rgba: rauwe (premultiplied)
         // tiny-skia-pixels, geen demultiply — consumenten verwachten dit.
-        crate::RenderedPage { width: out_w, height: out_h, rgba: out }
+        crate::RenderedPage {
+            width: out_w,
+            height: out_h,
+            rgba: out,
+        }
     }
 }
 
@@ -993,7 +1258,10 @@ mod tests {
         let tiled = scene.render_full_parallel(2.0, 64); // 7×7 tegels
         assert_eq!(full.width, tiled.width);
         assert_eq!(full.height, tiled.height);
-        assert_eq!(full.rgba, tiled.rgba, "tegel-assemblage wijkt af van volledige render");
+        assert_eq!(
+            full.rgba, tiled.rgba,
+            "tegel-assemblage wijkt af van volledige render"
+        );
         // en er is echt inhoud
         assert!(full.rgba.chunks_exact(4).any(|p| p[3] != 0));
     }
@@ -1059,12 +1327,22 @@ mod tests {
         assert!(scene.chunk_count() >= 2, "test verwacht meerdere chunks");
         let full = scene.render_full_parallel(1.0, 4096);
         // balk i=10 (chunk 1): pdf y 10..10,8 → device y ~89,2..90 (AA-dekking < 1)
-        assert!(px(&full, 50, 89)[3] > 100, "balk binnen clip (chunk 1) zichtbaar");
+        assert!(
+            px(&full, 50, 89)[3] > 100,
+            "balk binnen clip (chunk 1) zichtbaar"
+        );
         assert_eq!(px(&full, 70, 89)[3], 0, "x buiten clip-band blijft leeg");
         // balk i=70 (chunk 2): pdf y 70 > 40 → volledig weggeclipt
-        assert_eq!(px(&full, 50, 29)[3], 0, "balk boven clipgebied (chunk 2) weggeclipt");
+        assert_eq!(
+            px(&full, 50, 29)[3],
+            0,
+            "balk boven clipgebied (chunk 2) weggeclipt"
+        );
         let tiled = scene.render_full_parallel(1.0, 16);
-        assert_eq!(full.rgba, tiled.rgba, "snapshot-clips breken de tegel-gelijkheid");
+        assert_eq!(
+            full.rgba, tiled.rgba,
+            "snapshot-clips breken de tegel-gelijkheid"
+        );
     }
 
     #[test]
@@ -1085,9 +1363,17 @@ mod tests {
         b.fill();
         let scene = scene_from(b, 0.0, 0.0, 100.0, 100.0);
         let full = scene.render_full_parallel(1.0, 4096);
-        assert_eq!(px(&full, 20, 80)[3], 255, "geclipte fill binnen clip zichtbaar");
+        assert_eq!(
+            px(&full, 20, 80)[3],
+            255,
+            "geclipte fill binnen clip zichtbaar"
+        );
         assert_eq!(px(&full, 50, 50)[3], 0, "geclipte fill buiten clip leeg");
-        assert_eq!(px(&full, 70, 30)[3], 255, "fill na restore niet meer geclipt");
+        assert_eq!(
+            px(&full, 70, 30)[3],
+            255,
+            "fill na restore niet meer geclipt"
+        );
         let tiled = scene.render_full_parallel(1.0, 16);
         assert_eq!(full.rgba, tiled.rgba);
     }

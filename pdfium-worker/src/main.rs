@@ -24,7 +24,8 @@ fn main() -> Result<()> {
     // Slot is passed as argv[1] (set by the spawner). Default to 0 for
     // standalone testing. Namespace (owning app PID) is argv[2] so multiple
     // app instances don't collide on the same SHM file; default "0".
-    let slot: u32 = std::env::args().nth(1)
+    let slot: u32 = std::env::args()
+        .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let ns: String = std::env::args().nth(2).unwrap_or_else(|| "0".to_string());
@@ -53,7 +54,9 @@ fn main() -> Result<()> {
                 break;
             }
         };
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
 
         let req: Request = match serde_json::from_str(&line) {
             Ok(r) => r,
@@ -64,23 +67,33 @@ fn main() -> Result<()> {
         };
 
         match req {
-            Request::Render { id, path, page_index, scale, rotation } => {
+            Request::Render {
+                id,
+                path,
+                page_index,
+                scale,
+                rotation,
+            } => {
                 let resp = match renderer.render(&path, page_index, scale, rotation) {
                     Ok(result) => {
                         match shm_region.write_bitmap(result.width, result.height, &result.rgba) {
                             Ok(bytes) => Response::RenderOk {
-                                id, ok: true,
-                                w: result.width, h: result.height,
+                                id,
+                                ok: true,
+                                w: result.width,
+                                h: result.height,
                                 shm_bytes: bytes,
                             },
                             Err(e) => Response::RenderErr {
-                                id, ok: false,
+                                id,
+                                ok: false,
                                 error: format!("SHM write: {}", e),
                             },
                         }
                     }
                     Err(e) => Response::RenderErr {
-                        id, ok: false,
+                        id,
+                        ok: false,
                         error: format!("{}", e),
                     },
                 };
@@ -88,8 +101,15 @@ fn main() -> Result<()> {
                 stdout.flush()?;
             }
             Request::RenderOcr {
-                id, path, page_index, scale, rotation, max_width, max_height,
-                max_pixels, max_raster_bytes,
+                id,
+                path,
+                page_index,
+                scale,
+                rotation,
+                max_width,
+                max_height,
+                max_pixels,
+                max_raster_bytes,
             } => {
                 let limits = RasterLimits {
                     max_width,
@@ -97,33 +117,45 @@ fn main() -> Result<()> {
                     max_pixels,
                     max_raster_bytes,
                 };
-                let resp = match renderer.render_ocr(
-                    &path, page_index, scale, rotation, limits,
-                ) {
-                    Ok(result) => match shm_region.write_bitmap(result.width, result.height, &result.rgba) {
-                        Ok(bytes) => Response::RenderOcrOk {
-                            id,
-                            ok: true,
-                            w: result.width,
-                            h: result.height,
-                            shm_bytes: bytes,
-                            page_geometry: result.page_geometry
-                                .expect("bounded OCR render always records page geometry"),
-                        },
-                        Err(error) => Response::RenderErr {
-                            id, ok: false, error: format!("SHM write: {error}"),
-                        },
-                    },
+                let resp = match renderer.render_ocr(&path, page_index, scale, rotation, limits) {
+                    Ok(result) => {
+                        match shm_region.write_bitmap(result.width, result.height, &result.rgba) {
+                            Ok(bytes) => Response::RenderOcrOk {
+                                id,
+                                ok: true,
+                                w: result.width,
+                                h: result.height,
+                                shm_bytes: bytes,
+                                page_geometry: result
+                                    .page_geometry
+                                    .expect("bounded OCR render always records page geometry"),
+                            },
+                            Err(error) => Response::RenderErr {
+                                id,
+                                ok: false,
+                                error: format!("SHM write: {error}"),
+                            },
+                        }
+                    }
                     Err(error) => Response::RenderErr {
-                        id, ok: false, error: error.to_string(),
+                        id,
+                        ok: false,
+                        error: error.to_string(),
                     },
                 };
                 writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
                 stdout.flush()?;
             }
             Request::PageGeometry {
-                id, path, page_index, scale, rotation, max_width, max_height,
-                max_pixels, max_raster_bytes,
+                id,
+                path,
+                page_index,
+                scale,
+                rotation,
+                max_width,
+                max_height,
+                max_pixels,
+                max_raster_bytes,
             } => {
                 let limits = RasterLimits {
                     max_width,
@@ -135,7 +167,8 @@ fn main() -> Result<()> {
                     Ok(result) => Response::PageGeometryOk {
                         id,
                         ok: true,
-                        page_geometry: result.page_geometry
+                        page_geometry: result
+                            .page_geometry
                             .expect("bounded geometry render always records page geometry"),
                     },
                     Err(error) => Response::RenderErr {
@@ -148,28 +181,45 @@ fn main() -> Result<()> {
                 stdout.flush()?;
             }
             Request::RenderRegion {
-                id, path, page_index, scale, rotation,
-                region_x_pt, region_y_pt, region_w_pt, region_h_pt,
+                id,
+                path,
+                page_index,
+                scale,
+                rotation,
+                region_x_pt,
+                region_y_pt,
+                region_w_pt,
+                region_h_pt,
             } => {
                 let resp = match renderer.render_region(
-                    &path, page_index, scale, rotation,
-                    region_x_pt, region_y_pt, region_w_pt, region_h_pt,
+                    &path,
+                    page_index,
+                    scale,
+                    rotation,
+                    region_x_pt,
+                    region_y_pt,
+                    region_w_pt,
+                    region_h_pt,
                 ) {
                     Ok(result) => {
                         match shm_region.write_bitmap(result.width, result.height, &result.rgba) {
                             Ok(bytes) => Response::RenderOk {
-                                id, ok: true,
-                                w: result.width, h: result.height,
+                                id,
+                                ok: true,
+                                w: result.width,
+                                h: result.height,
                                 shm_bytes: bytes,
                             },
                             Err(e) => Response::RenderErr {
-                                id, ok: false,
+                                id,
+                                ok: false,
                                 error: format!("SHM write: {}", e),
                             },
                         }
                     }
                     Err(e) => Response::RenderErr {
-                        id, ok: false,
+                        id,
+                        ok: false,
                         error: format!("{}", e),
                     },
                 };

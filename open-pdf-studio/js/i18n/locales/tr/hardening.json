@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "{{label}} öğesini düzenle",
+    "editValueHint": "{{label}}. Düzenlemek için çift tıklayın veya Enter'a basın.",
+    "timezoneHint": "Tarihler {{timezone}} saat diliminde gösterilir ve ISO 8601 biçiminde kaydedilir."
+  },
+  "fontSubstitution": {
+    "title": "Yazı tipi değişikliğini onayla",
+    "sourceFace": "Kaynak yazı tipi",
+    "sourceFaces": "Kaynak yazı tipleri",
+    "unknown": "Bilinmiyor",
+    "packagedSubstitute": "Paketle birlikte gelen yedek yazı tipi",
+    "notAvailable": "Kullanılamıyor",
+    "sampleText": "Örnek",
+    "sampleFallback": "Hızlı kahverengi tilki tembel köpeğin üzerinden atlar.",
+    "scope": "Şunlara uygulanır",
+    "scopeAnnotation": "Bu ek açıklama",
+    "scopeSelection": "Seçili metin kutuları",
+    "scopeParagraph": "Bu PDF paragrafı",
+    "scopeFindReplace": "Bu Bul/Değiştir düzenlemesi",
+    "remember": "Bu onayı açık belge için hatırla",
+    "approve": "Yedek yazı tipini kullan",
+    "cancel": "İptal"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "PDF metnini düzenle",
+      "editFormatted": "Biçimlendirilmiş PDF metnini düzenle",
+      "editAnnotation": "Biçimlendirilmiş {{type}} metnini düzenle",
+      "editRegion": "Biçimlendirilmiş PDF metin bölgesini düzenle: {{text}}",
+      "editScannedLine": "Taranmış metin satırını düzenle: {{text}}",
+      "editScannedFixed": "Taranmış metnin sabit bölgesini düzenle: {{text}}",
+      "editScannedReflow": "Taranmış paragrafın yeniden akış bölgesini düzenle: {{text}}",
+      "selectedOcrParagraph": "{{count}} satırlık seçili OCR paragrafı"
+    },
+    "handles": {
+      "move": "Metin kutusunu taşı",
+      "moveHint": "Metin kutusunu taşımak için sürükleyin",
+      "resize": "Metin kutusunu yeniden boyutlandır",
+      "resizeHint": "Metin kutusunu yeniden boyutlandırmak için sürükleyin"
+    },
+    "actions": {
+      "apply": "Uygula",
+      "cancel": "İptal"
+    },
+    "status": {
+      "ocrOverflow": "OCR taslağının tamamı onaylanan bölgenin dışında görünüyor. Sabit bölgeye ilişkin kesin doğrulama metnin sığdığını onaylayana kadar kaydetme engellenir.",
+      "scannedRegion": "Taranmış metin onaylanan bölgenin içinde düzenleniyor.",
+      "shaping": "Kesin metin düzeni tamamlanıyor…",
+      "overlap": "Metin, sayfadaki mevcut içerikle örtüşüyor. Değişiklik uygulanabilir; komşu kaynak nesneler taşınmaz.",
+      "lowContrast": "Düşük kontrastlı kaynak renklerin yalnızca düzenleme sırasında görünen bir arka planı vardır. Kaydedilen renkler değişmez.",
+      "layoutRejectedPrefix": "Metin düzeni reddedildi:",
+      "layoutRejected": "Metin düzeni reddedildi: {{reasons}}",
+      "shapingRejected": "Metin şekillendirme reddedildi: {{reason}}",
+      "nativeManual": "Özgün PDF metni, satırları elle belirlenen bir metin kutusunda düzenleniyor. Yeni satır için Enter'a basın.",
+      "nativeManualContrast": "Özgün PDF metni, satırları elle belirlenen bir metin kutusunda düzenleniyor. Yeni satır için Enter'a basın. Düşük kontrastlı kaynak renklerin yalnızca düzenleme sırasında görünen bir arka planı vardır; kaydedilen renkler değişmez.",
+      "nativeGrowing": "Özgün PDF metni düzenleniyor. Genişlik sabittir ve bölge aşağı doğru büyür.",
+      "nativeGrowingContrast": "Özgün PDF metni düzenleniyor. Genişlik sabittir ve bölge aşağı doğru büyür. Düşük kontrastlı kaynak renklerin yalnızca düzenleme sırasında görünen bir arka planı vardır; kaydedilen renkler değişmez.",
+      "scannedEstimate": "Taranmış metin düzenleniyor. Yazı tipi özellikleri tahminidir.",
+      "applyRejected": "Metin düzenlemesi uygulanamadı: {{reason}}",
+      "cropBoxRejected": "Şekillendirilen metin sayfanın CropBox alanı içine uygulanamaz.",
+      "layoutTimeout": "Kesin metin düzeni zamanında tamamlanmadı. Düzenleyici açık kalır.",
+      "scannedRejected": "Taranmış metin değişikliği reddedildi: {{reason}}",
+      "lineBreakUnsupported": "Satır sonları desteklenmiyor. Bu tek satırlık düzenlemeyi uygulamak için Command-Enter kullanın.",
+      "ocrOneLine": "Taranmış tek bir bağımsız metin satırı düzenleniyor. Yazı tipi özellikleri tahminidir.",
+      "ocrFixed": "Birden fazla OCR satırı tek bir sabit özgün bölge içinde düzenleniyor. Tek paragraf bu bölge içinde yeniden akar; açık satır sonları sabit satır modunu korur. Command-Enter değişikliği uygular.",
+      "ocrReflow": "Tek bir paragraf, onaylanan özgün OCR bölgesi içinde düzenleniyor. Command-Enter değişikliği uygular; taşma reddedilir.",
+      "operationFailed": "Metin işlemi tamamlanamadı. Belge değiştirilmeden bırakıldı.",
+      "staleDraft": "Metin düzenleyici açıkken belge değişti. Taslak atıldı.",
+      "multipleOcrParagraphs": "Seçim birden fazla OCR paragrafını kapsıyor. Ayrı anahatları gözden geçirin ve açıkça Birleştir'i kullanın. Sütunlar arası birleştirme devre dışı kalmaya devam ediyor.",
+      "nativeColumnBoundary": "Bu paragraf algılanan özgün sütun sınırını aşıyor. Düzenleme engellendi ve belge değiştirilmeden bırakıldı.",
+      "nativeSourceUnavailable": "Görünür metin uygun kaynak işleçlerine bağlanamadı. Belge değiştirilmeden bırakıldı.",
+      "nativeDeleteUnavailable": "Bu yerel PDF metni, tam kaynak işleçleri belirsiz olduğundan güvenle silinemez. Belge değiştirilmeden bırakıldı.",
+      "readOnly": "Daha önce düzenlenmiş metin salt okunurdur. Belge değiştirilmeden bırakıldı."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "{{limit}} grafem sınırı",
+      "lineThreshold": "{{limit}} satır sınırı",
+      "message": "Yapıştırılan içeriğin tamamı korundu: {{lineCount}} satırda {{graphemeCount}} grafem. Sınır aşıldı: {{thresholds}}. Önizleme sınırlıdır. Eklenen içeriğin tamamını kaldırmak için Yapıştırmayı Geri Al'ı kullanın.",
+      "messageWithExpansion": "Yapıştırılan içeriğin tamamı korundu: {{lineCount}} satırda {{graphemeCount}} grafem. Sınır aşıldı: {{thresholds}}. Önizleme sınırlıdır. Eklenen içeriğin tamamını kaldırmak için Yapıştırmayı Geri Al'ı veya doğrulanan kesin sınırları benimsemek için Kutuyu Genişlet'i kullanın.",
+      "undo": "Yapıştırmayı Geri Al",
+      "expand": "Kutuyu Genişlet"
+    }
+  },
+  "ocrGrouping": {
+    "label": "OCR paragraflarını gruplama",
+    "title": "Gruplama",
+    "mergeSelected": "Seçilenleri Birleştir",
+    "mergeSelectedParagraphs": "Seçili Paragrafları Birleştir",
+    "mergePrevious": "Öncekiyle Birleştir",
+    "mergePreviousHint": "Önceki OCR paragrafıyla birleştir",
+    "mergeNext": "Sonrakiyle Birleştir",
+    "mergeNextHint": "Sonraki OCR paragrafıyla birleştir",
+    "splitBefore": "Öncesinden Böl",
+    "splitAfter": "Sonrasından Böl",
+    "reset": "Otomatik Gruplamayı Sıfırla",
+    "crossColumnDisabled": "Sütunlar arası birleştirme devre dışı",
+    "ambiguousBoundariesOnly": "Yalnızca aynı sütundaki belirsiz sınırlar elle birleştirilebilir",
+    "tooManyLines": "32'den fazla satır. Düzenlemeden önce bu paragrafı elle bölün.",
+    "mergeDescription": "Mevcut metinler, korunan sabit bir satır sonuyla ayrılır. Birleştirme yalnızca birleşik kaynak yaması ve sabit bölge doğrulamayı geçtikten sonra uygulanır.",
+    "mergedText": "Birleştirilmiş OCR metni",
+    "splitRegion": "OCR Bölgesini Böl",
+    "firstRegion": "İlk bölge",
+    "secondRegion": "İkinci bölge",
+    "sourceLines": "Kaynak satırlar: {{lines}}"
+  }
+}

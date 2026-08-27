@@ -33,13 +33,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
@@ -267,7 +261,11 @@ fn handle_tools_list() -> Value {
                     "properties": {
                         "x":      { "type": "integer" },
                         "y":      { "type": "integer" },
-                        "button": { "type": "string", "enum": ["left", "middle", "right"], "default": "left" }
+                        "button": { "type": "string", "enum": ["left", "middle", "right"], "default": "left" },
+                        "double": { "type": "boolean", "default": false },
+                        "shift":  { "type": "boolean", "default": false },
+                        "ctrl":   { "type": "boolean", "default": false },
+                        "alt":    { "type": "boolean", "default": false }
                     },
                     "required": ["x", "y"],
                     "additionalProperties": false
@@ -327,7 +325,21 @@ fn handle_tools_list() -> Value {
             },
             {
                 "name": "app_type",
-                "description": "Type a string into the focused element. For each character: keydown -> beforeinput -> (value splice) -> input -> keyup. Editable inputs receive value updates; non-editable elements receive only the key events.",
+                "description": "Type a string into the focused element. For each character: keydown -> beforeinput -> (value splice) -> input -> keyup. Optional framePaced and measurePerformance modes exercise deterministic user-paced typing and return paint/layout/task metrics.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string" },
+                        "framePaced": { "type": "boolean", "default": false },
+                        "measurePerformance": { "type": "boolean", "default": false }
+                    },
+                    "required": ["text"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "app_paste",
+                "description": "Dispatch a plain-text paste event to the LIVE app's focused editable element. This exercises the production paste handler without mutating application stores or entering an editor through a test-only path.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -801,59 +813,320 @@ async fn handle_tools_call(state: &AppState, params: &Value) -> Result<Value, (i
             )
             .await
         }
-        "app_open_pdf" => tool_app_request(state, "mcp:open-pdf", &arguments, Duration::from_secs(60)).await,
-        "app_set_zoom" => tool_app_request(state, "mcp:set-zoom", &arguments, Duration::from_secs(15)).await,
-        "app_zoom_in" => tool_app_request(state, "mcp:zoom-in", &arguments, Duration::from_secs(15)).await,
-        "app_zoom_out" => tool_app_request(state, "mcp:zoom-out", &arguments, Duration::from_secs(15)).await,
-        "app_screenshot_view" => tool_app_request(state, "mcp:screenshot-view", &arguments, Duration::from_secs(30)).await,
-        "app_mouse_move"  => tool_app_request(state, "mcp:mouse-move",  &arguments, Duration::from_secs(10)).await,
-        "app_mouse_click" => tool_app_request(state, "mcp:mouse-click", &arguments, Duration::from_secs(10)).await,
-        "app_mouse_drag"  => tool_app_request(state, "mcp:mouse-drag",  &arguments, Duration::from_secs(30)).await,
-        "app_scroll"      => tool_app_request(state, "mcp:scroll",      &arguments, Duration::from_secs(10)).await,
-        "app_key"         => tool_app_request(state, "mcp:key",         &arguments, Duration::from_secs(10)).await,
-        "app_type"        => tool_app_request(state, "mcp:type",        &arguments, Duration::from_secs(30)).await,
-        "app_get_viewport_state" => tool_app_request(state, "mcp:get-viewport-state", &arguments, Duration::from_secs(5)).await,
-        "app_get_recent_console" => tool_app_request(state, "mcp:get-recent-console", &arguments, Duration::from_secs(5)).await,
-        "app_wheel_zoom"         => tool_app_request(state, "mcp:wheel-zoom",         &arguments, Duration::from_secs(15)).await,
-        "app_zoom_anchor_test"   => tool_app_request(state, "mcp:zoom-anchor-test",   &arguments, Duration::from_secs(30)).await,
-        "app_clear_caches"       => tool_app_request(state, "mcp:clear-caches",       &arguments, Duration::from_secs(10)).await,
-        "app_go_to_page"         => tool_app_request(state, "mcp:go-to-page",         &arguments, Duration::from_secs(15)).await,
-        "app_set_tool"           => tool_app_request(state, "mcp:set-tool",           &arguments, Duration::from_secs(10)).await,
-        "app_click_element"      => tool_app_request(state, "mcp:click-element",      &arguments, Duration::from_secs(15)).await,
-        "app_ui_state"           => tool_app_request(state, "mcp:ui-state",           &arguments, Duration::from_secs(15)).await,
-        "app_set_window_size"    => tool_set_window_size(state, &arguments).await,
-        "app_get_current_tool"   => tool_app_request(state, "mcp:get-current-tool",   &arguments, Duration::from_secs(5)).await,
-        "app_merge_pdf"          => tool_app_request(state, "mcp:merge-pdf",           &arguments, Duration::from_secs(60)).await,
-        "app_ai_complete"        => tool_app_request(state, "mcp:ai-complete",         &arguments, Duration::from_secs(60)).await,
-        "app_accounts_status"    => tool_app_request(state, "mcp:accounts-status",     &arguments, Duration::from_secs(5)).await,
-        "app_accounts_fetch"     => tool_app_request(state, "mcp:accounts-fetch",      &arguments, Duration::from_secs(30)).await,
-        "app_assistant_ask"      => tool_app_request(state, "mcp:assistant-ask",       &arguments, Duration::from_secs(10)).await,
-        "app_assistant_pending"  => tool_app_request(state, "mcp:assistant-pending",   &arguments, Duration::from_secs(10)).await,
-        "app_assistant_answer"   => tool_app_request(state, "mcp:assistant-answer",    &arguments, Duration::from_secs(10)).await,
-        "app_assistant_history"  => tool_app_request(state, "mcp:assistant-history",   &arguments, Duration::from_secs(10)).await,
-        "app_create_annotation"  => tool_app_request(state, "mcp:create-annotation",  &arguments, Duration::from_secs(15)).await,
-        "app_list_annotations"   => tool_app_request(state, "mcp:list-annotations",   &arguments, Duration::from_secs(10)).await,
-        "app_get_annotation"     => tool_app_request(state, "mcp:get-annotation",     &arguments, Duration::from_secs(10)).await,
-        "app_update_annotation"  => tool_app_request(state, "mcp:update-annotation",  &arguments, Duration::from_secs(15)).await,
-        "app_delete_annotation"  => tool_app_request(state, "mcp:delete-annotation",  &arguments, Duration::from_secs(15)).await,
-        "app_select_annotation"  => tool_app_request(state, "mcp:select-annotation",  &arguments, Duration::from_secs(10)).await,
-        "app_clear_selection"    => tool_app_request(state, "mcp:clear-selection",    &arguments, Duration::from_secs(10)).await,
-        "app_undo"               => tool_app_request(state, "mcp:undo",               &arguments, Duration::from_secs(15)).await,
-        "app_redo"               => tool_app_request(state, "mcp:redo",               &arguments, Duration::from_secs(15)).await,
-        "app_list_tabs"          => tool_app_request(state, "mcp:list-tabs",          &arguments, Duration::from_secs(5)).await,
-        "app_switch_tab"         => tool_app_request(state, "mcp:switch-tab",         &arguments, Duration::from_secs(15)).await,
-        "app_close_tab"          => tool_app_request(state, "mcp:close-tab",          &arguments, Duration::from_secs(15)).await,
-        "app_new_blank_pdf"      => tool_app_request(state, "mcp:new-blank-pdf",      &arguments, Duration::from_secs(60)).await,
+        "app_open_pdf" => {
+            tool_app_request(state, "mcp:open-pdf", &arguments, Duration::from_secs(60)).await
+        }
+        "app_set_zoom" => {
+            tool_app_request(state, "mcp:set-zoom", &arguments, Duration::from_secs(15)).await
+        }
+        "app_zoom_in" => {
+            tool_app_request(state, "mcp:zoom-in", &arguments, Duration::from_secs(15)).await
+        }
+        "app_zoom_out" => {
+            tool_app_request(state, "mcp:zoom-out", &arguments, Duration::from_secs(15)).await
+        }
+        "app_screenshot_view" => {
+            tool_app_request(
+                state,
+                "mcp:screenshot-view",
+                &arguments,
+                Duration::from_secs(30),
+            )
+            .await
+        }
+        "app_mouse_move" => {
+            tool_app_request(state, "mcp:mouse-move", &arguments, Duration::from_secs(10)).await
+        }
+        "app_mouse_click" => {
+            tool_app_request(
+                state,
+                "mcp:mouse-click",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_mouse_drag" => {
+            tool_app_request(state, "mcp:mouse-drag", &arguments, Duration::from_secs(30)).await
+        }
+        "app_scroll" => {
+            tool_app_request(state, "mcp:scroll", &arguments, Duration::from_secs(10)).await
+        }
+        "app_key" => tool_app_request(state, "mcp:key", &arguments, Duration::from_secs(10)).await,
+        "app_type" => {
+            tool_app_request(state, "mcp:type", &arguments, Duration::from_secs(30)).await
+        }
+        "app_paste" => {
+            tool_app_request(state, "mcp:paste", &arguments, Duration::from_secs(30)).await
+        }
+        "app_get_viewport_state" => {
+            tool_app_request(
+                state,
+                "mcp:get-viewport-state",
+                &arguments,
+                Duration::from_secs(5),
+            )
+            .await
+        }
+        "app_get_recent_console" => {
+            tool_app_request(
+                state,
+                "mcp:get-recent-console",
+                &arguments,
+                Duration::from_secs(5),
+            )
+            .await
+        }
+        "app_wheel_zoom" => {
+            tool_app_request(state, "mcp:wheel-zoom", &arguments, Duration::from_secs(15)).await
+        }
+        "app_zoom_anchor_test" => {
+            tool_app_request(
+                state,
+                "mcp:zoom-anchor-test",
+                &arguments,
+                Duration::from_secs(30),
+            )
+            .await
+        }
+        "app_clear_caches" => {
+            tool_app_request(
+                state,
+                "mcp:clear-caches",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_go_to_page" => {
+            tool_app_request(state, "mcp:go-to-page", &arguments, Duration::from_secs(15)).await
+        }
+        "app_set_tool" => {
+            tool_app_request(state, "mcp:set-tool", &arguments, Duration::from_secs(10)).await
+        }
+        "app_click_element" => {
+            tool_app_request(
+                state,
+                "mcp:click-element",
+                &arguments,
+                Duration::from_secs(15),
+            )
+            .await
+        }
+        "app_ui_state" => {
+            tool_app_request(state, "mcp:ui-state", &arguments, Duration::from_secs(15)).await
+        }
+        "app_set_window_size" => tool_set_window_size(state, &arguments).await,
+        "app_get_current_tool" => {
+            tool_app_request(
+                state,
+                "mcp:get-current-tool",
+                &arguments,
+                Duration::from_secs(5),
+            )
+            .await
+        }
+        "app_merge_pdf" => {
+            tool_app_request(state, "mcp:merge-pdf", &arguments, Duration::from_secs(60)).await
+        }
+        "app_ai_complete" => {
+            tool_app_request(
+                state,
+                "mcp:ai-complete",
+                &arguments,
+                Duration::from_secs(60),
+            )
+            .await
+        }
+        "app_accounts_status" => {
+            tool_app_request(
+                state,
+                "mcp:accounts-status",
+                &arguments,
+                Duration::from_secs(5),
+            )
+            .await
+        }
+        "app_accounts_fetch" => {
+            tool_app_request(
+                state,
+                "mcp:accounts-fetch",
+                &arguments,
+                Duration::from_secs(30),
+            )
+            .await
+        }
+        "app_assistant_ask" => {
+            tool_app_request(
+                state,
+                "mcp:assistant-ask",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_assistant_pending" => {
+            tool_app_request(
+                state,
+                "mcp:assistant-pending",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_assistant_answer" => {
+            tool_app_request(
+                state,
+                "mcp:assistant-answer",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_assistant_history" => {
+            tool_app_request(
+                state,
+                "mcp:assistant-history",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_create_annotation" => {
+            tool_app_request(
+                state,
+                "mcp:create-annotation",
+                &arguments,
+                Duration::from_secs(15),
+            )
+            .await
+        }
+        "app_list_annotations" => {
+            tool_app_request(
+                state,
+                "mcp:list-annotations",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_get_annotation" => {
+            tool_app_request(
+                state,
+                "mcp:get-annotation",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_update_annotation" => {
+            tool_app_request(
+                state,
+                "mcp:update-annotation",
+                &arguments,
+                Duration::from_secs(15),
+            )
+            .await
+        }
+        "app_delete_annotation" => {
+            tool_app_request(
+                state,
+                "mcp:delete-annotation",
+                &arguments,
+                Duration::from_secs(15),
+            )
+            .await
+        }
+        "app_select_annotation" => {
+            tool_app_request(
+                state,
+                "mcp:select-annotation",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_clear_selection" => {
+            tool_app_request(
+                state,
+                "mcp:clear-selection",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
+        "app_undo" => {
+            tool_app_request(state, "mcp:undo", &arguments, Duration::from_secs(15)).await
+        }
+        "app_redo" => {
+            tool_app_request(state, "mcp:redo", &arguments, Duration::from_secs(15)).await
+        }
+        "app_list_tabs" => {
+            tool_app_request(state, "mcp:list-tabs", &arguments, Duration::from_secs(5)).await
+        }
+        "app_switch_tab" => {
+            tool_app_request(state, "mcp:switch-tab", &arguments, Duration::from_secs(15)).await
+        }
+        "app_close_tab" => {
+            tool_app_request(state, "mcp:close-tab", &arguments, Duration::from_secs(15)).await
+        }
+        "app_new_blank_pdf" => {
+            tool_app_request(
+                state,
+                "mcp:new-blank-pdf",
+                &arguments,
+                Duration::from_secs(60),
+            )
+            .await
+        }
         // Large OCR-qualified documents can spend several minutes in the
         // production writer and atomic-replacement proof. This is an MCP
         // observer timeout only; it does not alter product save semantics.
-        "app_save_pdf"           => tool_app_request(state, "mcp:save-pdf",           &arguments, Duration::from_secs(600)).await,
-        "app_set_view_mode"      => tool_app_request(state, "mcp:set-view-mode",      &arguments, Duration::from_secs(30)).await,
-        "app_fit_page"           => tool_app_request(state, "mcp:fit-page",           &arguments, Duration::from_secs(15)).await,
-        "app_fit_width"          => tool_app_request(state, "mcp:fit-width",          &arguments, Duration::from_secs(15)).await,
-        "app_get_page_count"     => tool_app_request(state, "mcp:get-page-count",     &arguments, Duration::from_secs(5)).await,
-        "app_set_measure_scale"  => tool_app_request(state, "mcp:set-measure-scale",  &arguments, Duration::from_secs(15)).await,
-        "app_get_takeoff"        => tool_app_request(state, "mcp:get-takeoff",        &arguments, Duration::from_secs(10)).await,
+        "app_save_pdf" => {
+            tool_app_request(state, "mcp:save-pdf", &arguments, Duration::from_secs(600)).await
+        }
+        "app_set_view_mode" => {
+            tool_app_request(
+                state,
+                "mcp:set-view-mode",
+                &arguments,
+                Duration::from_secs(30),
+            )
+            .await
+        }
+        "app_fit_page" => {
+            tool_app_request(state, "mcp:fit-page", &arguments, Duration::from_secs(15)).await
+        }
+        "app_fit_width" => {
+            tool_app_request(state, "mcp:fit-width", &arguments, Duration::from_secs(15)).await
+        }
+        "app_get_page_count" => {
+            tool_app_request(
+                state,
+                "mcp:get-page-count",
+                &arguments,
+                Duration::from_secs(5),
+            )
+            .await
+        }
+        "app_set_measure_scale" => {
+            tool_app_request(
+                state,
+                "mcp:set-measure-scale",
+                &arguments,
+                Duration::from_secs(15),
+            )
+            .await
+        }
+        "app_get_takeoff" => {
+            tool_app_request(
+                state,
+                "mcp:get-takeoff",
+                &arguments,
+                Duration::from_secs(10),
+            )
+            .await
+        }
         other => Err((
             jsonrpc_error::METHOD_NOT_FOUND,
             format!("method not found: {other}"),
@@ -866,25 +1139,40 @@ async fn handle_tools_call(state: &AppState, params: &Value) -> Result<Value, (i
 /// runs call this up-front to make fit-scale and margin-geometry
 /// deterministic regardless of the size the window opened with.
 async fn tool_set_window_size(state: &AppState, arguments: &Value) -> Result<Value, (i32, String)> {
-    let width = arguments.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let height = arguments.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let width = arguments
+        .get("width")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let height = arguments
+        .get("height")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     if width < 200.0 || height < 200.0 {
         return Err((
             jsonrpc_error::INVALID_PARAMS,
             "width/height must be numbers >= 200".to_string(),
         ));
     }
-    let app = state.app_handle.as_ref().ok_or_else(|| (
-        jsonrpc_error::INTERNAL_ERROR,
-        "AppHandle unavailable — MCP server not started from inside Tauri::setup()".to_string(),
-    ))?;
-    let window = app.get_webview_window("main").ok_or_else(|| (
-        jsonrpc_error::INTERNAL_ERROR,
-        "main window not found".to_string(),
-    ))?;
+    let app = state.app_handle.as_ref().ok_or_else(|| {
+        (
+            jsonrpc_error::INTERNAL_ERROR,
+            "AppHandle unavailable — MCP server not started from inside Tauri::setup()".to_string(),
+        )
+    })?;
+    let window = app.get_webview_window("main").ok_or_else(|| {
+        (
+            jsonrpc_error::INTERNAL_ERROR,
+            "main window not found".to_string(),
+        )
+    })?;
     window
         .set_size(tauri::LogicalSize::new(width, height))
-        .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("set_size failed: {e}")))?;
+        .map_err(|e| {
+            (
+                jsonrpc_error::INTERNAL_ERROR,
+                format!("set_size failed: {e}"),
+            )
+        })?;
     // Give the resize + reflow a beat before reporting success.
     tokio::time::sleep(Duration::from_millis(300)).await;
     Ok(json!({
@@ -908,13 +1196,12 @@ async fn tool_app_request(
     arguments: &Value,
     timeout: Duration,
 ) -> Result<Value, (i32, String)> {
-    let app = state
-        .app_handle
-        .as_ref()
-        .ok_or_else(|| (
+    let app = state.app_handle.as_ref().ok_or_else(|| {
+        (
             jsonrpc_error::INTERNAL_ERROR,
             "AppHandle unavailable — MCP server not started from inside Tauri::setup()".to_string(),
-        ))?;
+        )
+    })?;
     let bridge = app.state::<McpAppBridge>();
     let response = mcp_app_bridge::request(app, &bridge, event_name, arguments.clone(), timeout)
         .await
@@ -1014,51 +1301,58 @@ async fn tool_screenshot_page(
     let page_index = arguments
         .get("page_index")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| (jsonrpc_error::INVALID_PARAMS, "missing or invalid 'page_index'".to_string()))?
-        as usize;
+        .ok_or_else(|| {
+            (
+                jsonrpc_error::INVALID_PARAMS,
+                "missing or invalid 'page_index'".to_string(),
+            )
+        })? as usize;
     let width = arguments
         .get("width")
         .and_then(|v| v.as_u64())
         .unwrap_or(2000) as u32;
     if width == 0 {
-        return Err((jsonrpc_error::INVALID_PARAMS, "'width' must be > 0".to_string()));
+        return Err((
+            jsonrpc_error::INVALID_PARAMS,
+            "'width' must be > 0".to_string(),
+        ));
     }
 
-    let pdf_bytes = tokio::fs::read(&path).await.map_err(|e| {
-        (
-            jsonrpc_error::INTERNAL_ERROR,
-            format!("read {}: {e}", path),
-        )
-    })?;
+    let pdf_bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("read {}: {e}", path)))?;
 
-    let (render_width, render_height, render_rgba) = tokio::task::spawn_blocking(move || -> Result<(u32, u32, Vec<u8>), String> {
-        let arc_bytes = std::sync::Arc::new(pdf_bytes.to_vec());
-        let cache = crate::pdfium_renderer::PdfiumDocCache::default();
-        let cache_key = format!("mcp:{:p}", arc_bytes.as_ptr());
-        let handle = crate::pdfium_renderer::get_or_load_pdfium_doc_with_bytes(
-            &cache_key, arc_bytes, &cache,
-        )?;
-        let doc = handle.document();
-        let scale = {
-            let pages = doc.pages();
-            let page = pages
-                .get(page_index as i32)
-                .map_err(|e| format!("page_dimensions: {e}"))?;
-            // Literal-width convention to match PyMuPDF reference renderer.
-            width as f32 / page.width().value
-        };
-        crate::pdfium_renderer::render_page_to_rgba(doc, page_index as u32, scale, 0)
-    })
-    .await
-    .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("render task panic: {e}")))?
-    .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, e))?;
+    let (render_width, render_height, render_rgba) =
+        tokio::task::spawn_blocking(move || -> Result<(u32, u32, Vec<u8>), String> {
+            let arc_bytes = std::sync::Arc::new(pdf_bytes.to_vec());
+            let cache = crate::pdfium_renderer::PdfiumDocCache::default();
+            let cache_key = format!("mcp:{:p}", arc_bytes.as_ptr());
+            let handle = crate::pdfium_renderer::get_or_load_pdfium_doc_with_bytes(
+                &cache_key, arc_bytes, &cache,
+            )?;
+            let doc = handle.document();
+            let scale = {
+                let pages = doc.pages();
+                let page = pages
+                    .get(page_index as i32)
+                    .map_err(|e| format!("page_dimensions: {e}"))?;
+                // Literal-width convention to match PyMuPDF reference renderer.
+                width as f32 / page.width().value
+            };
+            crate::pdfium_renderer::render_page_to_rgba(doc, page_index as u32, scale, 0)
+        })
+        .await
+        .map_err(|e| {
+            (
+                jsonrpc_error::INTERNAL_ERROR,
+                format!("render task panic: {e}"),
+            )
+        })?
+        .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, e))?;
 
-    let png_b64 = crate::render_to_png::encode_rgba_to_png_base64(
-        render_width,
-        render_height,
-        &render_rgba,
-    )
-    .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("encode png: {e}")))?;
+    let png_b64 =
+        crate::render_to_png::encode_rgba_to_png_base64(render_width, render_height, &render_rgba)
+            .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("encode png: {e}")))?;
 
     let payload = json!({
         "png_base64": png_b64,
@@ -1109,7 +1403,9 @@ async fn tool_get_pdf_metadata(
         if let Ok(info_ref) = doc.trailer.get(b"Info") {
             // /Info can be a direct dict OR an indirect reference. Resolve both.
             let info_dict_opt = if let Ok(reference) = info_ref.as_reference() {
-                doc.get_object(reference).ok().and_then(|o| o.as_dict().ok())
+                doc.get_object(reference)
+                    .ok()
+                    .and_then(|o| o.as_dict().ok())
             } else {
                 info_ref.as_dict().ok()
             };
@@ -1169,7 +1465,12 @@ async fn tool_get_pdf_metadata(
         }))
     })
     .await
-    .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("metadata task panic: {e}")))?
+    .map_err(|e| {
+        (
+            jsonrpc_error::INTERNAL_ERROR,
+            format!("metadata task panic: {e}"),
+        )
+    })?
     .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, e))?;
 
     Ok(json!({
@@ -1186,10 +1487,7 @@ async fn tool_get_pdf_metadata(
 /// schedule, then PDFium produces the raster for each page using the same
 /// scaling convention as `screenshot_page`:
 /// `scale = width / page_w_pt` (literal output width).
-async fn tool_screenshot_all(
-    _state: &AppState,
-    arguments: &Value,
-) -> Result<Value, (i32, String)> {
+async fn tool_screenshot_all(_state: &AppState, arguments: &Value) -> Result<Value, (i32, String)> {
     let path = arguments
         .get("path")
         .and_then(|v| v.as_str())
@@ -1200,23 +1498,30 @@ async fn tool_screenshot_all(
         .and_then(|v| v.as_u64())
         .unwrap_or(2000) as u32;
     if width == 0 {
-        return Err((jsonrpc_error::INVALID_PARAMS, "'width' must be > 0".to_string()));
+        return Err((
+            jsonrpc_error::INVALID_PARAMS,
+            "'width' must be > 0".to_string(),
+        ));
     }
 
     // First, count pages via lopdf so we know how many render passes to do.
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
-        (jsonrpc_error::INTERNAL_ERROR, format!("read {}: {e}", path))
-    })?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("read {}: {e}", path)))?;
 
     let total: usize = {
         let bytes_clone = bytes.clone();
         tokio::task::spawn_blocking(move || -> Result<usize, String> {
-            let doc = lopdf::Document::load_mem(&bytes_clone)
-                .map_err(|e| format!("parse: {e}"))?;
+            let doc = lopdf::Document::load_mem(&bytes_clone).map_err(|e| format!("parse: {e}"))?;
             Ok(doc.get_pages().len())
         })
         .await
-        .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("count task panic: {e}")))?
+        .map_err(|e| {
+            (
+                jsonrpc_error::INTERNAL_ERROR,
+                format!("count task panic: {e}"),
+            )
+        })?
         .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, e))?
     };
 
@@ -1227,34 +1532,41 @@ async fn tool_screenshot_all(
 
     for idx in 0..total {
         let bytes_clone = bytes_arc.clone();
-        let (rw, rh, rgba) = tokio::task::spawn_blocking(move || -> Result<(u32, u32, Vec<u8>), String> {
-            let arc_bytes = bytes_clone;
-            let cache = crate::pdfium_renderer::PdfiumDocCache::default();
-            let cache_key = format!("mcp:{:p}", arc_bytes.as_ptr());
-            let handle = crate::pdfium_renderer::get_or_load_pdfium_doc_with_bytes(
-                &cache_key, arc_bytes, &cache,
-            )?;
-            let doc = handle.document();
-            let scale = {
-                let pages = doc.pages();
-                let page = pages
-                    .get(idx as i32)
-                    .map_err(|e| format!("page_dimensions[{idx}]: {e}"))?;
-                // Literal-width convention to match PyMuPDF reference renderer.
-                width as f32 / page.width().value
-            };
-            crate::pdfium_renderer::render_page_to_rgba(doc, idx as u32, scale, 0)
-        })
-        .await
-        .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("render task panic on page {idx}: {e}")))?
-        .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, e))?;
+        let (rw, rh, rgba) =
+            tokio::task::spawn_blocking(move || -> Result<(u32, u32, Vec<u8>), String> {
+                let arc_bytes = bytes_clone;
+                let cache = crate::pdfium_renderer::PdfiumDocCache::default();
+                let cache_key = format!("mcp:{:p}", arc_bytes.as_ptr());
+                let handle = crate::pdfium_renderer::get_or_load_pdfium_doc_with_bytes(
+                    &cache_key, arc_bytes, &cache,
+                )?;
+                let doc = handle.document();
+                let scale = {
+                    let pages = doc.pages();
+                    let page = pages
+                        .get(idx as i32)
+                        .map_err(|e| format!("page_dimensions[{idx}]: {e}"))?;
+                    // Literal-width convention to match PyMuPDF reference renderer.
+                    width as f32 / page.width().value
+                };
+                crate::pdfium_renderer::render_page_to_rgba(doc, idx as u32, scale, 0)
+            })
+            .await
+            .map_err(|e| {
+                (
+                    jsonrpc_error::INTERNAL_ERROR,
+                    format!("render task panic on page {idx}: {e}"),
+                )
+            })?
+            .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, e))?;
 
-        let png_b64 = crate::render_to_png::encode_rgba_to_png_base64(
-            rw,
-            rh,
-            &rgba,
-        )
-        .map_err(|e| (jsonrpc_error::INTERNAL_ERROR, format!("encode png[{idx}]: {e}")))?;
+        let png_b64 =
+            crate::render_to_png::encode_rgba_to_png_base64(rw, rh, &rgba).map_err(|e| {
+                (
+                    jsonrpc_error::INTERNAL_ERROR,
+                    format!("encode png[{idx}]: {e}"),
+                )
+            })?;
 
         pages_json.push(json!({
             "index":      idx,
@@ -1275,10 +1587,7 @@ async fn tool_screenshot_all(
 
 /// Axum POST handler for `/mcp`. Parses the JSON-RPC envelope and dispatches
 /// on the `method` field.
-async fn mcp_handler(
-    State(state): State<AppState>,
-    Json(body): Json<Value>,
-) -> impl IntoResponse {
+async fn mcp_handler(State(state): State<AppState>, Json(body): Json<Value>) -> impl IntoResponse {
     // Pull out the request id; default to null so error responses are still
     // well-formed if the client omitted it.
     let id = body.get("id").cloned().unwrap_or(Value::Null);
@@ -1341,9 +1650,7 @@ pub async fn start(
     app_handle: Option<AppHandle>,
 ) -> Result<(), String> {
     if !cfg!(debug_assertions) && std::env::var("OPS_ENABLE_MCP").as_deref() != Ok("1") {
-        return Err(
-            "MCP server refused to start: release build without OPS_ENABLE_MCP=1".into(),
-        );
+        return Err("MCP server refused to start: release build without OPS_ENABLE_MCP=1".into());
     }
 
     let state = AppState {
@@ -1403,10 +1710,7 @@ mod tests {
         assert_eq!(v["capabilities"]["tools"]["listChanged"], false);
         assert_eq!(v["protocolVersion"], "2025-03-26");
         assert_eq!(v["_meta"]["openPdfStudio"]["webviewReady"], false);
-        assert_eq!(
-            v["_meta"]["openPdfStudio"]["processId"],
-            std::process::id()
-        );
+        assert_eq!(v["_meta"]["openPdfStudio"]["processId"], std::process::id());
     }
 
     #[test]
@@ -1477,8 +1781,7 @@ mod tests {
         let text = value["content"][0]["text"]
             .as_str()
             .expect("text content present");
-        let payload: Value =
-            serde_json::from_str(text).expect("text payload is valid JSON");
+        let payload: Value = serde_json::from_str(text).expect("text payload is valid JSON");
         let pdfs = payload["pdfs"].as_array().expect("pdfs is an array");
         assert!(
             !pdfs.is_empty(),
@@ -1532,7 +1835,8 @@ mod tests {
         #[cfg(target_os = "macos")]
         let _pdfium_guard = pdfium_render_test_guard();
         // Pick the smallest PDF deterministically.
-        let mut pdfs: Vec<_> = std::fs::read_dir(&corpus).unwrap()
+        let mut pdfs: Vec<_> = std::fs::read_dir(&corpus)
+            .unwrap()
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("pdf"))
@@ -1540,18 +1844,27 @@ mod tests {
         pdfs.sort_by_key(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(u64::MAX));
         let smallest = pdfs.first().expect("no pdfs in corpus").clone();
 
-        let state = AppState { test_pdfs_dir: std::sync::Arc::new(corpus), app_handle: None };
+        let state = AppState {
+            test_pdfs_dir: std::sync::Arc::new(corpus),
+            app_handle: None,
+        };
         let args = serde_json::json!({
             "path": smallest.to_string_lossy(),
             "page_index": 0,
             "width": 200
         });
-        let result = tool_screenshot_page(&state, &args).await.expect("render ok");
+        let result = tool_screenshot_page(&state, &args)
+            .await
+            .expect("render ok");
         assert_eq!(result["isError"], serde_json::Value::Bool(false));
         let text = result["content"][0]["text"].as_str().unwrap();
         let body: serde_json::Value = serde_json::from_str(text).unwrap();
         let b64 = body["png_base64"].as_str().unwrap();
-        assert!(b64.starts_with("iVBORw0KGgo"), "expected png magic; got {}", &b64[..20]);
+        assert!(
+            b64.starts_with("iVBORw0KGgo"),
+            "expected png magic; got {}",
+            &b64[..20]
+        );
         assert!(body["width"].as_u64().unwrap() > 0);
     }
 
@@ -1593,7 +1906,9 @@ mod tests {
             app_handle: None,
         };
         let args = serde_json::json!({ "path": pdf.to_string_lossy() });
-        let result = tool_get_pdf_metadata(&state, &args).await.expect("metadata ok");
+        let result = tool_get_pdf_metadata(&state, &args)
+            .await
+            .expect("metadata ok");
         assert_eq!(result["isError"], serde_json::Value::Bool(false));
 
         let text = result["content"][0]["text"].as_str().unwrap();
@@ -1605,7 +1920,10 @@ mod tests {
         assert_eq!(pages.len() as u64, page_count);
         // Page 0 of Technische tekening.pdf has /Rotate 90 in the source PDF.
         let rot0 = pages[0]["rotation"].as_i64().unwrap();
-        assert_eq!(rot0, 90, "Technische tekening.pdf page 0 should have /Rotate 90");
+        assert_eq!(
+            rot0, 90,
+            "Technische tekening.pdf page 0 should have /Rotate 90"
+        );
         let mediabox = pages[0]["mediabox"].as_array().unwrap();
         assert_eq!(mediabox.len(), 4, "MediaBox should be 4 numbers");
     }
@@ -1613,8 +1931,12 @@ mod tests {
     #[test]
     fn tools_list_advertises_screenshot_all() {
         let v = handle_tools_list();
-        let names: Vec<&str> = v["tools"].as_array().unwrap().iter()
-            .map(|t| t["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = v["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
         assert!(names.contains(&"screenshot_all"));
     }
 
@@ -1635,17 +1957,22 @@ mod tests {
         #[cfg(target_os = "macos")]
         let _pdfium_guard = pdfium_render_test_guard();
         // Pick the smallest multi-page-or-one PDF so the test runs fast.
-        let pdfs: Vec<_> = std::fs::read_dir(&corpus).unwrap()
+        let pdfs: Vec<_> = std::fs::read_dir(&corpus)
+            .unwrap()
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("pdf"))
             .collect();
-        let smallest = pdfs.iter()
+        let smallest = pdfs
+            .iter()
             .min_by_key(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(u64::MAX))
             .expect("no pdfs in corpus")
             .clone();
 
-        let state = AppState { test_pdfs_dir: std::sync::Arc::new(corpus), app_handle: None };
+        let state = AppState {
+            test_pdfs_dir: std::sync::Arc::new(corpus),
+            app_handle: None,
+        };
         let args = serde_json::json!({
             "path": smallest.to_string_lossy(),
             "width": 200
@@ -1680,8 +2007,12 @@ mod tests {
             "app_scroll",
             "app_key",
             "app_type",
+            "app_paste",
         ] {
-            assert!(names.contains(&tool), "missing tool: {tool} (got {names:?})");
+            assert!(
+                names.contains(&tool),
+                "missing tool: {tool} (got {names:?})"
+            );
             let descr = arr.iter().find(|t| t["name"] == tool).unwrap();
             assert_eq!(
                 descr["inputSchema"]["type"], "object",
@@ -1734,7 +2065,10 @@ mod tests {
             "app_set_measure_scale",
             "app_get_takeoff",
         ] {
-            assert!(names.contains(&tool), "missing tool: {tool} (got {names:?})");
+            assert!(
+                names.contains(&tool),
+                "missing tool: {tool} (got {names:?})"
+            );
             let descr = arr.iter().find(|t| t["name"] == tool).unwrap();
             assert_eq!(
                 descr["inputSchema"]["type"], "object",
@@ -1757,16 +2091,26 @@ mod tests {
             app_handle: None,
         };
         for (name, args) in [
-            ("app_mouse_move",  serde_json::json!({"x": 100, "y": 100})),
+            ("app_mouse_move", serde_json::json!({"x": 100, "y": 100})),
             ("app_mouse_click", serde_json::json!({"x": 100, "y": 100})),
-            ("app_mouse_drag",  serde_json::json!({"x1": 0, "y1": 0, "x2": 1, "y2": 1})),
-            ("app_scroll",      serde_json::json!({"x": 100, "y": 100, "dy": -1})),
-            ("app_key",         serde_json::json!({"key": "Escape"})),
-            ("app_type",        serde_json::json!({"text": "x"})),
+            (
+                "app_mouse_drag",
+                serde_json::json!({"x1": 0, "y1": 0, "x2": 1, "y2": 1}),
+            ),
+            (
+                "app_scroll",
+                serde_json::json!({"x": 100, "y": 100, "dy": -1}),
+            ),
+            ("app_key", serde_json::json!({"key": "Escape"})),
+            ("app_type", serde_json::json!({"text": "x"})),
+            ("app_paste", serde_json::json!({"text": "x"})),
         ] {
             let params = serde_json::json!({"name": name, "arguments": args});
             let result = handle_tools_call(&state, &params).await;
-            assert!(result.is_err(), "{name} must return Err without an AppHandle");
+            assert!(
+                result.is_err(),
+                "{name} must return Err without an AppHandle"
+            );
             let (_code, msg) = result.unwrap_err();
             assert!(
                 msg.contains("AppHandle unavailable"),

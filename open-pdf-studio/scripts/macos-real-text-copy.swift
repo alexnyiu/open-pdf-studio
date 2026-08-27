@@ -84,7 +84,7 @@ func postKey(_ keyCode: CGKeyCode, command: Bool) {
 }
 
 guard CommandLine.arguments.count >= 3 else {
-    fail("usage: macos-real-text-copy.swift <pid> drag <x1> <y1> <x2> <y2> | <pid> all <x> <y> | <pid> all-center")
+    fail("usage: macos-real-text-copy.swift <pid> drag <x1> <y1> <x2> <y2> | <pid> all <x> <y> | <pid> all-center | <pid> copy")
 }
 let pid = pid_t(number(1, "pid"))
 let mode = CommandLine.arguments[2]
@@ -129,12 +129,17 @@ let interactionBounds = webAreaOrigin.flatMap { origin in
 } ?? bounds
 
 let pasteboard = NSPasteboard.general
+let pasteboardChangeCountBeforeClear = pasteboard.changeCount
 pasteboard.clearContents()
+let pasteboardChangeCountAfterClear = pasteboard.changeCount
+var interaction: [String: Any] = ["mode": mode]
 
 if mode == "drag" {
     guard CommandLine.arguments.count == 7 else { fail("drag requires x1 y1 x2 y2") }
     let start = CGPoint(x: interactionOrigin.x + number(3, "x1"), y: interactionOrigin.y + number(4, "y1"))
     let end = CGPoint(x: interactionOrigin.x + number(5, "x2"), y: interactionOrigin.y + number(6, "y2"))
+    interaction["start"] = ["x": start.x, "y": start.y]
+    interaction["end"] = ["x": end.x, "y": end.y]
     postMouse(.mouseMoved, start)
     usleep(60_000)
     postMouse(.leftMouseDown, start)
@@ -151,6 +156,7 @@ if mode == "drag" {
 } else if mode == "all" {
     guard CommandLine.arguments.count == 5 else { fail("all requires x y") }
     let point = CGPoint(x: interactionOrigin.x + number(3, "x"), y: interactionOrigin.y + number(4, "y"))
+    interaction["point"] = ["x": point.x, "y": point.y]
     postMouse(.mouseMoved, point)
     postMouse(.leftMouseDown, point)
     postMouse(.leftMouseUp, point)
@@ -159,20 +165,35 @@ if mode == "drag" {
 } else if mode == "all-center" {
     guard CommandLine.arguments.count == 3 else { fail("all-center takes no coordinates") }
     let point = CGPoint(x: interactionBounds.midX, y: interactionBounds.midY)
+    interaction["point"] = ["x": point.x, "y": point.y]
     postMouse(.mouseMoved, point)
     postMouse(.leftMouseDown, point)
     postMouse(.leftMouseUp, point)
     usleep(100_000)
     postKey(0, command: true) // A
+} else if mode == "copy" {
+    guard CommandLine.arguments.count == 3 else { fail("copy takes no coordinates") }
 } else {
     fail("unsupported mode: \(mode)")
 }
 
-usleep(180_000)
-postKey(8, command: true) // C
-usleep(300_000)
+// WebKit can publish a successful copy to NSPasteboard after the key-up event.
+// Preserve the genuine pointer/keyboard path while polling the system
+// pasteboard and retrying only Command+C against the existing selection.
+usleep(250_000)
+var text = ""
+var copyAttempts = 0
+var pasteboardPolls = 0
+for _ in 0..<3 where text.isEmpty {
+    copyAttempts += 1
+    postKey(8, command: true) // C
+    for _ in 0..<12 where text.isEmpty {
+        pasteboardPolls += 1
+        usleep(100_000)
+        text = pasteboard.string(forType: .string) ?? ""
+    }
+}
 
-let text = pasteboard.string(forType: .string) ?? ""
 let payload: [String: Any] = [
     "status": text.isEmpty ? "empty" : "pass",
     "text": text,
@@ -185,6 +206,15 @@ let payload: [String: Any] = [
         "webAreaFound": webArea != nil,
         "x": interactionOrigin.x,
         "y": interactionOrigin.y,
+    ],
+    "interaction": interaction,
+    "pasteboard": [
+        "changeCountBeforeClear": pasteboardChangeCountBeforeClear,
+        "changeCountAfterClear": pasteboardChangeCountAfterClear,
+        "changeCountFinal": pasteboard.changeCount,
+        "copyAttempts": copyAttempts,
+        "polls": pasteboardPolls,
+        "types": pasteboard.types?.map(\.rawValue) ?? [],
     ],
     "window": [
         "x": bounds.minX,

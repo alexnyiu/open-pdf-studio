@@ -84,6 +84,34 @@
   margin-right: 4px;
 }
 
+.document-tab-ocr-badge {
+  min-width: 22px;
+  margin-right: 5px;
+  padding: 1px 4px;
+  border: 1px solid var(--theme-tab-border);
+  border-radius: 8px;
+  color: var(--theme-tab-text);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.document-tab-ocr-badge.is-running {
+  border-color: var(--theme-tab-active-accent);
+  color: var(--theme-tab-active-accent);
+}
+
+.document-tab-ocr-badge.is-failed {
+  border-color: var(--theme-error, #a4262c);
+  color: var(--theme-error, #a4262c);
+}
+
+.document-tab-ocr-badge.is-terminal:not(.is-failed) {
+  color: var(--theme-text-secondary, #666);
+}
+
 .document-tab-rename-input {
   flex: 1;
   font-size: 12px;

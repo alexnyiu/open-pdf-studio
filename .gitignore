@@ -53,6 +53,7 @@ temp/
 open-pdf-studio/output/pdf/open-pdf-studio-ocr-writer-proof.pdf
 open-pdf-studio/output/ocr-safe-save-packaged/latest.json
 open-pdf-studio/output/ocr-release-hardening/
+open-pdf-studio/test-artifacts/
 
 # Internal notes
 Missing.md

@@ -7,6 +7,7 @@ import { layoutTextboxForExport } from '../annotations/rendering/shapes.js';
 import { markDocumentSaved, updateWindowTitle } from '../ui/chrome/tabs.js';
 import { isTauri, invoke, readBinaryFile, writeBinaryFile, saveFileDialog, unlockFile, lockFile } from '../core/platform.js';
 import { getCachedPdfBytes, hidePdfABar, installValidatedSavedPdfDocument } from './loader.js';
+import { canSkipUnmodifiedSamePathSave } from './save-state.js';
 import { PDFDocument, PDFString, PDFHexString, PDFName, PDFArray, PDFStream, degrees,
   PDFTextField, PDFCheckBox, PDFDropdown, PDFRadioGroup, PDFOptionList } from 'pdf-lib';
 import { getAnnotationStorage, getAnnotIdToFieldName } from './form-layer.js';
@@ -168,6 +169,28 @@ function isMacosTauri() {
   try { return window.__TAURI__?.os?.type?.() === 'macos'; } catch (_) { return false; }
 }
 
+// FreeText /M participates in the serialized PDF bytes, so deriving it from
+// the save clock makes an unchanged second save non-idempotent. Canonicalize
+// the annotation's own timestamp instead. Loader-created annotations expose
+// modifiedAt/createdAt; modificationDate/creationDate cover callers that still
+// carry the persisted PDF.js names. The Unix epoch is a deterministic
+// "timestamp unknown" sentinel: omitting /M would not remain stable across a
+// reopen because the legacy loader currently supplies the open-time clock for
+// a missing date.
+function stableFreeTextModifiedTimestamp(annotation = {}) {
+  const candidate = [
+    annotation.modifiedAt,
+    annotation.modificationDate,
+    annotation.createdAt,
+    annotation.creationDate,
+  ]
+    .map((value) => value instanceof Date && Number.isFinite(value.getTime())
+      ? value.toISOString() : typeof value === 'string' ? value.trim() : '')
+    .map((value) => ({ value, time: Date.parse(value) }))
+    .find(({ time }) => Number.isFinite(time));
+  return candidate ? new Date(candidate.time).toISOString() : '1970-01-01T00:00:00.000Z';
+}
+
 // Save PDF with annotations
 export async function savePDF(saveAsPath = null) {
   const activeDoc = getActiveDocument();
@@ -195,6 +218,15 @@ export async function savePDF(saveAsPath = null) {
   const OUTLOOK_TEMP = /[\\/]INetCache[\\/]Content\.Outlook[\\/]|Microsoft\.OutlookForWindows/i;
   if (!saveAsPath && OUTLOOK_TEMP.test(currentPath)) {
     return await savePDFAs();
+  }
+
+  if (canSkipUnmodifiedSamePathSave({
+    documentState: activeDoc,
+    currentPath,
+    outputPath,
+    saveAsPath,
+  })) {
+    return true;
   }
 
   window.__pdfSaveInProgress = true;
@@ -1053,7 +1085,7 @@ export async function savePDF(saveAsPath = null) {
               DS: PDFString.of(dsStr),
               CA: opacity,
               T: PDFString.of(ann.author || 'User'),
-              M: PDFString.of(new Date().toISOString()),
+              M: PDFString.of(stableFreeTextModifiedTimestamp(ann)),
               F: computeAnnotFlags(ann)
             };
             const richAlignment = ann.richText?.lines?.[0]?.alignment || ann.textAlign;

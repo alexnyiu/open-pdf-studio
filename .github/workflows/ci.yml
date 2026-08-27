@@ -4,14 +4,88 @@ on:
   push:
     branches:
       - main
+      - ocr-release-hardening
     tags-ignore:
       - 'v*'
   pull_request:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
+  static-verification:
+    name: Static verification
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: open-pdf-studio
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf dbus-x11 xvfb
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Run TypeScript verification
+        run: npm run typecheck
+
+      - name: Run full unit, OCR, lifecycle, and quality suites
+        run: npm run test
+
+      - name: Build production frontend
+        run: npm run build
+
+      - name: Check patch whitespace
+        working-directory: .
+        run: git diff --check
+
+      - name: Run desktop Rust package tests
+        working-directory: .
+        run: cargo test -p open-pdf-studio
+
+      - name: Run PDFium worker Rust package tests
+        working-directory: .
+        run: cargo test -p pdfium-worker
+
+      - name: Record static verification evidence
+        run: >-
+          node scripts/write-release-gate-evidence.mjs
+          --gate-id static-verification
+          --output "$RUNNER_TEMP/test-artifacts/gates/static-verification.json"
+          --command "npm ci"
+          --command "npm run typecheck"
+          --command "npm run test"
+          --command "npm run build"
+          --command "git diff --check"
+          --command "cargo test -p open-pdf-studio"
+          --command "cargo test -p pdfium-worker"
+
+      - name: Upload static verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-release-hardening-evidence-static
+          path: ${{ runner.temp }}/test-artifacts
+          if-no-files-found: warn
+
   build:
+    name: Desktop build (${{ matrix.platform }})
+    needs: static-verification
     strategy:
       fail-fast: false
       matrix:
@@ -128,7 +202,7 @@ jobs:
           Copy-Item src-tauri/binaries/win-x64/pdfium.dll ../target/release/pdfium.dll -Force
           node scripts/run-ocr-phase-a-gate.mjs `
             --app ../target/release/open-pdf-studio.exe `
-            --report "$env:RUNNER_TEMP/ocr-phase-a-$env:RUNNER_OS-$env:RUNNER_ARCH.json"
+            --report "$env:RUNNER_TEMP/test-artifacts/ocr/phase-a-$env:RUNNER_OS-$env:RUNNER_ARCH.json"
 
       - name: Build Tauri AppImage
         if: matrix.platform == 'ubuntu-22.04'
@@ -157,7 +231,7 @@ jobs:
           chmod +x "$appimage"
           dbus-run-session -- xvfb-run -a node scripts/run-ocr-phase-a-gate.mjs \
             --app "$appimage" \
-            --report "$RUNNER_TEMP/ocr-phase-a-$RUNNER_OS-$RUNNER_ARCH.json"
+            --report "$RUNNER_TEMP/test-artifacts/ocr/phase-a-$RUNNER_OS-$RUNNER_ARCH.json"
 
       - name: Pre-sign macOS PDFium runtime and sidecars for hardened runtime
         if: matrix.platform == 'macos-26'
@@ -192,7 +266,7 @@ jobs:
           APP_PATH="../target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app"
           node scripts/test-macos-release-hardening.mjs \
             --app "$APP_PATH" \
-            --output "$RUNNER_TEMP/ocr-release-hardening-artifact.json"
+            --output "$RUNNER_TEMP/test-artifacts/release-hardening/macos-artifact.json"
 
       - name: Run live macOS filesystem edge-case gate
         if: matrix.platform == 'macos-26'
@@ -200,7 +274,7 @@ jobs:
           APP_PATH="../target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app"
           node scripts/test-macos-filesystem-edge-cases.mjs \
             --app "$APP_PATH" \
-            --output "$RUNNER_TEMP/ocr-release-hardening-filesystem.json"
+            --output "$RUNNER_TEMP/test-artifacts/release-hardening/macos-filesystem.json"
 
       - name: Run OCR Phase A gate (macOS)
         if: matrix.platform == 'macos-26'
@@ -209,7 +283,7 @@ jobs:
           APP_BINARY="../target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app/Contents/MacOS/open-pdf-studio"
           node scripts/run-ocr-phase-a-gate.mjs \
             --app "$APP_BINARY" \
-            --report "$RUNNER_TEMP/ocr-phase-a-$RUNNER_OS-$RUNNER_ARCH.json"
+            --report "$RUNNER_TEMP/test-artifacts/ocr/phase-a-$RUNNER_OS-$RUNNER_ARCH.json"
 
       - name: Evaluate macOS OCR production decision
         if: matrix.platform == 'macos-26'
@@ -217,16 +291,56 @@ jobs:
         run: |
           APP_PATH="../target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app"
           node scripts/evaluate-ocr-phase-a-macos-report.mjs \
-            "$RUNNER_TEMP/ocr-phase-a-$RUNNER_OS-$RUNNER_ARCH.json" \
+            "$RUNNER_TEMP/test-artifacts/ocr/phase-a-$RUNNER_OS-$RUNNER_ARCH.json" \
             --app "$APP_PATH" \
-            --output "$RUNNER_TEMP/ocr-phase-a-macos-production-decision.json"
+            --output "$RUNNER_TEMP/test-artifacts/ocr/macos-production-decision.json"
+
+      - name: Archive packaged macOS app for required acceptance jobs
+        if: matrix.platform == 'macos-26'
+        run: |
+          APP_PARENT="../target/aarch64-apple-darwin/release/bundle/macos"
+          tar -C "$APP_PARENT" -czf "$RUNNER_TEMP/open-pdf-studio-macos-arm64.tar.gz" "Open PDF Studio.app"
+
+      - name: Upload packaged macOS app
+        if: matrix.platform == 'macos-26'
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-pdf-studio-macos-arm64-app
+          path: ${{ runner.temp }}/open-pdf-studio-macos-arm64.tar.gz
+          if-no-files-found: error
+
+      - name: Record desktop build evidence
+        run: >-
+          node scripts/write-release-gate-evidence.mjs
+          --gate-id desktop-build-${{ matrix.platform }}
+          --output "${{ runner.temp }}/test-artifacts/gates/desktop-build-${{ matrix.platform }}.json"
+          --command "npm ci"
+          --command "npm run test:quality"
+          --command "npm run test:unit"
+          --command "desktop package/build and platform OCR gate"
+
+      - name: Record macOS OCR release-hardening evidence
+        if: matrix.platform == 'macos-26'
+        run: >-
+          node scripts/write-release-gate-evidence.mjs
+          --gate-id macos-ocr-release-hardening
+          --output "$RUNNER_TEMP/test-artifacts/gates/macos-ocr-release-hardening.json"
+          --command "node scripts/test-macos-release-hardening.mjs"
+          --command "node scripts/test-macos-filesystem-edge-cases.mjs"
+          --command "node scripts/run-ocr-phase-a-gate.mjs"
+          --command "node scripts/evaluate-ocr-phase-a-macos-report.mjs"
+          --command "npm run test:ocr-adversarial:macos"
+          --artifact "release-hardening/macos-artifact.json"
+          --artifact "release-hardening/macos-filesystem.json"
+          --artifact "ocr/macos-production-decision.json"
+          --artifact "ocr/adversarial-packaged.json"
 
       - name: Upload OCR Phase A platform evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ocr-phase-a-${{ runner.os }}-${{ runner.arch }}
-          path: ${{ runner.temp }}/ocr-phase-a-${{ runner.os }}-${{ runner.arch }}.json
+          path: ${{ runner.temp }}/test-artifacts/ocr/phase-a-${{ runner.os }}-${{ runner.arch }}.json
           if-no-files-found: warn
 
       - name: Upload macOS OCR production decision
@@ -234,7 +348,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ocr-phase-a-macos-production-decision
-          path: ${{ runner.temp }}/ocr-phase-a-macos-production-decision.json
+          path: ${{ runner.temp }}/test-artifacts/ocr/macos-production-decision.json
           if-no-files-found: error
 
       - name: Upload macOS release-hardening evidence
@@ -243,8 +357,317 @@ jobs:
         with:
           name: ocr-release-hardening-macos
           path: |
-            ${{ runner.temp }}/ocr-release-hardening-artifact.json
-            ${{ runner.temp }}/ocr-release-hardening-filesystem.json
+            ${{ runner.temp }}/test-artifacts/release-hardening/macos-artifact.json
+            ${{ runner.temp }}/test-artifacts/release-hardening/macos-filesystem.json
+          if-no-files-found: error
+
+      - name: Upload standardized release-hardening evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-release-hardening-evidence-${{ matrix.platform }}
+          path: ${{ runner.temp }}/test-artifacts
+          if-no-files-found: warn
+
+  packaged-macos-editor-acceptance:
+    name: macOS packaged editor acceptance
+    needs: build
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: open-pdf-studio
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Download packaged macOS app
+        uses: actions/download-artifact@v4
+        with:
+          name: open-pdf-studio-macos-arm64-app
+          path: ${{ runner.temp }}/packaged-app
+
+      - name: Extract packaged macOS app
+        run: |
+          mkdir -p "$RUNNER_TEMP/packaged-app/extracted"
+          tar -C "$RUNNER_TEMP/packaged-app/extracted" -xzf "$RUNNER_TEMP/packaged-app/open-pdf-studio-macos-arm64.tar.gz"
+
+      - name: Run genuine packaged editor coverage matrix
+        timeout-minutes: 90
+        env:
+          OPEN_PDF_STUDIO_PACKAGED_APP: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app/Contents/MacOS/open-pdf-studio
+          OPEN_PDF_STUDIO_TEST_ARTIFACT_DIR: ${{ runner.temp }}/test-artifacts/browser-ui
+        run: >-
+          npm run test:editor-coverage:macos --
+          --output "$RUNNER_TEMP/test-artifacts/browser-ui/editor-coverage-manifest.json"
+
+      - name: Run supplemental browser editor, metadata, and modal acceptance
+        id: browser_acceptance
+        continue-on-error: true
+        env:
+          OPEN_PDF_STUDIO_TEST_ARTIFACT_DIR: ${{ runner.temp }}/test-artifacts/browser-ui
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/test-artifacts/browser-ui"
+          ./node_modules/.bin/vite --host 127.0.0.1 --port 3041 --strictPort \
+            >"$RUNNER_TEMP/test-artifacts/browser-ui/vite-console.log" 2>&1 &
+          VITE_PID=$!
+          trap 'kill "$VITE_PID" 2>/dev/null || true' EXIT
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3041/ >/dev/null; then break; fi
+            if ! kill -0 "$VITE_PID" 2>/dev/null; then
+              cat "$RUNNER_TEMP/test-artifacts/browser-ui/vite-console.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:3041/ >/dev/null
+          browser_status=0
+          npm run test:native-text-editing:ui 2>&1 | tee "$RUNNER_TEMP/test-artifacts/browser-ui/native-text-editing.log" || browser_status=1
+          npm run test:metadata-editing:ui 2>&1 | tee "$RUNNER_TEMP/test-artifacts/browser-ui/metadata-editing.log" || browser_status=1
+          npm run test:modal-hardening:ui 2>&1 | tee "$RUNNER_TEMP/test-artifacts/browser-ui/modal-hardening.log" || browser_status=1
+          npm run test:ocr-ui:browser:macos 2>&1 | tee "$RUNNER_TEMP/test-artifacts/browser-ui/ocr-ui.log" || browser_status=1
+          exit "$browser_status"
+
+      - name: Run production packaged editor acceptance
+        if: always()
+        env:
+          OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app
+          OPEN_PDF_STUDIO_PACKAGED_APP: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app/Contents/MacOS/open-pdf-studio
+          OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME: ${{ steps.browser_acceptance.outcome }}
+          OPEN_PDF_STUDIO_EDITOR_COVERAGE_MANIFEST: ${{ runner.temp }}/test-artifacts/browser-ui/editor-coverage-manifest.json
+        run: >-
+          npm run test:editor-acceptance:macos --
+          --output "$RUNNER_TEMP/test-artifacts/packaged-editor/acceptance.json"
+
+      - name: Enforce supplemental browser acceptance
+        if: always() && steps.browser_acceptance.outcome != 'success'
+        run: exit 1
+
+      - name: Upload packaged editor artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-release-hardening-evidence-packaged-editor
+          path: ${{ runner.temp }}/test-artifacts
+          if-no-files-found: error
+
+  macos-editor-ocr-performance:
+    name: macOS editor and OCR performance
+    needs: build
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: open-pdf-studio
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Install locked frontend dependencies
+        run: npm ci
+
+      - name: Download packaged macOS app
+        uses: actions/download-artifact@v4
+        with:
+          name: open-pdf-studio-macos-arm64-app
+          path: ${{ runner.temp }}/packaged-app
+
+      - name: Extract packaged macOS app
+        run: |
+          mkdir -p "$RUNNER_TEMP/packaged-app/extracted"
+          tar -C "$RUNNER_TEMP/packaged-app/extracted" -xzf "$RUNNER_TEMP/packaged-app/open-pdf-studio-macos-arm64.tar.gz"
+
+      - name: Run packaged adversarial OCR qualification
+        id: ocr_adversarial
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app
+          OPEN_PDF_STUDIO_PACKAGED_APP: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app/Contents/MacOS/open-pdf-studio
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/test-artifacts/ocr"
+          adversarial_status=0
+          npm run test:ocr-adversarial:macos 2>&1 \
+            | tee "$RUNNER_TEMP/test-artifacts/ocr/adversarial-console.log" \
+            || adversarial_status=$?
+          if [[ -f output/ocr-release-hardening/adversarial-latest.json ]]; then
+            cp output/ocr-release-hardening/adversarial-latest.json \
+              "$RUNNER_TEMP/test-artifacts/ocr/adversarial-packaged.json"
+          else
+            adversarial_status=1
+          fi
+          exit "$adversarial_status"
+
+      - name: Run real packaged 100-page OCR performance qualification
+        id: ocr_100_page_performance
+        continue-on-error: true
+        env:
+          OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app
+          OPEN_PDF_STUDIO_PACKAGED_APP: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app/Contents/MacOS/open-pdf-studio
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/test-artifacts/editor-performance"
+          ocr_status=0
+          npm run test:ocr-production-100-page:macos 2>&1 \
+            | tee "$RUNNER_TEMP/test-artifacts/editor-performance/ocr-production-100-page-console.log" \
+            || ocr_status=$?
+          if [[ -f output/ocr-release-hardening/production-100-page-latest.json ]]; then
+            cp output/ocr-release-hardening/production-100-page-latest.json \
+              "$RUNNER_TEMP/test-artifacts/editor-performance/ocr-production-100-page.json"
+          else
+            ocr_status=1
+          fi
+          exit "$ocr_status"
+
+      - name: Run deterministic editor and real OCR performance gate
+        if: always()
+        env:
+          OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app
+          OPEN_PDF_STUDIO_PACKAGED_APP: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app/Contents/MacOS/open-pdf-studio
+          OPEN_PDF_STUDIO_EDITOR_PERFORMANCE_REPORT: ${{ runner.temp }}/test-artifacts/editor-performance/performance.json
+          OPEN_PDF_STUDIO_OCR_100_PAGE_REPORT: ${{ runner.temp }}/test-artifacts/editor-performance/ocr-production-100-page.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/test-artifacts/editor-performance"
+          npm run test:editor-performance:macos 2>&1 \
+            | tee "$RUNNER_TEMP/test-artifacts/editor-performance/console.log"
+
+      - name: Enforce packaged OCR producer outcomes
+        if: always()
+        env:
+          ADVERSARIAL_OUTCOME: ${{ steps.ocr_adversarial.outcome }}
+          OCR_100_PAGE_OUTCOME: ${{ steps.ocr_100_page_performance.outcome }}
+        run: |
+          test "$ADVERSARIAL_OUTCOME" = success
+          test "$OCR_100_PAGE_OUTCOME" = success
+
+      - name: Upload performance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-release-hardening-evidence-performance
+          path: ${{ runner.temp }}/test-artifacts
+          if-no-files-found: error
+
+  macos-ocr-release-hardening-decision:
+    name: macOS OCR release-hardening decision
+    needs:
+      - static-verification
+      - build
+      - packaged-macos-editor-acceptance
+      - macos-editor-ocr-performance
+    if: always()
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: open-pdf-studio
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Download release-hardening evidence
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: ocr-release-hardening-evidence-*
+          path: ${{ runner.temp }}/release-hardening-evidence
+          merge-multiple: true
+
+      - name: Prepare fail-closed evidence directory
+        run: mkdir -p "$RUNNER_TEMP/release-hardening-evidence"
+
+      - name: Verify live main-branch repository controls
+        continue-on-error: true
+        env:
+          # Classic protection requires a read-only Administration token; active rules use github.token.
+          ACTIVE_RULES_TOKEN: ${{ github.token }}
+          CLASSIC_PROTECTION_TOKEN: ${{ secrets.REPOSITORY_CONTROLS_TOKEN }}
+        run: |
+          set -euo pipefail
+          ACTIVE_RULES_PATH="$RUNNER_TEMP/release-hardening-evidence/github-main-active-rules.json"
+          CLASSIC_PROTECTION_PATH="$RUNNER_TEMP/release-hardening-evidence/github-main-classic-protection.json"
+          CONTROLS_PATH="$RUNNER_TEMP/release-hardening-evidence/gates/repository-controls.json"
+          FALLBACK_ARGS=()
+          mkdir -p "$(dirname "$CONTROLS_PATH")"
+          curl --fail --silent --show-error --location \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer $ACTIVE_RULES_TOKEN" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/rules/branches/main?per_page=100" \
+            --output "$ACTIVE_RULES_PATH"
+          if node -e 'const fs = require("node:fs"); const rules = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.exit(Array.isArray(rules) && rules.length === 0 ? 0 : 1);' "$ACTIVE_RULES_PATH"; then
+            curl --fail --silent --show-error --location \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $CLASSIC_PROTECTION_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/branches/main/protection" \
+              --output "$CLASSIC_PROTECTION_PATH"
+            FALLBACK_ARGS=(--classic-fallback-input "$CLASSIC_PROTECTION_PATH")
+          fi
+          node scripts/evaluate-github-branch-protection.mjs \
+            --active-rules-input "$ACTIVE_RULES_PATH" \
+            "${FALLBACK_ARGS[@]}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --output "$CONTROLS_PATH"
+
+      - name: Evaluate authoritative PR or fail-closed diagnostic decision
+        if: always()
+        continue-on-error: ${{ github.event_name != 'pull_request' || github.base_ref != 'main' }}
+        run: |
+          set -euo pipefail
+          RELEASE_CONTEXT_ARGS=(
+            --event-name "$GITHUB_EVENT_NAME"
+            --base-ref "${GITHUB_BASE_REF:-}"
+            --head-ref "${GITHUB_HEAD_REF:-}"
+            --github-ref "$GITHUB_REF"
+            --event-repository "$GITHUB_REPOSITORY"
+            --event-payload "$GITHUB_EVENT_PATH"
+          )
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" || "${GITHUB_BASE_REF:-}" != "main" ]]; then
+            RELEASE_CONTEXT_ARGS+=(--local-diagnostic)
+          fi
+          node scripts/evaluate-ocr-release-hardening.mjs \
+            --evidence-dir "$RUNNER_TEMP/release-hardening-evidence" \
+            --expected-head "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            "${RELEASE_CONTEXT_ARGS[@]}" \
+            --required-job-result "static-verification=${{ needs.static-verification.result }}" \
+            --required-job-result "build=${{ needs.build.result }}" \
+            --required-job-result "packaged-macos-editor-acceptance=${{ needs.packaged-macos-editor-acceptance.result }}" \
+            --required-job-result "macos-editor-ocr-performance=${{ needs.macos-editor-ocr-performance.result }}" \
+            --output output/ocr-release-hardening/acceptance.json
+
+      - name: Standardize final decision artifact
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/test-artifacts/release-hardening"
+          cp -R "$RUNNER_TEMP/release-hardening-evidence/." "$RUNNER_TEMP/test-artifacts/"
+          cp output/ocr-release-hardening/acceptance.json "$RUNNER_TEMP/test-artifacts/release-hardening/acceptance.json"
+
+      - name: Upload final release decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-release-hardening-acceptance
+          path: ${{ runner.temp }}/test-artifacts
           if-no-files-found: error
 
   ocr-phase-a-production-gate:

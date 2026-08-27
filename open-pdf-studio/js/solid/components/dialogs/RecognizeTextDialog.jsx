@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onMount, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, onMount, Show } from 'solid-js';
 import Dialog from '../Dialog.jsx';
 import { getActiveDocument } from '../../../core/state.js';
 import {
@@ -9,11 +9,11 @@ import {
 } from '../../../ocr/recognition-dialog-model.js';
 import { closeDialog } from '../../stores/dialogStore.js';
 import {
-  activeDocumentOcrWorkflow,
   ocrModelPackState,
   ocrWorkflowActionFailure,
+  ocrWorkflowForDocument,
   refreshOcrModelPackState,
-  startOcrFromApplicationAction,
+  startOcrForDocument,
 } from '../../stores/ocrWorkflowStore.js';
 import { useTranslation } from '../../../i18n/useTranslation.js';
 
@@ -24,12 +24,16 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)} MB`;
 }
 
-export default function RecognizeTextDialog() {
+export default function RecognizeTextDialog(props) {
   const { t } = useTranslation('dialogs');
   const { t: tCommon } = useTranslation('common');
-  const document = getActiveDocument();
-  const pageCount = document?.pdfDoc?.numPages ?? 0;
-  const currentPage = document?.currentPage ?? 1;
+  const openedDocument = getActiveDocument();
+  const dialogOwner = props?.data || {};
+  const ownerDocumentId = dialogOwner.ownerDocumentId ?? openedDocument?.id ?? null;
+  const ownerDocumentGeneration = dialogOwner.ownerDocumentGeneration
+    ?? (Number(openedDocument?.lifecycleGeneration) || 0);
+  const pageCount = dialogOwner.pageCount ?? openedDocument?.pdfDoc?.numPages ?? 0;
+  const currentPage = dialogOwner.currentPage ?? openedDocument?.currentPage ?? 1;
   const [scopeKind, setScopeKind] = createSignal('current-page');
   const [rangeStart, setRangeStart] = createSignal(String(currentPage));
   const [rangeEnd, setRangeEnd] = createSignal(String(currentPage));
@@ -60,7 +64,7 @@ export default function RecognizeTextDialog() {
     }
   });
   const modelReady = () => ocrModelPackState().status === 'installed';
-  const activeJob = () => activeDocumentOcrWorkflow()?.finishedAt === null;
+  const activeJob = () => ocrWorkflowForDocument(ownerDocumentId)?.finishedAt === null;
   const storage = createMemo(() => estimateOcrStorageImpact({
     pageCount: selection().value?.pageNumbers.length ?? 0,
     modelState: ocrModelPackState(),
@@ -88,7 +92,7 @@ export default function RecognizeTextDialog() {
         existingText: existingText(),
         keepCompletedPages: keepCompletedPages(),
       });
-      await startOcrFromApplicationAction({
+      await startOcrForDocument(ownerDocumentId, {
         pageScope: selection().value.pageScope,
         recognitionPolicy,
       });
@@ -98,6 +102,14 @@ export default function RecognizeTextDialog() {
       setStarting(false);
     }
   }
+
+  createEffect(() => {
+    const active = getActiveDocument();
+    if (!ownerDocumentId || active?.id !== ownerDocumentId
+      || (Number(active?.lifecycleGeneration) || 0) !== ownerDocumentGeneration) {
+      closeDialog('recognize-text');
+    }
+  });
 
   onMount(() => { void verifyModel(false); });
 

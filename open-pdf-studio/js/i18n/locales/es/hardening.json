@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Editar {{label}}",
+    "editValueHint": "{{label}}. Haz doble clic o pulsa Intro para editar.",
+    "timezoneHint": "Las fechas se muestran en la zona horaria {{timezone}} y se guardan en formato ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Aprobar la sustitución de fuente",
+    "sourceFace": "Fuente original",
+    "sourceFaces": "Fuentes originales",
+    "unknown": "Desconocida",
+    "packagedSubstitute": "Fuente sustituta incluida",
+    "notAvailable": "No disponible",
+    "sampleText": "Muestra",
+    "sampleFallback": "El veloz murciélago hindú comía feliz cardillo y kiwi.",
+    "scope": "Se aplica a",
+    "scopeAnnotation": "Esta anotación",
+    "scopeSelection": "Los cuadros de texto seleccionados",
+    "scopeParagraph": "Este párrafo del PDF",
+    "scopeFindReplace": "Esta edición de Buscar/Reemplazar",
+    "remember": "Recordar esta aprobación para el documento abierto",
+    "approve": "Usar la fuente sustituta",
+    "cancel": "Cancelar"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Editar texto del PDF",
+      "editFormatted": "Editar texto con formato del PDF",
+      "editAnnotation": "Editar texto con formato de {{type}}",
+      "editRegion": "Editar región de texto con formato del PDF: {{text}}",
+      "editScannedLine": "Editar línea de texto escaneado: {{text}}",
+      "editScannedFixed": "Editar región fija de texto escaneado: {{text}}",
+      "editScannedReflow": "Editar región de redistribución del párrafo escaneado: {{text}}",
+      "selectedOcrParagraph": "Párrafo OCR seleccionado con {{count}} líneas"
+    },
+    "handles": {
+      "move": "Mover cuadro de texto",
+      "moveHint": "Arrastra para mover el cuadro de texto",
+      "resize": "Cambiar el tamaño del cuadro de texto",
+      "resizeHint": "Arrastra para cambiar el tamaño del cuadro de texto"
+    },
+    "actions": {
+      "apply": "Aplicar",
+      "cancel": "Cancelar"
+    },
+    "status": {
+      "ocrOverflow": "El borrador completo del OCR se ve fuera de la región aprobada. El guardado seguirá bloqueado hasta que la validación exacta de la región fija confirme que el texto cabe.",
+      "scannedRegion": "Editando texto escaneado dentro de la región aprobada.",
+      "shaping": "Finalizando la disposición exacta del texto…",
+      "overlap": "El texto se superpone al contenido existente de la página. Se permite aplicar el cambio; los objetos originales adyacentes no se moverán.",
+      "lowContrast": "Los colores originales de bajo contraste tienen un fondo que solo se muestra durante la edición. Los colores guardados no cambiarán.",
+      "layoutRejectedPrefix": "Disposición del texto rechazada:",
+      "layoutRejected": "Disposición del texto rechazada: {{reasons}}",
+      "shapingRejected": "Composición del texto rechazada: {{reason}}",
+      "nativeManual": "Editando texto nativo en un cuadro de texto con líneas manuales. Pulsa Intro para crear una línea nueva.",
+      "nativeManualContrast": "Editando texto nativo en un cuadro de texto con líneas manuales. Pulsa Intro para crear una línea nueva. Los colores originales de bajo contraste tienen un fondo que solo se muestra durante la edición; los colores guardados no cambiarán.",
+      "nativeGrowing": "Editando texto nativo. El ancho es fijo y la región crece hacia abajo.",
+      "nativeGrowingContrast": "Editando texto nativo. El ancho es fijo y la región crece hacia abajo. Los colores originales de bajo contraste tienen un fondo que solo se muestra durante la edición; los colores guardados no cambiarán.",
+      "scannedEstimate": "Editando texto escaneado. Las propiedades de la fuente son aproximadas.",
+      "applyRejected": "No se pudo aplicar la edición de texto: {{reason}}",
+      "cropBoxRejected": "El texto compuesto no se puede aplicar dentro del CropBox de la página.",
+      "layoutTimeout": "La disposición exacta del texto no terminó a tiempo. El editor permanece abierto.",
+      "scannedRejected": "Se rechazó el cambio de texto escaneado: {{reason}}",
+      "lineBreakUnsupported": "No se admiten saltos de línea. Usa Comando-Intro para aplicar esta edición de una sola línea.",
+      "ocrOneLine": "Editando una línea aislada de texto escaneado. Las propiedades de la fuente son aproximadas.",
+      "ocrFixed": "Editando varias líneas de OCR dentro de una única región original fija. Un solo párrafo se redistribuye dentro de esta región; los saltos de línea explícitos conservan el modo de líneas fijas. Comando-Intro aplica el cambio.",
+      "ocrReflow": "Editando un párrafo dentro de su región OCR original aprobada. Comando-Intro aplica el cambio; el desbordamiento se rechaza.",
+      "operationFailed": "No se pudo completar la operación de texto. El documento no se modificó.",
+      "staleDraft": "El documento cambió mientras el editor de texto estaba abierto. Se descartó el borrador.",
+      "multipleOcrParagraphs": "La selección abarca varios párrafos OCR. Revise los contornos por separado y use «Combinar» de forma explícita. La combinación entre columnas sigue desactivada.",
+      "nativeColumnBoundary": "Este párrafo cruza un límite de columna original detectado. Se bloqueó la edición y el documento no se modificó.",
+      "nativeSourceUnavailable": "El texto visible no se pudo vincular con operadores de origen aptos. El documento no se modificó.",
+      "nativeDeleteUnavailable": "Este texto nativo del PDF no se puede eliminar de forma segura porque sus operadores de origen exactos son ambiguos. El documento no se modificó.",
+      "readOnly": "El texto editado anteriormente es de solo lectura. El documento no se modificó."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Límite de {{limit}} grafemas",
+      "lineThreshold": "Límite de {{limit}} líneas",
+      "message": "Se ha conservado todo el contenido pegado: {{graphemeCount}} grafemas en {{lineCount}} líneas. Límite superado: {{thresholds}}. La vista previa está limitada. Usa Deshacer pegado para eliminar todo el contenido insertado.",
+      "messageWithExpansion": "Se ha conservado todo el contenido pegado: {{graphemeCount}} grafemas en {{lineCount}} líneas. Límite superado: {{thresholds}}. La vista previa está limitada. Usa Deshacer pegado para eliminar todo el contenido insertado o Expandir cuadro para adoptar los límites exactos validados.",
+      "undo": "Deshacer pegado",
+      "expand": "Expandir cuadro"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Agrupación de párrafos de OCR",
+    "title": "Agrupación",
+    "mergeSelected": "Combinar selección",
+    "mergeSelectedParagraphs": "Combinar párrafos seleccionados",
+    "mergePrevious": "Combinar con el anterior",
+    "mergePreviousHint": "Combinar con el párrafo de OCR anterior",
+    "mergeNext": "Combinar con el siguiente",
+    "mergeNextHint": "Combinar con el párrafo de OCR siguiente",
+    "splitBefore": "Dividir antes",
+    "splitAfter": "Dividir después",
+    "reset": "Restablecer agrupación automática",
+    "crossColumnDisabled": "La combinación entre columnas está desactivada",
+    "ambiguousBoundariesOnly": "Solo se pueden combinar manualmente los límites ambiguos de la misma columna",
+    "tooManyLines": "Más de 32 líneas. Divide este párrafo manualmente antes de editarlo.",
+    "mergeDescription": "Los textos existentes están separados por un salto de línea fijo que se conserva. La combinación solo se aplica después de que el parche de origen combinado y la región fija superen la validación.",
+    "mergedText": "Texto OCR combinado",
+    "splitRegion": "Dividir región OCR",
+    "firstRegion": "Primera región",
+    "secondRegion": "Segunda región",
+    "sourceLines": "Líneas de origen: {{lines}}"
+  }
+}

@@ -28,6 +28,7 @@ import SchedulePanel from './components/SchedulePanel.jsx';
 import SymbolTypeEditor from './components/symbol-edit/SymbolTypeEditor.jsx';
 import MiniLog from './components/MiniLog.jsx';
 import AssistantPanel from './components/AssistantPanel.jsx';
+import InertWhenModal from './components/InertWhenModal.jsx';
 import { getRegisteredPalettes } from '../plugins/palette-registry.js';
 import { leftOrder, rightOrder } from './stores/paletteOrder.js';
 import { useTranslation } from '../i18n/useTranslation.js';
@@ -70,6 +71,7 @@ function DesktopApp() {
 
   return (
     <>
+      <InertWhenModal class="app-modal-background">
       <TitleBar />
 
       <div class="ribbon-container">
@@ -124,7 +126,6 @@ function DesktopApp() {
       <StatusBar />
 
       <AppMenu />
-      <DialogHost />
       <ContextMenu />
       <FloatingToolPalette />
       <FloatingSymbolPalette />
@@ -142,6 +143,8 @@ function DesktopApp() {
       <KeystrokeOverlay />
       <BoxSizeOverlay />
       <SketchModeBar />
+      </InertWhenModal>
+      <DialogHost />
     </>
   );
 }

@@ -36,6 +36,15 @@ const memoryLimit = 32 * 1024 * 1024;
 
 assert.equal(process.platform, 'darwin', 'packaged adversarial qualification is macOS-only');
 
+async function gitHead() {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
+  const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+    cwd: repoDir,
+    encoding: 'utf8',
+  });
+  return stdout.trim();
+}
+
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -404,9 +413,11 @@ async function pathologicalCancellation(value) {
 const report = {
   contract: 'open-pdf-studio.ocr.adversarial-packaged-qualification',
   schemaVersion: 1,
+  head: await gitHead(),
   startedAt: new Date().toISOString(),
   finishedAt: null,
   status: 'FAIL',
+  platform: { operatingSystem: process.platform, architecture: process.arch },
   appBinary,
   automation: {
     visibleProductionAction: '#ep-recognize-text',

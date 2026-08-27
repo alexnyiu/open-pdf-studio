@@ -58,13 +58,17 @@ fn test_2459_fonts_and_text() {
             if let Ok(xobj_ref) = res.get(b"XObject") {
                 let xobj_dict = match xobj_ref {
                     Object::Dictionary(d) => d.clone(),
-                    Object::Reference(id) => doc.get_object(*id).unwrap().as_dict().unwrap().clone(),
+                    Object::Reference(id) => {
+                        doc.get_object(*id).unwrap().as_dict().unwrap().clone()
+                    }
                     _ => return,
                 };
 
                 let mut examined = HashSet::new();
                 for name in &xobject_names {
-                    if examined.contains(name) { continue; }
+                    if examined.contains(name) {
+                        continue;
+                    }
                     examined.insert(name.clone());
                     examine_form_xobject(&doc, &xobj_dict, name);
                 }
@@ -90,14 +94,29 @@ fn examine_form_xobject(doc: &Document, xobj_dict: &lopdf::Dictionary, name: &st
         Object::Stream(ref s) => s,
         _ => return,
     };
-    let subtype = stream.dict.get(b"Subtype").ok().and_then(|s| s.as_name().ok());
+    let subtype = stream
+        .dict
+        .get(b"Subtype")
+        .ok()
+        .and_then(|s| s.as_name().ok());
     if subtype != Some(b"Form" as &[u8]) {
-        println!("\n  {} is NOT a Form XObject (subtype: {:?})", name, subtype);
+        println!(
+            "\n  {} is NOT a Form XObject (subtype: {:?})",
+            name, subtype
+        );
         return;
     }
 
-    let matrix = stream.dict.get(b"Matrix").ok().and_then(|m| m.as_array().ok());
-    let bbox = stream.dict.get(b"BBox").ok().and_then(|m| m.as_array().ok());
+    let matrix = stream
+        .dict
+        .get(b"Matrix")
+        .ok()
+        .and_then(|m| m.as_array().ok());
+    let bbox = stream
+        .dict
+        .get(b"BBox")
+        .ok()
+        .and_then(|m| m.as_array().ok());
 
     println!("\n  Form XObject '{}' (id: {:?}):", name, resolved_id);
     if let Some(m) = matrix {
@@ -133,7 +152,10 @@ fn examine_form_xobject(doc: &Document, xobj_dict: &lopdf::Dictionary, name: &st
                     _ => {}
                 }
             }
-            println!("    Text ops (Tj/TJ): {}, nested Do: {}", text_count, do_count);
+            println!(
+                "    Text ops (Tj/TJ): {}, nested Do: {}",
+                text_count, do_count
+            );
             if !nested_xobjects.is_empty() {
                 println!("    Nested XObjects: {:?}", nested_xobjects);
 
@@ -142,7 +164,9 @@ fn examine_form_xobject(doc: &Document, xobj_dict: &lopdf::Dictionary, name: &st
                     if let Ok(nested_xobj_ref) = form_res.get(b"XObject") {
                         let nested_xobj_dict = match nested_xobj_ref {
                             Object::Dictionary(d) => d.clone(),
-                            Object::Reference(id) => doc.get_object(*id).unwrap().as_dict().unwrap().clone(),
+                            Object::Reference(id) => {
+                                doc.get_object(*id).unwrap().as_dict().unwrap().clone()
+                            }
                             _ => return,
                         };
                         for nested_name in nested_xobjects.iter().take(5) {
@@ -161,8 +185,14 @@ fn print_fonts(doc: &Document, resources: &lopdf::Dictionary, prefix: &str) {
             Object::Dictionary(d) => d.clone(),
             Object::Reference(id) => {
                 if let Ok(obj) = doc.get_object(*id) {
-                    if let Ok(d) = obj.as_dict() { d.clone() } else { return; }
-                } else { return; }
+                    if let Ok(d) = obj.as_dict() {
+                        d.clone()
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
+                }
             }
             _ => return,
         };
@@ -173,8 +203,16 @@ fn print_fonts(doc: &Document, resources: &lopdf::Dictionary, prefix: &str) {
             if let Object::Reference(id) = font_ref {
                 if let Ok(font_obj) = doc.get_object(*id) {
                     if let Ok(fd) = font_obj.as_dict() {
-                        let subtype = fd.get(b"Subtype").ok().and_then(|s| s.as_name().ok()).unwrap_or(b"?");
-                        let base = fd.get(b"BaseFont").ok().and_then(|s| s.as_name().ok()).unwrap_or(b"?");
+                        let subtype = fd
+                            .get(b"Subtype")
+                            .ok()
+                            .and_then(|s| s.as_name().ok())
+                            .unwrap_or(b"?");
+                        let base = fd
+                            .get(b"BaseFont")
+                            .ok()
+                            .and_then(|s| s.as_name().ok())
+                            .unwrap_or(b"?");
                         let has_desc = fd.has(b"FontDescriptor");
                         let has_enc = fd.has(b"Encoding");
 
@@ -183,15 +221,20 @@ fn print_fonts(doc: &Document, resources: &lopdf::Dictionary, prefix: &str) {
                             if let Ok(Object::Reference(did)) = fd.get(b"FontDescriptor") {
                                 if let Ok(desc) = doc.get_object(*did) {
                                     if let Ok(dd) = desc.as_dict() {
-                                        if dd.has(b"FontFile2") { embedded = "FontFile2 (TrueType)"; }
-                                        else if dd.has(b"FontFile3") { embedded = "FontFile3 (CFF)"; }
-                                        else if dd.has(b"FontFile") { embedded = "FontFile (Type1)"; }
+                                        if dd.has(b"FontFile2") {
+                                            embedded = "FontFile2 (TrueType)";
+                                        } else if dd.has(b"FontFile3") {
+                                            embedded = "FontFile3 (CFF)";
+                                        } else if dd.has(b"FontFile") {
+                                            embedded = "FontFile (Type1)";
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        println!("    {} = {} / {} / embedded: {} / encoding: {}",
+                        println!(
+                            "    {} = {} / {} / embedded: {} / encoding: {}",
                             font_name,
                             String::from_utf8_lossy(subtype),
                             String::from_utf8_lossy(base),

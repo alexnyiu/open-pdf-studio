@@ -1,8 +1,8 @@
 use super::spawn::spawn_worker;
 use super::state::{Status, WorkerState};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const CRASH_WINDOW: Duration = Duration::from_secs(30);
@@ -19,7 +19,9 @@ pub async fn handle_worker_crash(worker: Arc<WorkerState>, exe_path: PathBuf) {
 
     let too_many = {
         let mut last = worker.last_crash_at.lock().await;
-        let recent = last.map(|t| now.duration_since(t) < CRASH_WINDOW).unwrap_or(false);
+        let recent = last
+            .map(|t| now.duration_since(t) < CRASH_WINDOW)
+            .unwrap_or(false);
         *last = Some(now);
         recent && crashes >= MAX_CRASHES_IN_WINDOW
     };

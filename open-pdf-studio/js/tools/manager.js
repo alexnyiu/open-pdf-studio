@@ -9,6 +9,7 @@ import { buildToolContext, resolvePointerCoords } from './tool-context.js';
 import { findAnnotationAt } from '../annotations/geometry.js';
 import { findHandleAt } from '../annotations/handles.js';
 import { cancelParametricSymbolInput } from './parametric-symbol-editing.js';
+import { getActiveTextEditSession } from '../text/text-edit-session.js';
 
 // Tools that are always allowed (view-only, non-modifying)
 const READONLY_ALLOWED_TOOLS = new Set(['select', 'hand']);
@@ -23,6 +24,7 @@ export function getCursorForTool(tool = state.currentTool) {
       return 'grab';
     case 'text':
     case 'editText':
+    case 'addText':
       return 'text';
     default: {
       const typeHandler = getAnnotationType(tool);
@@ -245,7 +247,8 @@ export function setTool(tool) {
   cancelParametricSymbolInput();
 
   // Deactivate PDF text editing when switching away
-  if (state.currentTool === 'editText' && tool !== 'editText') {
+  if ((state.currentTool === 'editText' || state.currentTool === 'addText')
+      && tool !== state.currentTool) {
     import('./text-edit-tool.js').then(m => m.deactivateEditTextTool());
   }
 
@@ -344,7 +347,10 @@ export function setTool(tool) {
           }
         }
       } catch (_) { /* fall through to hide */ }
-      if (isCurrentDefaultsRequest()) hideProperties();
+      // The user can open an inline editor while the preferences import above
+      // is still pending. That editor now owns the properties panel; a late
+      // tool-default fallback must not erase its controls.
+      if (isCurrentDefaultsRequest() && !getActiveTextEditSession()) hideProperties();
     })();
   }
 

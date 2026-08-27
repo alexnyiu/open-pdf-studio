@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "{{label}}を編集",
+    "editValueHint": "{{label}}。ダブルクリックするか Enter キーを押すと編集できます。",
+    "timezoneHint": "日付は{{timezone}}で表示され、ISO 8601 形式で保存されます。"
+  },
+  "fontSubstitution": {
+    "title": "フォントの置換を承認",
+    "sourceFace": "元のフォント",
+    "sourceFaces": "元のフォント",
+    "unknown": "不明",
+    "packagedSubstitute": "同梱の代替フォント",
+    "notAvailable": "利用できません",
+    "sampleText": "サンプル",
+    "sampleFallback": "素早い茶色の狐が怠け者の犬を飛び越える。",
+    "scope": "適用対象",
+    "scopeAnnotation": "この注釈",
+    "scopeSelection": "選択したテキストボックス",
+    "scopeParagraph": "この PDF 段落",
+    "scopeFindReplace": "この検索と置換の編集",
+    "remember": "この開いている文書について承認を記憶する",
+    "approve": "代替フォントを使用",
+    "cancel": "キャンセル"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "PDF テキストを編集",
+      "editFormatted": "書式付き PDF テキストを編集",
+      "editAnnotation": "書式付き{{type}}テキストを編集",
+      "editRegion": "書式付き PDF テキスト領域を編集: {{text}}",
+      "editScannedLine": "スキャンしたテキスト行を編集: {{text}}",
+      "editScannedFixed": "スキャンしたテキストの固定領域を編集: {{text}}",
+      "editScannedReflow": "スキャンしたテキストの段落リフロー領域を編集: {{text}}",
+      "selectedOcrParagraph": "{{count}} 行の選択された OCR 段落"
+    },
+    "handles": {
+      "move": "テキストボックスを移動",
+      "moveHint": "ドラッグしてテキストボックスを移動",
+      "resize": "テキストボックスのサイズを変更",
+      "resizeHint": "ドラッグしてテキストボックスのサイズを変更"
+    },
+    "actions": {
+      "apply": "適用",
+      "cancel": "キャンセル"
+    },
+    "status": {
+      "ocrOverflow": "OCR の下書き全体が承認済み領域の外にも表示されています。正確な固定領域の検証でテキストが収まるまで保存できません。",
+      "scannedRegion": "承認済み領域内のスキャンテキストを編集中です。",
+      "shaping": "正確なテキストレイアウトを仕上げています…",
+      "overlap": "テキストがページ上の既存コンテンツと重なっています。変更は適用できますが、隣接する元のオブジェクトは移動しません。",
+      "lowContrast": "コントラストが低い元の色には、編集時のみ背景が付きます。保存される色は変わりません。",
+      "layoutRejectedPrefix": "テキストレイアウトが拒否されました:",
+      "layoutRejected": "テキストレイアウトが拒否されました: {{reasons}}",
+      "shapingRejected": "テキストシェーピングが拒否されました: {{reason}}",
+      "nativeManual": "手動改行のテキストボックスでネイティブテキストを編集中です。改行するには Enter キーを押してください。",
+      "nativeManualContrast": "手動改行のテキストボックスでネイティブテキストを編集中です。改行するには Enter キーを押してください。コントラストが低い元の色には編集時のみ背景が付き、保存される色は変わりません。",
+      "nativeGrowing": "ネイティブテキストを編集中です。幅は固定され、領域は下方向に広がります。",
+      "nativeGrowingContrast": "ネイティブテキストを編集中です。幅は固定され、領域は下方向に広がります。コントラストが低い元の色には編集時のみ背景が付き、保存される色は変わりません。",
+      "scannedEstimate": "スキャンテキストを編集中です。フォント属性は推定値です。",
+      "applyRejected": "テキストの編集を適用できませんでした: {{reason}}",
+      "cropBoxRejected": "シェーピングされたテキストをページの CropBox 内に確定できません。",
+      "layoutTimeout": "正確なテキストレイアウトが時間内に完了しませんでした。エディターは開いたままです。",
+      "scannedRejected": "スキャンテキストの変更が拒否されました: {{reason}}",
+      "lineBreakUnsupported": "改行はサポートされていません。この 1 行の編集を適用するには Command-Enter を押してください。",
+      "ocrOneLine": "スキャンテキストの独立した 1 行を編集中です。フォント属性は推定値です。",
+      "ocrFixed": "1 つの固定された元の領域内で複数の OCR 行を編集中です。1 つの段落がこの領域内でリフローされ、明示的な改行を入れると固定行モードが維持されます。Command-Enter で適用します。",
+      "ocrReflow": "承認済みの元の OCR 領域内で 1 つの段落を編集中です。Command-Enter で適用します。領域からはみ出す場合は拒否されます。",
+      "operationFailed": "テキスト操作を完了できませんでした。ドキュメントは変更されていません。",
+      "staleDraft": "テキストエディターを開いている間にドキュメントが変更されました。下書きは破棄されました。",
+      "multipleOcrParagraphs": "選択範囲が複数の OCR 段落にまたがっています。個別のアウトラインを確認し、明示的に「結合」を使用してください。列をまたぐ結合は引き続き無効です。",
+      "nativeColumnBoundary": "この段落は、検出された元の列境界を越えています。編集はブロックされ、ドキュメントは変更されていません。",
+      "nativeSourceUnavailable": "表示テキストを適格なソース演算子に関連付けられませんでした。ドキュメントは変更されていません。",
+      "nativeDeleteUnavailable": "このネイティブ PDF テキストは、正確なソース演算子が曖昧なため、安全に削除できません。ドキュメントは変更されていません。",
+      "readOnly": "以前に編集したテキストは読み取り専用です。ドキュメントは変更されていません。"
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "{{limit}} 書記素の上限",
+      "lineThreshold": "{{limit}} 行の上限",
+      "message": "貼り付けた内容はすべて保持されています: {{lineCount}} 行、{{graphemeCount}} 書記素。超過した上限: {{thresholds}}。プレビューは制限されています。挿入内容をすべて削除するには「貼り付けを取り消す」を使用してください。",
+      "messageWithExpansion": "貼り付けた内容はすべて保持されています: {{lineCount}} 行、{{graphemeCount}} 書記素。超過した上限: {{thresholds}}。プレビューは制限されています。挿入内容をすべて削除するには「貼り付けを取り消す」を、検証済みの正確な境界を採用するには「ボックスを拡張」を使用してください。",
+      "undo": "貼り付けを取り消す",
+      "expand": "ボックスを拡張"
+    }
+  },
+  "ocrGrouping": {
+    "label": "OCR 段落のグループ化",
+    "title": "グループ化",
+    "mergeSelected": "選択項目を結合",
+    "mergeSelectedParagraphs": "選択した段落を結合",
+    "mergePrevious": "前と結合",
+    "mergePreviousHint": "前の OCR 段落と結合",
+    "mergeNext": "次と結合",
+    "mergeNextHint": "次の OCR 段落と結合",
+    "splitBefore": "前で分割",
+    "splitAfter": "後で分割",
+    "reset": "自動グループ化をリセット",
+    "crossColumnDisabled": "列をまたぐ結合は無効です",
+    "ambiguousBoundariesOnly": "同じ列内の曖昧な境界だけを手動で結合できます",
+    "tooManyLines": "32 行を超えています。編集する前に、この段落を手動で分割してください。",
+    "mergeDescription": "既存のテキストは、保持された強制改行で区切られています。結合は、統合されたソースパッチと固定領域が検証に合格した後にのみ適用されます。",
+    "mergedText": "結合された OCR テキスト",
+    "splitRegion": "OCR 領域を分割",
+    "firstRegion": "最初の領域",
+    "secondRegion": "2 番目の領域",
+    "sourceLines": "ソース行: {{lines}}"
+  }
+}

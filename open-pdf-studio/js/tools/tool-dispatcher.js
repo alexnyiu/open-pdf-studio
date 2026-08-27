@@ -5,7 +5,8 @@ import { cloneAnnotation } from '../annotations/factory.js';
 import { applyResize, applyMove, applyRotation } from '../annotations/transforms.js';
 import { redrawAnnotations, redrawContinuous, snapToGrid } from '../annotations/rendering.js';
 import { showProperties, showMultiSelectionProperties } from '../ui/panels/properties-panel.js';
-import { startTextEditing, finishTextEditing } from './text-editing.js';
+import { startTextEditing } from './text-editing.js';
+import { applyActiveTextEditing } from '../text/text-edit-session.js';
 import { openStickyPopup } from '../bridge.js';
 import { findAnnotationAt } from '../annotations/geometry.js';
 import { startPan, startContinuousPan, handlePanEnd, handleMiddleButtonPanEnd } from './pan-handler.js';
@@ -67,15 +68,18 @@ export function handlePointerDown(e) {
     state._ctrlCopiesCreated = false;
   }
 
-  // Finish inline text editing. A left-click while editing is the user
-  // clicking AWAY to commit the text — consume that click so the SAME gesture
-  // doesn't also place a brand-new textbox/shape (the old behaviour dropped a
-  // fresh textbox every time you clicked away, so editing never "ended").
-  // Middle/right buttons fall through so panning and the 2D-cursor gesture
-  // keep working while a textbox is open.
+  // A primary page click outside the editor is an owner-scoped Apply. Consume
+  // that gesture so it cannot also place a new shape while exact validation is
+  // pending. Escape and the visible Cancel control remain the only discards.
+  // The overlay's capture listener handles every editor family; this fallback
+  // keeps direct dispatcher calls consistent for textbox/callout sessions.
   if (state.isEditingText) {
-    finishTextEditing();
-    if (e.button === 0) return;
+    if (e.button === 0) {
+      void applyActiveTextEditing().catch((error) => {
+        console.warn('[text-edit] Click-away Apply failed:', error);
+      });
+      return;
+    }
   }
 
   const coords = resolvePointerCoords(e);
@@ -889,19 +893,19 @@ function _finishDrawing(ctx, e, coords) {
   const { createAnnotationFromTool } = ctx;
   const ann = createAnnotationFromTool(state.currentTool, state.startX, state.startY, endX, endY, e);
   if (ann) {
-    if (drawDoc) drawDoc.annotations.push(ann);
-    recordAdd(ann);
+    if (!['textbox', 'callout'].includes(ann.type)) {
+      if (drawDoc) drawDoc.annotations.push(ann);
+      recordAdd(ann);
+    }
   }
   redraw();
 
   if (ann && ['textbox', 'callout'].includes(ann.type)) {
     // For text annotations, switch to select FIRST then start editing
     // (startTextEditing requires select tool active to receive keyboard input)
-    if (drawDoc) { drawDoc.selectedAnnotations = [ann]; drawDoc.selectedAnnotation = ann; }
-    showProperties(ann);
     import('./manager.js').then(m => {
       m.setTool('select');
-      startTextEditing(ann);
+      void startTextEditing(ann, { isNew: true });
     });
   } else {
     // Auto-reset to select tool for non-text annotations

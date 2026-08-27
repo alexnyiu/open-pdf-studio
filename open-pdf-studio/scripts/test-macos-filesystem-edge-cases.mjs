@@ -36,6 +36,15 @@ const defaultApp = path.join(
 );
 const sourcePdf = path.join(projectDir, 'output', 'pdf', 'open-pdf-studio-ocr-writer-proof.pdf');
 
+async function gitHead() {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
+  const result = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+    cwd: repoDir,
+    encoding: 'utf8',
+  });
+  return result.stdout.trim();
+}
+
 function parseArguments(argv) {
   const options = {
     appPath: process.env.OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE || defaultApp,
@@ -158,11 +167,13 @@ async function main() {
   const mountedImages = [];
   let icloudTransactionPath = null;
   let app = null;
+  let mutationSequence = 0;
   const cleanupErrors = [];
 
   const report = {
     contract: 'open-pdf-studio.macos-filesystem-edge-cases',
     schemaVersion: 1,
+    head: await gitHead(),
     generatedAt: new Date().toISOString(),
     platform: { os: process.platform, architecture: process.arch },
     appPath,
@@ -201,8 +212,26 @@ async function main() {
     return opened;
   }
 
+  async function queueSaveMutation(label) {
+    mutationSequence += 1;
+    const created = await app.callTool('app_create_annotation', {
+      type: 'comment',
+      page: 1,
+      props: {
+        x: 36 + (mutationSequence % 12) * 3,
+        y: 36 + (mutationSequence % 8) * 3,
+        text: `Filesystem hardening probe: ${label}`,
+      },
+    });
+    if (created?.ok !== true) {
+      throw new Error(`could not create pending save mutation for ${label}: ${created?.error}`);
+    }
+    return created.id;
+  }
+
   async function assertRejectedAndPreserved(filePath, mutate, restore) {
     await openPdf(filePath);
+    await queueSaveMutation(path.basename(filePath));
     const before = await sha256(filePath);
     const mark = app.markLogs();
     await mutate();
@@ -285,6 +314,7 @@ async function main() {
     let lockProcess = null;
     try {
       await openPdf(advisoryLockPath);
+      await queueSaveMutation('advisory lock');
       const before = await sha256(advisoryLockPath);
       lockProcess = spawn(lockHelper, [advisoryLockPath], { stdio: ['pipe', 'pipe', 'pipe'] });
       const lockOutput = await waitForLine(lockProcess.stdout, 'LOCKED');
@@ -317,6 +347,7 @@ async function main() {
       const [homeDevice, externalDevice] = await Promise.all([stat(projectDir), stat(apfsImage.mountPath)]);
       if (homeDevice.dev === externalDevice.dev) throw new Error('APFS image is not a distinct mounted volume');
       await openPdf(externalPath);
+      await queueSaveMutation('APFS initial save');
       const first = await app.callTool('app_save_pdf');
       const second = await app.callTool('app_save_pdf');
       if (first?.ok !== true || second?.ok !== true) {
@@ -326,6 +357,7 @@ async function main() {
       if ((await privateCandidates(apfsImage.mountPath)).length) throw new Error('APFS saves left private files');
 
       const preservedHash = await sha256(externalPath);
+      await queueSaveMutation('APFS locked rejection');
       await requiredCommand('/usr/bin/chflags', ['uchg', externalPath]);
       let lockedSave;
       try {
@@ -355,6 +387,7 @@ async function main() {
       const diskFullPath = path.join(diskFullImage.mountPath, 'disk-full.pdf');
       await copyFile(sourcePdf, diskFullPath);
       await openPdf(diskFullPath);
+      await queueSaveMutation('disk full rejection');
       const before = await sha256(diskFullPath);
       const fillPath = path.join(diskFullImage.mountPath, 'capacity-filler.bin');
       const handle = await open(fillPath, 'w');
@@ -408,6 +441,7 @@ async function main() {
       const exfatPath = path.join(exfatImage.mountPath, 'external-save.pdf');
       await copyFile(sourcePdf, exfatPath);
       await openPdf(exfatPath);
+      await queueSaveMutation('exFAT transaction');
       const before = await sha256(exfatPath);
       const saved = await app.callTool('app_save_pdf');
       const candidates = await privateCandidates(exfatImage.mountPath);
@@ -475,6 +509,7 @@ async function main() {
           const icloudPdf = path.join(icloudTransactionPath, 'provider-save.pdf');
           await copyFile(sourcePdf, icloudPdf);
           await openPdf(icloudPdf);
+          await queueSaveMutation('iCloud provider transaction');
           const saved = await app.callTool('app_save_pdf');
           if (saved?.ok !== true) throw new Error(`provider-backed safe save failed: ${saved?.error}`);
           let itemStatus = null;

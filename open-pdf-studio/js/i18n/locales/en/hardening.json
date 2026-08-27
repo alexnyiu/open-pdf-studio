@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Edit {{label}}",
+    "editValueHint": "{{label}}. Double-click or press Enter to edit.",
+    "timezoneHint": "Dates are shown in {{timezone}} and saved as ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Approve font substitution",
+    "sourceFace": "Source font",
+    "sourceFaces": "Source fonts",
+    "unknown": "Unknown",
+    "packagedSubstitute": "Packaged substitute",
+    "notAvailable": "Not available",
+    "sampleText": "Sample",
+    "sampleFallback": "The quick brown fox jumps over the lazy dog.",
+    "scope": "Applies to",
+    "scopeAnnotation": "This annotation",
+    "scopeSelection": "The selected text boxes",
+    "scopeParagraph": "This PDF paragraph",
+    "scopeFindReplace": "This Find/Replace edit",
+    "remember": "Remember this approval for this open document",
+    "approve": "Use substitute",
+    "cancel": "Cancel"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Edit PDF text",
+      "editFormatted": "Edit formatted PDF text",
+      "editAnnotation": "Edit formatted {{type}} text",
+      "editRegion": "Edit formatted PDF text region: {{text}}",
+      "editScannedLine": "Edit scanned text line: {{text}}",
+      "editScannedFixed": "Edit scanned text fixed region: {{text}}",
+      "editScannedReflow": "Edit scanned text paragraph reflow region: {{text}}",
+      "selectedOcrParagraph": "Selected OCR paragraph with {{count}} lines"
+    },
+    "handles": {
+      "move": "Move text box",
+      "moveHint": "Drag to move text box",
+      "resize": "Resize text box",
+      "resizeHint": "Drag to resize text box"
+    },
+    "actions": {
+      "apply": "Apply",
+      "cancel": "Cancel"
+    },
+    "status": {
+      "ocrOverflow": "The complete OCR draft is visible beyond its approved region. Saving remains blocked unless exact fixed-region validation fits the text.",
+      "scannedRegion": "Editing scanned text inside its approved region.",
+      "shaping": "Finishing exact text layout…",
+      "overlap": "Text overlaps existing page content. Commit is allowed; neighboring source objects will not move.",
+      "lowContrast": "Low-contrast source colors have an editing-only backing. Saved colors remain unchanged.",
+      "layoutRejectedPrefix": "Text layout rejected:",
+      "layoutRejected": "Text layout rejected: {{reasons}}",
+      "shapingRejected": "Text shaping rejected: {{reason}}",
+      "nativeManual": "Editing native text in a manual-line text box. Press Enter for a new line.",
+      "nativeManualContrast": "Editing native text in a manual-line text box. Press Enter for a new line. Low-contrast source colors have an editing-only backing; saved colors remain unchanged.",
+      "nativeGrowing": "Editing native text. The width is fixed and the region grows downward.",
+      "nativeGrowingContrast": "Editing native text. The width is fixed and the region grows downward. Low-contrast source colors have an editing-only backing; saved colors remain unchanged.",
+      "scannedEstimate": "Editing scanned text. Font properties are estimates.",
+      "applyRejected": "Text edit could not be applied: {{reason}}",
+      "cropBoxRejected": "The shaped text cannot be committed inside the page CropBox.",
+      "layoutTimeout": "Exact text layout did not finish in time. The editor remains open.",
+      "scannedRejected": "Scanned text change rejected: {{reason}}",
+      "readOnly": "Previously edited text is read-only. The document was left untouched.",
+      "operationFailed": "The text operation could not be completed. The document was left untouched.",
+      "staleDraft": "The document changed while the text editor was open. The draft was discarded.",
+      "multipleOcrParagraphs": "The selection spans multiple OCR paragraphs. Review the separate outlines and use Merge explicitly. Cross-column merges remain disabled.",
+      "nativeColumnBoundary": "This paragraph crosses a detected native column boundary. Editing was blocked and the document was left untouched.",
+      "nativeSourceUnavailable": "Visible text could not be linked to eligible source operators. The document was left untouched.",
+      "nativeDeleteUnavailable": "This native PDF text cannot be deleted safely because its exact source operators are ambiguous. The document was left untouched.",
+      "lineBreakUnsupported": "Line breaks are not supported. Use Command-Enter to apply this one-line edit.",
+      "ocrOneLine": "Editing one isolated scanned text line. Font properties are estimates.",
+      "ocrFixed": "Editing multiple OCR lines inside one fixed original region. A single paragraph reflows inside this region; hard line breaks preserve fixed-line mode. Command-Enter applies.",
+      "ocrReflow": "Editing one paragraph inside its approved original OCR region. Command-Enter applies; overflow is rejected."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "{{limit}}-grapheme limit",
+      "lineThreshold": "{{limit}}-line limit",
+      "message": "Full paste retained: {{graphemeCount}} graphemes across {{lineCount}} lines. Threshold exceeded: {{thresholds}}. The preview is bounded. Use Undo Paste to remove the complete insertion.",
+      "messageWithExpansion": "Full paste retained: {{graphemeCount}} graphemes across {{lineCount}} lines. Threshold exceeded: {{thresholds}}. The preview is bounded. Use Undo Paste to remove the complete insertion or Expand Box to adopt the exact validated bounds.",
+      "undo": "Undo Paste",
+      "expand": "Expand Box"
+    }
+  },
+  "ocrGrouping": {
+    "label": "OCR paragraph grouping",
+    "title": "Grouping",
+    "mergeSelected": "Merge Selected",
+    "mergeSelectedParagraphs": "Merge Selected Paragraphs",
+    "mergePrevious": "Merge Previous",
+    "mergePreviousHint": "Merge with the previous OCR paragraph",
+    "mergeNext": "Merge Next",
+    "mergeNextHint": "Merge with the next OCR paragraph",
+    "splitBefore": "Split Before",
+    "splitAfter": "Split After",
+    "splitRegion": "Split OCR Region",
+    "firstRegion": "First region",
+    "secondRegion": "Second region",
+    "sourceLines": "Source lines: {{lines}}",
+    "mergedText": "Merged OCR text",
+    "mergeDescription": "The existing texts are separated by a preserved hard line break. The merge is applied only after the combined source patch and fixed region pass validation.",
+    "reset": "Reset Automatic Grouping",
+    "crossColumnDisabled": "Cross-column merges are disabled",
+    "ambiguousBoundariesOnly": "Only ambiguous same-column boundaries may be merged manually",
+    "tooManyLines": "More than 32 lines. Split this paragraph manually before editing."
+  }
+}

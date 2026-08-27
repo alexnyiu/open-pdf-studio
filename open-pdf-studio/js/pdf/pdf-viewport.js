@@ -6,6 +6,7 @@ import { renderVectorPage } from './vector-renderer.js';
 import { state, getActiveDocument } from '../core/state.js';
 import { findAnnotationAt as _findAnnotationAt } from '../annotations/geometry.js';
 import { getTextLayerCssMatrix, resolveTextEditPageGeometry } from '../text/text-edit-appearance.js';
+import { captureTextLayerOwner, findTextLayerForOwner } from '../text/text-layer-lifecycle.js';
 import {
   computeZoomBucket,
   getBestAvailableBitmap,
@@ -26,6 +27,9 @@ if (!window.__pdfViewport) {
     originX: 0,      // MediaBox x0 (can be negative)
     originY: 0,      // MediaBox y0 (can be negative)
     filePath: null,
+    documentId: null,
+    documentLifecycleGeneration: 0,
+    viewportRevision: 0,
     pageNum: 1,
     rotation: 0,    // user-applied rotation (0/90/180/270) — part of cache key
     dirty: true,
@@ -38,12 +42,35 @@ if (!window.__pdfViewport) {
   };
 }
 export const viewport = window.__pdfViewport;
+viewport.documentId ??= null;
+viewport.documentLifecycleGeneration ??= 0;
+viewport.viewportRevision ??= 0;
 
 let _canvas = null;
 let _ctx = null;
 let _rafId = 0;
 let _annotationRedraw = null; // callback for annotation overlay
 let _resizeObserver = null;
+
+function _dispatchViewportEvent(type, reason) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  window.dispatchEvent(new CustomEvent(type, {
+    detail: {
+      documentId: viewport.documentId,
+      lifecycleGeneration: viewport.documentLifecycleGeneration,
+      pageNum: viewport.pageNum,
+      viewportRevision: viewport.viewportRevision,
+      reason,
+    },
+  }));
+}
+
+/** Mark a canonical viewport geometry change and wake active editor placement. */
+export function bumpViewportRevision(reason = 'geometry') {
+  viewport.viewportRevision = (Number(viewport.viewportRevision) || 0) + 1;
+  _dispatchViewportEvent('opds:viewport-revision', reason);
+  return viewport.viewportRevision;
+}
 
 // ─── Init / Teardown ────────────────────────────────────────────────────────
 
@@ -83,6 +110,8 @@ export function initViewport(canvas, annotationRedrawFn) {
 
 export function destroyViewport() {
   viewport.active = false;
+  bumpViewportRevision('teardown');
+  _dispatchViewportEvent('opds:viewport-teardown', 'teardown');
   cancelAnimationFrame(_rafId);
   window.removeEventListener('resize', _resizeCanvas);
   if (_resizeObserver) {
@@ -159,6 +188,7 @@ function _resizeCanvas() {
     }
 
     viewport.dirty = true;
+    bumpViewportRevision('resize');
   }
 }
 
@@ -207,6 +237,7 @@ function _armDprWatcher() {
 async function _applyDprChange() {
   _dprDebounce = null;
   const doc = getActiveDocument();
+  _dispatchViewportEvent('opds:dpr-change', 'device-pixel-ratio');
   if (doc && doc.viewMode === 'continuous') {
     // Continuous/book/facing mode paints per-page canvases sized at
     // getCanvasDPR() when they are built. Rebuild them at the new dpr so they
@@ -480,6 +511,7 @@ function _startLoop() {
         if (_vx !== 0 || _vy !== 0) {
           _scheduleTileRecheckAfterPan();
         }
+        bumpViewportRevision('pan-momentum');
       }
       if (viewport.dirty) {
         viewport.dirty = false;
@@ -802,11 +834,16 @@ function _render() {
   // Sync text layer with viewport.
   // PDF.js text layer (0,0) = page top-left at scale=1.
   // Page top-left on screen = (offsetX, offsetY).
-  const textLayer = document.querySelector('.textLayer');
+  const doc = getActiveDocument();
+  const textLayerHost = _canvas?.closest?.('#canvas-container')
+    || document.getElementById('canvas-container');
+  const textLayer = findTextLayerForOwner(
+    textLayerHost,
+    captureTextLayerOwner(doc, viewport.pageNum),
+  );
   if (textLayer) {
     const tx = viewport.offsetX;
     const ty = viewport.offsetY;
-    const doc = getActiveDocument();
     const geometry = resolveTextEditPageGeometry(
       doc?.pageDims?.[viewport.pageNum],
       viewport.pageW,
@@ -898,7 +935,12 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
   // (so prev/next/keyboard/wheel/thumbnail nav doesn't reset what the user
   // chose). Identify the document by file path — that's stable across all
   // page navigation but changes when a different file is opened.
-  const isNewDocument = viewport.filePath !== filePath;
+  const ownerDocument = getActiveDocument();
+  const nextDocumentId = ownerDocument?.id || null;
+  const nextLifecycleGeneration = Number(ownerDocument?.lifecycleGeneration) || 0;
+  const isNewDocument = viewport.documentId !== nextDocumentId
+    || viewport.documentLifecycleGeneration !== nextLifecycleGeneration
+    || viewport.filePath !== filePath;
   const isPageChange = viewport.pageNum !== pageNum;
   // Rotating the CURRENT page keeps the same file + page number, so without an
   // explicit rotation check neither branch below would fire — the stale bitmap
@@ -922,6 +964,8 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
   }
 
   viewport.filePath = filePath;
+  viewport.documentId = nextDocumentId;
+  viewport.documentLifecycleGeneration = nextLifecycleGeneration;
   viewport.pageNum = pageNum;
   viewport.pageW = pageW;
   viewport.pageH = pageH;
@@ -954,6 +998,7 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
     _strictAnchor = false;
     viewport.dirty = true;
   }
+  bumpViewportRevision(isNewDocument ? 'document' : isRotationChange ? 'rotation' : 'page');
 }
 
 /// Compute the zoom factor needed to fit a page into a canvas under one of
@@ -1027,6 +1072,7 @@ export function fitToViewport(mode = 'page') {
   viewport.offsetX = newOffsetX;
   viewport.offsetY = newOffsetY;
   viewport.dirty = true;
+  bumpViewportRevision(`fit-${mode}`);
 
   // Raster: re-kick the orchestrator so the new fit-zoom-bucket's bitmap +
   // tile get async-fetched. Mirrors the hook in _anchorAt; fitToViewport
@@ -1119,6 +1165,7 @@ function _anchorAt(screenX, screenY, oldZoom, newZoom, strict = false) {
   _anchorActive = true;
   _strictAnchor = strict;
   viewport.dirty = true;
+  bumpViewportRevision('zoom');
 
   // Extend the freeze window for another 150 ms (debounce). Final cleanup
   // (drop snapshot, force one fresh render) happens in the scheduled timer.
@@ -1205,6 +1252,7 @@ export function updatePan(screenX, screenY) {
   _anchorActive = true;
   _strictAnchor = false;
   viewport.dirty = true;
+  bumpViewportRevision('pan');
   _scheduleTileRecheckAfterPan();
 }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { access } from 'node:fs/promises';
 import { chromium } from 'playwright';
+import { startPlaywrightFailureArtifacts } from './playwright-failure-artifacts.mjs';
 
 let executablePath;
 try {
@@ -14,9 +15,12 @@ const browser = await chromium.launch({
   headless: true,
   ...(executablePath ? { executablePath } : {}),
 });
+let page;
+let failureArtifacts;
 
 try {
-  const page = await browser.newPage({ viewport: { width: 1000, height: 760 } });
+  page = await browser.newPage({ viewport: { width: 1000, height: 760 } });
+  failureArtifacts = await startPlaywrightFailureArtifacts(page.context(), 'inline-document-metadata');
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
   await page.goto('http://127.0.0.1:3041', { waitUntil: 'domcontentloaded' });
@@ -27,7 +31,7 @@ try {
     const metadata = {
       title: 'Original title', author: 'Original author', subject: '', keywords: 'alpha',
       creator: 'Original creator', producer: 'Original producer',
-      creationDate: '2026-08-25T10:11:12.000Z',
+      creationDate: '2026-08-25T10:11:12.123456Z',
       modificationDate: '2026-08-25T13:14:15.000Z',
     };
     const pdfDoc = {
@@ -59,9 +63,19 @@ try {
   let state = await page.evaluate(async () => {
     const { state } = await import('/js/core/state.ts');
     const doc = state.documents[0];
-    return { title: doc.metadata.title, undo: doc.undoStack.length, modified: doc.modified };
+    return {
+      title: doc.metadata.title,
+      creationDate: doc.metadata.creationDate,
+      undo: doc.undoStack.length,
+      modified: doc.modified,
+    };
   });
-  assert.deepEqual(state, { title: '設計図 – crisp metadata', undo: 1, modified: true });
+  assert.deepEqual(state, {
+    title: '設計図 – crisp metadata',
+    creationDate: '2026-08-25T10:11:12.123456Z',
+    undo: 1,
+    modified: true,
+  });
 
   await page.evaluate(async () => {
     const { undo } = await import('/js/core/undo-manager.js');
@@ -104,6 +118,55 @@ try {
   });
   assert.equal(afterNoop, beforeNoop, 'no-op metadata edits must not create undo commands');
 
+  await value('creationDate').dblclick();
+  await editor('creationDate').press('Enter');
+  assert.equal(await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    return state.documents[0].metadata.creationDate;
+  }), '2026-08-25T10:11:12.123456Z', 'untouched date must preserve its original ISO bytes');
+
+  await page.evaluate(async () => {
+    const { showDocPropertiesDialog } = await import('/js/ui/chrome/dialogs.js');
+    await showDocPropertiesDialog();
+  });
+  const propertiesDialog = page.locator('.doc-props-dialog');
+  await propertiesDialog.waitFor({ state: 'visible' });
+  const modalInputs = propertiesDialog.locator('.doc-props-edit-row input');
+  assert.equal(await modalInputs.nth(6).getAttribute('step'), '0.001');
+  await modalInputs.nth(0).fill('Modal metadata title');
+  await propertiesDialog.locator('.doc-props-save').click();
+  await propertiesDialog.waitFor({ state: 'detached' });
+  assert.deepEqual(await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    return {
+      title: state.documents[0].metadata.title,
+      creationDate: state.documents[0].metadata.creationDate,
+    };
+  }), {
+    title: 'Modal metadata title',
+    creationDate: '2026-08-25T10:11:12.123456Z',
+  }, 'full metadata modal must preserve untouched source timestamp bytes');
+
+  assert.equal(await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    const { showDocPropertiesDialog } = await import('/js/ui/chrome/dialogs.js');
+    const { getDialogs } = await import('/js/solid/stores/dialogStore.js');
+    const originalPdfDocument = state.documents[0].pdfDoc;
+    let resolveMetadata;
+    state.documents[0].pdfDoc = {
+      numPages: 1,
+      getMetadata: () => new Promise((resolve) => { resolveMetadata = resolve; }),
+      getPage: async () => ({ getViewport: () => ({ width: 612, height: 792 }) }),
+    };
+    const pending = showDocPropertiesDialog();
+    state.activeDocumentIndex = 1;
+    resolveMetadata({ info: { PDFFormatVersion: 'stale' } });
+    await pending;
+    state.activeDocumentIndex = 0;
+    state.documents[0].pdfDoc = originalPdfDocument;
+    return getDialogs().some((dialog) => dialog.name === 'doc-properties');
+  }), false, 'stale asynchronous document-properties data must not open a modal');
+
   await value('creator').dblclick();
   await editor('creator').fill('');
   await editor('creator').press('Enter');
@@ -137,7 +200,7 @@ try {
 
   await value('modificationDate').dblclick();
   assert.equal(await editor('modificationDate').getAttribute('type'), 'datetime-local');
-  assert.equal(await editor('modificationDate').getAttribute('step'), '1');
+  assert.equal(await editor('modificationDate').getAttribute('step'), '0.001');
   await editor('modificationDate').fill('2026-09-02T01:02:03');
   await editor('modificationDate').press('Enter');
   assert.equal(await page.evaluate(async () => {
@@ -168,6 +231,31 @@ try {
   });
   assert.deepEqual(staleState, ['Committed producer', 'Original producer']);
 
+  const staleInfo = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    const { docInfo, populateDocInfo } = await import('/js/solid/stores/propertiesStore.js');
+    let resolveOldPage;
+    const originalPdfDocument = state.documents[0].pdfDoc;
+    state.documents[0].pdfDoc = {
+      numPages: 9,
+      getPage: () => new Promise((resolve) => { resolveOldPage = resolve; }),
+      getMetadata: async () => ({ info: { PDFFormatVersion: 'stale' } }),
+    };
+    state.activeDocumentIndex = 0;
+    const oldRequest = populateDocInfo();
+    state.activeDocumentIndex = 1;
+    await populateDocInfo();
+    resolveOldPage({ getViewport: () => ({ width: 72, height: 72 }) });
+    await oldRequest;
+    state.documents[0].pdfDoc = originalPdfDocument;
+    return { filename: docInfo.filename, title: docInfo.title, version: docInfo.version };
+  });
+  assert.deepEqual(staleInfo, {
+    filename: 'inline-metadata-two.pdf',
+    title: 'Second document',
+    version: '1.7',
+  }, 'late document info must not overwrite the active owner snapshot');
+
   await page.evaluate(async () => {
     const { state } = await import('/js/core/state.ts');
     const { populateDocInfo } = await import('/js/solid/stores/propertiesStore.js');
@@ -190,6 +278,10 @@ try {
   assert.equal(pageErrors.length, 0, pageErrors.join('\n'));
 
   console.log('Inline document metadata editing, keyboard flow, undo, and stale-document guard test passed');
+} catch (error) {
+  await failureArtifacts?.capture(page);
+  throw error;
 } finally {
+  await failureArtifacts?.discard();
   await browser.close();
 }

@@ -9,9 +9,20 @@ import { getDefaultOcrModelPackState } from './model-state.js';
 /** @typedef {import('../types/ocr.js').OcrDocumentJobSummary} OcrDocumentJobSummary */
 /** @typedef {import('../types/ocr.js').OcrWorkflowJobState} OcrWorkflowJobState */
 /** @typedef {import('../types/ocr.js').OcrWorkflowSnapshot} OcrWorkflowSnapshot */
+/** @typedef {import('../types/ocr.js').OcrWorkflowUpdate} OcrWorkflowUpdate */
+
+// Use the upper end of the release-hardening 100-125 ms delivery window.
+// Scheduling at exactly 100 ms can be observed as 99 ms by a millisecond
+// clock when a platform timer lands on the adjacent tick, which violates the
+// externally measured no-more-than-10-Hz contract despite correct coalescing.
+export const OCR_WORKFLOW_PUBLICATION_INTERVAL_MS = 125;
 
 function clone(value) {
   return structuredClone(value);
+}
+
+function highResolutionNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
 }
 
 function documentDisplayName(document, sourcePdfPath) {
@@ -63,16 +74,51 @@ function summaryFailures(summary) {
  * returned handles stay here; UI stores receive only cloneable status data.
  */
 export class OcrWorkflowService {
-  constructor({ controller = null, modelState = getDefaultOcrModelPackState() } = {}) {
+  constructor({
+    controller = null,
+    modelState = getDefaultOcrModelPackState(),
+    publicationIntervalMs = OCR_WORKFLOW_PUBLICATION_INTERVAL_MS,
+    clock = () => Date.now(),
+    performanceClock = highResolutionNow,
+    setTimer = (callback, delay) => setTimeout(callback, delay),
+    clearTimer = (timer) => clearTimeout(timer),
+  } = {}) {
     this.modelState = modelState;
     this.controller = controller ?? new OcrApplicationController({ modelState });
-    /** @type {Map<string, {handle: any, token: symbol, suppressPublications: boolean, cancellationPromise: Promise<any> | null}>} */
+    /** @type {Map<string, {handle: any, token: symbol, suppressPublications: boolean, cancellationPromise: Promise<any> | null, pageIndex: Map<number, any>, failureMap: Map<number, any>, lastSequence: number}>} */
     this.activeJobs = new Map();
     /** @type {Map<string, OcrWorkflowJobState>} */
     this.states = new Map();
     this.listeners = new Set();
+    this.updateListeners = new Set();
     this.closedDocuments = new Set();
     this.applicationClosing = false;
+    this.publicationIntervalMs = Math.max(100, Number(publicationIntervalMs) || OCR_WORKFLOW_PUBLICATION_INTERVAL_MS);
+    this.clock = clock;
+    this.performanceClock = performanceClock;
+    this.setTimer = setTimer;
+    this.clearTimer = clearTimer;
+    this.publicationTimer = null;
+    this.lastPublicationAt = null;
+    this.pendingSnapshotPublication = false;
+    /** @type {Map<string, {documentId: string, removed: boolean, terminal: boolean, progressPageNumbers: Set<number>}>} */
+    this.pendingUpdates = new Map();
+    this.publicationStats = {
+      startedAt: new Date().toISOString(),
+      publications: 0,
+      snapshotPublications: 0,
+      deltaPublications: 0,
+      deliveryBatches: 0,
+      ordinaryDeliveryBatches: 0,
+      immediateDeliveryBatches: 0,
+      minimumOrdinaryDeliveryIntervalMs: null,
+      bookkeepingEvents: 0,
+      bookkeepingMs: 0,
+      clonedBytes: 0,
+      lastPublishedAt: null,
+    };
+    this.publicationStartedAt = this.clock();
+    this.lastOrdinaryDeliveryAt = null;
   }
 
   /** @returns {OcrWorkflowSnapshot} */
@@ -92,11 +138,201 @@ export class OcrWorkflowService {
     return () => this.listeners.delete(listener);
   }
 
-  publish() {
-    const snapshot = this.snapshot();
-    for (const listener of this.listeners) {
-      try { listener(snapshot); } catch { /* observers cannot alter OCR execution */ }
+  /**
+   * Delta subscribers receive one initial snapshot, then document-scoped
+   * updates. This keeps the Solid bridge from cloning every retained job for
+   * each page-stage transition.
+   * @param {(update: OcrWorkflowUpdate) => void} listener
+   */
+  subscribeUpdates(listener) {
+    if (typeof listener !== 'function') throw new TypeError('OCR workflow update listener must be a function');
+    this.updateListeners.add(listener);
+    listener({ kind: 'snapshot', snapshot: this.snapshot() });
+    return () => this.updateListeners.delete(listener);
+  }
+
+  publicationMetrics() {
+    const elapsedMs = Math.max(1, this.clock() - this.publicationStartedAt);
+    const minimumInterval = this.publicationStats.minimumOrdinaryDeliveryIntervalMs;
+    return {
+      ...this.publicationStats,
+      elapsedMs,
+      publicationsPerSecond: this.publicationStats.publications * 1000 / elapsedMs,
+      deliveryBatchesPerSecond: this.publicationStats.deliveryBatches * 1000 / elapsedMs,
+      bookkeepingCpuPercent: this.publicationStats.bookkeepingMs * 100 / elapsedMs,
+      maximumOrdinaryDeliveryHz: Number.isFinite(minimumInterval) && minimumInterval > 0
+        ? 1000 / minimumInterval
+        : 0,
+    };
+  }
+
+  recordPublication(payload, kind) {
+    this.publicationStats.publications += 1;
+    this.publicationStats[`${kind}Publications`] += 1;
+    this.publicationStats.lastPublishedAt = new Date().toISOString();
+    try {
+      this.publicationStats.clonedBytes += new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+    } catch {
+      // Metrics must never interfere with progress delivery.
     }
+  }
+
+  emit(listener, value) {
+    try { listener(value); } catch { /* observers cannot alter OCR execution */ }
+  }
+
+  recordDeliveryBatch({ immediate }) {
+    this.publicationStats.deliveryBatches += 1;
+    if (immediate) {
+      this.publicationStats.immediateDeliveryBatches += 1;
+      return;
+    }
+    this.publicationStats.ordinaryDeliveryBatches += 1;
+    const deliveredAt = this.clock();
+    if (this.lastOrdinaryDeliveryAt !== null) {
+      const interval = Math.max(0, deliveredAt - this.lastOrdinaryDeliveryAt);
+      const current = this.publicationStats.minimumOrdinaryDeliveryIntervalMs;
+      this.publicationStats.minimumOrdinaryDeliveryIntervalMs = current === null
+        ? interval
+        : Math.min(current, interval);
+    }
+    this.lastOrdinaryDeliveryAt = deliveredAt;
+  }
+
+  emitSnapshot() {
+    const snapshot = this.snapshot();
+    for (const listener of this.listeners) this.emit(listener, snapshot);
+    const update = /** @type {OcrWorkflowUpdate} */ ({ kind: 'snapshot', snapshot });
+    for (const listener of this.updateListeners) this.emit(listener, update);
+    this.recordPublication(snapshot, 'snapshot');
+  }
+
+  emitDocumentUpdate(pending) {
+    const state = pending.removed ? null : this.states.get(pending.documentId) ?? null;
+    const active = this.activeJobs.get(pending.documentId);
+    const progressPages = state && active && pending.progressPageNumbers?.size > 0
+      ? [...pending.progressPageNumbers]
+        .map((pageNumber) => active.pageIndex.get(pageNumber))
+        .filter(Boolean)
+        .map((page) => clone(page))
+      : [];
+    const update = /** @type {OcrWorkflowUpdate} */ (progressPages.length > 0 && !pending.terminal
+      ? {
+        kind: 'progress',
+        documentId: pending.documentId,
+        jobId: state.jobId,
+        sequence: active.lastSequence,
+        status: state.status,
+        progress: state.progress,
+        pages: progressPages,
+        counts: clone(state.counts),
+        currentPageNumber: state.currentPageNumber,
+        currentPageState: state.currentPageState,
+        failureDetails: clone(state.failureDetails),
+        cancellationAvailable: state.cancellationAvailable,
+        cancellationRequested: state.cancellationRequested,
+      }
+      : {
+        kind: 'delta',
+        documentId: pending.documentId,
+        job: state ? clone(state) : null,
+        terminal: pending.terminal,
+      });
+    for (const listener of this.updateListeners) this.emit(listener, update);
+    this.recordPublication(update, 'delta');
+    if (this.listeners.size > 0) {
+      const snapshot = this.snapshot();
+      for (const listener of this.listeners) this.emit(listener, snapshot);
+      this.recordPublication(snapshot, 'snapshot');
+    }
+  }
+
+  flushPublications({ immediate = false } = {}) {
+    if (this.publicationTimer !== null) {
+      this.clearTimer(this.publicationTimer);
+      this.publicationTimer = null;
+    }
+    if (!this.pendingSnapshotPublication && this.pendingUpdates.size === 0) return;
+    const publishSnapshot = this.pendingSnapshotPublication;
+    const updates = [...this.pendingUpdates.values()];
+    this.pendingSnapshotPublication = false;
+    this.pendingUpdates.clear();
+    if (!immediate) this.lastPublicationAt = this.clock();
+
+    if (publishSnapshot) {
+      this.emitSnapshot();
+      this.recordDeliveryBatch({ immediate });
+      return;
+    }
+
+    for (const pending of updates) this.emitDocumentUpdate(pending);
+    this.recordDeliveryBatch({ immediate });
+  }
+
+  schedulePublication() {
+    if (this.publicationTimer !== null) return;
+    const elapsed = this.lastPublicationAt === null
+      ? 0
+      : this.clock() - this.lastPublicationAt;
+    const delay = Math.max(0, this.publicationIntervalMs - elapsed);
+    this.publicationTimer = this.setTimer(() => {
+      this.publicationTimer = null;
+      this.flushPublications();
+    }, delay);
+  }
+
+  /** Queue a full snapshot or one document delta. Terminal events bypass coalescing. */
+  publish(documentId = null, {
+    immediate = false,
+    removed = false,
+    terminal = false,
+    progressPageNumber = null,
+  } = {}) {
+    if (documentId !== null && (immediate || terminal)) {
+      if (this.listeners.size === 0 && this.updateListeners.size === 0) {
+        this.pendingUpdates.delete(documentId);
+        return;
+      }
+      this.pendingUpdates.delete(documentId);
+      // The immediate state is the subscriber's fresh baseline. Delay the
+      // next ordinary progress delta by the full coalescing window rather than
+      // scheduling a zero-delay first batch immediately after job start.
+      this.lastPublicationAt = this.clock();
+      this.emitDocumentUpdate({
+        documentId,
+        removed,
+        terminal,
+        progressPageNumbers: new Set(),
+      });
+      this.recordDeliveryBatch({ immediate: true });
+      if (this.pendingUpdates.size === 0 && !this.pendingSnapshotPublication && this.publicationTimer !== null) {
+        this.clearTimer(this.publicationTimer);
+        this.publicationTimer = null;
+      }
+      return;
+    }
+    if (documentId === null) {
+      this.pendingSnapshotPublication = true;
+      this.pendingUpdates.clear();
+    } else if (!this.pendingSnapshotPublication) {
+      const pending = this.pendingUpdates.get(documentId) ?? {
+        documentId,
+        removed,
+        terminal,
+        progressPageNumbers: new Set(),
+      };
+      pending.removed ||= removed;
+      pending.terminal ||= terminal;
+      if (Number.isSafeInteger(progressPageNumber)) pending.progressPageNumbers.add(progressPageNumber);
+      this.pendingUpdates.set(documentId, pending);
+    }
+    if (this.listeners.size === 0 && this.updateListeners.size === 0) {
+      this.pendingSnapshotPublication = false;
+      this.pendingUpdates.clear();
+      return;
+    }
+    if (immediate || terminal) this.flushPublications({ immediate: true });
+    else this.schedulePublication();
   }
 
   /** @param {string} documentId @returns {OcrWorkflowJobState | null} */
@@ -182,14 +418,8 @@ export class OcrWorkflowService {
       throw new TypeError('OCR controller returned an invalid application job handle');
     }
 
-    this.activeJobs.set(document.id, {
-      handle,
-      token,
-      suppressPublications: false,
-      cancellationPromise: null,
-    });
     const started = typeof handle.summary === 'function' ? handle.summary() : null;
-    const pages = started?.pages ?? input.pageNumbers.map((pageNumber) => ({
+    const pages = started?.pages?.length ? started.pages : input.pageNumbers.map((pageNumber) => ({
       pageNumber,
       state: 'queued',
       fraction: 0,
@@ -201,6 +431,7 @@ export class OcrWorkflowService {
       cache: 'not-checked',
       retained: false,
       measuredStageCosts: null,
+      performance: null,
     }));
     /** @type {OcrWorkflowJobState} */
     const state = {
@@ -214,7 +445,7 @@ export class OcrWorkflowService {
       currentPageNumber: pages[0]?.pageNumber ?? null,
       currentPageState: pages[0]?.state ?? 'queued',
       terminalSummary: null,
-      failureDetails: [],
+      failureDetails: summaryFailures({ pages }),
       cancellationAvailable: true,
       cancellationRequested: false,
       pageScope: clone(input.pageScope),
@@ -226,8 +457,21 @@ export class OcrWorkflowService {
       startedAt: started?.startedAt ?? new Date().toISOString(),
       finishedAt: null,
     };
+    const failureMap = new Map(
+      pages.filter((page) => page.failure)
+        .map((page) => [page.pageNumber, { pageNumber: page.pageNumber, ...clone(page.failure) }]),
+    );
+    this.activeJobs.set(document.id, {
+      handle,
+      token,
+      suppressPublications: false,
+      cancellationPromise: null,
+      pageIndex: new Map(pages.map((page) => [page.pageNumber, page])),
+      failureMap,
+      lastSequence: 0,
+    });
     this.states.set(document.id, state);
-    this.publish();
+    this.publish(document.id, { immediate: true });
 
     Promise.resolve(handle.completion).then(
       (summary) => this.finish(document.id, token, summary),
@@ -239,27 +483,42 @@ export class OcrWorkflowService {
   recordProgress(documentId, token, event) {
     const active = this.activeJobs.get(documentId);
     const state = this.states.get(documentId);
-    if (!active || active.token !== token || active.suppressPublications || !state || state.jobId !== event.jobId) return;
+    if (!active || active.token !== token || active.suppressPublications || !state ||
+        state.jobId !== event.jobId || state.cancellationRequested) return;
+    if (Number.isSafeInteger(event.sequence)) {
+      if (event.sequence <= active.lastSequence) return;
+      active.lastSequence = event.sequence;
+    }
+    const bookkeepingStarted = this.performanceClock();
     state.status = state.cancellationRequested ? 'cancelling' : 'running';
     state.progress = Math.max(state.progress, Number(event.documentFraction) || 0);
-    const page = state.pages.find((entry) => entry.pageNumber === event.pageNumber);
+    const page = active.pageIndex.get(event.pageNumber);
     if (page) {
+      const previousState = page.state;
       page.state = event.pageState;
       page.fraction = Math.max(page.fraction, Number(event.pageFraction) || 0);
       page.attempts = event.attempts;
       page.retries = event.retries;
       page.failure = event.failure ? clone(event.failure) : null;
+      if (previousState !== page.state && Object.hasOwn(state.counts, previousState) && Object.hasOwn(state.counts, page.state)) {
+        state.counts[previousState] = Math.max(0, state.counts[previousState] - 1);
+        state.counts[page.state] += 1;
+      }
       if (event.failure) {
-        state.failureDetails = [
-          ...state.failureDetails.filter((failure) => failure.pageNumber !== event.pageNumber),
-          { pageNumber: event.pageNumber, ...clone(event.failure) },
-        ];
+        active.failureMap.set(event.pageNumber, { pageNumber: event.pageNumber, ...clone(event.failure) });
+        state.failureDetails = [...active.failureMap.values()];
+      } else if (active.failureMap.delete(event.pageNumber)) {
+        state.failureDetails = [...active.failureMap.values()];
       }
       state.currentPageNumber = page.pageNumber;
       state.currentPageState = page.state;
-      state.counts = pageCounts(state.pages);
     }
-    this.publish();
+    this.publish(documentId, {
+      immediate: Boolean(event.failure),
+      progressPageNumber: event.pageNumber,
+    });
+    this.publicationStats.bookkeepingEvents += 1;
+    this.publicationStats.bookkeepingMs += Math.max(0, this.performanceClock() - bookkeepingStarted);
   }
 
   /** @param {string} documentId @param {symbol} token @param {OcrDocumentJobSummary} summary */
@@ -281,7 +540,7 @@ export class OcrWorkflowService {
     state.failureDetails = summaryFailures(summary);
     state.cancellationAvailable = false;
     state.finishedAt = summary.finishedAt ?? new Date().toISOString();
-    this.publish();
+    this.publish(documentId, { immediate: true, terminal: true });
   }
 
   fail(documentId, token, error) {
@@ -305,7 +564,7 @@ export class OcrWorkflowService {
     state.counts = pageCounts(state.pages);
     state.cancellationAvailable = false;
     state.finishedAt = new Date().toISOString();
-    this.publish();
+    this.publish(documentId, { immediate: true, terminal: true });
   }
 
   /** Cancel the retained application job handle for an explicit user action. */
@@ -318,7 +577,7 @@ export class OcrWorkflowService {
       state.status = 'cancelling';
       state.cancellationAvailable = false;
       state.cancellationRequested = true;
-      this.publish();
+      this.publish(documentId, { immediate: true });
     }
     try {
       active.cancellationPromise = Promise.resolve(active.handle.cancel(reason));
@@ -339,7 +598,7 @@ export class OcrWorkflowService {
         state.status = 'cancelling';
         state.cancellationAvailable = false;
         state.cancellationRequested = true;
-        this.publish();
+        this.publish(documentId, { immediate: true });
       }
     }
     try {
@@ -347,7 +606,7 @@ export class OcrWorkflowService {
       const current = this.activeJobs.get(documentId);
       if (!active || current === active) this.activeJobs.delete(documentId);
       this.states.delete(documentId);
-      this.publish();
+      this.publish(documentId, { immediate: true, removed: true, terminal: true });
       return summaries;
     } catch (error) {
       this.closedDocuments.delete(documentId);
@@ -359,7 +618,7 @@ export class OcrWorkflowService {
         state.cancellationAvailable = false;
         state.finishedAt = new Date().toISOString();
       }
-      this.publish();
+      this.publish(documentId, { immediate: true, terminal: true });
       throw error;
     }
   }
@@ -372,11 +631,11 @@ export class OcrWorkflowService {
       const summaries = await this.controller.cancelAll(reason);
       this.activeJobs.clear();
       this.states.clear();
-      this.publish();
+      this.publish(null, { immediate: true, terminal: true });
       return summaries;
     } catch (error) {
       for (const active of this.activeJobs.values()) active.suppressPublications = false;
-      this.publish();
+      this.publish(null, { immediate: true, terminal: true });
       throw error;
     }
   }
@@ -384,6 +643,16 @@ export class OcrWorkflowService {
 
 // One production service and one production controller live for the app lifetime.
 export const ocrWorkflowService = new OcrWorkflowService();
+
+export function getOcrWorkflowStatus(documentId) {
+  if (typeof documentId !== 'string' || documentId.length === 0) return null;
+  return ocrWorkflowService.status(documentId);
+}
+
+export function cancelOcrWorkflow(documentId, reason = 'user-cancelled') {
+  if (typeof documentId !== 'string' || documentId.length === 0) return Promise.resolve(null);
+  return ocrWorkflowService.cancel(documentId, reason);
+}
 
 export function cancelOcrWorkflowDocument(documentId, reason = 'document-close') {
   if (typeof documentId !== 'string' || documentId.length === 0) return Promise.resolve([]);

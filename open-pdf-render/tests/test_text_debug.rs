@@ -32,7 +32,9 @@ fn test_text_operators_detail() {
 
     for op in &content.operations {
         match op.operator.as_str() {
-            "BT" => { tm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]; }
+            "BT" => {
+                tm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+            }
             "Tf" => {
                 if op.operands.len() >= 2 {
                     if let lopdf::Object::Name(ref name) = op.operands[0] {

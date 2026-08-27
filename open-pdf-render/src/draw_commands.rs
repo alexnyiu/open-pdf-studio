@@ -229,8 +229,8 @@ mod tests {
         buf.set_dash(&[5.0, 3.0, 1.0], 0.0);
         let bytes = buf.into_bytes();
         assert_eq!(bytes[0], 16); // SetDash
-        assert_eq!(bytes[1], 3);  // count
-        // 3 f32 pattern + 1 f32 phase = 16 bytes after count
+        assert_eq!(bytes[1], 3); // count
+                                 // 3 f32 pattern + 1 f32 phase = 16 bytes after count
         assert_eq!(bytes.len(), 1 + 1 + 12 + 4); // 18
     }
 }

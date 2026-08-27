@@ -1,9 +1,11 @@
-import { For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
-import { active, editorStyle, editorPlacement, text, setText, keyDownHandler, blurHandler, selectOnFocus,
-  setSelectOnFocus, editorOptions, editorStatus, setEditorStatus, richTextDocument,
+import { For, Show, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
+import { active, editorMountGeneration, editorStyle, editorPlacement, text, setText, keyDownHandler, blurHandler, selectOnFocus,
+  setSelectOnFocus, editorOptions, editorStatus, editorStatusKind, setEditorStatus, richTextDocument,
+  richTextDraftRevision,
   editorLayoutState, setEditorLayoutState,
   richTextSelection, typingStyle, updateRichTextDraft, updateRichTextSelection,
-  undoRichTextDraft, redoRichTextDraft, updateEditorGeometry } from '../stores/pdfTextEditStore.js';
+  undoRichTextDraft, redoRichTextDraft, updateEditorGeometry,
+  recordEditorGeometryHistory } from '../stores/pdfTextEditStore.js';
 import {
   canonicalRichTextHash,
   createRichTextDocument,
@@ -13,44 +15,99 @@ import {
   graphemeLength,
   replaceTextRange,
   richTextInsertionContext,
+  shouldInsertRichHardBreak,
 } from '../../text/rich-text.js';
 import { shapeRichTextDocument } from '../../text/font-catalog.js';
 import { reflowRichTextToWidth } from '../../text/text-edit-selection.js';
-import { layoutExpandableNativeText } from '../../text/native-expandable-layout.js';
+import { createEditorLayoutRevision } from '../../text/editor-layout-revision.js';
+import { cancelLatestNativeLayout, requestLatestNativeLayout } from '../../text/native-layout-scheduler.js';
+import {
+  applyActiveTextEditing,
+  cancelActiveTextEditing,
+  getActiveTextEditSession,
+} from '../../text/text-edit-session.js';
 import { documentNeedsContrastAid, editableRunPresentation } from '../../text/text-edit-contrast.js';
 import {
+  applyPageTextEditProjection,
   canonicalDeltaFromDisplayDelta,
   clampPageTextEditBounds,
   projectCommitBounds,
   projectPageTextEditPlacement,
+  shallowEqualPageTextEditProjection,
   scrollFreePreviewSize,
 } from '../../text/page-text-edit-placement.js';
 import {
   ensurePageTextEditHost,
+  findPageTextEditHost,
   measurePageTextEditFrame,
+  removeEmptyPageTextEditHosts,
 } from '../../text/page-text-edit-host.js';
+import {
+  createPageTextEditPlacementController,
+  shouldCancelPageTextEditPlacement,
+} from '../../text/page-text-edit-placement-controller.js';
+import { resolveEditorStatus } from '../../text/editor-status-priority.js';
+import { useTranslation } from '../../i18n/useTranslation.js';
+import { recordPageTextEditPlacementWrite } from '../../text/page-text-edit-metrics.js';
+import {
+  PATHOLOGICAL_PASTE_GRAPHEME_LIMIT,
+  PATHOLOGICAL_PASTE_LINE_LIMIT,
+  displayArrowDelta,
+  exactExpansionCandidate,
+  orderedRichTextSelectionStart,
+  pathologicalPasteDetails,
+  semanticRichTextSignature,
+} from '../../text/pdf-text-edit-interactions.js';
+import {
+  consumeOutsidePointerDownForTextEdit,
+  shouldApplyTextEditForOutsideFocus,
+  shouldSuppressOutsideApplyFollowup,
+  textEditTargetIsWithinFocusBoundary,
+  textEditTargetStartsLifecycleTransition,
+} from '../../text/text-edit-focus-boundary.js';
 
 export default function PdfTextEditOverlay() {
+  const { t: tHardening, language: hardeningLanguage } = useTranslation('hardening');
   let textareaRef;
   let richEditorRef;
   let portalRef;
-  let placementFrameId = 0;
-  let placementSignature = '';
+  let portalMountTimerId = 0;
   let shapingGeneration = 0;
   let shapedSignature = '';
+  let richLayoutOverflow = null;
   let richDisplayHeight = 0;
   let exactRequiredHeight = 0;
-  let lastExpandableInputKey = '';
+  let lastExpandableFingerprint = '';
   let liveContentWidth = 0;
+  let contentResizeFrameId = 0;
   let currentPlacementFrame = null;
   let geometryGesture = null;
+  let initialManipulation = null;
+  let initialManipulationIdentity = '';
   let pendingInputContext = null;
-  const [inkInsetsPx, setInkInsetsPx] = createSignal(null);
+  let selectionFrameId = 0;
+  let outsideApplyPromise = null;
+  let outsidePointerGesture = null;
+  let restoreFocusAfterHostTransition = false;
+  let cachedLineRevision = -1;
+  const lineGraphemeOffsetCache = new Map();
+  const attachmentProjections = new WeakMap();
+  const [contentInsetsPx, setContentInsetsPx] = createSignal(null);
   const [projectedStyle, setProjectedStyle] = createSignal(null);
   const [commitBoundsStyle, setCommitBoundsStyle] = createSignal(null);
   const [pageDisplayScale, setPageDisplayScale] = createSignal(0);
   const [previewOverflow, setPreviewOverflow] = createSignal(false);
   const [editorBox, setEditorBox] = createSignal(null);
+  const [pathologicalPaste, setPathologicalPaste] = createSignal(null);
+  const [pathologicalPreviewFrame, setPathologicalPreviewFrame] = createSignal(null);
+
+  const publishContentInsetsPx = (next) => setContentInsetsPx((previous) => (
+    shallowEqualPageTextEditProjection(previous, next) ? previous : next
+  ));
+
+  const publishEditorBox = (next) => setEditorBox((previous) => (
+    previous?.width === next.width && previous?.height === next.height ? previous : next
+  ));
 
   const displayScale = () => pageDisplayScale()
     || editorOptions().expandableRegion?.displayScale
@@ -58,6 +115,41 @@ export default function PdfTextEditOverlay() {
     || 1;
 
   const liveEditorStyle = () => projectedStyle() || editorStyle() || {};
+
+  const boundedPathologicalPreview = (preview, editorNode) => {
+    if (!pathologicalPaste() || !editorNode) {
+      if (pathologicalPreviewFrame()) setPathologicalPreviewFrame(null);
+      return preview;
+    }
+    const editorRect = editorNode.getBoundingClientRect?.();
+    const hostRect = portalRef?.parentElement?.getBoundingClientRect?.();
+    const viewportWidth = Math.max(240, Number(window.innerWidth) || 1024);
+    const viewportHeight = Math.max(180, Number(window.innerHeight) || 768);
+    const left = Number.isFinite(editorRect?.left) ? editorRect.left : 12;
+    const top = Number.isFinite(editorRect?.top) ? editorRect.top : 12;
+    const rightLimit = Math.min(
+      Number.isFinite(hostRect?.right) && hostRect.right > left ? hostRect.right : viewportWidth - 12,
+      viewportWidth - 12,
+    );
+    const bottomLimit = Math.min(
+      Number.isFinite(hostRect?.bottom) && hostRect.bottom > top ? hostRect.bottom : viewportHeight - 12,
+      viewportHeight - 12,
+    );
+    const maximumWidth = Math.max(96, rightLimit - left);
+    // Reserve enough room for the exact-count notice plus all recovery and
+    // Apply/Cancel controls. The full canonical text remains in the scrollable
+    // editor; this only bounds what Chromium paints at once.
+    const maximumHeight = Math.max(64, bottomLimit - top - 126);
+    const width = Math.min(preview.width, maximumWidth);
+    const height = Math.min(preview.height, maximumHeight);
+    const actionWidth = Math.min(Math.max(280, width), viewportWidth - 24);
+    setPathologicalPreviewFrame({
+      width: actionWidth,
+      left: Math.max(12, Math.min(left, viewportWidth - actionWidth - 12)),
+      top: Math.max(12, Math.min(top + height + 8, viewportHeight - 112)),
+    });
+    return { ...preview, width, height };
+  };
 
   const placementIdentity = () => {
     const placement = editorPlacement();
@@ -70,58 +162,116 @@ export default function PdfTextEditOverlay() {
     const placement = editorPlacement();
     if (!active() || !placement) {
       currentPlacementFrame = null;
-      placementSignature = '';
       if (projectedStyle()) setProjectedStyle(null);
       if (commitBoundsStyle()) setCommitBoundsStyle(null);
       if (pageDisplayScale()) setPageDisplayScale(0);
-      return;
+      publishPlacementDebug('inactive');
+      return true;
     }
-    const host = ensurePageTextEditHost(placement);
-    const frame = host && measurePageTextEditFrame(placement, host);
-    if (!host || !frame) return;
+    let host = findPageTextEditHost(placement);
+    if (!host) {
+      // Host creation is a DOM write. Defer all layout reads until a later
+      // frame so the placement pass remains measure-then-write.
+      host = ensurePageTextEditHost(placement);
+      publishPlacementDebug(host ? 'host-created' : 'host-unavailable');
+      return false;
+    }
+    const mountGeneration = String(editorMountGeneration());
+    if (portalRef?.dataset?.editorMountGeneration !== mountGeneration) {
+      portalRef = [...document.querySelectorAll('.pdf-text-edit-portal')]
+        .find((candidate) => candidate.dataset.editorMountGeneration === mountGeneration);
+    }
+    // Solid assigns refs after mounting the conditional subtree. A session
+    // handoff can land between that mount and this frame; retry a bounded
+    // number of active frames instead of leaving the portal at its root
+    // fallback position for the lifetime of the editor.
+    if (!portalRef) {
+      publishPlacementDebug('portal-missing');
+      return false;
+    }
+    const frame = measurePageTextEditFrame(placement, host);
+    if (!frame) {
+      publishPlacementDebug('frame-unavailable');
+      return false;
+    }
     currentPlacementFrame = frame;
-    const style = editorStyle() || {};
-    const signature = JSON.stringify([
-      placement.documentId, placement.pageNum, placement.generation,
-      frame.pageWidth, frame.pageHeight, frame.rotation, frame.scale,
-      frame.offsetX, frame.offsetY, style.left, style.top, style.width,
-      style.height, style['font-size'], style['line-height'],
-      placement.canonicalBounds.x, placement.canonicalBounds.y,
-      placement.canonicalBounds.width, placement.canonicalBounds.height,
-    ]);
+    let wrotePlacement = false;
+    const previousHosts = new Set();
+    for (const stalePortal of document.querySelectorAll('.pdf-text-edit-portal')) {
+      if (stalePortal === portalRef) continue;
+      if (stalePortal.parentElement?.classList?.contains('pdf-text-edit-layer')) {
+        previousHosts.add(stalePortal.parentElement);
+      }
+      stalePortal.remove();
+      wrotePlacement = true;
+    }
     if (portalRef && portalRef.parentElement !== host) {
-      const focused = portalRef.contains(document.activeElement);
+      const preserveFocus = restoreFocusAfterHostTransition
+        || portalRef.contains(document.activeElement);
+      if (portalRef.parentElement?.classList?.contains('pdf-text-edit-layer')) {
+        previousHosts.add(portalRef.parentElement);
+      }
       host.appendChild(portalRef);
-      if (focused) queueMicrotask(() => (richEditorRef || textareaRef)?.focus({ preventScroll: true }));
+      if (preserveFocus) {
+        queueMicrotask(() => (richEditorRef || textareaRef)?.focus({ preventScroll: true }));
+      }
     }
     for (const attachment of editorOptions().attachedPageElements || []) {
       const element = attachment?.element;
       const attachmentPlacement = attachment?.placement;
       if (!element || !attachmentPlacement) continue;
-      if (element.parentElement !== host) host.appendChild(element);
-      const attachmentStyle = projectPageTextEditPlacement(
-        attachmentPlacement,
-        frame,
-        attachmentPlacement.sourceStyle,
-      );
-      if (attachmentStyle) Object.assign(element.style, attachmentStyle);
+      if (element.parentElement !== host) {
+        if (element.parentElement?.classList?.contains('pdf-text-edit-layer')) {
+          previousHosts.add(element.parentElement);
+        }
+        host.appendChild(element);
+      }
+      const attachmentStyle = projectPageTextEditPlacement(attachmentPlacement, frame);
+      const previousAttachmentStyle = attachmentProjections.get(element) || null;
+      if (applyPageTextEditProjection(element, attachmentStyle, previousAttachmentStyle)) {
+        attachmentProjections.set(element, attachmentStyle);
+        wrotePlacement = true;
+      }
     }
-    if (signature === placementSignature) return;
-    placementSignature = signature;
-    setProjectedStyle(projectPageTextEditPlacement(placement, frame, style));
-    setCommitBoundsStyle(projectCommitBounds(placement, frame));
-    setPageDisplayScale(frame.scale);
-    const exactInsets = editorLayoutState()?.result?.inkInsets;
+    for (const previousHost of previousHosts) {
+      if (previousHost !== host && previousHost.childElementCount === 0) previousHost.remove();
+    }
+    if (portalRef?.parentElement === host) restoreFocusAfterHostTransition = false;
+    const nextProjectedStyle = projectPageTextEditPlacement(placement, frame);
+    const nextCommitBoundsStyle = projectCommitBounds(placement, frame);
+    if (!shallowEqualPageTextEditProjection(projectedStyle(), nextProjectedStyle)) {
+      setProjectedStyle(nextProjectedStyle);
+      wrotePlacement = true;
+    }
+    if (!shallowEqualPageTextEditProjection(commitBoundsStyle(), nextCommitBoundsStyle)) {
+      setCommitBoundsStyle(nextCommitBoundsStyle);
+      wrotePlacement = true;
+    }
+    const scaleChanged = pageDisplayScale() !== frame.scale;
+    if (scaleChanged) setPageDisplayScale(frame.scale);
+    if (wrotePlacement) recordPageTextEditPlacementWrite();
+    const exactInsets = editorLayoutState()?.result?.contentInsets;
     if (exactInsets) {
-      setInkInsetsPx({
+      publishContentInsetsPx({
         left: exactInsets.left * frame.scale,
         right: exactInsets.right * frame.scale,
+        top: exactInsets.top * frame.scale,
+        bottom: exactInsets.bottom * frame.scale,
       });
     }
-    queueMicrotask(() => {
-      resizeToContent();
-      resizeRichToContent();
+    if (wrotePlacement || scaleChanged) {
+      queueMicrotask(() => {
+        resizeToContent();
+        resizeRichToContent();
+      });
+    }
+    const attached = portalRef.parentElement === host;
+    publishPlacementDebug(attached ? 'attached' : 'attachment-rejected', {
+      hostDocumentId: host.dataset.documentId ?? null,
+      hostGeneration: host.dataset.generation ?? null,
+      hostPage: host.dataset.page ?? null,
     });
+    return attached;
   };
 
   const resizeToContent = () => {
@@ -144,14 +294,16 @@ export default function PdfTextEditOverlay() {
         scrollWidth: textareaRef.scrollWidth,
         scrollHeight: textareaRef.scrollHeight,
       });
-      textareaRef.style.height = `${preview.height}px`;
-      setEditorBox({ width: preview.width, height: preview.height });
+      const bounded = boundedPathologicalPreview(preview, textareaRef);
+      textareaRef.style.maxWidth = pathologicalPaste() ? `${bounded.width}px` : `${minWidth}px`;
+      textareaRef.style.maxHeight = pathologicalPaste() ? `${bounded.height}px` : 'none';
+      textareaRef.style.overflow = pathologicalPaste() ? 'auto' : 'hidden';
+      textareaRef.style.width = `${bounded.width}px`;
+      textareaRef.style.height = `${bounded.height}px`;
+      publishEditorBox({ width: bounded.width, height: bounded.height });
       const overflowing = preview.overflowing;
       if (overflowing !== previewOverflow()) {
         setPreviewOverflow(overflowing);
-        setEditorStatus(overflowing
-          ? 'The complete OCR draft is visible beyond its approved region. Saving remains blocked unless exact fixed-region validation fits the text.'
-          : (editorOptions().status || 'Editing scanned text inside its approved region.'));
       }
       return;
     }
@@ -161,11 +313,23 @@ export default function PdfTextEditOverlay() {
     // wrap that would disappear after saving.
     textareaRef.style.width = `${minWidth}px`;
     textareaRef.style.height = '0px';
-    textareaRef.style.height = `${Math.max(minHeight, textareaRef.scrollHeight)}px`;
-    textareaRef.style.width = `${Math.max(minWidth, textareaRef.scrollWidth + 2)}px`;
-    setEditorBox({
+    textareaRef.style.maxWidth = 'none';
+    textareaRef.style.maxHeight = 'none';
+    textareaRef.style.overflow = 'hidden';
+    const preview = boundedPathologicalPreview({
       width: Math.max(minWidth, textareaRef.scrollWidth + 2),
       height: Math.max(minHeight, textareaRef.scrollHeight),
+    }, textareaRef);
+    textareaRef.style.height = `${preview.height}px`;
+    textareaRef.style.width = `${preview.width}px`;
+    if (pathologicalPaste()) {
+      textareaRef.style.maxWidth = `${preview.width}px`;
+      textareaRef.style.maxHeight = `${preview.height}px`;
+      textareaRef.style.overflow = 'auto';
+    }
+    publishEditorBox({
+      width: preview.width,
+      height: preview.height,
     });
   };
 
@@ -188,78 +352,180 @@ export default function PdfTextEditOverlay() {
       scrollHeight: richEditorRef.scrollHeight,
       fixedWidth: !manualLineBreaks,
     });
-    richEditorRef.style.width = `${preview.width}px`;
-    const nextHeight = preview.height;
+    const bounded = boundedPathologicalPreview(preview, richEditorRef);
+    richEditorRef.style.maxWidth = pathologicalPaste()
+      ? `${bounded.width}px` : (manualLineBreaks ? 'none' : `${minWidth}px`);
+    richEditorRef.style.maxHeight = pathologicalPaste() ? `${bounded.height}px` : 'none';
+    richEditorRef.style.overflow = pathologicalPaste() ? 'auto' : 'visible';
+    richEditorRef.style.width = `${bounded.width}px`;
+    const nextHeight = bounded.height;
     richEditorRef.style.height = `${nextHeight}px`;
-    setEditorBox({ width: preview.width, height: nextHeight });
+    publishEditorBox({ width: bounded.width, height: nextHeight });
     richDisplayHeight = nextHeight;
-    const overflowing = Boolean(editorOptions().fixedRegion && preview.overflowing);
+    // Rich DOM line boxes include one complete baseline advance for the final
+    // line, so scrollHeight can exceed the approved region even when every
+    // shaped glyph ink bound fits. Fixed-region validity comes from the exact
+    // font shaper; DOM overflow remains only a preview-sizing input.
+    const overflowing = Boolean(editorOptions().fixedRegion && richLayoutOverflow === true);
     if (overflowing !== previewOverflow()) {
       setPreviewOverflow(overflowing);
-      setEditorStatus(overflowing
-        ? 'The complete OCR draft is visible beyond its approved region. Saving remains blocked unless exact fixed-region validation fits the text.'
-        : (editorOptions().status || 'Editing scanned text inside its approved region.'));
     }
     editorOptions().onHeightChange?.(nextHeight);
   };
 
-  createEffect(() => {
+  const scheduleContentResize = () => {
+    const mountGeneration = editorMountGeneration();
+    queueMicrotask(() => {
+      if (!active() || editorMountGeneration() !== mountGeneration) return;
+      resizeToContent();
+      resizeRichToContent();
+      if (contentResizeFrameId) cancelAnimationFrame(contentResizeFrameId);
+      contentResizeFrameId = requestAnimationFrame(() => {
+        contentResizeFrameId = 0;
+        if (!active() || editorMountGeneration() !== mountGeneration) return;
+        resizeToContent();
+        resizeRichToContent();
+      });
+    });
+  };
+
+  const focusEditorOnOpen = () => {
     const editor = richTextDocument() ? richEditorRef : textareaRef;
-    if (active() && editor) {
-      if (editorPlacement()) {
-        syncPagePlacement();
-        if (!portalRef?.parentElement?.classList?.contains('pdf-text-edit-layer')) return;
-      }
-      editor.focus();
-      if (selectOnFocus()) {
-        if (richTextDocument()) {
-          const selection = window.getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(editor);
-          selection.removeAllRanges();
-          selection.addRange(range);
-          syncRichSelection();
-        } else {
-          textareaRef.select();
-        }
-        setSelectOnFocus(false);
-      }
+    if (!active() || !editor || !selectOnFocus()) return false;
+    if (editorPlacement()
+        && !portalRef?.parentElement?.classList?.contains('pdf-text-edit-layer')) return false;
+    editor.focus({ preventScroll: true });
+    if (richTextDocument()) {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      syncRichSelection();
+    } else {
+      textareaRef.select();
     }
+    setSelectOnFocus(false);
+    return true;
+  };
+
+  const placementController = createPageTextEditPlacementController({
+    isActive: () => active() && Boolean(editorPlacement()),
+    update: syncPagePlacement,
+    afterUpdate: focusEditorOnOpen,
+    // Background/occluded WKWebViews may suspend requestAnimationFrame. A
+    // single dirty-cycle fallback keeps packaged automation and real tab
+    // handoffs recoverable without reintroducing an idle placement loop.
+    fallbackDelayMs: 100,
   });
 
-  const expandableInputKey = (document) => {
-    const logical = [];
-    let current = [];
-    const styleKeys = ['faceId','size','color','bold','italic','underline','strikeout','direction'];
-    const append = (run) => {
-      const style = Object.fromEntries(styleKeys.map((key) => [key, run[key]]));
-      const previous = current.at(-1);
-      if (previous && styleKeys.every((key) => previous[key] === style[key])) previous.text += run.text;
-      else current.push({ text: run.text, ...style });
+  const markPlacementDirty = () => placementController.markDirty();
+  const publishPlacementDebug = (phase, extra = {}) => {
+    if (typeof window === 'undefined') return;
+    const placement = editorPlacement();
+    window.__pdfTextEditPlacementDebug = {
+      phase,
+      editorMountGeneration: editorMountGeneration(),
+      placementSessionGeneration: placement?.sessionGeneration ?? null,
+      documentId: placement?.documentId ?? null,
+      documentGeneration: placement?.generation ?? null,
+      pageNum: placement?.pageNum ?? null,
+      portalMountGeneration: portalRef?.dataset?.editorMountGeneration ?? null,
+      portalParentClass: portalRef?.parentElement?.className ?? null,
+      portalConnected: portalRef?.isConnected === true,
+      at: performance.now(),
+      ...extra,
     };
-    document.lines.forEach((line) => {
-      line.runs.forEach(append);
-      if (line.breakAfter !== 'soft') {
-        logical.push(current);
-        current = [];
-      }
-    });
-    if (current.length) logical.push(current);
-    return JSON.stringify(logical);
   };
+  const capturePortalElement = (element) => {
+    portalRef = element;
+    // Solid does not invoke ref callbacks with null when this keyed subtree is
+    // replaced. Drop both mutually exclusive editor refs before the new child
+    // mounts so queued sizing work from the previous session cannot mutate the
+    // replacement session's overflow state.
+    textareaRef = undefined;
+    richEditorRef = undefined;
+    currentPlacementFrame = null;
+    richDisplayHeight = 0;
+    exactRequiredHeight = 0;
+    liveContentWidth = 0;
+    shapedSignature = '';
+    richLayoutOverflow = null;
+    setEditorBox(null);
+    publishContentInsetsPx(null);
+    setProjectedStyle(null);
+    setCommitBoundsStyle(null);
+    setPageDisplayScale(0);
+    setPreviewOverflow(false);
+    setPathologicalPaste(null);
+    setPathologicalPreviewFrame(null);
+    const mountGeneration = editorMountGeneration();
+    // The ref callback runs while Solid is still constructing the keyed
+    // subtree, before the portal is connected and before cleanup from the
+    // previous session is guaranteed to have completed. Try immediately for
+    // ordinary mounts, then make one task-boundary attempt for fast handoffs.
+    const placementScheduled = markPlacementDirty();
+    publishPlacementDebug('portal-mounted', {
+      placementScheduled,
+      placementPending: placementController.pending,
+    });
+    if (portalMountTimerId) clearTimeout(portalMountTimerId);
+    portalMountTimerId = setTimeout(() => {
+      portalMountTimerId = 0;
+      if (active() && editorMountGeneration() === mountGeneration
+          && portalRef === element) {
+        const scheduled = markPlacementDirty();
+        publishPlacementDebug('portal-mount-task', {
+          placementScheduled: scheduled,
+          placementPending: placementController.pending,
+        });
+      }
+    }, 0);
+  };
+  const handleViewportRevision = () => {
+    // View-mode rendering can detach the current page host before the next
+    // placement frame. Preserve focus only when the editor owned it before
+    // that transition; property-panel and formatting focus is never stolen.
+    if (portalRef?.contains(document.activeElement)) restoreFocusAfterHostTransition = true;
+    markPlacementDirty();
+  };
+
+  createEffect(() => {
+    const editor = richTextDocument() ? richEditorRef : textareaRef;
+    if (active() && editor && selectOnFocus()) {
+      if (editorPlacement()) markPlacementDirty();
+      else focusEditorOnOpen();
+    }
+  });
 
   const scheduleExpandableLayout = (source) => {
     const config = editorOptions().expandableRegion;
     if (!config || !source) return;
-    const inputKey = expandableInputKey(source);
-    if (inputKey === lastExpandableInputKey) return;
-    lastExpandableInputKey = inputKey;
+    const placement = editorPlacement();
+    const session = getActiveTextEditSession();
+    const revision = createEditorLayoutRevision(source, config, {
+      sessionId: session?.sessionId,
+      ownerDocumentId: session?.ownerDocumentId || placement?.documentId,
+      ownerDocumentGeneration: session?.ownerDocumentGeneration,
+      placementGeneration: placement?.sessionGeneration,
+    });
+    const fingerprint = revision.fingerprint;
+    if (fingerprint === lastExpandableFingerprint) return;
+    lastExpandableFingerprint = fingerprint;
     const sourcePlacementIdentity = placementIdentity();
-    const generation = ++shapingGeneration;
-    setEditorLayoutState({ pending: true, valid: false, message: 'Finishing exact text layout…' });
-    setEditorStatus('Finishing exact text layout…');
-    void layoutExpandableNativeText(source, {
+    setEditorLayoutState({
+      pending: true,
+      valid: false,
+      requestedFingerprint: fingerprint,
+      validatedFingerprint: null,
+      message: tHardening('textEditor.status.shaping'),
+      statuses: { shaping: 'pending' },
+    });
+    setEditorStatus(tHardening('textEditor.status.shaping'), 'shaping');
+    const workerOptions = {
       width: config.width,
+      contentWidth: config.contentWidth,
+      contentInset: config.contentInset,
       inkPadding: config.inkPadding,
       minimumHeight: config.minimumHeight,
       anchorTop: config.anchorTop,
@@ -268,37 +534,89 @@ export default function PdfTextEditOverlay() {
       existingBounds: config.existingBounds,
       editId: config.editId,
       manualLineBreaks: config.manualLineBreaks === true,
-    }).then((result) => {
-      if (generation !== shapingGeneration
-          || placementIdentity() !== sourcePlacementIdentity
-          || expandableInputKey(richTextDocument()) !== inputKey) return;
+    };
+    void requestLatestNativeLayout(structuredClone(source), workerOptions, fingerprint).then((response) => {
+      const live = richTextDocument();
+      const currentSession = getActiveTextEditSession();
+      if (!live || placementIdentity() !== sourcePlacementIdentity) return;
+      const currentRevision = createEditorLayoutRevision(live, editorOptions().expandableRegion, {
+        sessionId: currentSession?.sessionId,
+        ownerDocumentId: currentSession?.ownerDocumentId || editorPlacement()?.documentId,
+        ownerDocumentGeneration: currentSession?.ownerDocumentGeneration,
+        placementGeneration: editorPlacement()?.sessionGeneration,
+      });
+      if (response.fingerprint !== fingerprint || currentRevision.fingerprint !== fingerprint) return;
+      const result = response.result;
+      const validatedRevision = createEditorLayoutRevision(
+        result.document,
+        editorOptions().expandableRegion,
+        {
+          sessionId: currentSession?.sessionId,
+          ownerDocumentId: currentSession?.ownerDocumentId || editorPlacement()?.documentId,
+          ownerDocumentGeneration: currentSession?.ownerDocumentGeneration,
+          placementGeneration: editorPlacement()?.sessionGeneration,
+        },
+      );
       shapedSignature = canonicalRichTextHash(result.document);
       updateRichTextDraft(result.document, { recordHistory: false, preserveDom: true });
       exactRequiredHeight = result.requiredHeight;
       liveContentWidth = result.contentWidth;
-      setInkInsetsPx({
-        left: result.inkInsets.left * displayScale(),
-        right: result.inkInsets.right * displayScale(),
+      publishContentInsetsPx({
+        left: result.contentInsets.left * displayScale(),
+        right: result.contentInsets.right * displayScale(),
+        top: result.contentInsets.top * displayScale(),
+        bottom: result.contentInsets.bottom * displayScale(),
       });
       const notices = [];
+      const overlapNotice = tHardening('textEditor.status.overlap');
+      const contrastNotice = tHardening('textEditor.status.lowContrast');
       if (result.overlapWarnings.length) {
-        notices.push('Text overlaps existing page content. Commit is allowed; neighboring source objects will not move.');
+        notices.push(overlapNotice);
       }
       if (documentNeedsContrastAid(result.document, config.editorBackground)) {
-        notices.push('Low-contrast source colors have an editing-only backing. Saved colors remain unchanged.');
+        notices.push(contrastNotice);
       }
       const message = result.valid
         ? notices.join(' ')
-        : [`Text layout rejected: ${result.rejectionReasons.join('; ')}`, ...notices].join(' ');
-      setEditorLayoutState({ pending: false, valid: result.valid, message, result });
-      setEditorStatus(message);
+        : [tHardening('textEditor.status.layoutRejected', {
+          reasons: result.rejectionReasons.join('; '),
+        }), ...notices].join(' ');
+      setEditorLayoutState({
+        pending: false,
+        valid: result.valid,
+        sourceFingerprint: fingerprint,
+        requestedFingerprint: validatedRevision.fingerprint,
+        validatedFingerprint: validatedRevision.fingerprint,
+        validatedRevision: validatedRevision.payload,
+        message,
+        result,
+        statuses: {
+          shaping: null,
+          pageOrColumn: result.pageEdgeValid && result.columnValid
+            ? null : result.rejectionReasons.join('; '),
+          overflow: result.valid ? null : result.rejectionReasons.join('; '),
+          overlap: result.overlapWarnings.length ? overlapNotice : null,
+          contrast: documentNeedsContrastAid(result.document, config.editorBackground)
+            ? contrastNotice : null,
+        },
+      });
+      setEditorStatus(message, result.valid ? 'info' : 'invalid');
       config.onDraftLayout?.(result);
       queueMicrotask(resizeRichToContent);
     }).catch((error) => {
-      if (generation !== shapingGeneration) return;
-      const message = `Text shaping rejected: ${error instanceof Error ? error.message : String(error)}`;
-      setEditorLayoutState({ pending: false, valid: false, message });
-      setEditorStatus(message);
+      if (error?.code === 'TEXT_LAYOUT_CANCELLED' || lastExpandableFingerprint !== fingerprint) return;
+      const message = tHardening('textEditor.status.shapingRejected', {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      setEditorLayoutState({
+        pending: false,
+        valid: false,
+        requestedFingerprint: fingerprint,
+        validatedFingerprint: null,
+        message,
+        statuses: { shaping: message },
+      });
+      setEditorStatus(message, 'invalid');
       queueMicrotask(resizeRichToContent);
     });
   };
@@ -310,10 +628,13 @@ export default function PdfTextEditOverlay() {
     const current = richTextDocument();
     if (!active() || !current) {
       shapingGeneration += 1;
+      cancelLatestNativeLayout();
+      lastExpandableFingerprint = '';
       shapedSignature = '';
+      richLayoutOverflow = null;
       liveContentWidth = 0;
       exactRequiredHeight = 0;
-      if (inkInsetsPx()) setInkInsetsPx(null);
+      if (contentInsetsPx()) publishContentInsetsPx(null);
       return;
     }
     if (editorOptions().expandableRegion) {
@@ -323,6 +644,8 @@ export default function PdfTextEditOverlay() {
     const signature = canonicalRichTextHash(current);
     const fullyShaped = current.lines.every((line) => line.runs.every((run) => run.shaped));
     if (fullyShaped && signature === shapedSignature) return;
+    richLayoutOverflow = null;
+    if (editorOptions().fixedRegion && previewOverflow()) setPreviewOverflow(false);
     const sourcePlacementIdentity = placementIdentity();
     const generation = ++shapingGeneration;
     void shapeRichTextDocument(current).then((layout) => {
@@ -331,6 +654,7 @@ export default function PdfTextEditOverlay() {
           || placementIdentity() !== sourcePlacementIdentity || !live
           || canonicalRichTextHash(live) !== signature) return;
       shapedSignature = signature;
+      richLayoutOverflow = layout.overflow;
       layout.lines.forEach((line, lineIndex) => {
         line.runs.forEach((run, runIndex) => {
           const liveRun = live.lines[lineIndex]?.runs[runIndex];
@@ -339,24 +663,55 @@ export default function PdfTextEditOverlay() {
           liveRun.geometry = run.geometry;
         });
       });
-      if (layout.overflow) setEditorStatus(`Text layout rejected: ${layout.rejectionReasons.join('; ')}`);
-      else if (editorStatus().startsWith('Text layout rejected:')) setEditorStatus('');
+      if (layout.overflow) {
+        setEditorStatus(tHardening('textEditor.status.layoutRejected', {
+          reasons: layout.rejectionReasons.join('; '),
+        }), 'invalid');
+      } else if (editorStatus().startsWith(tHardening('textEditor.status.layoutRejectedPrefix'))) {
+        setEditorStatus('');
+      }
+      queueMicrotask(resizeRichToContent);
     }).catch((error) => {
       if (generation === shapingGeneration) {
-        setEditorStatus(`Text shaping rejected: ${error instanceof Error ? error.message : String(error)}`);
+        richLayoutOverflow = null;
+        setEditorStatus(tHardening('textEditor.status.shapingRejected', {
+          reason: error instanceof Error ? error.message : String(error),
+        }), 'invalid');
       }
     });
   });
 
   createEffect(() => {
     const isActive = active();
+    const mountGeneration = editorMountGeneration();
     text();
     richTextDocument();
     editorStyle();
     editorPlacement();
-    if (isActive && textareaRef) queueMicrotask(resizeToContent);
-    if (isActive && richEditorRef) queueMicrotask(resizeRichToContent);
-    if (isActive) queueMicrotask(syncPagePlacement);
+    // Placement projection and display-scale updates are applied after the
+    // editor subtree mounts. Re-measure once those reactive styles reach the
+    // DOM so an early fallback-size measurement cannot leave a fixed-region
+    // editor permanently marked as overflowing.
+    projectedStyle();
+    contentInsetsPx();
+    pageDisplayScale();
+    if (isActive && (textareaRef || richEditorRef)) scheduleContentResize();
+    // Reactive listener cleanups can cancel a frame scheduled earlier in the
+    // same Solid batch. Queue the authoritative dirty mark after all effects
+    // for this session handoff have settled.
+    if (isActive) queueMicrotask(() => {
+      if (active() && editorMountGeneration() === mountGeneration) markPlacementDirty();
+    });
+    else {
+      // The editor portal is deliberately reparented into the active page host.
+      // Once moved, Solid's original <Show> anchor can no longer remove it, so
+      // tear it down synchronously before the store changes document/view state.
+      portalRef?.remove?.();
+      portalRef = undefined;
+      textareaRef = undefined;
+      richEditorRef = undefined;
+      queueMicrotask(() => removeEmptyPageTextEditHosts());
+    }
   });
 
   const handleKeyDown = (e) => {
@@ -376,6 +731,9 @@ export default function PdfTextEditOverlay() {
   const manipulationStyle = () => {
     const style = liveEditorStyle();
     const box = editorBox();
+    const placement = editorPlacement();
+    const rotation = ((Number(currentPlacementFrame?.rotation) || 0)
+      + (Number(placement?.elementRotation) || 0)) % 180;
     return {
       position: 'absolute',
       left: style.left,
@@ -385,17 +743,185 @@ export default function PdfTextEditOverlay() {
       transform: style.transform || 'none',
       'transform-origin': style['transform-origin'] || '0 0',
       'z-index': String((Number(style['z-index']) || 1000) + 1),
+      '--text-edit-resize-cursor': Math.abs(rotation) === 90 ? 'nesw-resize' : 'nwse-resize',
     };
   };
 
-  const applyGeometryGesture = (clientX, clientY) => {
-    if (!geometryGesture || !currentPlacementFrame) return;
-    const delta = canonicalDeltaFromDisplayDelta({
-      x: clientX - geometryGesture.clientX,
-      y: clientY - geometryGesture.clientY,
-    }, currentPlacementFrame);
-    const start = geometryGesture.bounds;
-    const requested = geometryGesture.kind === 'move' ? {
+  const actionStyle = () => {
+    const pathologicalFrame = pathologicalPreviewFrame();
+    if (pathologicalPaste() && pathologicalFrame) {
+      return {
+        position: 'fixed',
+        left: `${pathologicalFrame.left}px`,
+        top: `${pathologicalFrame.top}px`,
+        width: `${pathologicalFrame.width}px`,
+        'max-width': 'calc(100vw - 24px)',
+        'z-index': '2147483000',
+      };
+    }
+    const style = liveEditorStyle();
+    const box = editorBox();
+    const top = (parseFloat(style.top) || 0)
+      + (box?.height ?? (parseFloat(style.height) || 24)) + 8;
+    return {
+      position: 'absolute',
+      left: style.left || '0px',
+      top: `${top}px`,
+      'z-index': String((Number(style['z-index']) || 1000) + 3),
+    };
+  };
+
+  const applyTextEdit = () => {
+    void applyActiveTextEditing().catch((error) => {
+      setEditorStatus(tHardening('textEditor.status.applyRejected', {
+        reason: error instanceof Error ? error.message : String(error),
+      }));
+    });
+  };
+
+  const applyTextEditFromOutside = () => {
+    if (outsideApplyPromise || !active()) return outsideApplyPromise;
+    const sessionId = getActiveTextEditSession()?.sessionId;
+    if (!sessionId) return null;
+    const refocusCurrentSession = () => queueMicrotask(() => {
+      if (active() && getActiveTextEditSession()?.sessionId === sessionId) {
+        (richEditorRef || textareaRef)?.focus?.({ preventScroll: true });
+      }
+    });
+    outsideApplyPromise = applyActiveTextEditing()
+      .then((result) => {
+        if (result === false
+            && active()
+            && getActiveTextEditSession()?.sessionId === sessionId) {
+          refocusCurrentSession();
+        }
+        return result;
+      })
+      .catch((error) => {
+        setEditorStatus(tHardening('textEditor.status.applyRejected', {
+          reason: error instanceof Error ? error.message : String(error),
+        }), 'invalid');
+        refocusCurrentSession();
+        return false;
+      })
+      .finally(() => {
+        outsideApplyPromise = null;
+      });
+    return outsideApplyPromise;
+  };
+
+  const handleOutsidePointerDown = (event) => {
+    if (!active()) return;
+    const target = event.target;
+    const sessionId = getActiveTextEditSession()?.sessionId;
+    if (!sessionId) return;
+    if (textEditTargetIsWithinFocusBoundary(target, portalRef)
+        || textEditTargetStartsLifecycleTransition(target)) return;
+    if (consumeOutsidePointerDownForTextEdit(event, portalRef)) {
+      // Consume the first outside gesture so its target cannot deactivate or
+      // supersede the owner session while exact validation is still finishing.
+      outsidePointerGesture = { sessionId, pointerId: event.pointerId };
+      void applyTextEditFromOutside();
+    }
+  };
+
+  const suppressOutsideApplyFollowup = (event) => {
+    const activeSessionId = getActiveTextEditSession()?.sessionId || null;
+    if (!shouldSuppressOutsideApplyFollowup({
+      target: event.target,
+      portal: portalRef,
+      button: event.button,
+      eventType: event.type,
+      detail: event.detail,
+      applyPending: Boolean(outsideApplyPromise),
+      consumedSessionId: outsidePointerGesture?.sessionId || null,
+      activeSessionId,
+    })) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.type === 'click'
+        && outsidePointerGesture?.sessionId === activeSessionId) outsidePointerGesture = null;
+  };
+
+  const handleOutsideFocusIn = (event) => {
+    if (!active()) return;
+    const target = event.target;
+    const sessionId = getActiveTextEditSession()?.sessionId;
+    if (!sessionId || !shouldApplyTextEditForOutsideFocus({
+      target,
+      portal: portalRef,
+      documentHasFocus: document.hasFocus(),
+      body: document.body,
+      documentElement: document.documentElement,
+    })) return;
+    // A focus hand-off can pass through an outside node for one microtask.
+    // Commit only if it settled outside the complete portal/properties boundary.
+    queueMicrotask(() => {
+      if (!active() || getActiveTextEditSession()?.sessionId !== sessionId) return;
+      const focused = document.activeElement;
+      if (!shouldApplyTextEditForOutsideFocus({
+        target: focused,
+        portal: portalRef,
+        documentHasFocus: document.hasFocus(),
+        body: document.body,
+        documentElement: document.documentElement,
+      })) return;
+      void applyTextEditFromOutside();
+    });
+  };
+
+  const editorGeometrySnapshot = (document = richTextDocument(), placement = editorPlacement()) => (
+    document && placement ? {
+      canonicalBounds: structuredClone(placement.canonicalBounds),
+      width: Number(editorOptions().expandableRegion?.width) || document.region.width,
+      minimumHeight: Number(editorOptions().expandableRegion?.minimumHeight) || document.region.height,
+      anchorTop: Number.isFinite(editorOptions().expandableRegion?.anchorTop)
+        ? editorOptions().expandableRegion.anchorTop : document.region.y + document.region.height,
+    } : null
+  );
+
+  const createGeometryGesture = (kind, { paintedBounds = false } = {}) => {
+    const placement = editorPlacement();
+    const richText = richTextDocument();
+    if (!directManipulationEnabled() || !placement || !richText || !currentPlacementFrame) return null;
+    let bounds = structuredClone(placement.canonicalBounds);
+    if (paintedBounds && kind === 'resize') {
+      const visibleBox = editorBox();
+      const editorNode = richEditorRef || textareaRef;
+      const paintedRect = editorNode?.getBoundingClientRect?.();
+      const quarterTurn = Math.abs(((Number(currentPlacementFrame.rotation) || 0)
+        + (Number(placement.elementRotation) || 0)) % 180) === 90;
+      const paintedWidth = Number(quarterTurn ? paintedRect?.height : paintedRect?.width)
+        || Number(editorNode?.offsetWidth) || Number(visibleBox?.width) || 0;
+      const paintedHeight = Number(quarterTurn ? paintedRect?.width : paintedRect?.height)
+        || Number(editorNode?.offsetHeight) || Number(visibleBox?.height) || 0;
+      bounds = {
+        ...bounds,
+        width: Math.max(bounds.width, paintedWidth / currentPlacementFrame.scale),
+        height: Math.max(bounds.height, paintedHeight / currentPlacementFrame.scale),
+      };
+    }
+    return {
+      kind,
+      bounds,
+      placement: structuredClone(placement),
+      richText: structuredClone(richText),
+      beforeDocument: structuredClone(richText),
+      beforeGeometry: editorGeometrySnapshot(richText, placement),
+      minimum: kind === 'move' ? {
+        width: bounds.width,
+        height: bounds.height,
+      } : {
+        width: Math.max(24 / currentPlacementFrame.scale, 12),
+        height: Math.max(18 / currentPlacementFrame.scale, 8),
+      },
+    };
+  };
+
+  const applyGeometryDelta = (gesture, delta) => {
+    if (!gesture) return false;
+    const start = gesture.bounds;
+    const requested = gesture.kind === 'move' ? {
       ...start,
       x: start.x + delta.x,
       y: start.y + delta.y,
@@ -405,35 +931,35 @@ export default function PdfTextEditOverlay() {
       height: start.height + delta.y,
     };
     let bounds = clampPageTextEditBounds(requested, {
-      width: editorPlacement().pageWidth,
-      height: editorPlacement().pageHeight,
-    }, geometryGesture.minimum);
+      width: gesture.placement.pageWidth,
+      height: gesture.placement.pageHeight,
+    }, gesture.minimum);
     const column = editorOptions().expandableRegion?.columnBounds;
     if (Number.isFinite(column?.left) && Number.isFinite(column?.right)
         && column.right > column.left) {
-      if (geometryGesture.kind === 'resize') {
+      if (gesture.kind === 'resize') {
         const maximumWidth = Math.max(
-          geometryGesture.minimum.width,
-          column.right - geometryGesture.richText.region.x,
+          gesture.minimum.width,
+          column.right - gesture.richText.region.x,
         );
         bounds = { ...bounds, width: Math.min(bounds.width, maximumWidth) };
       } else {
-        const minimumDx = column.left - geometryGesture.richText.region.x;
+        const minimumDx = column.left - gesture.richText.region.x;
         const maximumDx = column.right
-          - (geometryGesture.richText.region.x + geometryGesture.richText.region.width);
+          - (gesture.richText.region.x + gesture.richText.region.width);
         const dx = Math.max(minimumDx, Math.min(maximumDx, bounds.x - start.x));
         bounds = { ...bounds, x: start.x + dx };
       }
     }
-    const next = structuredClone(geometryGesture.richText);
-    if (geometryGesture.kind === 'move') {
+    const next = structuredClone(gesture.richText);
+    if (gesture.kind === 'move') {
       const dx = bounds.x - start.x;
       const dyPdf = -(bounds.y - start.y);
       next.region.x += dx;
       next.region.y += dyPdf;
       for (const line of next.lines) line.baseline += dyPdf;
     } else {
-      const anchorTop = geometryGesture.richText.region.y + geometryGesture.richText.region.height;
+      const anchorTop = gesture.richText.region.y + gesture.richText.region.height;
       next.region.width = bounds.width;
       next.region.height = bounds.height;
       next.region.y = anchorTop - bounds.height;
@@ -445,61 +971,146 @@ export default function PdfTextEditOverlay() {
       minimumHeight: next.region.height,
       anchorTop,
     });
-    lastExpandableInputKey = '';
+    lastExpandableFingerprint = '';
     updateRichTextDraft(next, { recordHistory: false });
     queueMicrotask(resizeRichToContent);
+    return true;
+  };
+
+  const recordFinishedGeometryGesture = (gesture) => {
+    const afterDocument = richTextDocument();
+    const afterGeometry = editorGeometrySnapshot(afterDocument, editorPlacement());
+    if (!gesture?.beforeDocument || !gesture.beforeGeometry || !afterDocument || !afterGeometry) return;
+    if (JSON.stringify(gesture.beforeGeometry) === JSON.stringify(afterGeometry)
+        && JSON.stringify(gesture.beforeDocument) === JSON.stringify(afterDocument)) return;
+    recordEditorGeometryHistory({
+      beforeDocument: gesture.beforeDocument,
+      afterDocument,
+      beforeGeometry: gesture.beforeGeometry,
+      afterGeometry,
+    });
+  };
+
+  const applyGeometryGesture = (event) => {
+    if (!geometryGesture || !currentPlacementFrame
+        || geometryGesture.pointerId !== event.pointerId) return;
+    const delta = canonicalDeltaFromDisplayDelta({
+      x: event.clientX - geometryGesture.clientX,
+      y: event.clientY - geometryGesture.clientY,
+    }, currentPlacementFrame);
+    applyGeometryDelta(geometryGesture, delta);
   };
 
   const finishGeometryGesture = (event) => {
-    if (!geometryGesture) return;
-    try { event.currentTarget?.releasePointerCapture?.(event.pointerId); } catch { /* no-op */ }
+    if (!geometryGesture || geometryGesture.pointerId !== event.pointerId) return;
+    const completed = geometryGesture;
     geometryGesture = null;
-    queueMicrotask(() => richEditorRef?.focus({ preventScroll: true }));
+    try { event.currentTarget?.releasePointerCapture?.(event.pointerId); } catch { /* no-op */ }
+    recordFinishedGeometryGesture(completed);
+  };
+
+  const cancelGeometryGesture = (event) => {
+    if (!geometryGesture || geometryGesture.pointerId !== event.pointerId) return;
+    const cancelled = geometryGesture;
+    geometryGesture = null;
+    try { event.currentTarget?.releasePointerCapture?.(event.pointerId); } catch { /* no-op */ }
+    updateEditorGeometry(cancelled.beforeGeometry);
+    updateRichTextDraft(cancelled.beforeDocument, { recordHistory: false });
+    lastExpandableFingerprint = '';
+    queueMicrotask(resizeRichToContent);
   };
 
   const startGeometryGesture = (kind, event) => {
-    const placement = editorPlacement();
-    const richText = richTextDocument();
-    if (!directManipulationEnabled() || !placement || !richText || !currentPlacementFrame) return;
+    const gesture = createGeometryGesture(kind, { paintedBounds: true });
+    if (!gesture) return;
     event.preventDefault();
     event.stopPropagation();
-    const visibleBox = editorBox();
-    const editorNode = richEditorRef || textareaRef;
-    const paintedRect = editorNode?.getBoundingClientRect?.();
-    const quarterTurn = Math.abs((
-      (Number(currentPlacementFrame.rotation) || 0)
-      + (Number(placement.elementRotation) || 0)
-    ) % 180) === 90;
-    const paintedWidth = Number(quarterTurn ? paintedRect?.height : paintedRect?.width)
-      || Number(editorNode?.offsetWidth) || Number(visibleBox?.width) || 0;
-    const paintedHeight = Number(quarterTurn ? paintedRect?.width : paintedRect?.height)
-      || Number(editorNode?.offsetHeight) || Number(visibleBox?.height) || 0;
-    const visibleBounds = {
-      ...placement.canonicalBounds,
-      width: Math.max(
-        placement.canonicalBounds.width,
-        paintedWidth / currentPlacementFrame.scale,
-      ),
-      height: Math.max(
-        placement.canonicalBounds.height,
-        paintedHeight / currentPlacementFrame.scale,
-      ),
-    };
+    setPathologicalPaste(null);
     geometryGesture = {
-      kind,
+      ...gesture,
+      pointerId: event.pointerId,
       clientX: event.clientX,
       clientY: event.clientY,
-      // Begin from the painted box, not merely the stored minimum. Exact
-      // shaping can make the live editor taller, and the corner must follow
-      // the pointer from the first pixel instead of consuming that difference.
-      bounds: visibleBounds,
-      richText: structuredClone(richText),
-      minimum: {
-        width: Math.max(24 / currentPlacementFrame.scale, 12),
-        height: Math.max(18 / currentPlacementFrame.scale, 8),
-      },
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const handleGeometryKeyDown = (kind, event) => {
+    const displayDelta = displayArrowDelta(event.key, (event.shiftKey ? 10 : 1)
+      * (currentPlacementFrame?.scale || 1));
+    if (!displayDelta || !currentPlacementFrame) return;
+    const gesture = createGeometryGesture(kind);
+    if (!gesture) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPathologicalPaste(null);
+    const canonicalDelta = canonicalDeltaFromDisplayDelta(displayDelta, currentPlacementFrame);
+    if (applyGeometryDelta(gesture, canonicalDelta)) recordFinishedGeometryGesture(gesture);
+  };
+
+  createEffect(() => {
+    const placement = editorPlacement();
+    const document = richTextDocument();
+    const identity = placement
+      ? `${placement.documentId}:${placement.pageNum}:${placement.sessionGeneration}` : '';
+    if (!directManipulationEnabled() || !placement || !document) {
+      initialManipulation = null;
+      initialManipulationIdentity = '';
+      return;
+    }
+    if (identity === initialManipulationIdentity) return;
+    initialManipulationIdentity = identity;
+    initialManipulation = {
+      document: structuredClone(document),
+      geometry: editorGeometrySnapshot(document, placement),
+    };
+  });
+
+  const resetGeometryFromHandle = (kind, event) => {
+    const gesture = createGeometryGesture(kind);
+    if (!gesture || !initialManipulation?.geometry) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPathologicalPaste(null);
+    const target = initialManipulation.geometry.canonicalBounds;
+    const delta = kind === 'move' ? {
+      x: target.x - gesture.bounds.x,
+      y: target.y - gesture.bounds.y,
+    } : {
+      x: target.width - gesture.bounds.width,
+      y: target.height - gesture.bounds.height,
+    };
+    if (applyGeometryDelta(gesture, delta)) recordFinishedGeometryGesture(gesture);
+  };
+
+  const graphemeOffsetsForLine = (line) => {
+    const revision = richTextDraftRevision();
+    if (cachedLineRevision !== revision) {
+      cachedLineRevision = revision;
+      lineGraphemeOffsetCache.clear();
+    }
+    const lineIndex = Number(line.dataset.richLineIndex);
+    const value = line.textContent.replaceAll('\u200b', '');
+    const cached = lineGraphemeOffsetCache.get(lineIndex);
+    if (cached?.value === value) return cached.offsets;
+    const offsets = [0];
+    let codeUnits = 0;
+    for (const unit of graphemes(value)) {
+      codeUnits += unit.length;
+      offsets.push(codeUnits);
+    }
+    lineGraphemeOffsetCache.set(lineIndex, { value, offsets });
+    return offsets;
+  };
+
+  const rawOffsetForCanonicalCodeUnits = (value, canonicalTarget) => {
+    let canonicalOffset = 0;
+    let rawOffset = 0;
+    while (rawOffset < value.length && canonicalOffset < canonicalTarget) {
+      if (value[rawOffset] !== '\u200b') canonicalOffset += 1;
+      rawOffset += 1;
+    }
+    return rawOffset;
   };
 
   const pointFromDom = (node, offset) => {
@@ -510,9 +1121,18 @@ export default function PdfTextEditOverlay() {
     const range = document.createRange();
     range.setStart(line, 0);
     try { range.setEnd(node, offset); } catch { return null; }
+    const prefixCodeUnits = range.toString().replaceAll('\u200b', '').length;
+    const offsets = graphemeOffsetsForLine(line);
+    let low = 0;
+    let high = offsets.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (offsets[middle] <= prefixCodeUnits) low = middle + 1;
+      else high = middle;
+    }
     return {
       line: Number(line.dataset.richLineIndex),
-      offset: graphemeLength(range.toString().replaceAll('\u200b', '')),
+      offset: Math.max(0, low - 1),
     };
   };
 
@@ -568,18 +1188,18 @@ export default function PdfTextEditOverlay() {
     const range = document.createRange();
     const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
-    let remaining = point.offset;
+    const offsets = graphemeOffsetsForLine(target);
+    let remainingCodeUnits = offsets[Math.max(0, Math.min(point.offset, offsets.length - 1))];
     while (node) {
-      const length = graphemeLength(node.textContent.replaceAll('\u200b', ''));
-      if (remaining <= length) break;
-      remaining -= length;
+      const length = node.textContent.replaceAll('\u200b', '').length;
+      if (remainingCodeUnits <= length) break;
+      remainingCodeUnits -= length;
       node = walker.nextNode();
     }
     node ||= target.querySelector('[data-rich-run]')?.firstChild;
     if (!node) return;
-    const codeUnits = graphemes(node.textContent.replaceAll('\u200b', ''))
-      .slice(0, remaining).reduce((sum, unit) => sum + unit.length, 0);
-    range.setStart(node, Math.min(codeUnits, node.textContent.length));
+    const rawOffset = rawOffsetForCanonicalCodeUnits(node.textContent, remainingCodeUnits);
+    range.setStart(node, Math.min(rawOffset, node.textContent.length));
     range.collapse(true);
     const domSelection = window.getSelection();
     domSelection.removeAllRanges();
@@ -588,7 +1208,7 @@ export default function PdfTextEditOverlay() {
     syncRichSelection();
   });
 
-  const insertCanonicalRichText = (insertedText) => {
+  const insertCanonicalRichText = (insertedText, { historyKind = 'typing' } = {}) => {
     syncRichDocument();
     syncRichSelection();
     const current = richTextDocument();
@@ -606,7 +1226,7 @@ export default function PdfTextEditOverlay() {
     const caret = next === inserted.document
       ? inserted.selection.anchor
       : caretAfterReflow(inserted.document, next, inserted.selection.anchor);
-    updateRichTextDraft(next);
+    updateRichTextDraft(next, { historyKind });
     updateRichTextSelection({ anchor: caret, focus: caret });
     pendingInputContext = null;
     restoreRichCaret(caret);
@@ -615,28 +1235,117 @@ export default function PdfTextEditOverlay() {
 
   const captureRichHardBreak = (event) => {
     if (!richEditorRef || !richEditorRef.contains(event.target)
-        || event.key !== 'Enter' || event.metaKey || event.ctrlKey) return;
+        || !shouldInsertRichHardBreak(event, {
+          singleLine: editorOptions().singleLine === true,
+        })) return;
     event.preventDefault();
     event.stopImmediatePropagation();
+    setPathologicalPaste(null);
     insertCanonicalRichText('\n');
   };
 
-  onMount(() => {
-    document.addEventListener('selectionchange', syncRichSelection);
-    document.addEventListener('keydown', captureRichHardBreak, true);
-    const placementLoop = () => {
-      syncPagePlacement();
-      placementFrameId = requestAnimationFrame(placementLoop);
+  const scheduleSelectionSync = () => {
+    if (selectionFrameId) return;
+    selectionFrameId = requestAnimationFrame(() => {
+      selectionFrameId = 0;
+      syncRichSelection();
+    });
+  };
+
+  // Global listeners and geometry observers exist only for an active editor.
+  createEffect(() => {
+    if (!active()) return;
+    // Session identity, not each immutable rich-text draft revision, owns the
+    // listener lifecycle. Reinstalling listeners on every keystroke used to
+    // cancel the placement frame that was about to attach the portal.
+    const observedMountGeneration = editorMountGeneration();
+    const observedSessionGeneration = editorPlacement()?.sessionGeneration ?? null;
+    const richEditorActive = Boolean(untrack(richTextDocument));
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null : new ResizeObserver(markPlacementDirty);
+    let observedPageContainer = null;
+    const mutationObserver = typeof MutationObserver === 'undefined'
+      ? null : new MutationObserver(() => {
+        observePlacementContainers();
+        markPlacementDirty();
+      });
+    const observePlacementContainers = () => {
+      if (!mutationObserver) return;
+      const placement = editorPlacement();
+      const singleContainer = document.getElementById('canvas-container');
+      const continuousRoot = document.getElementById('continuous-container');
+      const pageContainer = placement
+        ? document.querySelector(
+          `.page-wrapper[data-page="${placement.pageNum}"] .canvas-container-cont`,
+        )
+        : null;
+      if (singleContainer) mutationObserver.observe(singleContainer, { childList: true });
+      if (continuousRoot) mutationObserver.observe(continuousRoot, { childList: true });
+      if (pageContainer && pageContainer !== observedPageContainer) {
+        observedPageContainer = pageContainer;
+        mutationObserver.observe(pageContainer, { childList: true });
+      }
     };
-    placementFrameId = requestAnimationFrame(placementLoop);
+    queueMicrotask(() => {
+      if (!active()) return;
+      observePlacementContainers();
+      if (portalRef?.parentElement) observer?.observe(portalRef.parentElement);
+      if (richEditorRef || textareaRef) observer?.observe(richEditorRef || textareaRef);
+      markPlacementDirty();
+    });
+    if (richEditorActive) {
+      document.addEventListener('selectionchange', scheduleSelectionSync);
+      document.addEventListener('keydown', captureRichHardBreak, true);
+    }
+    document.addEventListener('scroll', markPlacementDirty, true);
+    document.addEventListener('pointerdown', handleOutsidePointerDown, true);
+    document.addEventListener('mousedown', suppressOutsideApplyFollowup, true);
+    document.addEventListener('click', suppressOutsideApplyFollowup, true);
+    document.addEventListener('focusin', handleOutsideFocusIn, true);
+    window.addEventListener('resize', markPlacementDirty);
+    window.addEventListener('opds:viewport-revision', handleViewportRevision);
+    window.addEventListener('opds:page-rendered', markPlacementDirty);
+    window.addEventListener('opds:dpr-change', markPlacementDirty);
+    onCleanup(() => {
+      if (richEditorActive) {
+        document.removeEventListener('selectionchange', scheduleSelectionSync);
+        document.removeEventListener('keydown', captureRichHardBreak, true);
+      }
+      document.removeEventListener('scroll', markPlacementDirty, true);
+      document.removeEventListener('pointerdown', handleOutsidePointerDown, true);
+      document.removeEventListener('mousedown', suppressOutsideApplyFollowup, true);
+      document.removeEventListener('click', suppressOutsideApplyFollowup, true);
+      document.removeEventListener('focusin', handleOutsideFocusIn, true);
+      window.removeEventListener('resize', markPlacementDirty);
+      window.removeEventListener('opds:viewport-revision', handleViewportRevision);
+      window.removeEventListener('opds:page-rendered', markPlacementDirty);
+      window.removeEventListener('opds:dpr-change', markPlacementDirty);
+      observer?.disconnect();
+      mutationObserver?.disconnect();
+      if (selectionFrameId) cancelAnimationFrame(selectionFrameId);
+      selectionFrameId = 0;
+      restoreFocusAfterHostTransition = false;
+      if (shouldCancelPageTextEditPlacement({
+        active: active(),
+        observedMountGeneration,
+        currentMountGeneration: editorMountGeneration(),
+        observedSessionGeneration,
+        currentSessionGeneration: editorPlacement()?.sessionGeneration ?? null,
+      })) placementController.cancel();
+    });
   });
+
   onCleanup(() => {
-    document.removeEventListener('selectionchange', syncRichSelection);
-    document.removeEventListener('keydown', captureRichHardBreak, true);
-    if (placementFrameId) cancelAnimationFrame(placementFrameId);
+    if (portalMountTimerId) clearTimeout(portalMountTimerId);
+    portalMountTimerId = 0;
+    if (contentResizeFrameId) cancelAnimationFrame(contentResizeFrameId);
+    contentResizeFrameId = 0;
+    placementController.dispose();
+    cancelLatestNativeLayout();
     for (const attachment of editorOptions().attachedPageElements || []) {
       attachment?.element?.remove?.();
     }
+    queueMicrotask(() => removeEmptyPageTextEditHosts());
   });
 
   const syncRichDocument = () => {
@@ -645,7 +1354,7 @@ export default function PdfTextEditOverlay() {
     const pendingSelection = pendingInputContext?.selection || richTextSelection();
     const insertion = pendingInputContext?.context || richTextInsertionContext(
       current,
-      pendingSelection?.anchor || { line: 0, offset: 0 },
+      pendingSelection ? orderedRichTextSelectionStart(pendingSelection) : { line: 0, offset: 0 },
       typingStyle(),
     );
     const fallback = insertion.runStyle;
@@ -736,10 +1445,13 @@ export default function PdfTextEditOverlay() {
     updateRichTextDraft(draft, { preserveDom: true });
     if (expandable) {
       exactRequiredHeight = draft.region.height;
-      lastExpandableInputKey = '';
+      lastExpandableFingerprint = '';
       scheduleExpandableLayout(draft);
     }
-    if (editorOptions().reflowWidth) queueMicrotask(resizeRichToContent);
+    // Manual-line native drafts do not reflow, so their live outline must be
+    // resized from the just-edited DOM before the asynchronous exact-layout
+    // result returns. Exact validation still owns whether Apply is allowed.
+    if (editorOptions().reflowWidth || expandable) queueMicrotask(resizeRichToContent);
     queueMicrotask(syncRichSelection);
     pendingInputContext = null;
   };
@@ -750,9 +1462,14 @@ export default function PdfTextEditOverlay() {
     syncRichSelection();
     const selection = richTextSelection();
     if (!selection) return;
+    setPathologicalPaste(null);
     pendingInputContext = {
       selection: structuredClone(selection),
-      context: richTextInsertionContext(current, selection.anchor, typingStyle()),
+      context: richTextInsertionContext(
+        current,
+        orderedRichTextSelectionStart(selection),
+        typingStyle(),
+      ),
     };
     if (event.inputType === 'insertParagraph' || event.inputType === 'insertLineBreak') {
       event.preventDefault();
@@ -760,24 +1477,214 @@ export default function PdfTextEditOverlay() {
     }
   };
 
-  const insertTransferText = (event, value) => {
-    if (!richEditorRef?.contains(event.target)) return;
+  const placeRichDropCaret = (clientX, clientY) => {
+    if (!richEditorRef || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return false;
+    let node = null;
+    let offset = 0;
+    const position = document.caretPositionFromPoint?.(clientX, clientY);
+    if (position) {
+      node = position.offsetNode;
+      offset = position.offset;
+    } else {
+      const caretRange = document.caretRangeFromPoint?.(clientX, clientY);
+      node = caretRange?.startContainer || null;
+      offset = caretRange?.startOffset || 0;
+    }
+    if (!node || !richEditorRef.contains(node)) return false;
+    const range = document.createRange();
+    try {
+      if (node === richEditorRef) {
+        const lineElements = [...richEditorRef.children];
+        if (lineElements.length === 0) return false;
+        const atStart = offset <= 0;
+        const line = atStart
+          ? lineElements[0] : lineElements[Math.min(lineElements.length - 1, offset - 1)];
+        range.selectNodeContents(line);
+        range.collapse(atStart);
+      } else {
+        range.setStart(node, offset);
+        range.collapse(true);
+      }
+    } catch { return false; }
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    syncRichSelection();
+    return true;
+  };
+
+  const rememberPathologicalPaste = (details, recovery) => {
+    if (!details.pathological) return;
+    setPathologicalPaste({
+      ...details,
+      ...recovery,
+      semanticSignature: recovery.kind === 'rich'
+        ? semanticRichTextSignature(richTextDocument()) : null,
+    });
+    queueMicrotask(() => {
+      resizeToContent();
+      resizeRichToContent();
+    });
+  };
+
+  const insertTransferText = (event, value, { atDropPoint = false } = {}) => {
+    if (!richEditorRef?.contains(event.target) || typeof value !== 'string' || value.length === 0) return;
     event.preventDefault();
     event.stopPropagation();
-    insertCanonicalRichText(String(value || '').replaceAll('\r\n', '\n').replaceAll('\r', '\n'));
+    // A drop is coordinate-owned. If WebKit cannot resolve that coordinate to
+    // this editor, fail closed instead of inserting at an unrelated stale
+    // selection.
+    if (atDropPoint && !placeRichDropCaret(event.clientX, event.clientY)) return;
+    const details = pathologicalPasteDetails(value);
+    if (insertCanonicalRichText(details.text, { historyKind: 'paste' })) {
+      rememberPathologicalPaste(details, { kind: 'rich' });
+    }
   };
+
+  const handlePlainPaste = (event) => {
+    const details = pathologicalPasteDetails(event.clipboardData?.getData('text/plain'));
+    if (!details.pathological || !textareaRef) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const beforeText = text();
+    const start = Math.max(0, Number(textareaRef.selectionStart) || 0);
+    const end = Math.max(start, Number(textareaRef.selectionEnd) || start);
+    const nextText = `${beforeText.slice(0, start)}${details.text}${beforeText.slice(end)}`;
+    const caret = start + details.text.length;
+    setText(nextText);
+    rememberPathologicalPaste(details, {
+      kind: 'plain',
+      beforeText,
+      beforeSelection: { start, end },
+      afterText: nextText,
+    });
+    queueMicrotask(() => {
+      textareaRef?.setSelectionRange?.(caret, caret);
+      resizeToContent();
+    });
+  };
+
+  const undoPathologicalPaste = () => {
+    const recovery = pathologicalPaste();
+    if (!recovery) return;
+    if (recovery.kind === 'rich') {
+      undoRichTextDraft();
+    } else if (recovery.kind === 'plain') {
+      setText(recovery.beforeText);
+      queueMicrotask(() => {
+        textareaRef?.setSelectionRange?.(
+          recovery.beforeSelection.start,
+          recovery.beforeSelection.end,
+        );
+        textareaRef?.focus?.({ preventScroll: true });
+      });
+    }
+    setPathologicalPaste(null);
+    queueMicrotask(() => {
+      resizeToContent();
+      resizeRichToContent();
+    });
+  };
+
+  const approvedExpansion = () => exactExpansionCandidate({
+    placement: editorPlacement(),
+    layoutState: editorLayoutState(),
+    columnBounds: editorOptions().expandableRegion?.columnBounds,
+  });
+
+  const expandPathologicalPasteBox = () => {
+    const candidate = approvedExpansion();
+    const gesture = createGeometryGesture('resize');
+    if (!candidate || !gesture) return;
+    const delta = {
+      x: candidate.width - gesture.bounds.width,
+      y: candidate.height - gesture.bounds.height,
+    };
+    setPathologicalPaste(null);
+    if (applyGeometryDelta(gesture, delta)) recordFinishedGeometryGesture(gesture);
+  };
+
+  const pathologicalPasteMessage = () => {
+    const recovery = pathologicalPaste();
+    if (!recovery) return '';
+    const locale = hardeningLanguage();
+    const thresholds = [
+      recovery.overGraphemeLimit && tHardening('textEditor.pathologicalPaste.graphemeThreshold', {
+        limit: PATHOLOGICAL_PASTE_GRAPHEME_LIMIT.toLocaleString(locale),
+      }),
+      recovery.overLineLimit && tHardening('textEditor.pathologicalPaste.lineThreshold', {
+        limit: PATHOLOGICAL_PASTE_LINE_LIMIT.toLocaleString(locale),
+      }),
+    ].filter(Boolean);
+    const formattedThresholds = new Intl.ListFormat(locale, {
+      style: 'long',
+      type: 'conjunction',
+    }).format(thresholds);
+    return tHardening(approvedExpansion()
+      ? 'textEditor.pathologicalPaste.messageWithExpansion'
+      : 'textEditor.pathologicalPaste.message', {
+      graphemeCount: recovery.graphemeCount.toLocaleString(locale),
+      lineCount: recovery.lineCount.toLocaleString(locale),
+      thresholds: formattedThresholds,
+    });
+  };
+
+  const visibleEditorStatus = () => resolveEditorStatus({
+    editorStatus: editorStatus(),
+    statusKind: editorStatusKind(),
+    layoutState: editorLayoutState(),
+    pathologicalStatus: pathologicalPaste() ? pathologicalPasteMessage() : '',
+    previewOverflow: previewOverflow(),
+    overflowStatus: tHardening('textEditor.status.ocrOverflow'),
+    defaultStatus: editorOptions().status || (editorOptions().expandableRegion
+      ? editorOptions().expandableRegion?.manualLineBreaks
+        ? documentNeedsContrastAid(richTextDocument(), editorBackground())
+          ? tHardening('textEditor.status.nativeManualContrast')
+          : tHardening('textEditor.status.nativeManual')
+        : documentNeedsContrastAid(richTextDocument(), editorBackground())
+          ? tHardening('textEditor.status.nativeGrowingContrast')
+          : tHardening('textEditor.status.nativeGrowing')
+      : tHardening('textEditor.status.scannedEstimate')),
+  });
+
+  createEffect(() => {
+    const recovery = pathologicalPaste();
+    const document = richTextDocument();
+    if (recovery?.kind === 'rich' && document
+        && recovery.semanticSignature !== semanticRichTextSignature(document)) {
+      setPathologicalPaste(null);
+    }
+  });
 
   const editorBackground = () => editorOptions().expandableRegion?.editorBackground
     || editorOptions().editorBackground
     || '#ffffff';
   const runPresentation = (run) => editableRunPresentation(run.color, editorBackground());
-  const richEditorStyle = () => ({
-    ...liveEditorStyle(),
-    background: editorBackground(),
-    'padding-left': `${inkInsetsPx()?.left ?? editorOptions().expandableRegion?.inkPaddingPx ?? 0}px`,
-    'padding-right': `${inkInsetsPx()?.right ?? editorOptions().expandableRegion?.inkPaddingPx ?? 0}px`,
-    'font-synthesis': 'none',
-  });
+  const richEditorStyle = () => {
+    const base = liveEditorStyle();
+    const box = editorBox();
+    const manualLineBreaks = editorOptions().expandableRegion?.manualLineBreaks === true;
+    return {
+      ...base,
+      background: editorBackground(),
+      'padding-left': `${contentInsetsPx()?.left
+        ?? editorOptions().expandableRegion?.contentInsetPx ?? 0}px`,
+      'padding-right': `${contentInsetsPx()?.right
+        ?? editorOptions().expandableRegion?.contentInsetPx ?? 0}px`,
+      'padding-top': `${contentInsetsPx()?.top
+        ?? editorOptions().expandableRegion?.contentInsetPx ?? 0}px`,
+      'padding-bottom': `${contentInsetsPx()?.bottom
+        ?? editorOptions().expandableRegion?.contentInsetPx ?? 0}px`,
+      'font-synthesis': 'none',
+      'max-width': pathologicalPaste() && box
+        ? `${box.width}px` : (manualLineBreaks ? 'none' : base['max-width']),
+      'max-height': pathologicalPaste() && box ? `${box.height}px` : 'none',
+      ...(box ? {
+        width: `${box.width}px`,
+        height: `${box.height}px`,
+      } : {}),
+    };
+  };
   const runStyle = (run) => ({
     'font-family': run.faceId.includes('mono') ? '"Liberation Mono", monospace'
       : run.faceId.includes('serif') ? '"Liberation Serif", serif' : '"Liberation Sans", sans-serif',
@@ -847,45 +1754,76 @@ export default function PdfTextEditOverlay() {
   });
 
   return (
-    <Show when={active()}>
-      <>
-        <div ref={portalRef} class="pdf-text-edit-portal" data-page={editorPlacement()?.pageNum}>
+    <Show when={active() ? editorMountGeneration() : 0} keyed>
+      {() => <>
+        <div ref={capturePortalElement} class="pdf-text-edit-portal" data-page={editorPlacement()?.pageNum}
+          data-editor-mount-generation={editorMountGeneration()}
+          data-text-edit-focus-boundary="true">
           <Show when={editorOptions().fixedRegion && commitBoundsStyle()}>
             <div class="pdf-text-edit-commit-bounds" style={commitBoundsStyle()} aria-hidden="true" />
           </Show>
           <Show when={richTextDocument()} fallback={
             <textarea
               ref={textareaRef}
-              class={`pdf-text-editor${previewOverflow() ? ' pdf-text-editor-overflow' : ''}`}
+              class={`pdf-text-editor${previewOverflow() ? ' pdf-text-editor-overflow' : ''}${pathologicalPaste() ? ' pdf-text-editor-pathological-paste' : ''}`}
               dir={editorOptions().direction || 'auto'}
               wrap={editorOptions().fixedRegion ? 'soft' : 'off'}
               spellcheck={false}
-              aria-label={editorOptions().ariaLabel || 'Edit PDF text'}
+              aria-label={editorOptions().ariaLabel || tHardening('textEditor.aria.editPlain')}
               aria-multiline={editorOptions().singleLine ? 'false' : 'true'}
-              aria-describedby={(editorOptions().singleLine || editorOptions().fixedRegion)
-                ? 'scanned-text-edit-status' : undefined}
+              aria-describedby={[
+                (editorOptions().singleLine || editorOptions().fixedRegion)
+                  && 'scanned-text-edit-status',
+                pathologicalPaste() && 'pdf-text-pathological-paste-status',
+              ].filter(Boolean).join(' ') || undefined}
               style={liveEditorStyle()}
               value={text()}
-              onInput={(e) => { setText(e.target.value); queueMicrotask(resizeToContent); }}
+              onInput={(e) => {
+                if (pathologicalPaste()?.kind === 'plain'
+                    && e.target.value !== pathologicalPaste().afterText) setPathologicalPaste(null);
+                setText(e.target.value);
+                queueMicrotask(resizeToContent);
+              }}
+              onPaste={handlePlainPaste}
               onKeyDown={handleKeyDown}
               onBlur={handleBlur}
             />
           }>
             <div
               ref={richEditorRef}
-              class={`pdf-text-editor rich-text-editor${editorOptions().reflowWidth ? ' rich-text-editor-reflow' : ''}${editorOptions().expandableRegion?.manualLineBreaks ? ' rich-text-editor-manual-lines' : ''}${previewOverflow() ? ' pdf-text-editor-overflow' : ''}${editorOptions().expandableRegion && editorLayoutState()?.valid === false ? ' pdf-text-editor-rejected' : ''}`}
+              class={`pdf-text-editor rich-text-editor${editorOptions().reflowWidth ? ' rich-text-editor-reflow' : ''}${editorOptions().expandableRegion?.manualLineBreaks ? ' rich-text-editor-manual-lines' : ''}${previewOverflow() ? ' pdf-text-editor-overflow' : ''}${pathologicalPaste() ? ' pdf-text-editor-pathological-paste' : ''}${editorOptions().expandableRegion && editorLayoutState()?.valid === false ? ' pdf-text-editor-rejected' : ''}`}
               contentEditable={true}
+              dir={editorOptions().direction || 'auto'}
               role="textbox"
-              aria-label={editorOptions().ariaLabel || 'Edit formatted PDF text'}
+              aria-label={editorOptions().ariaLabel || tHardening('textEditor.aria.editFormatted')}
               aria-multiline={editorOptions().singleLine ? 'false' : 'true'}
-              aria-describedby={editorOptions().expandableRegion ? 'native-text-edit-status' : undefined}
+              aria-describedby={[
+                editorOptions().expandableRegion && 'native-text-edit-status',
+                pathologicalPaste() && 'pdf-text-pathological-paste-status',
+              ].filter(Boolean).join(' ') || undefined}
               spellcheck={false}
               style={richEditorStyle()}
               onBeforeInput={captureRichBeforeInput}
               onPaste={(event) => insertTransferText(event, event.clipboardData?.getData('text/plain'))}
-              onDrop={(event) => insertTransferText(event, event.dataTransfer?.getData('text/plain'))}
+              onDrop={(event) => insertTransferText(
+                event,
+                event.dataTransfer?.getData('text/plain'),
+                { atDropPoint: true },
+              )}
               onInput={syncRichDocument}
-              on:keydown={(event) => {
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  cancelActiveTextEditing('escape');
+                  return;
+                }
+                if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  applyTextEdit();
+                  return;
+                }
                 if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
                   event.preventDefault();
                   if (event.shiftKey) redoRichTextDraft();
@@ -941,40 +1879,78 @@ export default function PdfTextEditOverlay() {
               <button
                 type="button"
                 class="pdf-text-editor-move-handle"
-                aria-label="Move text box"
-                title="Drag to move text box"
+                aria-label={tHardening('textEditor.handles.move')}
+                title={tHardening('textEditor.handles.moveHint')}
                 onPointerDown={(event) => startGeometryGesture('move', event)}
-                onPointerMove={(event) => applyGeometryGesture(event.clientX, event.clientY)}
+                onPointerMove={applyGeometryGesture}
                 onPointerUp={finishGeometryGesture}
-                onPointerCancel={finishGeometryGesture}
+                onPointerCancel={cancelGeometryGesture}
+                onLostPointerCapture={finishGeometryGesture}
+                onKeyDown={(event) => handleGeometryKeyDown('move', event)}
+                onDblClick={(event) => resetGeometryFromHandle('move', event)}
               />
               <button
                 type="button"
                 class="pdf-text-editor-resize-handle"
-                aria-label="Resize text box"
-                title="Drag to resize text box"
+                aria-label={tHardening('textEditor.handles.resize')}
+                title={tHardening('textEditor.handles.resizeHint')}
                 onPointerDown={(event) => startGeometryGesture('resize', event)}
-                onPointerMove={(event) => applyGeometryGesture(event.clientX, event.clientY)}
+                onPointerMove={applyGeometryGesture}
                 onPointerUp={finishGeometryGesture}
-                onPointerCancel={finishGeometryGesture}
+                onPointerCancel={cancelGeometryGesture}
+                onLostPointerCapture={finishGeometryGesture}
+                onKeyDown={(event) => handleGeometryKeyDown('resize', event)}
+                onDblClick={(event) => resetGeometryFromHandle('resize', event)}
               />
             </div>
           </Show>
+          <div
+            class="pdf-text-editor-actions"
+            style={actionStyle()}
+          >
+            <Show when={pathologicalPaste()}>
+              <div
+                id="pdf-text-pathological-paste-status"
+                class="pdf-text-editor-paste-recovery"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                data-grapheme-count={pathologicalPaste().graphemeCount}
+                data-line-count={pathologicalPaste().lineCount}
+              >
+                <span>{pathologicalPasteMessage()}</span>
+                <div class="pdf-text-editor-paste-actions">
+                  <button type="button" onClick={undoPathologicalPaste}>
+                    {tHardening('textEditor.pathologicalPaste.undo')}
+                  </button>
+                  <Show when={approvedExpansion()}>
+                    <button type="button" onClick={expandPathologicalPasteBox}>
+                      {tHardening('textEditor.pathologicalPaste.expand')}
+                    </button>
+                  </Show>
+                </div>
+              </div>
+            </Show>
+            <button
+              type="button"
+              class="pdf-text-editor-apply"
+              disabled={Boolean(editorOptions().expandableRegion
+                && (editorLayoutState()?.pending || editorLayoutState()?.valid === false))}
+              onClick={applyTextEdit}
+            >{tHardening('textEditor.actions.apply')}</button>
+            <button
+              type="button"
+              class="pdf-text-editor-cancel"
+              onClick={() => cancelActiveTextEditing('cancel-button')}
+            >{tHardening('textEditor.actions.cancel')}</button>
+          </div>
         </div>
         <Show when={editorOptions().singleLine || editorOptions().fixedRegion || editorOptions().expandableRegion}>
           <div id={editorOptions().expandableRegion ? 'native-text-edit-status' : 'scanned-text-edit-status'} class="ocr-review-live-region" role="status" aria-live="polite" aria-atomic="true">
-            {editorStatus() || editorOptions().status || (editorOptions().expandableRegion
-              ? editorOptions().expandableRegion?.manualLineBreaks
-                ? documentNeedsContrastAid(richTextDocument(), editorBackground())
-                  ? 'Editing native text in a manual-line text box. Press Enter for a new line. Low-contrast source colors have an editing-only backing; saved colors remain unchanged.'
-                  : 'Editing native text in a manual-line text box. Press Enter for a new line.'
-                : documentNeedsContrastAid(richTextDocument(), editorBackground())
-                  ? 'Editing native text. The width is fixed and the region grows downward. Low-contrast source colors have an editing-only backing; saved colors remain unchanged.'
-                  : 'Editing native text. The width is fixed and the region grows downward.'
-              : 'Editing scanned text. Font properties are estimates.')}
+            {visibleEditorStatus()}
           </div>
         </Show>
-      </>
+      </>}
     </Show>
   );
 }

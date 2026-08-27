@@ -107,6 +107,10 @@ await run('/usr/bin/codesign', [
   appPath,
 ]);
 await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
+// Exercise the final, signed nested artifact. A structurally valid signature is
+// insufficient if a later deep-sign step stripped the worker's library-
+// validation entitlement or if the resource landed outside its lookup roots.
+await run(bundledWorker, ['--probe-pdfium']);
 
 const apiCredentials = process.env.APPLE_API_KEY
   && process.env.APPLE_API_ISSUER

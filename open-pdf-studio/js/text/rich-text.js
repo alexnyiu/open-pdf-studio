@@ -18,6 +18,14 @@ export const DEFAULT_TEXT_FORMAT_CAPABILITIES = Object.freeze({
   directions: Object.freeze(['ltr']),
 });
 
+/** Plain Enter inserts a canonical hard break only in multiline rich editors. */
+export function shouldInsertRichHardBreak(event, { singleLine = false } = {}) {
+  return event?.key === 'Enter'
+    && event.metaKey !== true
+    && event.ctrlKey !== true
+    && singleLine !== true;
+}
+
 const FACE_IDS = new Set([
   'liberation-sans-regular', 'liberation-sans-bold', 'liberation-sans-italic',
   'liberation-sans-bold-italic', 'liberation-serif-regular', 'liberation-serif-bold',
@@ -30,9 +38,61 @@ const STYLE_KEYS = Object.freeze([
 ]);
 
 function clone(value) {
-  return typeof structuredClone === 'function'
-    ? structuredClone(value)
-    : JSON.parse(JSON.stringify(value));
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Solid stores expose JSON-shaped reactive proxies. They deliberately
+      // cannot cross the structured-clone boundary, so normalize them before
+      // they enter persisted document or undo state.
+    }
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+export function cloneRichTextDocument(document) {
+  const copy = clone(document);
+  assertRichTextDocumentV2(copy);
+  return copy;
+}
+
+/** Detach one JSON-only edit record from reactive owner-document storage. */
+export function cloneTextEditRecord(record) {
+  return JSON.parse(JSON.stringify(record));
+}
+
+/** Detach the complete owned-text state before persistence or native IPC. */
+export function cloneOwnedTextEditPersistenceState(documentState) {
+  return {
+    records: (documentState?.textEdits || []).map((record) => cloneTextEditRecord(record)),
+    previousManifest: documentState?.textEditManifest
+      ? JSON.parse(JSON.stringify(documentState.textEditManifest))
+      : null,
+  };
+}
+
+/**
+ * Remove one owned record only after its undo snapshot is safely detached.
+ * `recordRemoval` must synchronously accept the plain snapshot and its index.
+ */
+export function removeTextEditRecordFromDocument(documentState, recordId, recordRemoval) {
+  if (!documentState || !Array.isArray(documentState.textEdits)) return false;
+  if (typeof recordRemoval !== 'function') throw new TypeError('A text-edit removal recorder is required');
+  const index = documentState.textEdits.findIndex((entry) => String(entry?.id) === String(recordId));
+  if (index < 0) return false;
+
+  // Solid's browser store returns a proxy from splice(). Snapshot before the
+  // mutation so a clone failure can never leave the owner record removed.
+  const snapshot = cloneTextEditRecord(documentState.textEdits[index]);
+  const [removed] = documentState.textEdits.splice(index, 1);
+  try {
+    if (recordRemoval(snapshot, index) === true) return true;
+  } catch (error) {
+    documentState.textEdits.splice(index, 0, removed);
+    throw error;
+  }
+  documentState.textEdits.splice(index, 0, removed);
+  return false;
 }
 
 function stableId(prefix, value) {
@@ -45,11 +105,14 @@ function stableId(prefix, value) {
   return `${prefix}-${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
+const graphemeSegmenter = typeof Intl !== 'undefined' && Intl.Segmenter
+  ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  : null;
+
 export function graphemes(text) {
   const value = String(text ?? '');
-  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-    return [...segmenter.segment(value)].map((entry) => entry.segment);
+  if (graphemeSegmenter) {
+    return [...graphemeSegmenter.segment(value)].map((entry) => entry.segment);
   }
   return Array.from(value);
 }
@@ -237,6 +300,12 @@ export function richTextInsertionContext(document, point, typingStyle = null) {
     lineStyle: {
       alignment: line.alignment,
       baselineAdvance: line.baselineAdvance,
+      lineSpacingMultiplier: (() => {
+        const maximumRunSize = Math.max(...line.runs.map((run) => Number(run.size) || 0));
+        return maximumRunSize > 0
+          ? Math.round((Number(line.baselineAdvance) / maximumRunSize) * 1e7) / 1e7
+          : null;
+      })(),
     },
     sourceLineId: line.id,
     sourceRunId: sourceRun.id,
@@ -318,8 +387,16 @@ export function textFormatState(document, selection) {
   const selectedLines = document.lines.slice(range.start.line, range.end.line + 1);
   const alignments = new Set(selectedLines.map((line) => line.alignment));
   const advances = new Set(selectedLines.map((line) => line.baselineAdvance));
+  const spacingMultipliers = new Set(selectedLines.map((line) => {
+    const maximumRunSize = Math.max(...line.runs.map((run) => Number(run.size) || 0));
+    return maximumRunSize > 0
+      ? Math.round((Number(line.baselineAdvance) / maximumRunSize) * 1e7) / 1e7
+      : null;
+  }));
   output.alignment = alignments.size === 1 ? [...alignments][0] : null;
   output.baselineAdvance = advances.size === 1 ? [...advances][0] : null;
+  output.lineSpacingMultiplier = spacingMultipliers.size === 1
+    ? [...spacingMultipliers][0] : null;
   return output;
 }
 

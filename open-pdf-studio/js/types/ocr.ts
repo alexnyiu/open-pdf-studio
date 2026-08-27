@@ -218,12 +218,77 @@ export interface OcrPageJobSummary {
     sampleCount: number;
     costsMs: Record<string, number>;
   } | null;
+  performance: {
+    rasterMs: number;
+    childStartupMs: number;
+    modelStartupMs: number;
+    detectionMs: number;
+    recognitionMs: number;
+    validationMs: number;
+    applyMs: number;
+    totalOcrMs: number;
+    lifecycle: unknown[];
+    resources: Record<string, unknown>;
+  } | null;
+}
+
+export interface OcrApplicationStageTimingSummary {
+  source: string;
+  samples: number;
+  totalMs: number;
+  meanMs: number | null;
+  medianMs: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
+}
+
+export interface OcrApplicationPerformanceSummary {
+  contract: 'open-pdf-studio.ocr.application-performance';
+  schemaVersion: 1;
+  expectedPageCount: number;
+  measuredPageCount: number;
+  pageCoverageComplete: boolean;
+  instrumentationAvailable: boolean;
+  failedOpen: boolean;
+  stageOrder: string[];
+  stages: Record<string, OcrApplicationStageTimingSummary>;
+  resourceLifecycle: {
+    pageSamples: number;
+    pagesWithLifecycle: number;
+    lifecycleEvents: number;
+    pagesWithResources: number;
+    instrumentationAvailable: boolean;
+    failedOpen: boolean;
+    cleanup: {
+      jobEnvelopeDroppedPages: number;
+      onnxSessionsReleasedPages: number;
+      transferredBuffersDroppedPages: number;
+      eventListenersRemovedPages: number;
+      offlinePolicyEnforcedPages: number;
+      offlineSelfTestPassedPages: number;
+      duplicateModelInstancePages: number;
+      maximumAdapterInstances: number;
+    };
+  };
+  prefetch: {
+    requested: number;
+    used: number;
+    discarded: number;
+    failed: number;
+    maxBuffered: number;
+    rasterMs: number;
+    bytesPrepared: number;
+    bytesUsed: number;
+    peakBufferedBytes: number;
+    boundedBuffer: boolean;
+  };
 }
 
 export interface OcrDocumentJobSummary {
   jobId: string;
   documentId: string;
   documentGeneration: string;
+  documentLifecycleGeneration: number;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   cancellationReason: string | null;
@@ -238,6 +303,18 @@ export interface OcrDocumentJobSummary {
   };
   appliedPageNumbers: number[];
   rolledBackPageNumbers: number[];
+  prefetch: {
+    requested: number;
+    used: number;
+    discarded: number;
+    failed: number;
+    maxBuffered: number;
+    rasterMs: number;
+    bytesPrepared: number;
+    bytesUsed: number;
+    peakBufferedBytes: number;
+  };
+  performance: OcrApplicationPerformanceSummary;
 }
 
 export type OcrPageScope =
@@ -297,3 +374,32 @@ export interface OcrWorkflowJobState {
 export interface OcrWorkflowSnapshot {
   jobsByDocumentId: Record<string, OcrWorkflowJobState>;
 }
+
+/**
+ * The workflow bridge sends one full snapshot when a subscriber attaches and
+ * document-scoped deltas thereafter. Terminal/removal deltas are delivered
+ * immediately; ordinary progress deltas are coalesced.
+ */
+export type OcrWorkflowUpdate =
+  | { kind: 'snapshot'; snapshot: OcrWorkflowSnapshot }
+  | {
+    kind: 'progress';
+    documentId: string;
+    jobId: string;
+    sequence: number;
+    status: OcrWorkflowJobState['status'];
+    progress: number;
+    pages: OcrPageJobSummary[];
+    counts: Record<OcrApplicationPageState, number>;
+    currentPageNumber: number | null;
+    currentPageState: OcrApplicationPageState;
+    failureDetails: OcrWorkflowFailureDetail[];
+    cancellationAvailable: boolean;
+    cancellationRequested: boolean;
+  }
+  | {
+    kind: 'delta';
+    documentId: string;
+    job: OcrWorkflowJobState | null;
+    terminal: boolean;
+  };

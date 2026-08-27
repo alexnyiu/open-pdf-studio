@@ -1,4 +1,6 @@
-import { onMount, onCleanup } from 'solid-js';
+import { createEffect, onMount, onCleanup } from 'solid-js';
+import { useTranslation } from '../../i18n/useTranslation.js';
+import { useModalStack } from './ModalStackContext.jsx';
 
 // Track when the window last gained focus (shared across all Dialog instances)
 let lastFocusTime = 0;
@@ -6,12 +8,18 @@ function onWindowFocus() { lastFocusTime = Date.now(); }
 window.addEventListener('focus', onWindowFocus);
 
 export default function Dialog(props) {
+  const modalStack = useModalStack();
+  const { t } = useTranslation('common');
   let overlayRef;
   let dialogRef;
   let isDragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
   let previouslyFocused;
+  let wasTop = false;
+  let focusFrame = null;
+
+  const isTopModal = () => modalStack?.isTop?.() ?? true;
 
   function focusableElements() {
     if (!dialogRef) return [];
@@ -21,6 +29,7 @@ export default function Dialog(props) {
   }
 
   function onHeaderMouseDown(e) {
+    if (!isTopModal()) return;
     if (e.target.closest('.modal-close-btn')) return;
     isDragging = true;
     const rect = dialogRef.getBoundingClientRect();
@@ -30,7 +39,7 @@ export default function Dialog(props) {
   }
 
   function onMouseMove(e) {
-    if (!isDragging) return;
+    if (!isTopModal() || !isDragging) return;
     const overlayRect = overlayRef.getBoundingClientRect();
     let newX = e.clientX - overlayRect.left - dragOffsetX;
     let newY = e.clientY - overlayRect.top - dragOffsetY;
@@ -44,6 +53,7 @@ export default function Dialog(props) {
   }
 
   function onMouseUp() {
+    if (!isTopModal()) return;
     isDragging = false;
   }
 
@@ -67,12 +77,13 @@ export default function Dialog(props) {
   }
 
   function onKeyDown(e) {
+    if (!isTopModal()) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       props.onClose?.();
       return;
     }
-    if (e.key === 'Tab' && props.trapFocus) {
+    if (e.key === 'Tab' && props.trapFocus !== false) {
       const focusable = focusableElements();
       if (focusable.length === 0) {
         e.preventDefault();
@@ -105,6 +116,7 @@ export default function Dialog(props) {
   }
 
   function onOverlayMouseDown(e) {
+    if (!isTopModal()) return;
     // If the window just gained focus from this click, only activate — don't interact
     if (Date.now() - lastFocusTime < 300) {
       e.preventDefault();
@@ -120,6 +132,7 @@ export default function Dialog(props) {
   }
 
   function onOverlayDblClick(e) {
+    if (!isTopModal()) return;
     // Block double-click on overlay from reaching the window behind
     if (e.target === overlayRef) {
       e.preventDefault();
@@ -133,14 +146,28 @@ export default function Dialog(props) {
     document.addEventListener('mouseup', onMouseUp);
     document.addEventListener('keydown', onKeyDown);
     window.addEventListener('resize', clampToViewport);
-    // Clamp after first layout (content height is only known then)
-    requestAnimationFrame(() => {
-      clampToViewport();
-      const initial = props.initialFocusSelector
-        ? dialogRef?.querySelector(props.initialFocusSelector)
-        : null;
-      (initial || focusableElements()[0] || dialogRef)?.focus?.();
-    });
+  });
+
+  createEffect(() => {
+    const top = isTopModal();
+    if (overlayRef) {
+      overlayRef.inert = !top;
+      if (top) overlayRef.removeAttribute('aria-hidden');
+      else overlayRef.setAttribute('aria-hidden', 'true');
+    }
+    if (top && !wasTop) {
+      if (focusFrame !== null) cancelAnimationFrame(focusFrame);
+      focusFrame = requestAnimationFrame(() => {
+        focusFrame = null;
+        clampToViewport();
+        const initial = props.initialFocusSelector
+          ? dialogRef?.querySelector(props.initialFocusSelector)
+          : null;
+        (initial || focusableElements()[0] || dialogRef)?.focus?.();
+      });
+    }
+    if (!top) isDragging = false;
+    wasTop = top;
   });
 
   onCleanup(() => {
@@ -148,7 +175,10 @@ export default function Dialog(props) {
     document.removeEventListener('mouseup', onMouseUp);
     document.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('resize', clampToViewport);
-    if (previouslyFocused?.isConnected) previouslyFocused.focus?.();
+    if (focusFrame !== null) cancelAnimationFrame(focusFrame);
+    if (dialogRef?.contains(document.activeElement) && previouslyFocused?.isConnected) {
+      previouslyFocused.focus?.();
+    }
   });
 
   return (
@@ -173,7 +203,7 @@ export default function Dialog(props) {
           onMouseDown={onHeaderMouseDown}
         >
           <h2>{props.title}</h2>
-          <button type="button" class="modal-close-btn" aria-label={props.closeLabel || 'Close'} onClick={() => props.onClose?.()}>
+          <button type="button" class="modal-close-btn" aria-label={props.closeLabel || t('close')} onClick={() => props.onClose?.()}>
             <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2"/></svg>
           </button>
         </div>

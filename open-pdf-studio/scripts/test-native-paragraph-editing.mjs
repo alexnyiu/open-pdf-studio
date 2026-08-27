@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { access } from 'node:fs/promises';
 import { chromium } from 'playwright';
+import { startPlaywrightFailureArtifacts } from './playwright-failure-artifacts.mjs';
 
 let executablePath;
 try {
@@ -14,9 +15,12 @@ const browser = await chromium.launch({
   headless: true,
   ...(executablePath ? { executablePath } : {}),
 });
+let page;
+let failureArtifacts;
 
 try {
-  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+  page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+  failureArtifacts = await startPlaywrightFailureArtifacts(page.context(), 'native-paragraph-editing');
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
   await page.goto('http://127.0.0.1:3041', { waitUntil: 'domcontentloaded' });
@@ -93,7 +97,8 @@ try {
     addSpan('Next row', 300, 245, 70);
 
     state.documents = [{
-      id: 'native-paragraph-test-document', currentPage: 1, scale: 1, viewMode: 'single',
+      id: 'native-paragraph-test-document', lifecycleGeneration: 0,
+      currentPage: 1, scale: 1, viewMode: 'single',
       annotations: [], selectedAnnotations: [], textEdits: [], undoStack: [], redoStack: [],
       pdfDoc: { numPages: 1, getPage: async () => ({
         getTextContent: async () => ({ items: [], styles: {} }),
@@ -136,6 +141,11 @@ try {
   await target.click();
   const editor = page.locator('.pdf-text-editor');
   await editor.waitFor({ state: 'visible' });
+  await page.waitForFunction(() => {
+    const host = document.querySelector('.pdf-text-editor')?.closest('.pdf-text-edit-layer');
+    return host?.dataset.page === '1'
+      && host?.dataset.documentId === 'native-paragraph-test-document';
+  });
   const pageLocalState = await editor.evaluate((node) => ({
     editorPosition: getComputedStyle(node).position,
     portalPosition: getComputedStyle(node.closest('.pdf-text-edit-portal')).position,
@@ -235,6 +245,12 @@ try {
     const bridge = await import('/js/bridge.ts');
     return bridge.getPdfEditorLayoutState()?.pending === false;
   });
+  await page.waitForFunction((minimumWidth) => {
+    const node = document.querySelector('.pdf-text-editor');
+    if (!node) return false;
+    return node.getBoundingClientRect().width > minimumWidth + 10
+      && node.scrollWidth <= node.clientWidth + 2;
+  }, originalEditorBox.width);
   const overlongEditorState = await editor.evaluate((node) => ({
     rect: node.getBoundingClientRect().toJSON(),
     overflow: getComputedStyle(node).overflow,
@@ -275,6 +291,12 @@ try {
     const bridge = await import('/js/bridge.ts');
     return bridge.getPdfEditorLayoutState()?.pending === false;
   });
+  await page.waitForFunction((minimumHeight) => {
+    const node = document.querySelector('.pdf-text-editor');
+    if (!node) return false;
+    return node.getBoundingClientRect().height > minimumHeight + 10
+      && node.scrollHeight <= node.clientHeight + 2;
+  }, originalEditorBox.height);
   const grownEditorState = await editor.evaluate((node) => ({
     rect: node.getBoundingClientRect().toJSON(),
     overflow: getComputedStyle(node).overflow,
@@ -307,6 +329,10 @@ try {
     const bridge = await import('/js/bridge.ts');
     return bridge.getPdfEditorLayoutState()?.pending === false;
   });
+  await page.waitForFunction((maximumHeight) => (
+    (document.querySelector('.pdf-text-editor')?.getBoundingClientRect().height || Infinity)
+      < maximumHeight
+  ), grownEditorState.rect.height);
   const shrunkenEditorBox = await editor.boundingBox();
   assert.ok(shrunkenEditorBox.height < grownEditorState.rect.height,
     'deleting text must shrink the editor after exact layout');
@@ -314,8 +340,33 @@ try {
     `native editor must never shrink below its immutable original height (${shrunkenEditorBox.height} < ${immutableMinimumHeight})`);
   await editor.press('Enter');
   await page.keyboard.type('Edited second line');
-  await page.keyboard.press('Control+Enter');
-  await editor.waitFor({ state: 'detached' });
+  assert.equal(await editor.evaluate((node) => document.activeElement === node), true,
+    'native editor must retain focus while exact layout revisions settle');
+  await editor.press('Control+Enter');
+  try {
+    await editor.waitFor({ state: 'detached' });
+  } catch (error) {
+    const commitState = await page.evaluate(async () => {
+      const bridge = await import('/js/bridge.ts');
+      const sessions = await import('/js/text/text-edit-session.js');
+      const richText = await import('/js/text/rich-text.js');
+      const node = document.querySelector('.pdf-text-editor');
+      const layout = bridge.getPdfEditorLayoutState();
+      const draft = bridge.getPdfEditorRichText();
+      return {
+        layout,
+        draftRegion: draft?.region || null,
+        draftHash: draft ? richText.canonicalRichTextHash(draft) : null,
+        validatedHash: layout?.result?.document
+          ? richText.canonicalRichTextHash(layout.result.document) : null,
+        status: document.getElementById('native-text-edit-status')?.textContent || '',
+        text: bridge.getPdfEditorText(),
+        activeSession: sessions.getActiveTextEditSession(),
+        className: node?.className || '',
+      };
+    });
+    throw new Error(`native editor did not Apply: ${JSON.stringify(commitState)}`, { cause: error });
+  }
 
   const firstCommit = await page.evaluate(async () => {
     const { state } = await import('/js/core/state.ts');
@@ -385,7 +436,7 @@ try {
   assert.equal(secondCommit.id, firstCommit.id);
   assert.equal(secondCommit.ownedLayerId, firstCommit.ownedLayerId);
   assert.equal(secondCommit.provenance, firstCommit.provenance);
-  assert.equal(secondCommit.revision, 2);
+  assert.equal(secondCommit.revision, 2, JSON.stringify({ firstCommit, secondCommit }));
   assert.equal(secondCommit.text, 'Re-edited first line\nRe-edited second line');
   assert.equal(secondCommit.lineCount, 2);
 
@@ -551,7 +602,8 @@ try {
     addSpan('right paragraph final line.', 320, 256, 210, '#111111');
 
     state.documents = [{
-      id: 'native-side-by-side-document', currentPage: 1, scale: 1, viewMode: 'single',
+      id: 'native-side-by-side-document', lifecycleGeneration: 0,
+      currentPage: 1, scale: 1, viewMode: 'single',
       annotations: [], selectedAnnotations: [], textEdits: [], undoStack: [], redoStack: [],
       pdfDoc: { numPages: 1, getPage: async () => ({
         getTextContent: async () => ({ items: [], styles: {} }),
@@ -572,15 +624,20 @@ try {
     'side-by-side paragraph outline must stop before the neighboring column');
   await leftTarget.click();
   await editor.waitFor({ state: 'visible' });
+  await page.waitForFunction(() => {
+    const host = document.querySelector('.pdf-text-editor')?.closest('.pdf-text-edit-layer');
+    return host?.dataset.page === '1'
+      && host?.dataset.documentId === 'native-side-by-side-document';
+  });
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
   assert.match(await editor.innerText(), /Left paragraph first line/u);
   assert.doesNotMatch(await editor.innerText(), /Right paragraph/u);
   const sideEditorBox = await editor.boundingBox();
   assert.ok(sideEditorBox.x + sideEditorBox.width < rightTargetBox.x,
     'native editor width must remain inside its inferred column');
-  await page.waitForFunction(async () => {
-    const bridge = await import('/js/bridge.ts');
-    return bridge.getPdfEditorLayoutState()?.pending === false;
-  });
   const colorState = await editor.evaluate((node) => [...node.querySelectorAll('[data-rich-run]')]
     .map((run) => ({ text: run.textContent, color: run.dataset.color,
       size: Number(run.dataset.size),
@@ -789,6 +846,10 @@ try {
   assert.deepEqual(savedContinuation.color, [0, 87 / 255, 168 / 255]);
 
   console.log('Native paragraph, side-by-side color, multi-box merge, atomic undo, and stable re-edit targets test passed');
+} catch (error) {
+  await failureArtifacts?.capture(page);
+  throw error;
 } finally {
+  await failureArtifacts?.discard();
   await browser.close();
 }

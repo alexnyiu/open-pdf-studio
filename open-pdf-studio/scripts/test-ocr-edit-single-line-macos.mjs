@@ -27,6 +27,7 @@ const appPath = path.resolve(process.env.OPEN_PDF_STUDIO_PACKAGED_APP || path.jo
   projectDir,
   '..',
   'target',
+  'aarch64-apple-darwin',
   'release',
   'bundle',
   'macos',
@@ -404,12 +405,27 @@ try {
   await click('#prop-text-format-section .text-style-btn:nth-of-type(1)');
   await click('#prop-paragraph-section .text-align-btn:nth-of-type(2)');
 
+  // Formatting controls intentionally do not steal focus back from the user.
+  // Return to the editor and make the replacement selection explicit before
+  // typing, matching the production keyboard flow.
+  await click('.pdf-text-editor[aria-multiline="false"][dir="ltr"]');
+  await callTool('app_key', { key: 'a', meta: true });
   const typed = await callTool('app_type', { text: 'NEW TEXT' });
   assert.equal(typed.editable, true);
   assert.equal((await ui('.pdf-text-editor')).value, 'NEW TEXT');
-  await callTool('app_key', { key: 'Enter' });
+  const plainEnter = await callTool('app_key', { key: 'Enter' });
   await waitUi('#scanned-text-edit-status',
-    (value) => value.found && value.visible && /Line breaks are not supported/iu.test(value.text));
+    (value) => value.found && value.visible && /Line breaks are not supported/iu.test(value.text))
+    .catch(async (error) => {
+      const [editorAfterEnter, statusAfterEnter, viewportAfterEnter] = await Promise.all([
+        ui('.pdf-text-editor'),
+        ui('#scanned-text-edit-status'),
+        callTool('app_get_viewport_state'),
+      ]);
+      throw new Error(`${error.message}; plainEnter=${JSON.stringify(plainEnter)}; `
+        + `editor=${JSON.stringify(editorAfterEnter)}; status=${JSON.stringify(statusAfterEnter)}; `
+        + `viewport=${JSON.stringify(viewportAfterEnter)}`);
+    });
   assert.equal((await ui('.pdf-text-editor')).value, 'NEW TEXT');
   await callTool('app_key', { key: 'Enter', meta: true });
   await waitUi('.pdf-text-editor', (value) => !value.found);

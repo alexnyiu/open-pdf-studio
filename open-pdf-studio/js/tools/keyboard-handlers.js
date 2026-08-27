@@ -27,6 +27,13 @@ import { tryStartGRotate, isGRotateModeActive } from './g-rotate-mode.js';
 import { toggleFullscreen, exitFullscreen, getFullscreenState } from '../ui/chrome/fullscreen.js';
 import { typeLengthActive, consumeKey as typeLengthConsumeKey, typeLengthCursor } from './type-length-input.js';
 import { clearSelectedTextBoxes } from './text-edit-tool.js';
+import {
+  consumeTextEditEscape,
+  isEditableKeyboardTarget,
+  selectAllTextEditorContent,
+  shouldRedirectTextEditorSelectAll,
+} from './keyboard-focus-boundary.js';
+import { cancelActiveTextEditing } from '../text/text-edit-session.js';
 
 function redraw() {
   if (getActiveDocument()?.viewMode === 'continuous') redrawContinuous();
@@ -244,25 +251,39 @@ export async function handleKeydown(e) {
 
   // Allow certain shortcuts even when in input fields
   const keyboardTarget = e.target;
-  const isInInput = keyboardTarget?.tagName === 'INPUT'
-    || keyboardTarget?.tagName === 'TEXTAREA'
-    || keyboardTarget?.tagName === 'SELECT'
-    || keyboardTarget?.isContentEditable === true
-    || keyboardTarget?.closest?.('[contenteditable="true"], [contenteditable="plaintext-only"]') != null;
+  const isInInput = isEditableKeyboardTarget(keyboardTarget);
   const isFindInput = e.target.id === 'find-input';
 
-  // Keep Select All scoped to an active text-edit session, even when focus
-  // temporarily moved to the properties panel or the document itself.
-  if (ctrl && !shift && !e.altKey && shortcutKey === 'a'
-      && (state.isEditingText || state.pdfTextEditState)) {
+  // The inline editor and its properties controls form one focus boundary.
+  // Escape always discards that boundary's transient draft, even when a form
+  // control would normally make the global shortcut handler return early.
+  // The cancellation is intentionally synchronous so no subsequent handler
+  // can commit or mutate the detached draft.
+  const wasEditingAnnotationText = state.isEditingText;
+  if (consumeTextEditEscape(
+    e,
+    wasEditingAnnotationText || Boolean(state.pdfTextEditState),
+    cancelActiveTextEditing,
+  )) {
+    if (wasEditingAnnotationText) setTool('select');
+    return;
+  }
+
+  // Keep Select All scoped to an active text-edit session when focus is on a
+  // non-editable app surface. Real form fields retain native Select All so a
+  // zoom/page/property value can never be typed into the document draft.
+  if (shouldRedirectTextEditorSelectAll(
+    e,
+    state.isEditingText || Boolean(state.pdfTextEditState),
+  )) {
     const editor = document.querySelector('.inline-text-editor, .pdf-text-editor');
-    if (editor && typeof editor.select === 'function') {
-      e.preventDefault();
-      e.stopPropagation();
-      editor.focus();
-      editor.select();
-      return;
-    }
+    // Always consume this shortcut for the active session. During page-host
+    // replacement the portal can be detached for one frame; falling through
+    // would select page annotations instead of the editor draft.
+    e.preventDefault();
+    e.stopPropagation();
+    selectAllTextEditorContent(editor);
+    return;
   }
 
   // Handle find-related shortcuts even in inputs
@@ -668,10 +689,11 @@ export async function handleKeydown(e) {
       return;
     }
     e.preventDefault();
-    // End an in-progress text edit (commit the typed text) and return to the
-    // select tool — Esc as an alternative to right-click / clicking away.
+    // Escape always discards a transient text draft. This fallback covers an
+    // active annotation draft whose focus is outside the shared boundary.
     if (state.isEditingText) {
-      import('./text-editing.js').then(m => { m.finishTextEditing(); setTool('select'); });
+      cancelActiveTextEditing('escape');
+      setTool('select');
       return;
     }
     // Cancel an in-progress grip-stretch / resize: restore the original

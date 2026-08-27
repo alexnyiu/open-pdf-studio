@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Redigera {{label}}",
+    "editValueHint": "{{label}}. Dubbelklicka eller tryck på Retur för att redigera.",
+    "timezoneHint": "Datumen visas i tidszonen {{timezone}} och sparas i ISO 8601-format."
+  },
+  "fontSubstitution": {
+    "title": "Godkänn teckensnittsersättning",
+    "sourceFace": "Källteckensnitt",
+    "sourceFaces": "Källteckensnitt",
+    "unknown": "Okänt",
+    "packagedSubstitute": "Medföljande ersättningsteckensnitt",
+    "notAvailable": "Inte tillgängligt",
+    "sampleText": "Exempel",
+    "sampleFallback": "Den snabba bruna räven hoppar över den lata hunden.",
+    "scope": "Gäller för",
+    "scopeAnnotation": "Den här anteckningen",
+    "scopeSelection": "De markerade textrutorna",
+    "scopeParagraph": "Det här PDF-stycket",
+    "scopeFindReplace": "Den här Sök/ersätt-redigeringen",
+    "remember": "Kom ihåg godkännandet för det öppna dokumentet",
+    "approve": "Använd ersättningsteckensnitt",
+    "cancel": "Avbryt"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Redigera PDF-text",
+      "editFormatted": "Redigera formaterad PDF-text",
+      "editAnnotation": "Redigera formaterad {{type}}-text",
+      "editRegion": "Redigera område med formaterad PDF-text: {{text}}",
+      "editScannedLine": "Redigera skannad textrad: {{text}}",
+      "editScannedFixed": "Redigera fast område med skannad text: {{text}}",
+      "editScannedReflow": "Redigera omflödesområde för skannat stycke: {{text}}",
+      "selectedOcrParagraph": "Markerat OCR-stycke med {{count}} rader"
+    },
+    "handles": {
+      "move": "Flytta textruta",
+      "moveHint": "Dra för att flytta textrutan",
+      "resize": "Ändra textrutans storlek",
+      "resizeHint": "Dra för att ändra textrutans storlek"
+    },
+    "actions": {
+      "apply": "Använd",
+      "cancel": "Avbryt"
+    },
+    "status": {
+      "ocrOverflow": "Hela OCR-utkastet visas utanför det godkända området. Det går fortfarande inte att spara förrän den exakta kontrollen av det fasta området bekräftar att texten ryms.",
+      "scannedRegion": "Skannad text redigeras inom det godkända området.",
+      "shaping": "Den exakta textlayouten slutförs…",
+      "overlap": "Texten överlappar befintligt sidinnehåll. Ändringen kan tillämpas; intilliggande källobjekt flyttas inte.",
+      "lowContrast": "Källfärger med låg kontrast har en bakgrund som bara visas under redigering. Sparade färger förblir oförändrade.",
+      "layoutRejectedPrefix": "Textlayouten avvisades:",
+      "layoutRejected": "Textlayouten avvisades: {{reasons}}",
+      "shapingRejected": "Textformningen avvisades: {{reason}}",
+      "nativeManual": "Ursprunglig text redigeras i en textruta med manuella rader. Tryck på Retur för en ny rad.",
+      "nativeManualContrast": "Ursprunglig text redigeras i en textruta med manuella rader. Tryck på Retur för en ny rad. Källfärger med låg kontrast har en bakgrund som bara visas under redigering; sparade färger förblir oförändrade.",
+      "nativeGrowing": "Ursprunglig text redigeras. Bredden är fast och området växer nedåt.",
+      "nativeGrowingContrast": "Ursprunglig text redigeras. Bredden är fast och området växer nedåt. Källfärger med låg kontrast har en bakgrund som bara visas under redigering; sparade färger förblir oförändrade.",
+      "scannedEstimate": "Skannad text redigeras. Teckensnittsegenskaperna är uppskattningar.",
+      "applyRejected": "Textredigeringen kunde inte tillämpas: {{reason}}",
+      "cropBoxRejected": "Den formade texten kan inte tillämpas inom sidans CropBox.",
+      "layoutTimeout": "Den exakta textlayouten blev inte klar i tid. Redigeraren förblir öppen.",
+      "scannedRejected": "Ändringen av den skannade texten avvisades: {{reason}}",
+      "lineBreakUnsupported": "Radbrytningar stöds inte. Använd Kommando-Retur för att tillämpa den här enradiga redigeringen.",
+      "ocrOneLine": "En enskild isolerad skannad textrad redigeras. Teckensnittsegenskaperna är uppskattningar.",
+      "ocrFixed": "Flera OCR-rader redigeras inom ett fast ursprungligt område. Ett enda stycke flödar om inom området; fasta radbrytningar bevarar läget med fasta rader. Kommando-Retur tillämpar ändringen.",
+      "ocrReflow": "Ett stycke redigeras inom det godkända ursprungliga OCR-området. Kommando-Retur tillämpar ändringen; överflöd avvisas.",
+      "operationFailed": "Textåtgärden kunde inte slutföras. Dokumentet lämnades oförändrat.",
+      "staleDraft": "Dokumentet ändrades medan textredigeraren var öppen. Utkastet kasserades.",
+      "multipleOcrParagraphs": "Markeringen omfattar flera OCR-stycken. Granska de separata konturerna och använd Sammanfoga uttryckligen. Sammanfogning mellan kolumner är fortfarande inaktiverad.",
+      "nativeColumnBoundary": "Det här stycket korsar en identifierad ursprunglig kolumngräns. Redigeringen blockerades och dokumentet lämnades oförändrat.",
+      "nativeSourceUnavailable": "Synlig text kunde inte kopplas till giltiga källoperatorer. Dokumentet lämnades oförändrat.",
+      "nativeDeleteUnavailable": "Den här ursprungliga PDF-texten kan inte tas bort på ett säkert sätt eftersom dess exakta källoperatorer är tvetydiga. Dokumentet lämnades oförändrat.",
+      "readOnly": "Tidigare redigerad text är skrivskyddad. Dokumentet lämnades oförändrat."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Gräns på {{limit}} grafem",
+      "lineThreshold": "Gräns på {{limit}} rader",
+      "message": "Hela det inklistrade innehållet behölls: {{graphemeCount}} grafem på {{lineCount}} rader. Gränsen överskreds: {{thresholds}}. Förhandsvisningen är begränsad. Använd Ångra inklistring för att ta bort hela infogningen.",
+      "messageWithExpansion": "Hela det inklistrade innehållet behölls: {{graphemeCount}} grafem på {{lineCount}} rader. Gränsen överskreds: {{thresholds}}. Förhandsvisningen är begränsad. Använd Ångra inklistring för att ta bort hela infogningen eller Utöka ruta för att använda de exakt verifierade gränserna.",
+      "undo": "Ångra inklistring",
+      "expand": "Utöka ruta"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Gruppering av OCR-stycken",
+    "title": "Gruppering",
+    "mergeSelected": "Sammanfoga markerade",
+    "mergeSelectedParagraphs": "Sammanfoga markerade stycken",
+    "mergePrevious": "Sammanfoga med föregående",
+    "mergePreviousHint": "Sammanfoga med föregående OCR-stycke",
+    "mergeNext": "Sammanfoga med nästa",
+    "mergeNextHint": "Sammanfoga med nästa OCR-stycke",
+    "splitBefore": "Dela före",
+    "splitAfter": "Dela efter",
+    "reset": "Återställ automatisk gruppering",
+    "crossColumnDisabled": "Sammanfogning mellan kolumner är inaktiverad",
+    "ambiguousBoundariesOnly": "Endast tvetydiga gränser i samma kolumn kan sammanfogas manuellt",
+    "tooManyLines": "Fler än 32 rader. Dela stycket manuellt innan du redigerar det.",
+    "mergeDescription": "De befintliga texterna är åtskilda med en bevarad fast radbrytning. Sammanfogningen tillämpas först när den kombinerade källändringen och det fasta området har klarat valideringen.",
+    "mergedText": "Sammanfogad OCR-text",
+    "splitRegion": "Dela OCR-område",
+    "firstRegion": "Första området",
+    "secondRegion": "Andra området",
+    "sourceLines": "Källrader: {{lines}}"
+  }
+}

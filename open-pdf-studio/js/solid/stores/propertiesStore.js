@@ -28,6 +28,14 @@ import {
 import { recalculateAllMeasurements, calculateArea, calculatePerimeter, calculateDistance, formatMeasurement, formatDimensionText, getMeasureScale } from '../../annotations/measurement.js';
 import { applyTemplateRealSize } from '../../symbols/real-size.js';
 import { pendingParams, setPendingParams } from './parametricSymbolStore.js';
+import { collectDocumentInfoSnapshot, createEmptyDocumentInfo } from '../../pdf/document-info.js';
+import {
+  activeTextAnnotationDraft,
+  isActiveTextAnnotationDraft,
+  recordAnnotationMutationOutsideTextDraft,
+} from '../../text/annotation-text-draft.js';
+import { getActiveTextEditSession } from '../../text/text-edit-session.js';
+import { setEditorStatus } from './pdfTextEditStore.js';
 
 // Types whose single 'color' control IS their stroke colour and which render
 // via `strokeColor || color`. For these, the 'color' control must mirror onto
@@ -36,6 +44,52 @@ import { pendingParams, setPendingParams } from './parametricSymbolStore.js';
 const _STROKE_COLOR_DRIVEN = new Set([
   'parametricSymbol', 'polyline', 'cloudPolyline', 'spline', 'splineArrow', 'draw',
 ]);
+
+function textEditSessionIdentity(session = getActiveTextEditSession()) {
+  return session ? {
+    sessionId: session.sessionId,
+    ownerDocumentId: session.ownerDocumentId,
+    ownerDocumentGeneration: session.ownerDocumentGeneration,
+  } : null;
+}
+
+function textEditSessionMatches(identity) {
+  const current = getActiveTextEditSession();
+  return Boolean(identity && current
+    && current.sessionId === identity.sessionId
+    && current.ownerDocumentId === identity.ownerDocumentId
+    && current.ownerDocumentGeneration === identity.ownerDocumentGeneration);
+}
+
+function reportTextEditFormatFailure(identity, error) {
+  if (!textEditSessionMatches(identity)) return;
+  const reason = error instanceof Error ? error.message : String(error || '');
+  console.warn('[text-edit] Properties formatting rejected:', error);
+  setEditorStatus(i18next.t('textEditor.status.applyRejected', {
+    ns: 'hardening',
+    reason: reason || i18next.t('textEditor.status.operationFailed', { ns: 'hardening' }),
+  }), 'invalid');
+}
+
+function dispatchTextEditFormat({ key, value, loadModule, exportName }) {
+  const identity = textEditSessionIdentity();
+  if (!identity) return false;
+  loadModule()
+    .then((module) => {
+      if (!textEditSessionMatches(identity)) return;
+      const apply = module?.[exportName];
+      const applied = typeof apply === 'function' ? apply(key, value) : false;
+      if (applied === false) {
+        reportTextEditFormatFailure(identity);
+        return;
+      }
+      if (textEditSessionMatches(identity)) setAnnotProps(key, value);
+    })
+    .catch((error) => {
+      reportTextEditFormatFailure(identity, error);
+    });
+  return true;
+}
 
 // Panel visibility and collapsed state
 const [panelVisible, setPanelVisible] = createSignal(true);
@@ -165,23 +219,8 @@ const [sectionVis, setSectionVis] = createStore({
 });
 
 // Document info store
-const [docInfo, setDocInfo] = createStore({
-  filename: '-',
-  filepath: '-',
-  pages: '-',
-  pageSize: '-',
-  title: '-',
-  author: '-',
-  subject: '-',
-  keywords: '-',
-  creator: '-',
-  producer: '-',
-  creationDate: '-',
-  modificationDate: '-',
-  version: '-',
-  annotCount: '0',
-  annotPage: '0',
-});
+const [docInfo, setDocInfo] = createStore(createEmptyDocumentInfo());
+let docInfoRequestGeneration = 0;
 
 // Custom fields from plugin annotation types
 const [customFieldsDef, setCustomFieldsDef] = createSignal([]);
@@ -656,7 +695,7 @@ export function storeShowTextEditProperties(info) {
     fontUnderline: info.isUnderline || false,
     fontStrikethrough: info.isStrikethrough || false,
     textAlign: info.textAlign || 'left',
-    lineSpacing: '1.5',
+    lineSpacing: info.lineSpacing ?? '1.5',
     lineWidth: 0,
     opacity: 1,
     fillColor: null,
@@ -691,7 +730,10 @@ export function storeShowTextEditProperties(info) {
     dimensions: false,
     measurement: false,
     textFormat: true,
-    paragraph: info.scannedTextEstimate === true,
+    // Every active text editor exposes canonical paragraph alignment. Native
+    // and owned rich text additionally expose line spacing through the same
+    // draft-only routing used by textbox/callout editors.
+    paragraph: true,
     content: false,
     image: false,
     actions: false,
@@ -712,53 +754,31 @@ export function storeShowTextEditProperties(info) {
 
 // Populate document info
 export async function populateDocInfo() {
+  const requestGeneration = ++docInfoRequestGeneration;
   const doc = getActiveDocument();
-  const filePath = doc?.filePath || '';
-  if (filePath) {
-    const parts = filePath.replace(/\\/g, '/').split('/');
-    setDocInfo('filename', parts[parts.length - 1]);
-    setDocInfo('filepath', filePath);
-  } else {
-    setDocInfo('filename', i18next.t('docInfo.noFileOpen', { ns: 'properties' }));
-    setDocInfo('filepath', '-');
-  }
-
-  if (doc?.pdfDoc) {
-    setDocInfo('pages', `${doc.currentPage} / ${doc.pdfDoc.numPages}`);
-    try {
-      const page = await doc.pdfDoc.getPage(doc.currentPage);
-      const vp = page.getViewport({ scale: 1 });
-      const wMm = (vp.width / 72 * 25.4).toFixed(1);
-      const hMm = (vp.height / 72 * 25.4).toFixed(1);
-      setDocInfo('pageSize', `${wMm} x ${hMm} mm`);
-    } catch (e) {
-      setDocInfo('pageSize', '-');
-    }
-
-    const metadata = doc.metadata || {};
-    setDocInfo('title', metadata.title || '-');
-    setDocInfo('author', metadata.author || '-');
-    setDocInfo('subject', metadata.subject || '-');
-    setDocInfo('keywords', metadata.keywords || '-');
-    setDocInfo('creator', metadata.creator || '-');
-    setDocInfo('producer', metadata.producer || '-');
-    setDocInfo('creationDate', metadata.creationDate ? new Date(metadata.creationDate).toLocaleString() : '-');
-    setDocInfo('modificationDate', metadata.modificationDate ? new Date(metadata.modificationDate).toLocaleString() : '-');
-    try {
-      const pdfMetadata = await doc.pdfDoc.getMetadata();
-      setDocInfo('version', pdfMetadata?.info?.PDFFormatVersion || '-');
-    } catch (e) { setDocInfo('version', '-'); }
-  } else {
-    setDocInfo('pages', '-');
-    setDocInfo('pageSize', '-');
-  }
-
-  const docAnnotations = doc?.annotations || [];
-  const total = docAnnotations.length;
-  const docPage = doc ? doc.currentPage : 1;
-  const onPage = docAnnotations.filter(a => a.page === docPage).length;
-  setDocInfo('annotCount', String(total));
-  setDocInfo('annotPage', i18next.t('docInfo.onPageCount', { count: onPage, page: docPage, ns: 'properties' }));
+  const ownerDocumentId = doc?.id ?? null;
+  const ownerLifecycleGeneration = Number(doc?.lifecycleGeneration) || 0;
+  const ownerPage = doc?.currentPage || 1;
+  const ownerPdfDocument = doc?.pdfDoc || null;
+  const isCurrent = () => {
+    if (requestGeneration !== docInfoRequestGeneration) return false;
+    const active = getActiveDocument();
+    if (!doc) return !active;
+    return String(active?.id) === String(ownerDocumentId)
+      && (Number(active?.lifecycleGeneration) || 0) === ownerLifecycleGeneration
+      && active.currentPage === ownerPage
+      && active.pdfDoc === ownerPdfDocument;
+  };
+  const snapshot = await collectDocumentInfoSnapshot(doc, {
+    noFileOpen: i18next.t('docInfo.noFileOpen', { ns: 'properties' }),
+    onPageCount: ({ count, page }) => i18next.t('docInfo.onPageCount', {
+      count,
+      page,
+      ns: 'properties',
+    }),
+    isCurrent,
+  });
+  if (snapshot && isCurrent()) setDocInfo(snapshot);
 }
 
 // Apply a property change to a single annotation object
@@ -998,8 +1018,15 @@ function _scaleRegionPpu(ann) {
 }
 
 export function updateAnnotProp(key, value) {
+  // Selection/render refreshes may republish the persisted source annotation
+  // while its isolated textbox/callout draft is still open. The immutable
+  // editor session remains authoritative: never let that stale panel pointer
+  // bypass draft formatting or create a separate source mutation.
+  const sessionDraft = activeTextAnnotationDraft(state);
+  if (sessionDraft) currentAnnotation = sessionDraft;
+
   // Multi-selection mode: apply to all selected annotations
-  if (annotProps.multiCount > 0) {
+  if (!sessionDraft && annotProps.multiCount > 0) {
     const _doc = getActiveDocument();
     const selected = _doc ? _doc.selectedAnnotations : [];
     if (!selected || selected.length === 0) return;
@@ -1057,24 +1084,29 @@ export function updateAnnotProp(key, value) {
   // Route formatting changes to the active edit instead of mutating the pseudo
   // (issue #264 — formatting changes previously did nothing).
   if (currentAnnotation.id === '_pdfTextEdit') {
-    setAnnotProps(key, value); // panel feedback
-    import('../../tools/text-edit-tool.js')
-      .then(m => m.applyActiveTextEditStyle && m.applyActiveTextEditStyle(key, value))
-      .catch(() => {});
+    dispatchTextEditFormat({
+      key,
+      value,
+      loadModule: () => import('../../tools/text-edit-tool.js'),
+      exportName: 'applyActiveTextEditStyle',
+    });
     return;
   }
 
   // Textbox/callout formatting is a draft operation while the shared rich
   // editor is open. It must not mutate the annotation or document undo stack
   // until the whole edit transaction commits.
-  if (state.isEditingText && state.editingAnnotation === currentAnnotation
+  const editingTextAnnotationDraft = isActiveTextAnnotationDraft(currentAnnotation, state);
+  if (editingTextAnnotationDraft
       && ['fontFamily', 'fontSize', 'textFontSize', 'textColor', 'color',
         'fontBold', 'fontItalic', 'fontUnderline', 'fontStrikethrough',
         'textAlign', 'lineSpacing'].includes(key)) {
-    setAnnotProps(key, value);
-    import('../../tools/text-editing.js')
-      .then((module) => module.applyActiveAnnotationTextStyle?.(key, value))
-      .catch(() => {});
+    dispatchTextEditFormat({
+      key,
+      value,
+      loadModule: () => import('../../tools/text-editing.js'),
+      exportName: 'applyActiveAnnotationTextStyle',
+    });
     return;
   }
 
@@ -1113,7 +1145,7 @@ export function updateAnnotProp(key, value) {
         : JSON.parse(JSON.stringify(doc.measureScale)),
       tracksDocumentScale: key.startsWith('scaleBar'),
     };
-  } else {
+  } else if (!editingTextAnnotationDraft) {
     recordPropertyChange(currentAnnotation);
   }
   currentAnnotation.modifiedAt = new Date().toISOString();
@@ -1519,7 +1551,12 @@ export function addReply(text) {
     createdAt: new Date().toISOString()
   });
   currentAnnotation.modifiedAt = new Date().toISOString();
-  recordModify(currentAnnotation.id, before, currentAnnotation);
+  recordAnnotationMutationOutsideTextDraft({
+    annotation: currentAnnotation,
+    before,
+    editingState: state,
+    record: recordModify,
+  });
   setAnnotProps('replies', [...currentAnnotation.replies]);
   setAnnotProps('modified', formatDate(currentAnnotation.modifiedAt));
 }
@@ -1530,7 +1567,12 @@ export function deleteReply(index) {
   const before = cloneAnnotation(currentAnnotation);
   currentAnnotation.replies.splice(index, 1);
   currentAnnotation.modifiedAt = new Date().toISOString();
-  recordModify(currentAnnotation.id, before, currentAnnotation);
+  recordAnnotationMutationOutsideTextDraft({
+    annotation: currentAnnotation,
+    before,
+    editingState: state,
+    record: recordModify,
+  });
   setAnnotProps('replies', [...currentAnnotation.replies]);
   setAnnotProps('modified', formatDate(currentAnnotation.modifiedAt));
 }

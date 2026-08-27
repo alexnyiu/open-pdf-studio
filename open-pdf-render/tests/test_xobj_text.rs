@@ -35,7 +35,14 @@ fn test_xobj_text_detail() {
     for (name, xref) in xobjs.iter() {
         if let lopdf::Object::Reference(id) = xref {
             if let Ok(lopdf::Object::Stream(ref stream)) = doc.get_object(*id) {
-                let st = stream.dict.get(b"Subtype").ok().and_then(|s| s.as_name().ok()); if st != Some(b"Form") { continue; }
+                let st = stream
+                    .dict
+                    .get(b"Subtype")
+                    .ok()
+                    .and_then(|s| s.as_name().ok());
+                if st != Some(b"Form") {
+                    continue;
+                }
                 if let Ok(cb) = stream.decompressed_content() {
                     if let Ok(content) = lopdf::content::Content::decode(&cb) {
                         let mut font = String::new();
@@ -44,18 +51,31 @@ fn test_xobj_text_detail() {
                         for op in &content.operations {
                             match op.operator.as_str() {
                                 "Tf" if op.operands.len() >= 2 => {
-                                    if let lopdf::Object::Name(ref n) = op.operands[0] { font = String::from_utf8_lossy(n).to_string(); }
+                                    if let lopdf::Object::Name(ref n) = op.operands[0] {
+                                        font = String::from_utf8_lossy(n).to_string();
+                                    }
                                     size = obj_f32(&op.operands[1]);
                                 }
                                 "Tm" if op.operands.len() >= 6 => {
-                                    for i in 0..6 { tm[i] = obj_f32(&op.operands[i]); }
+                                    for i in 0..6 {
+                                        tm[i] = obj_f32(&op.operands[i]);
+                                    }
                                 }
                                 "Tj" | "TJ" if count < 15 => {
                                     let text: String = match op.operands.first() {
-                                        Some(lopdf::Object::String(b, _)) => String::from_utf8_lossy(b).to_string(),
-                                        Some(lopdf::Object::Array(arr)) => arr.iter().filter_map(|item| {
-                                            if let lopdf::Object::String(b, _) = item { Some(String::from_utf8_lossy(b).to_string()) } else { None }
-                                        }).collect(),
+                                        Some(lopdf::Object::String(b, _)) => {
+                                            String::from_utf8_lossy(b).to_string()
+                                        }
+                                        Some(lopdf::Object::Array(arr)) => arr
+                                            .iter()
+                                            .filter_map(|item| {
+                                                if let lopdf::Object::String(b, _) = item {
+                                                    Some(String::from_utf8_lossy(b).to_string())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect(),
                                         _ => String::new(),
                                     };
                                     let xn = String::from_utf8_lossy(name);

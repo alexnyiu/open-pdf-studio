@@ -11,7 +11,11 @@ fn main() {
     let target = std::env::var("TARGET").unwrap_or_else(|_| "x86_64-pc-windows-msvc".to_string());
     let host = std::env::var("HOST").unwrap_or_else(|_| target.clone());
     let profile = std::env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
-    let exe_suffix = if target.contains("windows") { ".exe" } else { "" };
+    let exe_suffix = if target.contains("windows") {
+        ".exe"
+    } else {
+        ""
+    };
     let worker_name = format!("pdfium-worker{}", exe_suffix);
 
     // De worker staat in DEZELFDE target-directory als deze app-build. Bij een
@@ -30,7 +34,9 @@ fn main() {
     // targetnaam kopiëren levert een geldig ogend maar onstartbaar pakket op.
     if host == target {
         candidates.push(
-            std::path::PathBuf::from("../../target").join(&profile).join(&worker_name),
+            std::path::PathBuf::from("../../target")
+                .join(&profile)
+                .join(&worker_name),
         );
     }
 
@@ -38,7 +44,11 @@ fn main() {
         .join(format!("pdfium-worker-{}{}", target, exe_suffix));
     if let Some(src) = candidates.iter().find(|p| p.exists()) {
         validate_binary_target(src, &target).unwrap_or_else(|error| {
-            panic!("pdfium-worker validation failed for {}: {}", src.display(), error)
+            panic!(
+                "pdfium-worker validation failed for {}: {}",
+                src.display(),
+                error
+            )
         });
         println!("cargo:rerun-if-changed={}", src.display());
         let _ = std::fs::create_dir_all("binaries");
@@ -51,14 +61,22 @@ fn main() {
             )
         });
         validate_binary_target(&dst, &target).unwrap_or_else(|error| {
-            panic!("staged pdfium-worker validation failed for {}: {}", dst.display(), error)
+            panic!(
+                "staged pdfium-worker validation failed for {}: {}",
+                dst.display(),
+                error
+            )
         });
     } else if dst.exists() {
         // Release workflows may deliberately pre-stage the target-specific
         // sidecar. Validate it instead of overwriting it with a host binary.
         println!("cargo:rerun-if-changed={}", dst.display());
         validate_binary_target(&dst, &target).unwrap_or_else(|error| {
-            panic!("pre-staged pdfium-worker validation failed for {}: {}", dst.display(), error)
+            panic!(
+                "pre-staged pdfium-worker validation failed for {}: {}",
+                dst.display(),
+                error
+            )
         });
     } else {
         println!(

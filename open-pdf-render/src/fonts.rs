@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use lopdf::{Dictionary, Document, Object, ObjectId};
 use crate::encoding;
 use crate::font_parser::{self, ParsedFont};
+use lopdf::{Dictionary, Document, Object, ObjectId};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Cached font entry with parsed outlines and encoding info.
 pub struct FontEntry {
@@ -78,7 +78,8 @@ impl FontRegistry {
         doc: &Document,
         resources: &Dictionary,
     ) -> Option<Arc<FontEntry>> {
-        self.get_font_with_id(name, doc, resources).map(|(_id, e)| e)
+        self.get_font_with_id(name, doc, resources)
+            .map(|(_id, e)| e)
     }
 
     /// Same as `get_font` but also returns the font's global `ObjectId`
@@ -184,22 +185,37 @@ impl FontRegistry {
             // 1..N and the actual glyphs live at high GIDs), neither low nor
             // ASCII GID ranges contain outlines. Check `byte_cmap` (populated
             // from non-Unicode cmap subtables) to detect this case.
-            let embedded_usable = parsed.as_ref().map(|p| {
-                let count_outlines = |range: std::ops::RangeInclusive<u16>| -> usize {
-                    range.filter(|gid| {
-                        p.glyphs.get(gid).map(|g| !g.commands.is_empty()).unwrap_or(false)
-                    }).count()
-                };
-                let low = count_outlines(1..=10);
-                let ascii = count_outlines(0x41..=0x5A); // 'A'..'Z'
+            let embedded_usable = parsed
+                .as_ref()
+                .map(|p| {
+                    let count_outlines = |range: std::ops::RangeInclusive<u16>| -> usize {
+                        range
+                            .filter(|gid| {
+                                p.glyphs
+                                    .get(gid)
+                                    .map(|g| !g.commands.is_empty())
+                                    .unwrap_or(false)
+                            })
+                            .count()
+                    };
+                    let low = count_outlines(1..=10);
+                    let ascii = count_outlines(0x41..=0x5A); // 'A'..'Z'
 
-                // Subset font: count how many byte_cmap targets have outlines.
-                let byte_cmap_outlines = p.byte_cmap.values().filter(|&&gid| {
-                    p.glyphs.get(&gid).map(|g| !g.commands.is_empty()).unwrap_or(false)
-                }).count();
+                    // Subset font: count how many byte_cmap targets have outlines.
+                    let byte_cmap_outlines = p
+                        .byte_cmap
+                        .values()
+                        .filter(|&&gid| {
+                            p.glyphs
+                                .get(&gid)
+                                .map(|g| !g.commands.is_empty())
+                                .unwrap_or(false)
+                        })
+                        .count();
 
-                low > 5 || ascii > 5 || byte_cmap_outlines > 5
-            }).unwrap_or(false);
+                    low > 5 || ascii > 5 || byte_cmap_outlines > 5
+                })
+                .unwrap_or(false);
 
             if parsed.is_none() || !embedded_usable {
                 if let Some(sys_font) = Self::try_system_font(&base_font) {
@@ -299,7 +315,9 @@ impl FontRegistry {
                 _ => None,
             })
         {
-            if let Some(cid_dict) = arr.first().and_then(|o| Self::resolve_obj(o, doc))
+            if let Some(cid_dict) = arr
+                .first()
+                .and_then(|o| Self::resolve_obj(o, doc))
                 .and_then(|o| match o {
                     Object::Dictionary(d) => Some(d),
                     _ => None,
@@ -567,10 +585,7 @@ impl FontRegistry {
     ///   `c [w1 w2 ... wn]` — widths for cids c..c+n-1
     ///   `c1 c2 w` — width w for all cids c1..=c2
     /// Returns (cid_widths, dw_default_in_glyph_units).
-    fn extract_cid_widths(
-        font_dict: &Dictionary,
-        doc: &Document,
-    ) -> (HashMap<u16, f32>, f32) {
+    fn extract_cid_widths(font_dict: &Dictionary, doc: &Document) -> (HashMap<u16, f32>, f32) {
         let mut out = HashMap::new();
         let mut dw = 1000.0_f32; // PDF default
 
@@ -588,7 +603,11 @@ impl FontRegistry {
         };
 
         // /DW default width
-        if let Some(dw_obj) = cid_dict.get(b"DW").ok().and_then(|o| Self::resolve_obj(o, doc)) {
+        if let Some(dw_obj) = cid_dict
+            .get(b"DW")
+            .ok()
+            .and_then(|o| Self::resolve_obj(o, doc))
+        {
             match dw_obj {
                 Object::Integer(n) => dw = n as f32,
                 Object::Real(n) => dw = n as f32,
@@ -597,7 +616,11 @@ impl FontRegistry {
         }
 
         // /W array
-        let w_arr = match cid_dict.get(b"W").ok().and_then(|o| Self::resolve_obj(o, doc)) {
+        let w_arr = match cid_dict
+            .get(b"W")
+            .ok()
+            .and_then(|o| Self::resolve_obj(o, doc))
+        {
             Some(Object::Array(a)) => a,
             _ => return (out, dw),
         };
@@ -775,7 +798,10 @@ impl FontRegistry {
         let path = format!(r"C:\Windows\Fonts\{}", fallback_file);
         if let Ok(font_data) = std::fs::read(&path) {
             if let Ok(parsed) = font_parser::parse_truetype(&font_data) {
-                eprintln!("[fonts] Generic fallback: {} → {}", clean_name, fallback_file);
+                eprintln!(
+                    "[fonts] Generic fallback: {} → {}",
+                    clean_name, fallback_file
+                );
                 return Some(parsed);
             }
         }
@@ -802,8 +828,11 @@ impl FontRegistry {
 
         // Brute-force: scan fonts directory for matching name
         if let Ok(entries) = std::fs::read_dir(fonts_dir) {
-            let search = normalized.replace("bold", "").replace("italic", "")
-                .replace("regular", "").replace("light", "");
+            let search = normalized
+                .replace("bold", "")
+                .replace("italic", "")
+                .replace("regular", "")
+                .replace("light", "");
             for entry in entries.flatten() {
                 let filename = entry.file_name().to_string_lossy().to_lowercase();
                 if filename.ends_with(".ttf") || filename.ends_with(".ttc") {
@@ -921,9 +950,7 @@ impl FontRegistry {
             _ => return map,
         };
         let cmap_data = match tu_obj {
-            Some(Object::Stream(stream)) => {
-                stream.decompressed_content().unwrap_or_default()
-            }
+            Some(Object::Stream(stream)) => stream.decompressed_content().unwrap_or_default(),
             _ => return map,
         };
 
@@ -936,10 +963,22 @@ impl FontRegistry {
 
         for line in cmap_str.lines() {
             let line = line.trim();
-            if line.contains("beginbfchar") { in_bfchar = true; continue; }
-            if line.contains("endbfchar") { in_bfchar = false; continue; }
-            if line.contains("beginbfrange") { in_bfrange = true; continue; }
-            if line.contains("endbfrange") { in_bfrange = false; continue; }
+            if line.contains("beginbfchar") {
+                in_bfchar = true;
+                continue;
+            }
+            if line.contains("endbfchar") {
+                in_bfchar = false;
+                continue;
+            }
+            if line.contains("beginbfrange") {
+                in_bfrange = true;
+                continue;
+            }
+            if line.contains("endbfrange") {
+                in_bfrange = false;
+                continue;
+            }
 
             if (in_bfchar || in_bfrange) && line.starts_with('<') {
                 // Parse hex values between < >
@@ -947,7 +986,9 @@ impl FontRegistry {
                     .split('>')
                     .filter_map(|part| {
                         let hex = part.trim().trim_start_matches('<');
-                        if hex.is_empty() { return None; }
+                        if hex.is_empty() {
+                            return None;
+                        }
                         u32::from_str_radix(hex, 16).ok()
                     })
                     .collect();
@@ -982,9 +1023,7 @@ impl FontRegistry {
             _ => return map,
         };
         let cmap_data = match tu_obj {
-            Some(Object::Stream(stream)) => {
-                stream.decompressed_content().unwrap_or_default()
-            }
+            Some(Object::Stream(stream)) => stream.decompressed_content().unwrap_or_default(),
             _ => return map,
         };
 
@@ -994,17 +1033,31 @@ impl FontRegistry {
 
         for line in cmap_str.lines() {
             let line = line.trim();
-            if line.contains("beginbfchar") { in_bfchar = true; continue; }
-            if line.contains("endbfchar") { in_bfchar = false; continue; }
-            if line.contains("beginbfrange") { in_bfrange = true; continue; }
-            if line.contains("endbfrange") { in_bfrange = false; continue; }
+            if line.contains("beginbfchar") {
+                in_bfchar = true;
+                continue;
+            }
+            if line.contains("endbfchar") {
+                in_bfchar = false;
+                continue;
+            }
+            if line.contains("beginbfrange") {
+                in_bfrange = true;
+                continue;
+            }
+            if line.contains("endbfrange") {
+                in_bfrange = false;
+                continue;
+            }
 
             if (in_bfchar || in_bfrange) && line.starts_with('<') {
                 let hex_values: Vec<u32> = line
                     .split('>')
                     .filter_map(|part| {
                         let hex = part.trim().trim_start_matches('<');
-                        if hex.is_empty() { return None; }
+                        if hex.is_empty() {
+                            return None;
+                        }
                         u32::from_str_radix(hex, 16).ok()
                     })
                     .collect();

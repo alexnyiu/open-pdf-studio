@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import net from 'node:net';
 import { chromium } from 'playwright';
+import { startPlaywrightFailureArtifacts } from './playwright-failure-artifacts.mjs';
 
 assert.equal(process.platform, 'darwin', 'OCR progress UI gate is macOS-only');
 
@@ -53,6 +54,8 @@ vite.stdout.on('data', (chunk) => { serverOutput = (serverOutput + chunk).slice(
 vite.stderr.on('data', (chunk) => { serverOutput = (serverOutput + chunk).slice(-20_000); });
 
 let browser;
+let page;
+let failureArtifacts;
 try {
   await waitForServer(`${origin}/tests/ui/ocr-progress.html`, vite);
   let executablePath;
@@ -63,7 +66,8 @@ try {
     await access(executablePath);
   }
   browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
-  const page = await browser.newPage();
+  page = await browser.newPage();
+  failureArtifacts = await startPlaywrightFailureArtifacts(page.context(), 'ocr-progress');
   const browserErrors = [];
   page.on('pageerror', (error) => browserErrors.push(error.stack || error.message));
   page.on('console', (message) => {
@@ -77,6 +81,10 @@ try {
   assert.equal(await toast.count(), 1);
   assert.match(await toast.textContent(), /scan-a\.pdf/);
   assert.doesNotMatch(await toast.textContent(), /Users|Private/);
+  const firstTabBadge = page.locator('.document-tab').nth(0).locator('.document-tab-ocr-badge');
+  await firstTabBadge.waitFor();
+  assert.equal(await firstTabBadge.textContent(), '0%');
+  assert.equal(await page.locator('.document-tab').nth(1).locator('.document-tab-ocr-badge').count(), 0);
   const initial = await page.evaluate(() => window.__ocrProgressHarness.snapshot());
   assert.equal(initial.retainedHandle, true);
   assert.doesNotMatch(JSON.stringify(initial.fullSnapshot), /Users|Private/);
@@ -102,6 +110,7 @@ try {
       document.querySelector('.ocr-progress-state')?.dataset.pageState === expected, stateName);
   }
   assert.equal(await toast.getByRole('progressbar').getAttribute('aria-valuenow'), '80');
+  assert.equal(await firstTabBadge.textContent(), '80%');
   assert.match(await toast.textContent(), /Page 5 of 5/);
   for (const stateName of ['completed', 'skipped', 'unsupported', 'failed', 'cancelled']) {
     assert.equal(await countValue(toast, stateName), 1, stateName);
@@ -124,7 +133,8 @@ try {
   assert.equal(await toast.count(), 1);
 
   await page.evaluate(() => window.__ocrProgressHarness.switchDocument(1));
-  await toast.waitFor({ state: 'detached' });
+  await toast.waitFor();
+  assert.match(await toast.textContent(), /scan-a\.pdf/);
   await page.evaluate(() => window.__ocrProgressHarness.switchDocument(0));
   await toast.waitFor();
   assert.equal(await toast.evaluate((element) => element.classList.contains('ocr-progress-collapsed')), true);
@@ -140,7 +150,7 @@ try {
   assert.equal(snapshot.active.finishedAt, null);
 
   await page.evaluate(() => window.__ocrProgressHarness.switchDocument(1));
-  await toast.waitFor({ state: 'detached' });
+  await cancellingButton.waitFor();
   await page.evaluate(() => window.__ocrProgressHarness.switchDocument(0));
   await cancellingButton.waitFor();
 
@@ -183,9 +193,11 @@ try {
   assert.deepEqual(browserErrors, [], `browser errors:\n${browserErrors.join('\n')}`);
   console.log('macOS OCR progress and cancellation UI integration gate passed');
 } catch (error) {
+  await failureArtifacts?.capture(page);
   if (serverOutput) error.message += `\nVite output:\n${serverOutput}`;
   throw error;
 } finally {
+  await failureArtifacts?.discard();
   await browser?.close();
   if (vite.exitCode === null) vite.kill('SIGTERM');
 }

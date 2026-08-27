@@ -2,13 +2,23 @@ import i18next from 'i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
 
 // Locale bundles are loaded on demand, one language at a time, instead of
-// statically importing all 37 languages (296 JSON files) into the entry
-// chunk. Only English (the fallback) and the active language are fetched at
-// startup; switching language fetches that language's 8 namespace files on
+// statically importing every locale file into the entry chunk. Only English
+// (the fallback) and the active language are fetched at startup; switching
+// language fetches that language's namespace files on
 // first use. This keeps the main bundle small and startup parse/init fast.
 const localeModules = import.meta.glob('./locales/*/*.json');
 
-const ns = ['common', 'ribbon', 'preferences', 'dialogs', 'appMenu', 'properties', 'context', 'statusbar'];
+const ns = [
+  'common',
+  'ribbon',
+  'preferences',
+  'dialogs',
+  'appMenu',
+  'properties',
+  'context',
+  'statusbar',
+  'hardening',
+];
 
 export const LANGUAGES = [
   { code: 'auto', name: 'Auto-detect', englishName: 'Auto-detect' },
@@ -63,7 +73,7 @@ function isKnownLanguage(lng) {
   return LANGUAGES.some((l) => l.code === lng);
 }
 
-// Fetch all 8 namespace bundles for one language. Missing files are skipped
+// Fetch every namespace bundle for one language. Missing files are skipped
 // (same effect as the language simply not providing that namespace).
 async function fetchLocale(lng) {
   const bundles = {};

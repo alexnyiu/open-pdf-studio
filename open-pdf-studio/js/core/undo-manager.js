@@ -2,6 +2,7 @@ import { state, getActiveDocument, getPageRotation, setPageRotation } from './st
 import { cloneAnnotation } from '../annotations/factory.js';
 import { restoreOcrCommandState } from '../ocr/document-state.js';
 import { restoreScannedTextEditCommandState } from '../ocr/editing/edit-state.js';
+import { applyNativeTextSourceProjection } from '../text/native-text-source-projection.js';
 const MAX_UNDO_STACK = 100;
 const DOCUMENT_STATE_COMMAND_TYPES = new Set([
   'ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned', 'scannedTextEdit',
@@ -155,6 +156,70 @@ function commandChangesMeasureScale(cmd) {
   return cmd.type === 'compound' && cmd.commands.some(commandChangesMeasureScale);
 }
 
+function textEditPagesForCommand(cmd, pages = new Set()) {
+  if (!cmd) return pages;
+  if (cmd.type === 'compound') {
+    for (const command of cmd.commands || []) textEditPagesForCommand(command, pages);
+    return pages;
+  }
+  if (!['addTextEdit', 'removeTextEdit', 'modifyTextEdit', 'replaceTextEditSet'].includes(cmd.type)) {
+    return pages;
+  }
+  const addPage = (record) => {
+    if (Number.isInteger(record?.page) && record.page > 0) pages.add(record.page);
+  };
+  addPage(cmd.textEdit);
+  addPage(cmd.oldTextEdit);
+  addPage(cmd.newTextEdit);
+  addPage(cmd.mergedRecord);
+  for (const item of cmd.originalRecords || []) addPage(item?.record);
+  return pages;
+}
+
+function applyNativeSourceCommandProjections(cmd, direction) {
+  if (!cmd) return;
+  if (cmd.type === 'compound') {
+    const commands = direction === 'undo'
+      ? [...(cmd.commands || [])].reverse()
+      : (cmd.commands || []);
+    for (const command of commands) applyNativeSourceCommandProjections(command, direction);
+    return;
+  }
+  if (cmd.type === 'addTextEdit' && cmd.nativeSourceProjection) {
+    applyNativeTextSourceProjection(cmd.nativeSourceProjection, direction);
+  }
+}
+
+async function refreshTextEditLayerProjections(cmd, direction) {
+  const pages = textEditPagesForCommand(cmd);
+  if (pages.size === 0 || !globalThis.document?.querySelectorAll) return;
+  applyNativeSourceCommandProjections(cmd, direction);
+
+  const doc = getActiveDocument();
+  if (!doc) return;
+  const { injectSyntheticTextSpans } = await import('../text/text-layer.js');
+  const dpr = globalThis.window?.devicePixelRatio || 1;
+  for (const pageNum of pages) {
+    const layers = document.querySelectorAll(`.textLayer[data-page="${pageNum}"]`);
+    for (const textLayer of layers) {
+      const canvas = textLayer.parentElement?.querySelector?.('canvas.pdf-canvas')
+        || document.getElementById?.('pdf-canvas');
+      const stored = doc.pageDims?.[pageNum];
+      const scale = Number(doc.scale) || 1;
+      const pageWidth = Number(stored?.widthPt)
+        || (Number(canvas?.width) > 0 ? Number(canvas.width) / (scale * dpr) : textLayer.clientWidth);
+      const pageHeight = Number(stored?.heightPt)
+        || (Number(canvas?.height) > 0 ? Number(canvas.height) / (scale * dpr) : textLayer.clientHeight);
+      injectSyntheticTextSpans(textLayer, pageNum, pageWidth, pageHeight);
+    }
+  }
+  if (typeof globalThis.CustomEvent === 'function') {
+    globalThis.window?.dispatchEvent?.(
+      new globalThis.CustomEvent('open-pdf-studio:request-text-edit-hover-refresh'),
+    );
+  }
+}
+
 async function persistMeasureScaleIfNeeded(cmd) {
   if (!commandChangesMeasureScale(cmd)) return;
   const { saveDocumentScale } = await import('../annotations/measurement.js');
@@ -210,6 +275,7 @@ export async function undo() {
   }
 
   applyUndo(cmd);
+  await refreshTextEditLayerProjections(cmd, 'undo');
   await persistMeasureScaleIfNeeded(cmd);
   syncModifiedState();
 
@@ -267,6 +333,7 @@ export async function redo() {
   }
 
   applyRedo(cmd);
+  await refreshTextEditLayerProjections(cmd, 'redo');
   await persistMeasureScaleIfNeeded(cmd);
   syncModifiedState();
 

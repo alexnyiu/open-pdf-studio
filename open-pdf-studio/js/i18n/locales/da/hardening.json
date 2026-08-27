@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Rediger {{label}}",
+    "editValueHint": "{{label}}. Dobbeltklik, eller tryk på Enter for at redigere.",
+    "timezoneHint": "Datoer vises i tidszonen {{timezone}} og gemmes i ISO 8601-format."
+  },
+  "fontSubstitution": {
+    "title": "Godkend skrifterstatning",
+    "sourceFace": "Kildeskrifttype",
+    "sourceFaces": "Kildeskrifttyper",
+    "unknown": "Ukendt",
+    "packagedSubstitute": "Medfølgende erstatningsskrifttype",
+    "notAvailable": "Ikke tilgængelig",
+    "sampleText": "Eksempel",
+    "sampleFallback": "Den hurtige brune ræv hopper over den dovne hund.",
+    "scope": "Gælder for",
+    "scopeAnnotation": "Denne annotation",
+    "scopeSelection": "De valgte tekstfelter",
+    "scopeParagraph": "Dette PDF-afsnit",
+    "scopeFindReplace": "Denne Søg/erstat-redigering",
+    "remember": "Husk denne godkendelse for det åbne dokument",
+    "approve": "Brug erstatningsskrifttype",
+    "cancel": "Annuller"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Rediger PDF-tekst",
+      "editFormatted": "Rediger formateret PDF-tekst",
+      "editAnnotation": "Rediger formateret {{type}}-tekst",
+      "editRegion": "Rediger formateret PDF-tekstområde: {{text}}",
+      "editScannedLine": "Rediger scannet tekstlinje: {{text}}",
+      "editScannedFixed": "Rediger fast område med scannet tekst: {{text}}",
+      "editScannedReflow": "Rediger ombrydningsområde for scannet tekstafsnit: {{text}}",
+      "selectedOcrParagraph": "Valgt OCR-afsnit med {{count}} linjer"
+    },
+    "handles": {
+      "move": "Flyt tekstfelt",
+      "moveHint": "Træk for at flytte tekstfeltet",
+      "resize": "Tilpas tekstfeltets størrelse",
+      "resizeHint": "Træk for at tilpasse tekstfeltets størrelse"
+    },
+    "actions": {
+      "apply": "Anvend",
+      "cancel": "Annuller"
+    },
+    "status": {
+      "ocrOverflow": "Hele OCR-kladden er synlig uden for det godkendte område. Lagring er fortsat blokeret, medmindre den nøjagtige validering af det faste område bekræfter, at teksten passer.",
+      "scannedRegion": "Scannet tekst redigeres inden for det godkendte område.",
+      "shaping": "Det nøjagtige tekstlayout færdiggøres…",
+      "overlap": "Teksten overlapper eksisterende sideindhold. Ændringen kan gemmes; tilstødende kildeobjekter flyttes ikke.",
+      "lowContrast": "Kildefarver med lav kontrast har en baggrund, der kun vises under redigering. Gemte farver forbliver uændrede.",
+      "layoutRejectedPrefix": "Tekstlayout blev afvist:",
+      "layoutRejected": "Tekstlayout blev afvist: {{reasons}}",
+      "shapingRejected": "Tekstformning blev afvist: {{reason}}",
+      "nativeManual": "Oprindelig tekst redigeres i et tekstfelt med manuelle linjer. Tryk på Enter for at oprette en ny linje.",
+      "nativeManualContrast": "Oprindelig tekst redigeres i et tekstfelt med manuelle linjer. Tryk på Enter for at oprette en ny linje. Kildefarver med lav kontrast har en baggrund, der kun vises under redigering; gemte farver forbliver uændrede.",
+      "nativeGrowing": "Oprindelig tekst redigeres. Bredden er fast, og området vokser nedad.",
+      "nativeGrowingContrast": "Oprindelig tekst redigeres. Bredden er fast, og området vokser nedad. Kildefarver med lav kontrast har en baggrund, der kun vises under redigering; gemte farver forbliver uændrede.",
+      "scannedEstimate": "Scannet tekst redigeres. Skrifttypeegenskaberne er anslåede.",
+      "applyRejected": "Tekstændringen kunne ikke anvendes: {{reason}}",
+      "cropBoxRejected": "Den formede tekst kan ikke gemmes inden for sidens beskæringsramme.",
+      "layoutTimeout": "Det nøjagtige tekstlayout blev ikke færdigt i tide. Redigeringsfeltet forbliver åbent.",
+      "scannedRejected": "Ændringen af den scannede tekst blev afvist: {{reason}}",
+      "lineBreakUnsupported": "Linjeskift understøttes ikke. Brug Kommando-Enter for at anvende denne redigering af én linje.",
+      "ocrOneLine": "En enkelt isoleret scannet tekstlinje redigeres. Skrifttypeegenskaberne er anslåede.",
+      "ocrFixed": "Flere OCR-linjer redigeres inden for ét fast oprindeligt område. Et enkelt afsnit ombrydes inden for området; hårde linjeskift bevarer tilstanden med faste linjer. Kommando-Enter anvender ændringen.",
+      "ocrReflow": "Et afsnit redigeres inden for det godkendte oprindelige OCR-område. Kommando-Enter anvender ændringen; overløb afvises.",
+      "operationFailed": "Teksthandlingen kunne ikke fuldføres. Dokumentet blev ikke ændret.",
+      "staleDraft": "Dokumentet blev ændret, mens teksteditoren var åben. Kladden blev kasseret.",
+      "multipleOcrParagraphs": "Markeringen spænder over flere OCR-afsnit. Gennemse de separate konturer, og brug Flet eksplicit. Fletning på tværs af kolonner er fortsat deaktiveret.",
+      "nativeColumnBoundary": "Dette afsnit krydser en registreret kolonnegrænse i originalen. Redigeringen blev blokeret, og dokumentet blev ikke ændret.",
+      "nativeSourceUnavailable": "Synlig tekst kunne ikke knyttes til gyldige kildeoperatorer. Dokumentet blev ikke ændret.",
+      "nativeDeleteUnavailable": "Denne oprindelige PDF-tekst kan ikke slettes sikkert, fordi dens nøjagtige kildeoperatorer er tvetydige. Dokumentet blev ikke ændret.",
+      "readOnly": "Tidligere redigeret tekst er skrivebeskyttet. Dokumentet blev ikke ændret."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Grænse på {{limit}} grafemer",
+      "lineThreshold": "Grænse på {{limit}} linjer",
+      "message": "Hele det indsatte indhold er bevaret: {{graphemeCount}} grafemer fordelt på {{lineCount}} linjer. Grænse overskredet: {{thresholds}}. Forhåndsvisningen er begrænset. Brug Fortryd indsættelse til at fjerne hele indsættelsen.",
+      "messageWithExpansion": "Hele det indsatte indhold er bevaret: {{graphemeCount}} grafemer fordelt på {{lineCount}} linjer. Grænse overskredet: {{thresholds}}. Forhåndsvisningen er begrænset. Brug Fortryd indsættelse til at fjerne hele indsættelsen eller Udvid felt til at anvende de nøjagtige validerede grænser.",
+      "undo": "Fortryd indsættelse",
+      "expand": "Udvid felt"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Gruppering af OCR-afsnit",
+    "title": "Gruppering",
+    "mergeSelected": "Flet valgte",
+    "mergeSelectedParagraphs": "Flet valgte afsnit",
+    "mergePrevious": "Flet med forrige",
+    "mergePreviousHint": "Flet med det forrige OCR-afsnit",
+    "mergeNext": "Flet med næste",
+    "mergeNextHint": "Flet med det næste OCR-afsnit",
+    "splitBefore": "Opdel før",
+    "splitAfter": "Opdel efter",
+    "reset": "Nulstil automatisk gruppering",
+    "crossColumnDisabled": "Fletning på tværs af kolonner er deaktiveret",
+    "ambiguousBoundariesOnly": "Kun tvetydige grænser i samme kolonne kan flettes manuelt",
+    "tooManyLines": "Mere end 32 linjer. Opdel dette afsnit manuelt før redigering.",
+    "mergeDescription": "De eksisterende tekster er adskilt af et bevaret fast linjeskift. Fletningen anvendes først, når den kombinerede kildeændring og det faste område har bestået valideringen.",
+    "mergedText": "Flettet OCR-tekst",
+    "splitRegion": "Opdel OCR-område",
+    "firstRegion": "Første område",
+    "secondRegion": "Andet område",
+    "sourceLines": "Kildelinjer: {{lines}}"
+  }
+}

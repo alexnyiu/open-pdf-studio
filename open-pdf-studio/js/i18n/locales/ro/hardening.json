@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Editează {{label}}",
+    "editValueHint": "{{label}}. Fă dublu clic sau apasă Enter pentru a edita.",
+    "timezoneHint": "Datele sunt afișate în fusul orar {{timezone}} și salvate în format ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Aprobă înlocuirea fontului",
+    "sourceFace": "Font sursă",
+    "sourceFaces": "Fonturi sursă",
+    "unknown": "Necunoscut",
+    "packagedSubstitute": "Font înlocuitor inclus",
+    "notAvailable": "Indisponibil",
+    "sampleText": "Exemplu",
+    "sampleFallback": "Vulpea brună și rapidă sare peste câinele leneș.",
+    "scope": "Se aplică pentru",
+    "scopeAnnotation": "Această adnotare",
+    "scopeSelection": "Casetele de text selectate",
+    "scopeParagraph": "Acest paragraf PDF",
+    "scopeFindReplace": "Această editare Căutare/Înlocuire",
+    "remember": "Reține această aprobare pentru documentul deschis",
+    "approve": "Folosește fontul înlocuitor",
+    "cancel": "Anulează"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Editează textul PDF",
+      "editFormatted": "Editează textul PDF formatat",
+      "editAnnotation": "Editează textul {{type}} formatat",
+      "editRegion": "Editează regiunea cu text PDF formatat: {{text}}",
+      "editScannedLine": "Editează rândul de text scanat: {{text}}",
+      "editScannedFixed": "Editează regiunea fixă de text scanat: {{text}}",
+      "editScannedReflow": "Editează regiunea de rearanjare a paragrafului scanat: {{text}}",
+      "selectedOcrParagraph": "Paragraf OCR selectat cu {{count}} rânduri"
+    },
+    "handles": {
+      "move": "Mută caseta de text",
+      "moveHint": "Trage pentru a muta caseta de text",
+      "resize": "Redimensionează caseta de text",
+      "resizeHint": "Trage pentru a redimensiona caseta de text"
+    },
+    "actions": {
+      "apply": "Aplică",
+      "cancel": "Anulează"
+    },
+    "status": {
+      "ocrOverflow": "Întregul ciornă OCR este vizibil în afara regiunii aprobate. Salvarea rămâne blocată până când textul încape conform validării exacte a regiunii fixe.",
+      "scannedRegion": "Textul scanat este editat în regiunea aprobată.",
+      "shaping": "Se finalizează aspectul exact al textului…",
+      "overlap": "Textul se suprapune peste conținutul existent al paginii. Modificarea poate fi aplicată; obiectele sursă învecinate nu se vor deplasa.",
+      "lowContrast": "Culorile sursă cu contrast redus au un fundal vizibil numai la editare. Culorile salvate rămân neschimbate.",
+      "layoutRejectedPrefix": "Aspectul textului a fost respins:",
+      "layoutRejected": "Aspectul textului a fost respins: {{reasons}}",
+      "shapingRejected": "Formarea textului a fost respinsă: {{reason}}",
+      "nativeManual": "Textul nativ este editat într-o casetă cu rânduri manuale. Apasă Enter pentru un rând nou.",
+      "nativeManualContrast": "Textul nativ este editat într-o casetă cu rânduri manuale. Apasă Enter pentru un rând nou. Culorile sursă cu contrast redus au un fundal vizibil numai la editare; culorile salvate rămân neschimbate.",
+      "nativeGrowing": "Textul nativ este editat. Lățimea este fixă, iar regiunea se extinde în jos.",
+      "nativeGrowingContrast": "Textul nativ este editat. Lățimea este fixă, iar regiunea se extinde în jos. Culorile sursă cu contrast redus au un fundal vizibil numai la editare; culorile salvate rămân neschimbate.",
+      "scannedEstimate": "Textul scanat este editat. Proprietățile fontului sunt estimate.",
+      "applyRejected": "Editarea textului nu a putut fi aplicată: {{reason}}",
+      "cropBoxRejected": "Textul format nu poate fi aplicat în interiorul zonei CropBox a paginii.",
+      "layoutTimeout": "Aspectul exact al textului nu a fost finalizat la timp. Editorul rămâne deschis.",
+      "scannedRejected": "Modificarea textului scanat a fost respinsă: {{reason}}",
+      "lineBreakUnsupported": "Întreruperile de rând nu sunt acceptate. Folosește Command-Enter pentru a aplica această editare pe un singur rând.",
+      "ocrOneLine": "Este editat un singur rând izolat de text scanat. Proprietățile fontului sunt estimate.",
+      "ocrFixed": "Sunt editate mai multe rânduri OCR într-o singură regiune originală fixă. Un singur paragraf este rearanjat în această regiune; întreruperile de rând explicite păstrează modul cu rânduri fixe. Command-Enter aplică modificarea.",
+      "ocrReflow": "Este editat un paragraf în regiunea OCR originală aprobată. Command-Enter aplică modificarea; depășirea regiunii este respinsă.",
+      "operationFailed": "Operația asupra textului nu a putut fi finalizată. Documentul a rămas nemodificat.",
+      "staleDraft": "Documentul s-a modificat cât timp editorul de text era deschis. Schița a fost eliminată.",
+      "multipleOcrParagraphs": "Selecția se întinde pe mai multe paragrafe OCR. Examinați contururile separate și folosiți explicit Îmbinare. Îmbinarea între coloane rămâne dezactivată.",
+      "nativeColumnBoundary": "Acest paragraf traversează o limită detectată a coloanei originale. Editarea a fost blocată și documentul a rămas nemodificat.",
+      "nativeSourceUnavailable": "Textul vizibil nu a putut fi asociat cu operatori sursă eligibili. Documentul a rămas nemodificat.",
+      "nativeDeleteUnavailable": "Acest text PDF nativ nu poate fi șters în siguranță deoarece operatorii săi sursă exacți sunt ambigui. Documentul a rămas nemodificat.",
+      "readOnly": "Textul editat anterior este doar în citire. Documentul a rămas nemodificat."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Limită de {{limit}} grafeme",
+      "lineThreshold": "Limită de {{limit}} rânduri",
+      "message": "Întregul conținut lipit a fost păstrat: {{graphemeCount}} grafeme pe {{lineCount}} rânduri. Limită depășită: {{thresholds}}. Previzualizarea este limitată. Folosește Anulează lipirea pentru a elimina întreaga inserare.",
+      "messageWithExpansion": "Întregul conținut lipit a fost păstrat: {{graphemeCount}} grafeme pe {{lineCount}} rânduri. Limită depășită: {{thresholds}}. Previzualizarea este limitată. Folosește Anulează lipirea pentru a elimina întreaga inserare sau Extinde caseta pentru a adopta limitele exacte validate.",
+      "undo": "Anulează lipirea",
+      "expand": "Extinde caseta"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Gruparea paragrafelor OCR",
+    "title": "Grupare",
+    "mergeSelected": "Îmbină selecția",
+    "mergeSelectedParagraphs": "Îmbină paragrafele selectate",
+    "mergePrevious": "Îmbină cu precedentul",
+    "mergePreviousHint": "Îmbină cu paragraful OCR precedent",
+    "mergeNext": "Îmbină cu următorul",
+    "mergeNextHint": "Îmbină cu paragraful OCR următor",
+    "splitBefore": "Împarte înainte",
+    "splitAfter": "Împarte după",
+    "reset": "Resetează gruparea automată",
+    "crossColumnDisabled": "Îmbinarea între coloane este dezactivată",
+    "ambiguousBoundariesOnly": "Numai limitele ambigue din aceeași coloană pot fi îmbinate manual",
+    "tooManyLines": "Mai mult de 32 de rânduri. Împarte manual acest paragraf înainte de editare.",
+    "mergeDescription": "Textele existente sunt separate printr-un sfârșit de linie forțat păstrat. Îmbinarea se aplică numai după ce modificarea sursă combinată și regiunea fixă trec validarea.",
+    "mergedText": "Text OCR îmbinat",
+    "splitRegion": "Împarte regiunea OCR",
+    "firstRegion": "Prima regiune",
+    "secondRegion": "A doua regiune",
+    "sourceLines": "Linii sursă: {{lines}}"
+  }
+}

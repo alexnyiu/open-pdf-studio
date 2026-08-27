@@ -1,5 +1,7 @@
+import { execFile } from 'node:child_process';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { validatePlatformReport } from './evaluate-ocr-phase-a-reports.mjs';
@@ -10,8 +12,19 @@ export const MACOS_PRODUCTION_GO = 'MACOS PRODUCTION GO';
 export const MACOS_PRODUCTION_NO_GO = 'MACOS PRODUCTION NO-GO';
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoDir = path.resolve(projectDir, '..');
+const execFileAsync = promisify(execFile);
 const RETAINED_RSS_LIMIT_MIB = 32;
 const GROWTH_LIMIT_MIB_PER_CYCLE = 2;
+
+async function gitHead() {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
+  const result = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+    cwd: repoDir,
+    encoding: 'utf8',
+  });
+  return result.stdout.trim();
+}
 
 function noPids(value) {
   return Array.isArray(value) && value.length === 0;
@@ -155,6 +168,7 @@ export function evaluateMacosProductionReport(report, artifactEvidence = {}) {
   failures.push(...baseFailures.map((failure) => `platform report: ${failure}`));
 
   return {
+    contract: 'open-pdf-studio.ocr-macos-production-decision',
     schemaVersion: 1,
     scope: 'macos-arm64',
     classification: failures.length === 0
@@ -304,7 +318,10 @@ async function main() {
   } catch (error) {
     artifactEvidence = { summary: { verificationError: error.message } };
   }
-  const decision = evaluateMacosProductionReport(report, artifactEvidence);
+  const decision = {
+    ...evaluateMacosProductionReport(report, artifactEvidence),
+    head: await gitHead(),
+  };
   const serialized = `${JSON.stringify(decision, null, 2)}\n`;
   if (options.output) await writeFile(path.resolve(options.output), serialized, 'utf8');
   process.stdout.write(serialized);

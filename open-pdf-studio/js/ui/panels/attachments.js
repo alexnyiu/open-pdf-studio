@@ -278,6 +278,7 @@ async function removeAttachment(activeDoc, key) {
 
 // Reload the pdf.js document from new bytes
 async function reloadDocumentFromBytes(activeDoc, bytes) {
+  const { replaceDocumentPdfProxy } = await import('../../core/document-lifecycle.js');
   const pdfjsLib = await import('pdfjs-dist');
   const newDoc = await pdfjsLib.getDocument({
     data: bytes,
@@ -287,7 +288,8 @@ async function reloadDocumentFromBytes(activeDoc, bytes) {
     isEvalSupported: false,
     verbosity: 0,
   }).promise;
-  activeDoc.pdfDoc = newDoc;
+  const previousPdfDocument = replaceDocumentPdfProxy(activeDoc, newDoc, 'attachment-reload');
+  try { await previousPdfDocument?.destroy?.(); } catch (_) {}
 }
 
 // Guess MIME type from filename

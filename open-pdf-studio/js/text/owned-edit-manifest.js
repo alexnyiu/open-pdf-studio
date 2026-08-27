@@ -18,6 +18,7 @@ import {
 
 const OWNER_KEY = PDFName.of('OpenPDFStudioTextEdit');
 const OWNED_LAYER_KEY = PDFName.of('OPDSOwnedTextLayer');
+const LAST_MODIFIED_KEY = PDFName.of('LastModified');
 
 async function sha256(value) {
   const bytes = new TextEncoder().encode(value);
@@ -33,6 +34,16 @@ function canonicalPayload(payload) {
     revision: payload.revision,
     pages: payload.pages,
   });
+}
+
+function streamMatchesManifest(stream, serializedManifest) {
+  if (!(stream instanceof PDFRawStream)) return false;
+  try {
+    const decoded = new TextDecoder().decode(decodePDFRawStream(stream).decode());
+    return decoded === serializedManifest;
+  } catch {
+    return false;
+  }
 }
 
 function validateRecord(record) {
@@ -112,15 +123,23 @@ export async function writeOwnedTextEditManifest(pdfDocument, documentId, record
   }
   const existingEntry = pieceInfo.lookupMaybe(OWNER_KEY, PDFDict);
   const existingPrivateRef = existingEntry?.get(PDFName.of('Private')) || null;
-  const stream = context.stream(new TextEncoder().encode(JSON.stringify(manifest)), {
-    Type: 'Metadata',
-    Subtype: 'OpenPDFStudioTextEditManifest',
-  });
+  const serializedManifest = JSON.stringify(manifest);
+  const existingPrivateStream = existingEntry?.lookupMaybe(PDFName.of('Private'), PDFRawStream);
+  const unchanged = streamMatchesManifest(existingPrivateStream, serializedManifest);
   let privateRef = existingPrivateRef;
-  if (privateRef) context.assign(privateRef, stream);
-  else privateRef = context.register(stream);
+  if (!privateRef || !unchanged) {
+    const stream = context.stream(new TextEncoder().encode(serializedManifest), {
+      Type: 'Metadata',
+      Subtype: 'OpenPDFStudioTextEditManifest',
+    });
+    if (privateRef) context.assign(privateRef, stream);
+    else privateRef = context.register(stream);
+  }
+  const previousLastModified = existingEntry?.get(LAST_MODIFIED_KEY) || null;
   pieceInfo.set(OWNER_KEY, context.obj({
-    LastModified: PDFString.of(new Date().toISOString()),
+    LastModified: unchanged && previousLastModified
+      ? previousLastModified
+      : PDFString.of(new Date().toISOString()),
     Schema: PDFString.of(OWNED_TEXT_EDIT_MANIFEST_SCHEMA),
     Version: OWNED_TEXT_EDIT_MANIFEST_VERSION,
     Private: privateRef,

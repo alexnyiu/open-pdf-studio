@@ -120,8 +120,18 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum Response {
-    Ready { op: String, shm_name: String, shm_size: u64 },
-    RenderOk { id: u64, ok: bool, w: u32, h: u32, shm_bytes: u64 },
+    Ready {
+        op: String,
+        shm_name: String,
+        shm_size: u64,
+    },
+    RenderOk {
+        id: u64,
+        ok: bool,
+        w: u32,
+        h: u32,
+        shm_bytes: u64,
+    },
     RenderOcrOk {
         id: u64,
         ok: bool,
@@ -137,7 +147,11 @@ pub enum Response {
         #[serde(rename = "pageGeometry")]
         page_geometry: PdfiumPageGeometry,
     },
-    RenderErr { id: u64, ok: bool, error: String },
+    RenderErr {
+        id: u64,
+        ok: bool,
+        error: String,
+    },
 }
 
 #[cfg(test)]
@@ -196,7 +210,13 @@ mod tests {
 
     #[test]
     fn response_render_ok_serializes_with_ok_true() {
-        let resp = Response::RenderOk { id: 42, ok: true, w: 1289, h: 596, shm_bytes: 3072512 };
+        let resp = Response::RenderOk {
+            id: 42,
+            ok: true,
+            w: 1289,
+            h: 596,
+            shm_bytes: 3072512,
+        };
         let s = serde_json::to_string(&resp).unwrap();
         assert!(s.contains("\"ok\":true"));
         assert!(s.contains("\"shm_bytes\":3072512"));

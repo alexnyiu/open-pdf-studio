@@ -21,7 +21,9 @@ fn dict_of<'a>(doc: &'a Document, o: &'a Object) -> Option<&'a Dictionary> {
 }
 
 fn show_xobjects(doc: &Document, res: &Dictionary, depth: usize, seen: &mut HashSet<(u32, u16)>) {
-    let Some(xd) = res.get(b"XObject").ok().and_then(|o| dict_of(doc, o)) else { return };
+    let Some(xd) = res.get(b"XObject").ok().and_then(|o| dict_of(doc, o)) else {
+        return;
+    };
     for (name, val) in xd.iter() {
         let id = match val {
             Object::Reference(id) => *id,
@@ -30,19 +32,55 @@ fn show_xobjects(doc: &Document, res: &Dictionary, depth: usize, seen: &mut Hash
         if !seen.insert(id) {
             continue;
         }
-        let Ok(Object::Stream(s)) = doc.get_object(id) else { continue };
+        let Ok(Object::Stream(s)) = doc.get_object(id) else {
+            continue;
+        };
         let d = &s.dict;
-        let sub = d.get(b"Subtype").ok().and_then(|o| o.as_name().ok()).map(|n| String::from_utf8_lossy(n).into_owned()).unwrap_or_default();
-        let get_i = |k: &[u8]| d.get(k).ok().map(|o| match resolve(doc, o) { Object::Integer(i) => i.to_string(), other => format!("{:?}", other) }).unwrap_or_default();
-        let filter = d.get(b"Filter").ok().map(|o| format!("{:?}", o)).unwrap_or_default();
-        let cs = d.get(b"ColorSpace").ok().map(|o| format!("{:?}", resolve(doc, o))).unwrap_or_default();
-        let mask = d.get(b"ImageMask").ok().map(|o| format!("{:?}", o)).unwrap_or_default();
+        let sub = d
+            .get(b"Subtype")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            .map(|n| String::from_utf8_lossy(n).into_owned())
+            .unwrap_or_default();
+        let get_i = |k: &[u8]| {
+            d.get(k)
+                .ok()
+                .map(|o| match resolve(doc, o) {
+                    Object::Integer(i) => i.to_string(),
+                    other => format!("{:?}", other),
+                })
+                .unwrap_or_default()
+        };
+        let filter = d
+            .get(b"Filter")
+            .ok()
+            .map(|o| format!("{:?}", o))
+            .unwrap_or_default();
+        let cs = d
+            .get(b"ColorSpace")
+            .ok()
+            .map(|o| format!("{:?}", resolve(doc, o)))
+            .unwrap_or_default();
+        let mask = d
+            .get(b"ImageMask")
+            .ok()
+            .map(|o| format!("{:?}", o))
+            .unwrap_or_default();
         let smask = d.get(b"SMask").is_ok();
         println!(
             "{:indent$}[{}] /{} sub={} W={} H={} BPC={} filter={} CS={} mask={} smask={} len={}",
-            "", format!("{:?}", id), String::from_utf8_lossy(name), sub,
-            get_i(b"Width"), get_i(b"Height"), get_i(b"BitsPerComponent"),
-            filter, cs.chars().take(90).collect::<String>(), mask, smask, s.content.len(),
+            "",
+            format!("{:?}", id),
+            String::from_utf8_lossy(name),
+            sub,
+            get_i(b"Width"),
+            get_i(b"Height"),
+            get_i(b"BitsPerComponent"),
+            filter,
+            cs.chars().take(90).collect::<String>(),
+            mask,
+            smask,
+            s.content.len(),
             indent = depth * 2
         );
         if sub == "Form" {
@@ -70,13 +108,21 @@ fn main() {
 
     println!("\n== Inline images in content-stream ==");
     let content = doc.get_page_content(page_id).expect("content");
-    println!("content: {:.1} MB gedecomprimeerd", content.len() as f64 / 1048576.0);
+    println!(
+        "content: {:.1} MB gedecomprimeerd",
+        content.len() as f64 / 1048576.0
+    );
     // Ruwe scan op "BI" op token-grens gevolgd door /-dict en ID
     let mut i = 0usize;
     let mut n_bi = 0u64;
     let mut samples: Vec<String> = Vec::new();
     let is_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'\x0C' | b'\0');
-    let is_delim = |b: u8| matches!(b, b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%');
+    let is_delim = |b: u8| {
+        matches!(
+            b,
+            b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+        )
+    };
     while i + 1 < content.len() {
         if content[i] == b'B' && content[i + 1] == b'I' {
             let before_ok = i == 0 || is_ws(content[i - 1]) || is_delim(content[i - 1]);
@@ -87,7 +133,10 @@ fn main() {
                     // toon dict tot aan ID
                     let end = (i + 300).min(content.len());
                     if let Some(id_pos) = content[i..end].windows(2).position(|w| w == b"ID") {
-                        samples.push(String::from_utf8_lossy(&content[i..i + id_pos + 2]).replace(['\n', '\r'], " "));
+                        samples.push(
+                            String::from_utf8_lossy(&content[i..i + id_pos + 2])
+                                .replace(['\n', '\r'], " "),
+                        );
                     }
                 }
                 i += 2;
@@ -105,7 +154,10 @@ fn main() {
     println!("\n== DrawImage-payloads in extract_draw_commands ==");
     let bytes = std::fs::read(pdf).expect("read");
     let hdoc = open_pdf_render::DocumentHandle::load(&bytes).expect("load handle");
-    let d = hdoc.extract_draw_commands(page_idx, 0).expect("extract").into_bytes();
+    let d = hdoc
+        .extract_draw_commands(page_idx, 0)
+        .expect("extract")
+        .into_bytes();
     let mut pos = 16usize;
     let mut n_img = 0u64;
     while pos < d.len() {
@@ -128,11 +180,22 @@ fn main() {
                 let m = &d[pos + 8..pos + 8 + 8.min(dlen)];
                 n_img += 1;
                 if n_img <= 8 {
-                    println!("  img {}x{} len={} magic={:02X?} ({})", w, h, dlen, &m[..4.min(m.len())],
-                        if m.starts_with(b"RGBA") { "RGBA-raw" }
-                        else if m.starts_with(&[0xFF, 0xD8]) { "JPEG" }
-                        else if m.starts_with(&[0x89, b'P']) { "PNG" }
-                        else { "?" });
+                    println!(
+                        "  img {}x{} len={} magic={:02X?} ({})",
+                        w,
+                        h,
+                        dlen,
+                        &m[..4.min(m.len())],
+                        if m.starts_with(b"RGBA") {
+                            "RGBA-raw"
+                        } else if m.starts_with(&[0xFF, 0xD8]) {
+                            "JPEG"
+                        } else if m.starts_with(&[0x89, b'P']) {
+                            "PNG"
+                        } else {
+                            "?"
+                        }
+                    );
                 }
                 8 + dlen
             }

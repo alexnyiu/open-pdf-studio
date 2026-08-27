@@ -9,12 +9,12 @@ pub mod linux_runtime;
 pub mod macos_safe_save;
 pub mod mcp_app_bridge;
 pub mod mcp_server;
-pub mod ocr_controller;
 pub mod ocr_cache;
+pub mod ocr_controller;
 pub mod pdfium_renderer;
 pub mod render_to_png;
-pub mod window_mgmt;
 pub mod startup_diagnostics;
+pub mod window_mgmt;
 pub mod worker_pool;
 
 pub struct StartupOpts {
@@ -33,11 +33,11 @@ impl Default for StartupOpts {
     }
 }
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use tauri::{Emitter, Manager};
 use tauri_plugin_fs::FsExt;
 
@@ -120,7 +120,10 @@ fn get_preferences_file_path() -> String {
         if !app_dir.exists() {
             let _ = fs::create_dir_all(&app_dir);
         }
-        app_dir.join("preferences.json").to_string_lossy().to_string()
+        app_dir
+            .join("preferences.json")
+            .to_string_lossy()
+            .to_string()
     } else {
         "preferences.json".to_string()
     }
@@ -413,13 +416,16 @@ async fn get_printers() -> Result<String, String> {
             .and_then(|o| {
                 let s = String::from_utf8_lossy(&o.stdout).to_string();
                 // "system default destination: NAME" or "no system default destination"
-                s.lines()
-                    .find_map(|line| {
-                        line.split_once(':').and_then(|(_, v)| {
-                            let v = v.trim();
-                            if v.is_empty() || v.starts_with("no ") { None } else { Some(v.to_string()) }
-                        })
+                s.lines().find_map(|line| {
+                    line.split_once(':').and_then(|(_, v)| {
+                        let v = v.trim();
+                        if v.is_empty() || v.starts_with("no ") {
+                            None
+                        } else {
+                            Some(v.to_string())
+                        }
                     })
+                })
             })
             .unwrap_or_default();
 
@@ -427,10 +433,14 @@ async fn get_printers() -> Result<String, String> {
         let mut entries: Vec<String> = Vec::new();
         for line in stdout.lines() {
             let line = line.trim();
-            if !line.starts_with("printer ") { continue; }
+            if !line.starts_with("printer ") {
+                continue;
+            }
             let rest = &line["printer ".len()..];
             let name = rest.split_whitespace().next().unwrap_or("").to_string();
-            if name.is_empty() { continue; }
+            if name.is_empty() {
+                continue;
+            }
             let status_num: i32 = if rest.contains("disabled") { 0 } else { 3 }; // 3 = idle on Win32
             let is_default = name == default_name;
             // Match the Windows JSON shape: { Name, DriverName, Default, PrinterStatus }
@@ -465,22 +475,24 @@ async fn print_pdf(path: String, printer: String) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::Graphics::Gdi::{
-            CreateDCW, DeleteDC, StretchDIBits, GetDeviceCaps, SetStretchBltMode,
-            ResetDCW, DEVMODEW, BITMAPINFO, BITMAPINFOHEADER,
-            BI_RGB, DIB_RGB_COLORS, SRCCOPY, HORZRES, VERTRES, LOGPIXELSX, HALFTONE,
-            DM_ORIENTATION, DMORIENT_PORTRAIT, DMORIENT_LANDSCAPE,
+            CreateDCW, DeleteDC, GetDeviceCaps, ResetDCW, SetStretchBltMode, StretchDIBits,
+            BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DEVMODEW, DIB_RGB_COLORS, DMORIENT_LANDSCAPE,
+            DMORIENT_PORTRAIT, DM_ORIENTATION, HALFTONE, HORZRES, LOGPIXELSX, SRCCOPY, VERTRES,
         };
         // The StartDoc/EndDoc print-job family lives under Storage::Xps in
         // windows-sys (print spooler document API), not under Graphics::Gdi.
-        use windows_sys::Win32::Storage::Xps::{
-            StartDocW, EndDoc, AbortDoc, StartPage, EndPage, DOCINFOW,
-        };
-        use std::os::windows::ffi::OsStrExt;
         use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
         use std::sync::Arc;
+        use windows_sys::Win32::Storage::Xps::{
+            AbortDoc, EndDoc, EndPage, StartDocW, StartPage, DOCINFOW,
+        };
 
         fn to_wide(s: &str) -> Vec<u16> {
-            OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+            OsStr::new(s)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
         }
 
         let p = std::path::Path::new(&path);
@@ -499,7 +511,12 @@ async fn print_pdf(path: String, printer: String) -> Result<bool, String> {
 
         unsafe {
             let printer_w = to_wide(&printer);
-            let hdc = CreateDCW(std::ptr::null(), printer_w.as_ptr(), std::ptr::null(), std::ptr::null());
+            let hdc = CreateDCW(
+                std::ptr::null(),
+                printer_w.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+            );
             if hdc.is_null() {
                 return Err(format!("Cannot open printer '{printer}'"));
             }
@@ -517,9 +534,7 @@ async fn print_pdf(path: String, printer: String) -> Result<bool, String> {
                 devmode.dmDeviceName[..n].copy_from_slice(&printer_w[..n]);
             }
 
-            let doc_name = to_wide(
-                p.file_name().and_then(|n| n.to_str()).unwrap_or("Document"),
-            );
+            let doc_name = to_wide(p.file_name().and_then(|n| n.to_str()).unwrap_or("Document"));
             let di = DOCINFOW {
                 cbSize: std::mem::size_of::<DOCINFOW>() as i32,
                 lpszDocName: doc_name.as_ptr(),
@@ -554,8 +569,11 @@ async fn print_pdf(path: String, printer: String) -> Result<bool, String> {
                 // before StartPage) so the driver prints it upright: a landscape
                 // drawing goes on landscape paper, no 90° auto-rotation.
                 // dmOrientation is i16; the DMORIENT_* consts are u32 in windows-sys.
-                devmode.Anonymous1.Anonymous1.dmOrientation =
-                    (if w > h { DMORIENT_LANDSCAPE } else { DMORIENT_PORTRAIT }) as i16;
+                devmode.Anonymous1.Anonymous1.dmOrientation = (if w > h {
+                    DMORIENT_LANDSCAPE
+                } else {
+                    DMORIENT_PORTRAIT
+                }) as i16;
                 ResetDCW(hdc, &devmode);
                 let dev_w = GetDeviceCaps(hdc, HORZRES as i32);
                 let dev_h = GetDeviceCaps(hdc, VERTRES as i32);
@@ -588,8 +606,14 @@ async fn print_pdf(path: String, printer: String) -> Result<bool, String> {
                 SetStretchBltMode(hdc, HALFTONE as i32);
                 StretchDIBits(
                     hdc,
-                    dx, dy, dw, dh,
-                    0, 0, w as i32, h as i32,
+                    dx,
+                    dy,
+                    dw,
+                    dh,
+                    0,
+                    0,
+                    w as i32,
+                    h as i32,
                     rgba.as_ptr() as *const std::ffi::c_void,
                     &bmi,
                     DIB_RGB_COLORS,
@@ -617,20 +641,21 @@ fn open_printer_properties(window: tauri::WebviewWindow, printer: String) -> Res
     #[cfg(target_os = "windows")]
     {
         use windows_sys::Win32::Graphics::Printing::{
-            OpenPrinterW, ClosePrinter, DocumentPropertiesW,
+            ClosePrinter, DocumentPropertiesW, OpenPrinterW,
         };
 
         // Get the HWND from the Tauri window so the dialog is modal
-        let hwnd = window.hwnd().map_err(|e| format!("Failed to get window handle: {}", e))?;
+        let hwnd = window
+            .hwnd()
+            .map_err(|e| format!("Failed to get window handle: {}", e))?;
         let hwnd_raw = hwnd.0 as windows_sys::Win32::Foundation::HWND;
 
         // Convert printer name to wide string
         let wide_name: Vec<u16> = printer.encode_utf16().chain(std::iter::once(0)).collect();
 
         let mut h_printer: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
-        let opened = unsafe {
-            OpenPrinterW(wide_name.as_ptr(), &mut h_printer, std::ptr::null_mut())
-        };
+        let opened =
+            unsafe { OpenPrinterW(wide_name.as_ptr(), &mut h_printer, std::ptr::null_mut()) };
 
         if opened == 0 || h_printer.is_null() {
             return Err(format!("Failed to open printer '{}'", printer));
@@ -649,8 +674,8 @@ fn open_printer_properties(window: tauri::WebviewWindow, printer: String) -> Res
                     hwnd_usize as _,
                     printer_usize as _,
                     device_name.as_ptr() as _,
-                    std::ptr::null_mut(),   // pDevModeOutput — not capturing changes
-                    std::ptr::null_mut(),   // pDevModeInput
+                    std::ptr::null_mut(), // pDevModeOutput — not capturing changes
+                    std::ptr::null_mut(), // pDevModeInput
                     DM_IN_PROMPT,
                 );
                 ClosePrinter(printer_usize as _);
@@ -728,8 +753,7 @@ exit 1
         log_path.to_string_lossy()
     );
 
-    fs::write(&script_path, &wrapped)
-        .map_err(|e| format!("Failed to write temp script: {}", e))?;
+    fs::write(&script_path, &wrapped).map_err(|e| format!("Failed to write temp script: {}", e))?;
 
     // Launch elevated: Start-Process -Verb RunAs -Wait on the .ps1 file
     // Build the -ArgumentList as a single quoted string with each param separated by commas.
@@ -807,9 +831,11 @@ fn install_virtual_printer(use_collection: Option<bool>) -> Result<bool, String>
         let (port_setup_block, port_arg) = if use_collection {
             // Pre-create the spool dir + port pointing at it. Windows
             // file-ports require the port NAME to be the file path itself.
-            let local = std::env::var("LOCALAPPDATA")
-                .map_err(|_| "LOCALAPPDATA not set".to_string())?;
-            let spool_dir = std::path::Path::new(&local).join("OpenPDFPrinter").join("spool");
+            let local =
+                std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA not set".to_string())?;
+            let spool_dir = std::path::Path::new(&local)
+                .join("OpenPDFPrinter")
+                .join("spool");
             let spool_file = spool_dir.join("latest.pdf");
             std::fs::create_dir_all(&spool_dir)
                 .map_err(|e| format!("Failed to create spool dir: {}", e))?;
@@ -829,7 +855,8 @@ Add-PrinterPort -Name $portPath
             (String::new(), "'PORTPROMPT:'".to_string())
         };
 
-        let script = format!(r#"$ErrorActionPreference = 'Stop'
+        let script = format!(
+            r#"$ErrorActionPreference = 'Stop'
 $printerName = 'Open PDF Printer'
 $legacyName = 'Open PDF Studio'
 
@@ -843,7 +870,9 @@ Add-Printer -Name $printerName -DriverName 'Microsoft Print to PDF' -PortName {}
 # Default paper size = A4 (don't let driver/locale defaults pick C-size).
 try {{ Set-PrintConfiguration -PrinterName $printerName -PaperSize A4 -ErrorAction Stop }} catch {{
     Write-Host "Note: could not set default paper size to A4 (install still succeeded). $($_.Exception.Message)"
-}}"#, port_setup_block, port_arg);
+}}"#,
+            port_setup_block, port_arg
+        );
 
         run_elevated_ps_script(&script)?;
         Ok(true)
@@ -977,7 +1006,11 @@ fn virtual_printer_jobs() -> Result<Vec<VpJob>, String> {
 /// Delete one collected job. Basename only — no path traversal.
 #[tauri::command]
 fn virtual_printer_delete_job(file: String) -> Result<(), String> {
-    if file.contains('/') || file.contains('\\') || !file.starts_with("job_") || !file.ends_with(".pdf") {
+    if file.contains('/')
+        || file.contains('\\')
+        || !file.starts_with("job_")
+        || !file.ends_with(".pdf")
+    {
         return Err("invalid job file".into());
     }
     let p = vp_spool_dir()?.join(file);
@@ -997,8 +1030,10 @@ fn virtual_printer_catch_enabled() -> bool {
         };
         let out = no_window_command("powershell")
             .args(&[
-                "-NoProfile", "-NonInteractive", "-Command",
-                "(Get-Printer -Name 'Open PDF Printer' -ErrorAction SilentlyContinue).PortName"
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-Printer -Name 'Open PDF Printer' -ErrorAction SilentlyContinue).PortName",
             ])
             .output();
         match out {
@@ -1092,11 +1127,12 @@ fn is_virtual_printer_installed() -> bool {
 fn get_printer_spool_dir() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
-        let local = std::env::var("LOCALAPPDATA")
-            .map_err(|_| "LOCALAPPDATA not set".to_string())?;
-        let dir = std::path::Path::new(&local).join("OpenPDFPrinter").join("spool");
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create spool dir: {}", e))?;
+        let local =
+            std::env::var("LOCALAPPDATA").map_err(|_| "LOCALAPPDATA not set".to_string())?;
+        let dir = std::path::Path::new(&local)
+            .join("OpenPDFPrinter")
+            .join("spool");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create spool dir: {}", e))?;
         Ok(dir.to_string_lossy().to_string())
     }
     #[cfg(not(target_os = "windows"))]
@@ -1116,12 +1152,13 @@ fn list_printer_spool() -> Result<Vec<String>, String> {
         let dir = get_printer_spool_dir()?;
         let dir_path = std::path::Path::new(&dir);
         let mut entries: Vec<(std::time::SystemTime, String)> = Vec::new();
-        for e in std::fs::read_dir(dir_path)
-            .map_err(|e| format!("Failed to read spool: {}", e))? {
+        for e in std::fs::read_dir(dir_path).map_err(|e| format!("Failed to read spool: {}", e))? {
             if let Ok(entry) = e {
                 let path = entry.path();
                 if path.extension().and_then(|x| x.to_str()) == Some("pdf") {
-                    let created = entry.metadata().ok()
+                    let created = entry
+                        .metadata()
+                        .ok()
                         .and_then(|m| m.created().ok())
                         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                     entries.push((created, path.to_string_lossy().to_string()));
@@ -1150,8 +1187,7 @@ fn discard_spool_pdf(path: String) -> Result<bool, String> {
     if !p.starts_with(&spool) {
         return Err("Path is not in the printer spool directory".to_string());
     }
-    std::fs::remove_file(p)
-        .map_err(|e| format!("Failed to remove spool file: {}", e))?;
+    std::fs::remove_file(p).map_err(|e| format!("Failed to remove spool file: {}", e))?;
     Ok(true)
 }
 
@@ -1267,13 +1303,18 @@ fn reveal_in_file_manager(path: String) -> Result<bool, String> {
 /// Returns the temp file path on success.
 #[tauri::command]
 async fn download_pdf_from_url(url: String) -> Result<String, String> {
-    let response = reqwest::get(&url).await.map_err(|e| format!("Download failed: {}", e))?;
+    let response = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Download failed: {}", e))?;
 
     if !response.status().is_success() {
         return Err(format!("HTTP error: {}", response.status()));
     }
 
-    let bytes = response.bytes().await.map_err(|e| format!("Failed to read response: {}", e))?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
 
     if bytes.is_empty() {
         return Err("Downloaded file is empty".to_string());
@@ -1286,7 +1327,9 @@ async fn download_pdf_from_url(url: String) -> Result<String, String> {
         .unwrap_or(0);
 
     // Try to extract filename from URL
-    let filename = url.split('/').last()
+    let filename = url
+        .split('/')
+        .last()
         .and_then(|s| s.split('?').next())
         .filter(|s| s.to_lowercase().ends_with(".pdf"))
         .unwrap_or("download.pdf");
@@ -1329,7 +1372,9 @@ fn play_alert_sound() {
         extern "system" {
             fn MessageBeep(uType: c_uint) -> i32;
         }
-        unsafe { MessageBeep(0x00000030); } // MB_ICONEXCLAMATION
+        unsafe {
+            MessageBeep(0x00000030);
+        } // MB_ICONEXCLAMATION
     }
     #[cfg(target_os = "macos")]
     {
@@ -1390,11 +1435,13 @@ fn install_plugin(path: String) -> Result<serde_json::Value, String> {
     }
 
     let file = fs::File::open(&src_path).map_err(|e| format!("Failed to open file: {}", e))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Invalid plugin archive: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Invalid plugin archive: {}", e))?;
 
     // Read plugin.json from the archive to get the plugin id
     let manifest_content = {
-        let mut manifest_file = archive.by_name("plugin.json")
+        let mut manifest_file = archive
+            .by_name("plugin.json")
             .map_err(|_| "Plugin archive must contain plugin.json".to_string())?;
         let mut content = String::new();
         std::io::Read::read_to_string(&mut manifest_file, &mut content)
@@ -1405,7 +1452,8 @@ fn install_plugin(path: String) -> Result<serde_json::Value, String> {
     let manifest: serde_json::Value = serde_json::from_str(&manifest_content)
         .map_err(|e| format!("Invalid plugin.json: {}", e))?;
 
-    let plugin_id = manifest.get("id")
+    let plugin_id = manifest
+        .get("id")
         .and_then(|v| v.as_str())
         .ok_or("plugin.json must have an 'id' field")?;
 
@@ -1425,11 +1473,14 @@ fn install_plugin(path: String) -> Result<serde_json::Value, String> {
 
     // Re-open archive (consumed by by_name above)
     let file2 = fs::File::open(&src_path).map_err(|e| format!("Failed to reopen file: {}", e))?;
-    let mut archive2 = zip::ZipArchive::new(file2).map_err(|e| format!("Invalid archive: {}", e))?;
+    let mut archive2 =
+        zip::ZipArchive::new(file2).map_err(|e| format!("Invalid archive: {}", e))?;
 
     // Extract all files
     for i in 0..archive2.len() {
-        let mut file = archive2.by_index(i).map_err(|e| format!("Archive error: {}", e))?;
+        let mut file = archive2
+            .by_index(i)
+            .map_err(|e| format!("Archive error: {}", e))?;
         let outpath = plugin_dir.join(file.mangled_name());
 
         // Prevent path traversal
@@ -1443,8 +1494,8 @@ fn install_plugin(path: String) -> Result<serde_json::Value, String> {
             if let Some(parent) = outpath.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            let mut outfile = fs::File::create(&outpath)
-                .map_err(|e| format!("Failed to create file: {}", e))?;
+            let mut outfile =
+                fs::File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
             std::io::copy(&mut file, &mut outfile)
                 .map_err(|e| format!("Failed to extract file: {}", e))?;
         }
@@ -1494,7 +1545,8 @@ fn read_plugin_file(plugin_id: String, file_path: String) -> Result<String, Stri
 // ─── Allow FS access to a path (for testing / programmatic file opens) ────
 #[tauri::command]
 fn allow_fs_scope(app: tauri::AppHandle, path: String) -> Result<bool, String> {
-    app.fs_scope().allow_file(&path)
+    app.fs_scope()
+        .allow_file(&path)
         .map_err(|e| format!("{}", e))?;
     // Also allow the directory for related files
     if let Some(parent) = std::path::Path::new(&path).parent() {
@@ -1520,7 +1572,10 @@ fn get_or_load_doc(
 ) -> Result<Arc<DocumentHandle>, String> {
     // Fast path — handle already cached
     {
-        let cache_map = handle_cache.0.lock().map_err(|e| format!("Handle cache lock: {}", e))?;
+        let cache_map = handle_cache
+            .0
+            .lock()
+            .map_err(|e| format!("Handle cache lock: {}", e))?;
         if let Some(handle) = cache_map.get(path) {
             return Ok(handle.clone());
         }
@@ -1528,7 +1583,10 @@ fn get_or_load_doc(
 
     // Slow path — fetch bytes (from cache or disk), parse, insert
     let bytes = {
-        let mut bm = bytes_cache.0.lock().map_err(|e| format!("Bytes cache lock: {}", e))?;
+        let mut bm = bytes_cache
+            .0
+            .lock()
+            .map_err(|e| format!("Bytes cache lock: {}", e))?;
         if let Some(cached) = bm.get(path) {
             cached.clone()
         } else {
@@ -1539,11 +1597,16 @@ fn get_or_load_doc(
     };
 
     let renderer = PdfRenderer::new();
-    let handle = renderer.load_document(&bytes).map_err(|e| format!("{}", e))?;
+    let handle = renderer
+        .load_document(&bytes)
+        .map_err(|e| format!("{}", e))?;
     let arc = Arc::new(handle);
 
     {
-        let mut hm = handle_cache.0.lock().map_err(|e| format!("Handle cache lock: {}", e))?;
+        let mut hm = handle_cache
+            .0
+            .lock()
+            .map_err(|e| format!("Handle cache lock: {}", e))?;
         // Double-check in case another thread inserted while we were parsing.
         if let Some(existing) = hm.get(path) {
             return Ok(existing.clone());
@@ -1578,7 +1641,8 @@ fn render_pdf_page_skia(
 ) -> Result<tauri::ipc::Response, String> {
     let extra_rot = rotation.unwrap_or(0);
     let doc = get_or_load_doc(&path, &bytes_cache, &handle_cache)?;
-    let rendered = doc.render_page(page_index as usize, scale, extra_rot)
+    let rendered = doc
+        .render_page(page_index as usize, scale, extra_rot)
         .map_err(|e| format!("{}", e))?;
     let mut out = Vec::with_capacity(8 + rendered.rgba.len());
     out.extend_from_slice(&rendered.width.to_le_bytes());
@@ -1635,9 +1699,14 @@ async fn render_pdf_page(
                 let rgba_arc = std::sync::Arc::new(rgba);
                 if let Ok(mut guard) = pixmap_cache.0.lock() {
                     if let Some(cache) = guard.as_mut() {
-                        cache.insert(cache_key, std::sync::Arc::new(pdfium_renderer::CachedPixmap {
-                            width, height, rgba: rgba_arc.clone(),
-                        }));
+                        cache.insert(
+                            cache_key,
+                            std::sync::Arc::new(pdfium_renderer::CachedPixmap {
+                                width,
+                                height,
+                                rgba: rgba_arc.clone(),
+                            }),
+                        );
                     }
                 }
                 let mut data = Vec::with_capacity(8 + rgba_arc.len());
@@ -1647,14 +1716,20 @@ async fn render_pdf_page(
                 return Ok(tauri::ipc::Response::new(data));
             }
             Err(e) => {
-                eprintln!("[render_pdf_page] pool render failed: {} — falling back to in-proc", e);
+                eprintln!(
+                    "[render_pdf_page] pool render failed: {} — falling back to in-proc",
+                    e
+                );
             }
         }
     }
 
     // Fallback: in-proc PDFium (existing path, unchanged)
     let bytes = {
-        let mut bm = bytes_cache.0.lock().map_err(|e| format!("Bytes cache lock: {}", e))?;
+        let mut bm = bytes_cache
+            .0
+            .lock()
+            .map_err(|e| format!("Bytes cache lock: {}", e))?;
         if let Some(cached) = bm.get(&path) {
             cached.clone()
         } else {
@@ -1670,19 +1745,20 @@ async fn render_pdf_page(
         &pdfium_cache,
     )?;
 
-    let (width, height, rgba) = pdfium_renderer::render_page_to_rgba(
-        handle.document(),
-        page_index,
-        scale,
-        extra_rot,
-    )?;
+    let (width, height, rgba) =
+        pdfium_renderer::render_page_to_rgba(handle.document(), page_index, scale, extra_rot)?;
 
     let rgba_arc = std::sync::Arc::new(rgba);
     if let Ok(mut guard) = pixmap_cache.0.lock() {
         if let Some(cache) = guard.as_mut() {
-            cache.insert(cache_key, std::sync::Arc::new(pdfium_renderer::CachedPixmap {
-                width, height, rgba: rgba_arc.clone(),
-            }));
+            cache.insert(
+                cache_key,
+                std::sync::Arc::new(pdfium_renderer::CachedPixmap {
+                    width,
+                    height,
+                    rgba: rgba_arc.clone(),
+                }),
+            );
         }
     }
 
@@ -1710,12 +1786,10 @@ async fn rasterize_page_for_ocr(
     if !scale.is_finite() || !(0.5..=4.0).contains(&scale) {
         return Err("OCR raster scale must be between 0.5 and 4.0".to_string());
     }
-    let pool = pool
-        .get()
-        .ok_or_else(|| {
-            "PDFium worker pool is not ready; low-priority OCR will not use in-process fallback"
-                .to_string()
-        })?;
+    let pool = pool.get().ok_or_else(|| {
+        "PDFium worker pool is not ready; low-priority OCR will not use in-process fallback"
+            .to_string()
+    })?;
     let raster = pool
         .render_ocr_low_priority(
             &path,
@@ -1763,7 +1837,8 @@ async fn query_pdf_page_geometry(
         return Err("application rotation must be 0, 90, 180, or 270 degrees".to_string());
     }
     let pool = pool.get().ok_or_else(|| {
-        "PDFium worker pool is not ready; page geometry will not use in-process fallback".to_string()
+        "PDFium worker pool is not ready; page geometry will not use in-process fallback"
+            .to_string()
     })?;
     pool.query_page_geometry_low_priority(
         &path,
@@ -1803,7 +1878,17 @@ async fn render_pdf_page_region(
     // and off the main thread. Falls back to in-proc PDFium on any failure.
     if let Some(p) = pool.get() {
         match p
-            .render_region(&path, page_index, scale, extra_rot, region_x_pt, region_y_pt, region_w_pt, region_h_pt, spread.unwrap_or(false))
+            .render_region(
+                &path,
+                page_index,
+                scale,
+                extra_rot,
+                region_x_pt,
+                region_y_pt,
+                region_w_pt,
+                region_h_pt,
+                spread.unwrap_or(false),
+            )
             .await
         {
             Ok((width, height, rgba)) => {
@@ -1814,7 +1899,10 @@ async fn render_pdf_page_region(
                 return Ok(tauri::ipc::Response::new(data));
             }
             Err(e) => {
-                eprintln!("[render_pdf_page_region] pool failed: {} — in-proc fallback", e);
+                eprintln!(
+                    "[render_pdf_page_region] pool failed: {} — in-proc fallback",
+                    e
+                );
             }
         }
     }
@@ -1825,7 +1913,10 @@ async fn render_pdf_page_region(
     // nu centraal geserialiseerd via PDFIUM_INPROC_LOCK in pdfium_renderer, dus
     // dit pad heeft geen eigen lock meer nodig.
     let bytes = {
-        let mut bm = bytes_cache.0.lock().map_err(|e| format!("Bytes cache lock: {}", e))?;
+        let mut bm = bytes_cache
+            .0
+            .lock()
+            .map_err(|e| format!("Bytes cache lock: {}", e))?;
         if let Some(cached) = bm.get(&path) {
             cached.clone()
         } else {
@@ -1887,7 +1978,14 @@ async fn render_tile_scene_region(
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let key = format!("{}|{}|{}|p{}|r{}", path, mtime, meta.len(), page_index, extra_rot);
+    let key = format!(
+        "{}|{}|{}|p{}|r{}",
+        path,
+        mtime,
+        meta.len(),
+        page_index,
+        extra_rot
+    );
 
     let lookup = |sc: &TileSceneCache| -> Result<Option<Arc<open_pdf_render::tile_render::TileScene>>, String> {
         let cache = sc.0.lock().map_err(|e| format!("scene-cache lock: {}", e))?;
@@ -1905,58 +2003,74 @@ async fn render_tile_scene_region(
                 s
             } else {
                 let doc = get_or_load_doc(&path, &bytes_cache, &handle_cache)?;
-                let built = tauri::async_runtime::spawn_blocking(move || -> Result<open_pdf_render::tile_render::TileScene, String> {
-                    let buf = doc
-                        .extract_draw_commands(page_index as usize, extra_rot)
-                        .map_err(|e| format!("extract: {}", e))?;
-                    let bytes = buf.into_bytes();
-                    // Image-zware bladen horen op het PDFium-pad: een scene vol
-                    // ge-embedde beelddata is traag én zwaar — expliciet weigeren.
-                    if bytes.len() > 400 * 1024 * 1024 {
-                        return Err(format!("scene te groot ({} MB)", bytes.len() / 1_048_576));
-                    }
-                    let buffer_mb = ((bytes.len() / 1_048_576) as u64).max(1);
-                    let scene = open_pdf_render::tile_render::TileScene::build(bytes)
-                        .map_err(|e| format!("scene-build: {}", e))?;
-                    // Datagedreven engine-gate (corpus-benchmark 2026-07-05,
-                    // 136 pagina's; herijkt 2026-07-06 na image- en clip-
-                    // ondersteuning in de tegel-rasterizer): de scene is
-                    // alleen sneller ÉN accuraat op lijnwerk-bladen.
-                    //
-                    // Image-drempel 1 MB -> 2 MB (overleg-notitie): de
-                    // rasterizer tekent DrawImage-payloads nu daadwerkelijk
-                    // (RGBA-raw + JPEG), en de inline-strip-emissie geeft het
-                    // maatgevende strip-blad (MV-03: 4.925 strips, 1,44 MB
-                    // payload, downsampled diff 7,3% -> 7,1%) net méér dan
-                    // 1 MB aan correct renderende beelddata. In het corpus
-                    // haalt verder geen enkel blad het JS-voorfilter
-                    // (content >= 6 MB), dus deze verruiming raakt alleen de
-                    // strip-klasse; de BARN-klasse (tientallen MB's JPEG,
-                    // PDFium wint daar in tijd en beeld) blijft er ruim boven
-                    // en wordt nog steeds geweigerd.
-                    //
-                    // Clip-dichtheid blijft 25/MB: clips worden nu wél
-                    // gerepliceerd (tegel-maskers), maar boven deze dichtheid
-                    // is het maskerpad nog niet op snelheid gemeten —
-                    // versoepelen pas na een corpus-meting die dat draagt.
-                    let mb = buffer_mb;
-                    if scene.image_bytes > 2_000_000 {
-                        return Err(format!("scene geweigerd: {} MB embedded images", scene.image_bytes / 1_048_576));
-                    }
-                    if scene.clip_ops / mb > 25 {
-                        return Err(format!("scene geweigerd: {} clips/MB", scene.clip_ops / mb));
-                    }
-                    Ok(scene)
-                })
+                let built = tauri::async_runtime::spawn_blocking(
+                    move || -> Result<open_pdf_render::tile_render::TileScene, String> {
+                        let buf = doc
+                            .extract_draw_commands(page_index as usize, extra_rot)
+                            .map_err(|e| format!("extract: {}", e))?;
+                        let bytes = buf.into_bytes();
+                        // Image-zware bladen horen op het PDFium-pad: een scene vol
+                        // ge-embedde beelddata is traag én zwaar — expliciet weigeren.
+                        if bytes.len() > 400 * 1024 * 1024 {
+                            return Err(format!("scene te groot ({} MB)", bytes.len() / 1_048_576));
+                        }
+                        let buffer_mb = ((bytes.len() / 1_048_576) as u64).max(1);
+                        let scene = open_pdf_render::tile_render::TileScene::build(bytes)
+                            .map_err(|e| format!("scene-build: {}", e))?;
+                        // Datagedreven engine-gate (corpus-benchmark 2026-07-05,
+                        // 136 pagina's; herijkt 2026-07-06 na image- en clip-
+                        // ondersteuning in de tegel-rasterizer): de scene is
+                        // alleen sneller ÉN accuraat op lijnwerk-bladen.
+                        //
+                        // Image-drempel 1 MB -> 2 MB (overleg-notitie): de
+                        // rasterizer tekent DrawImage-payloads nu daadwerkelijk
+                        // (RGBA-raw + JPEG), en de inline-strip-emissie geeft het
+                        // maatgevende strip-blad (MV-03: 4.925 strips, 1,44 MB
+                        // payload, downsampled diff 7,3% -> 7,1%) net méér dan
+                        // 1 MB aan correct renderende beelddata. In het corpus
+                        // haalt verder geen enkel blad het JS-voorfilter
+                        // (content >= 6 MB), dus deze verruiming raakt alleen de
+                        // strip-klasse; de BARN-klasse (tientallen MB's JPEG,
+                        // PDFium wint daar in tijd en beeld) blijft er ruim boven
+                        // en wordt nog steeds geweigerd.
+                        //
+                        // Clip-dichtheid blijft 25/MB: clips worden nu wél
+                        // gerepliceerd (tegel-maskers), maar boven deze dichtheid
+                        // is het maskerpad nog niet op snelheid gemeten —
+                        // versoepelen pas na een corpus-meting die dat draagt.
+                        let mb = buffer_mb;
+                        if scene.image_bytes > 2_000_000 {
+                            return Err(format!(
+                                "scene geweigerd: {} MB embedded images",
+                                scene.image_bytes / 1_048_576
+                            ));
+                        }
+                        if scene.clip_ops / mb > 25 {
+                            return Err(format!(
+                                "scene geweigerd: {} clips/MB",
+                                scene.clip_ops / mb
+                            ));
+                        }
+                        Ok(scene)
+                    },
+                )
                 .await
                 .map_err(|e| format!("join: {}", e))??;
                 let arc = Arc::new(built);
-                let mut cache = scene_cache.0.lock().map_err(|e| format!("scene-cache lock: {}", e))?;
+                let mut cache = scene_cache
+                    .0
+                    .lock()
+                    .map_err(|e| format!("scene-cache lock: {}", e))?;
                 if cache.len() >= TILE_SCENE_CACHE_CAP {
                     cache.remove(0);
                 }
                 cache.push((key.clone(), arc.clone()));
-                eprintln!("[tile-scene] gebouwd: {} chunks, cache {}/{}", arc.chunk_count(), cache.len(), TILE_SCENE_CACHE_CAP);
+                eprintln!(
+                    "[tile-scene] gebouwd: {} chunks, cache {}/{}",
+                    arc.chunk_count(),
+                    cache.len(),
+                    TILE_SCENE_CACHE_CAP
+                );
                 arc
             }
         }
@@ -2044,7 +2158,10 @@ fn render_thumbnail(
     }
 
     let bytes = {
-        let mut bm = bytes_cache.0.lock().map_err(|e| format!("Bytes cache lock: {}", e))?;
+        let mut bm = bytes_cache
+            .0
+            .lock()
+            .map_err(|e| format!("Bytes cache lock: {}", e))?;
         if let Some(cached) = bm.get(&path) {
             cached.clone()
         } else {
@@ -2088,7 +2205,10 @@ fn analyze_page_type(
         }
     }
     let doc = get_or_load_doc(&path, &bytes_cache, &handle_cache)?;
-    let result = match doc.analyze_page_type(page_index as usize).map_err(|e| format!("{}", e))? {
+    let result = match doc
+        .analyze_page_type(page_index as usize)
+        .map_err(|e| format!("{}", e))?
+    {
         open_pdf_render::PageType::Vector => "vector".to_string(),
         open_pdf_render::PageType::Tile => "tile".to_string(),
     };
@@ -2159,7 +2279,9 @@ fn extract_draw_commands(
 ) -> Result<Vec<u8>, String> {
     let doc = get_or_load_doc(&path, &bytes_cache, &handle_cache)?;
     let extra_rot = rotation.unwrap_or(0);
-    let cmds = doc.extract_draw_commands(page_index as usize, extra_rot).map_err(|e| format!("{}", e))?;
+    let cmds = doc
+        .extract_draw_commands(page_index as usize, extra_rot)
+        .map_err(|e| format!("{}", e))?;
     Ok(cmds.into_bytes())
 }
 
@@ -2171,7 +2293,8 @@ fn extract_page_text(
     handle_cache: tauri::State<DocHandleCache>,
 ) -> Result<String, String> {
     let doc = get_or_load_doc(&path, &bytes_cache, &handle_cache)?;
-    doc.extract_text_positions(page_index as usize).map_err(|e| format!("{}", e))
+    doc.extract_text_positions(page_index as usize)
+        .map_err(|e| format!("{}", e))
 }
 
 /// Inspect native show-text operators using the Rust interpreter's exact
@@ -2191,7 +2314,10 @@ fn inspect_native_text_sources_batch(
     document_bytes: Vec<u8>,
     page_indices: Vec<u32>,
 ) -> Result<Vec<open_pdf_render::NativeTextSourceMapV1>, String> {
-    let indices: Vec<usize> = page_indices.into_iter().map(|index| index as usize).collect();
+    let indices: Vec<usize> = page_indices
+        .into_iter()
+        .map(|index| index as usize)
+        .collect();
     open_pdf_render::native_text::inspect_native_text_sources_batch(&document_bytes, &indices)
         .map_err(|error| error.to_string())
 }
@@ -2205,7 +2331,8 @@ struct NativeTextDesktopApplyResult {
 }
 
 fn current_native_marker_ids(records: &[serde_json::Value]) -> std::collections::HashSet<String> {
-    records.iter()
+    records
+        .iter()
         .filter_map(|record| record.get("sourceProvenance"))
         .flat_map(|provenance| provenance.as_array().into_iter().flatten())
         .filter_map(|source| source.get("markerId").and_then(serde_json::Value::as_str))
@@ -2219,17 +2346,35 @@ fn restoration_provenance_values(
     current_marker_ids: &std::collections::HashSet<String>,
 ) -> Vec<serde_json::Value> {
     let mut restore = Vec::new();
-    let Some(pages) = previous_manifest.and_then(|previous| previous.get("pages"))
-        .and_then(serde_json::Value::as_array) else { return restore };
+    let Some(pages) = previous_manifest
+        .and_then(|previous| previous.get("pages"))
+        .and_then(serde_json::Value::as_array)
+    else {
+        return restore;
+    };
     for page in pages {
-        let Some(edits) = page.get("edits").and_then(serde_json::Value::as_array) else { continue };
+        let Some(edits) = page.get("edits").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
         for edit in edits {
-            let Some(id) = edit.get("id").and_then(serde_json::Value::as_str) else { continue };
-            if current_ids.contains(id) { continue; }
-            let Some(provenance) = edit.get("sourceProvenance").and_then(serde_json::Value::as_array) else { continue };
+            let Some(id) = edit.get("id").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if current_ids.contains(id) {
+                continue;
+            }
+            let Some(provenance) = edit
+                .get("sourceProvenance")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
             for source in provenance {
-                if source.get("markerId").and_then(serde_json::Value::as_str)
-                    .is_some_and(|marker| current_marker_ids.contains(marker)) {
+                if source
+                    .get("markerId")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|marker| current_marker_ids.contains(marker))
+                {
                     continue;
                 }
                 restore.push(source.clone());
@@ -2272,57 +2417,106 @@ fn apply_native_text_edit_plan(
     previous_manifest: Option<serde_json::Value>,
 ) -> Result<NativeTextDesktopApplyResult, String> {
     let mut updated_records = records;
-    let record_array = updated_records.as_array_mut()
+    let record_array = updated_records
+        .as_array_mut()
         .ok_or_else(|| "Native text edit records must be an array".to_string())?;
     let mut sources = Vec::new();
     for record in record_array.iter() {
-        let Some(provenance) = record.get("sourceProvenance") else { continue };
-        if provenance.is_null() { continue; }
-        let source_values = provenance.as_array().cloned().unwrap_or_else(|| vec![provenance.clone()]);
+        let Some(provenance) = record.get("sourceProvenance") else {
+            continue;
+        };
+        if provenance.is_null() {
+            continue;
+        }
+        let source_values = provenance
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| vec![provenance.clone()]);
         for source in source_values {
-            if source.get("ownershipState").and_then(serde_json::Value::as_str) == Some("neutralized") {
+            if source
+                .get("ownershipState")
+                .and_then(serde_json::Value::as_str)
+                == Some("neutralized")
+            {
                 continue;
             }
-            sources.push(serde_json::from_value::<open_pdf_render::NativeTextSourceProvenanceV1>(source)
-                .map_err(|error| format!("Malformed native text provenance: {error}"))?);
+            sources.push(
+                serde_json::from_value::<open_pdf_render::NativeTextSourceProvenanceV1>(source)
+                    .map_err(|error| format!("Malformed native text provenance: {error}"))?,
+            );
         }
     }
 
-    let current_ids: std::collections::HashSet<String> = record_array.iter()
-        .filter_map(|record| record.get("id").and_then(serde_json::Value::as_str).map(str::to_owned))
+    let current_ids: std::collections::HashSet<String> = record_array
+        .iter()
+        .filter_map(|record| {
+            record
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
         .collect();
     // A merge deliberately transfers exact native ownership from consumed
     // records to the surviving primary record. Record disappearance alone is
     // therefore not evidence that its source operator should be restored.
     let current_marker_ids = current_native_marker_ids(record_array);
     let restore_sources = restoration_provenance_values(
-        previous_manifest.as_ref(), &current_ids, &current_marker_ids,
-    ).into_iter().map(|source| {
+        previous_manifest.as_ref(),
+        &current_ids,
+        &current_marker_ids,
+    )
+    .into_iter()
+    .map(|source| {
         serde_json::from_value::<open_pdf_render::NativeTextSourceProvenanceV1>(source)
             .map_err(|error| format!("Malformed restoration provenance: {error}"))
-    }).collect::<Result<Vec<_>, _>>()?;
-    let applied = open_pdf_render::native_text::apply_native_text_edit_plan(&document_bytes, &sources)
-        .map_err(|error| error.to_string())?;
-    let restored = open_pdf_render::native_text::restore_native_text_sources(&applied.pdf_bytes, &restore_sources)
-        .map_err(|error| error.to_string())?;
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+    let applied =
+        open_pdf_render::native_text::apply_native_text_edit_plan(&document_bytes, &sources)
+            .map_err(|error| error.to_string())?;
+    let restored = open_pdf_render::native_text::restore_native_text_sources(
+        &applied.pdf_bytes,
+        &restore_sources,
+    )
+    .map_err(|error| error.to_string())?;
     let mut combined_report = applied.report;
     combined_report.restored += restored.report.restored;
     combined_report.cloned_streams += restored.report.cloned_streams;
     combined_report.cloned_forms += restored.report.cloned_forms;
-    combined_report.marker_ids.extend(restored.report.marker_ids);
-    let neutralized_markers: std::collections::HashSet<&str> = combined_report.marker_ids.iter().map(String::as_str).collect();
+    combined_report
+        .marker_ids
+        .extend(restored.report.marker_ids);
+    let neutralized_markers: std::collections::HashSet<&str> = combined_report
+        .marker_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
     for record in record_array.iter_mut() {
-        let Some(provenance) = record.get_mut("sourceProvenance") else { continue };
+        let Some(provenance) = record.get_mut("sourceProvenance") else {
+            continue;
+        };
         if let Some(source_array) = provenance.as_array_mut() {
             for source in source_array {
-                let marker = source.get("markerId").and_then(serde_json::Value::as_str).map(str::to_owned);
-                if marker.as_deref().is_some_and(|value| neutralized_markers.contains(value)) {
+                let marker = source
+                    .get("markerId")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+                if marker
+                    .as_deref()
+                    .is_some_and(|value| neutralized_markers.contains(value))
+                {
                     source["ownershipState"] = serde_json::Value::String("neutralized".into());
                 }
             }
         } else {
-            let marker = provenance.get("markerId").and_then(serde_json::Value::as_str).map(str::to_owned);
-            if marker.as_deref().is_some_and(|value| neutralized_markers.contains(value)) {
+            let marker = provenance
+                .get("markerId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            if marker
+                .as_deref()
+                .is_some_and(|value| neutralized_markers.contains(value))
+            {
                 provenance["ownershipState"] = serde_json::Value::String("neutralized".into());
             }
         }
@@ -2351,9 +2545,11 @@ fn extract_draw_commands_batch(
 ) -> Result<Vec<Vec<u8>>, String> {
     let doc = get_or_load_doc(&path, &bytes_cache, &handle_cache)?;
     let rots = rotations.unwrap_or_default();
-    let pairs: Vec<(usize, i32)> = page_indices.iter().enumerate().map(|(i, &p)| {
-        (p as usize, rots.get(i).copied().unwrap_or(0))
-    }).collect();
+    let pairs: Vec<(usize, i32)> = page_indices
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (p as usize, rots.get(i).copied().unwrap_or(0)))
+        .collect();
     let results = doc.extract_draw_commands_batch(&pairs);
     let mut out = Vec::with_capacity(results.len());
     for r in results {
@@ -2374,8 +2570,16 @@ fn invalidate_pdf_cache(
     pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
     pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
 ) -> Result<bool, String> {
-    bytes_cache.0.lock().map_err(|e| format!("Bytes cache lock: {}", e))?.remove(&path);
-    handle_cache.0.lock().map_err(|e| format!("Handle cache lock: {}", e))?.remove(&path);
+    bytes_cache
+        .0
+        .lock()
+        .map_err(|e| format!("Bytes cache lock: {}", e))?
+        .remove(&path);
+    handle_cache
+        .0
+        .lock()
+        .map_err(|e| format!("Handle cache lock: {}", e))?
+        .remove(&path);
     if let Ok(mut tc) = thumb_cache.0.lock() {
         tc.retain(|(p, _, _, _), _| p != &path);
     }
@@ -2406,11 +2610,25 @@ fn clear_pdf_cache(
     pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
     pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
 ) -> Result<bool, String> {
-    bytes_cache.0.lock().map_err(|e| format!("Bytes cache lock: {}", e))?.clear();
-    handle_cache.0.lock().map_err(|e| format!("Handle cache lock: {}", e))?.clear();
-    if let Ok(mut tc) = thumb_cache.0.lock() { tc.clear(); }
-    if let Ok(mut ptc) = page_type_cache.0.lock() { ptc.clear(); }
-    if let Ok(mut pc) = pdfium_cache.0.lock() { pc.clear(); }
+    bytes_cache
+        .0
+        .lock()
+        .map_err(|e| format!("Bytes cache lock: {}", e))?
+        .clear();
+    handle_cache
+        .0
+        .lock()
+        .map_err(|e| format!("Handle cache lock: {}", e))?
+        .clear();
+    if let Ok(mut tc) = thumb_cache.0.lock() {
+        tc.clear();
+    }
+    if let Ok(mut ptc) = page_type_cache.0.lock() {
+        ptc.clear();
+    }
+    if let Ok(mut pc) = pdfium_cache.0.lock() {
+        pc.clear();
+    }
     if let Ok(mut guard) = pixmap_cache.0.lock() {
         if let Some(cache) = guard.as_mut() {
             cache.clear();
@@ -2511,9 +2729,8 @@ pub fn run(opts: StartupOpts) {
     // started here (before the builder ran) and never had a handle.
     let mcp_enabled = opts.mcp_server;
     let mcp_port = opts.mcp_port;
-    let ocr_child_state = ocr_controller::OcrChildJobState::from_descriptor(
-        opts.ocr_child_job.clone(),
-    );
+    let ocr_child_state =
+        ocr_controller::OcrChildJobState::from_descriptor(opts.ocr_child_job.clone());
     let is_ocr_child = ocr_child_state.is_child();
     let ocr_job_registry = if is_ocr_child {
         ocr_controller::OcrJobRegistry::child_scaffold()
@@ -2551,7 +2768,8 @@ pub fn run(opts: StartupOpts) {
     }
 
     // Collect any PDF file paths passed on the command line (for file associations)
-    let opened_files: Vec<String> = args.iter()
+    let opened_files: Vec<String> = args
+        .iter()
         .skip(1)
         .filter(|arg| arg.to_lowercase().ends_with(".pdf") && !arg.starts_with('-'))
         .cloned()
@@ -2560,7 +2778,8 @@ pub fn run(opts: StartupOpts) {
     // Spawn the PDFium worker pool. Failures here are non-fatal — the
     // existing in-proc PDFium path serves as fallback when the pool is
     // unavailable.
-    let pool: Arc<tokio::sync::OnceCell<worker_pool::WorkerPool>> = Arc::new(tokio::sync::OnceCell::new());
+    let pool: Arc<tokio::sync::OnceCell<worker_pool::WorkerPool>> =
+        Arc::new(tokio::sync::OnceCell::new());
     if !is_ocr_child {
         let pool_for_init = pool.clone();
         tauri::async_runtime::spawn(async move {
@@ -2647,14 +2866,17 @@ pub fn run(opts: StartupOpts) {
     {
         let is_detached = std::env::var("OPDS_DETACHED").as_deref() == Ok("1");
         if !is_detached && !is_ocr_child {
-            builder = builder
-                .plugin(tauri_plugin_single_instance::init(|app: &tauri::AppHandle, argv: Vec<String>, _cwd: String| {
+            builder = builder.plugin(tauri_plugin_single_instance::init(
+                |app: &tauri::AppHandle, argv: Vec<String>, _cwd: String| {
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.unminimize();
                         let _ = window.set_focus();
                     }
-                    let files: Vec<String> = argv.iter()
-                        .filter(|arg: &&String| arg.to_lowercase().ends_with(".pdf") && !arg.starts_with('-'))
+                    let files: Vec<String> = argv
+                        .iter()
+                        .filter(|arg: &&String| {
+                            arg.to_lowercase().ends_with(".pdf") && !arg.starts_with('-')
+                        })
                         .cloned()
                         .collect();
                     for path in &files {
@@ -2663,7 +2885,8 @@ pub fn run(opts: StartupOpts) {
                     if !files.is_empty() {
                         let _ = app.emit("open-files", &files);
                     }
-                }));
+                },
+            ));
         }
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
@@ -2744,7 +2967,9 @@ pub fn run(opts: StartupOpts) {
                     std::env::var_os("OPS_TEST_PDFS_DIR").map(std::path::PathBuf::from),
                 );
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = mcp_server::start(mcp_port, test_pdfs_dir, Some(app_handle)).await {
+                    if let Err(e) =
+                        mcp_server::start(mcp_port, test_pdfs_dir, Some(app_handle)).await
+                    {
                         eprintln!("[mcp] server failed: {e}");
                     }
                 });
@@ -2765,7 +2990,9 @@ pub fn run(opts: StartupOpts) {
             if !is_ocr_child {
                 match pdfium_renderer::init_pdfium(&resource_dir) {
                     Ok(()) => log::info!("PDFium initialised from {:?}", resource_dir),
-                    Err(e) => log::error!("PDFium initialisation failed (rendering disabled): {}", e),
+                    Err(e) => {
+                        log::error!("PDFium initialisation failed (rendering disabled): {}", e)
+                    }
                 }
             }
 
@@ -2785,13 +3012,12 @@ pub fn run(opts: StartupOpts) {
             #[cfg(target_os = "windows")]
             {
                 std::thread::spawn(|| {
+                    use windows_sys::core::GUID;
                     use windows_sys::Win32::System::Com::{
-                        CoCreateInstance, CoInitializeEx, CoUninitialize,
-                        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
-                        COINIT_DISABLE_OLE1DDE,
+                        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+                        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
                     };
                     use windows_sys::Win32::UI::Shell::FileOpenDialog;
-                    use windows_sys::core::GUID;
                     const FILE_OPEN_DIALOG_IID: GUID =
                         GUID::from_u128(0xd57c7288_d4ad_4768_be02_9d969532d960);
 
@@ -2819,9 +3045,8 @@ pub fn run(opts: StartupOpts) {
                             struct IUnknownV {
                                 _qi: usize,
                                 _add_ref: usize,
-                                release: unsafe extern "system" fn(
-                                    this: *mut std::ffi::c_void,
-                                ) -> u32,
+                                release:
+                                    unsafe extern "system" fn(this: *mut std::ffi::c_void) -> u32,
                             }
                             let vtbl = *(iptr as *mut *mut IUnknownV);
                             ((*vtbl).release)(iptr);
@@ -2884,6 +3109,8 @@ pub fn run(opts: StartupOpts) {
             rasterize_page_for_ocr,
             query_pdf_page_geometry,
             ocr_controller::run_ocr_page_job,
+            ocr_controller::prefetch_ocr_page_raster,
+            ocr_controller::cancel_ocr_page_prefetch,
             ocr_controller::get_ocr_job_status,
             ocr_controller::cancel_ocr_job,
             ocr_controller::cancel_ocr_document_jobs,
@@ -2944,7 +3171,10 @@ pub fn run(opts: StartupOpts) {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
                 let registry = app_handle.state::<ocr_controller::OcrJobRegistry>();
                 let _ = registry.cancel_all();
             }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { access, copyFile, mkdtemp, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { access, copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,9 +14,17 @@ import { readOwnedTextEditManifest } from '../js/text/owned-edit-manifest.js';
 assert.equal(process.platform, 'darwin', 'native paragraph packaged acceptance is macOS-only');
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoDir = path.resolve(projectDir, '..');
 const appBundle = path.resolve(process.env.OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE || path.join(
-  projectDir, '..', 'target', 'release', 'bundle', 'macos', 'Open PDF Studio.app',
+  repoDir, 'target', 'release', 'bundle', 'macos', 'Open PDF Studio.app',
 ));
+const artifactRoot = path.resolve(
+  process.env.OPEN_PDF_STUDIO_TEST_ARTIFACT_DIR
+    || path.join(projectDir, 'test-artifacts', 'packaged-editor'),
+);
+const reportPath = path.join(artifactRoot, 'reports', 'native-text-editing.json');
+const evidencePdfPath = path.join(artifactRoot, 'reports', 'native-paragraph-save-as.pdf');
+const colorEvidencePdfPath = path.join(artifactRoot, 'reports', 'native-side-by-side-save-as.pdf');
 const fixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-paragraph-table.pdf');
 const colorFixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-side-by-side-color.pdf');
 const runDir = await mkdtemp(path.join(tmpdir(), 'opds-native-paragraph-'));
@@ -33,6 +42,41 @@ let applicationPid;
 let exited = false;
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function gitHead() {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['rev-parse', 'HEAD'], {
+      cwd: repoDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) resolve(stdout.trim());
+      else reject(new Error(stderr.trim() || `git rev-parse exited with ${code}`));
+    });
+  });
+}
+
+async function sha256(pdfPath) {
+  return createHash('sha256').update(await readFile(pdfPath)).digest('hex');
+}
+
+async function ownedManifestIdentity(pdfPath) {
+  const pdfDocument = await PDFDocument.load(await readFile(pdfPath));
+  const manifest = await readOwnedTextEditManifest(pdfDocument);
+  const serialized = JSON.stringify(manifest);
+  return {
+    sha256: createHash('sha256').update(serialized).digest('hex'),
+    pageCount: manifest.pages.length,
+    editCount: manifest.pages.reduce((count, page) => count + page.edits.length, 0),
+    revisions: manifest.pages.flatMap((page) => page.edits.map((edit) => edit.revision)),
+  };
+}
 
 async function availablePort() {
   const server = net.createServer();
@@ -191,12 +235,38 @@ async function pdfJsText(pdfPath) {
   }
 }
 
-await Promise.all([
-  access(appBundle), access(fixture), access(colorFixture),
-  copyFile(fixture, workingPdf), copyFile(colorFixture, colorWorkingPdf),
-]);
+await mkdir(path.dirname(reportPath), { recursive: true });
+const report = {
+  contract: 'open-pdf-studio.native-text-packaged-acceptance',
+  schemaVersion: 1,
+  status: 'RUNNING',
+  head: await gitHead(),
+  generatedAt: new Date().toISOString(),
+  platform: { os: process.platform, architecture: process.arch },
+  packagedApp: {
+    bundlePath: appBundle,
+    signingScope: 'CI usability and hardened-runtime compatibility; not Developer ID or notarization evidence',
+  },
+  productionUiOnly: true,
+  syntheticStateSeeding: false,
+  testOnlyEntryPoint: false,
+  checks: {
+    saveReopen: 'PENDING',
+    genuineReeditPointerAction: 'PENDING',
+    repeatSaveIdempotence: 'PENDING',
+    sideBySideIsolation: 'PENDING',
+  },
+  saveEvidence: null,
+  artifacts: [],
+  testCommands: ['npm run test:native-text-editing:macos'],
+};
+await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
 try {
+  await Promise.all([
+    access(appBundle), access(fixture), access(colorFixture),
+    copyFile(fixture, workingPdf), copyFile(colorFixture, colorWorkingPdf),
+  ]);
   const port = await availablePort();
   endpoint = `http://127.0.0.1:${port}/mcp`;
   application = spawn('/usr/bin/open', [
@@ -273,7 +343,27 @@ try {
   const saveAsReedit = await openEditor(ownedSelector, 'Reopened first line');
   assert.equal(String(saveAsReedit.value ?? saveAsReedit.text).includes('Reopened second line'), true);
   await callTool('app_key', { key: 'Escape' });
+  report.checks.saveReopen = 'PASS';
+  report.checks.genuineReeditPointerAction = 'PASS';
+
+  const firstSaveSha256 = await sha256(saveAsPdf);
+  const firstManifestIdentity = await ownedManifestIdentity(saveAsPdf);
   await save();
+  const repeatedSaveSha256 = await sha256(saveAsPdf);
+  const repeatedManifestIdentity = await ownedManifestIdentity(saveAsPdf);
+  assert.equal(repeatedSaveSha256, firstSaveSha256,
+    'native repeat Save without edits changed PDF bytes');
+  assert.deepEqual(repeatedManifestIdentity, firstManifestIdentity,
+    'native repeat Save without edits changed the owned-edit object structure');
+  report.checks.repeatSaveIdempotence = 'PASS';
+  report.saveEvidence = {
+    firstSaveSha256,
+    repeatedSaveSha256,
+    firstOwnedManifest: firstManifestIdentity,
+    repeatedOwnedManifest: repeatedManifestIdentity,
+    byteIdentity: true,
+    ownedObjectStructureIdentity: true,
+  };
 
   const pdfBytes = await readFile(saveAsPdf);
   const pdfDocument = await PDFDocument.load(pdfBytes);
@@ -336,7 +426,29 @@ try {
   await callTool('app_key', { key: 'Escape' });
   assert.match(await pdfJsText(colorSaveAsPdf), /Independent packaged right paragraph/u);
 
+  report.checks.sideBySideIsolation = 'PASS';
+  await Promise.all([
+    copyFile(saveAsPdf, evidencePdfPath),
+    copyFile(colorSaveAsPdf, colorEvidencePdfPath),
+  ]);
+  report.artifacts = [
+    path.relative(path.dirname(reportPath), evidencePdfPath),
+    path.relative(path.dirname(reportPath), colorEvidencePdfPath),
+  ];
+  report.status = Object.values(report.checks).every((status) => status === 'PASS') ? 'PASS' : 'FAIL';
+  report.completedAt = new Date().toISOString();
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+
   console.log(`Packaged native paragraph editing acceptance passed: ${saveAsPdf}; ${colorSaveAsPdf}`);
+} catch (error) {
+  for (const [name, status] of Object.entries(report.checks)) {
+    if (status === 'PENDING') report.checks[name] = 'NOT_RUN';
+  }
+  report.status = 'FAIL';
+  report.completedAt = new Date().toISOString();
+  report.error = error.stack || error.message || String(error);
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  throw error;
 } finally {
   if (application && !exited) {
     try { process.kill(applicationPid || -application.pid, 'SIGTERM'); } catch {}

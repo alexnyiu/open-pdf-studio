@@ -9,6 +9,8 @@ export function createDocument(filePath: string | null = null): DocumentState {
   const id = Date.now() + Math.random().toString(36).substr(2, 9);
   return {
     id,
+    lifecycleGeneration: 0,
+    fontSubstitutionApprovals: new Map(),
     filePath: filePath,
     fileName: filePath ? filePath.split(/[\\/]/).pop()! : 'Untitled',
     pdfDoc: null,

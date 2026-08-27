@@ -1,79 +1,149 @@
-import { state, getActiveDocument, getPageRotation } from '../core/state.js';
+import { state, getActiveDocument, getDocumentById, getPageRotation } from '../core/state.js';
+import i18next from '../i18n/config.js';
 import { redrawAnnotations, redrawContinuous } from '../annotations/rendering.js';
 import { hasFill } from '../annotations/fill-utils.js';
 import { showProperties } from '../ui/panels/properties-panel.js';
-import { recordAdd, recordModify } from '../core/undo-manager.js';
+import { executeForDocument, flushPropertyChange } from '../core/undo-manager.js';
 import { cloneAnnotation } from '../annotations/factory.js';
 import { annotationCanvas } from '../ui/dom-elements.js';
 import { viewport as vpState } from '../pdf/pdf-viewport.js';
 import {
   showPdfTextEditor, hidePdfTextEditor,
-  getPdfEditorText as getTextValue, getPdfEditorRichText,
+  getPdfEditorRichText,
   getPdfEditorFormatState,
+  getPdfEditorLayoutState,
   applyPdfEditorRichTextFormat,
   applyPdfEditorRichTextParagraphFormat,
   openStickyPopup,
+  setPdfEditorStatus,
 } from '../bridge.js';
 import {
   DEFAULT_TEXT_FORMAT_CAPABILITIES,
+  canonicalRichTextHash,
+  cloneRichTextDocument,
   richTextFromPlainText,
   richTextToPlainText,
 } from '../text/rich-text.js';
+import { resolvePackagedFace } from '../text/font-catalog.js';
+import { requestFontSubstitutionApproval } from '../text/font-substitution-approval.js';
 import {
-  proposeFontSubstitution,
-  resolvePackagedFace,
-} from '../text/font-catalog.js';
-import { createPageTextEditPlacement } from '../text/page-text-edit-placement.js';
+  createPageTextEditPlacement,
+  createPageTextEditStyle,
+} from '../text/page-text-edit-placement.js';
 import { resolveTextEditPageGeometry } from '../text/text-edit-appearance.js';
+import {
+  applyActiveTextEditing,
+  cancelActiveTextEditing,
+  completeTextEditSession,
+  registerTextEditSession,
+} from '../text/text-edit-session.js';
+import {
+  applyExistingTextAnnotationDraft,
+  applyTextAnnotationDraft,
+  cleanTextAnnotationApplyIsNoop,
+  discardTextAnnotationDraft,
+  isolateTextAnnotationDraft,
+} from '../text/annotation-text-draft.js';
+import {
+  createTextEditDirtyBaseline,
+  textEditDraftIsDirty,
+  textEditGeometryChanged,
+} from '../text/text-edit-dirty-state.js';
+import { runOwnerScopedTextCommit } from '../text/text-edit-commit.js';
+
+async function waitForExactAnnotationLayout(operation) {
+  const deadline = performance.now() + 5_000;
+  while (performance.now() < deadline) {
+    const layout = getPdfEditorLayoutState();
+    const draft = getPdfEditorRichText();
+    const validatedDraft = layout?.result?.document;
+    const exactFingerprintMatches = Boolean(
+      layout?.requestedFingerprint
+        && layout.validatedFingerprint === layout.requestedFingerprint,
+    );
+    const exactDraftMatches = Boolean(draft && validatedDraft
+      && canonicalRichTextHash(draft) === canonicalRichTextHash(validatedDraft));
+    if (!layout?.pending && exactFingerprintMatches && exactDraftMatches) {
+      return layout.valid === true ? cloneRichTextDocument(validatedDraft) : null;
+    }
+    if (operation && !operation.isCurrent()) return null;
+    await new Promise((resolve) => {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
+      else setTimeout(resolve, 4);
+    });
+  }
+  setPdfEditorStatus(i18next.t('textEditor.status.layoutTimeout', { ns: 'hardening' }), 'invalid');
+  return null;
+}
 
 // Start inline text editing for textbox/callout
-export function startTextEditing(annotation, { isNew = false } = {}) {
+export async function startTextEditing(annotation, { isNew = false } = {}) {
   // Idempotency guard: if already editing this same annotation, do nothing.
   // Without this, double-firing handlers (select-tool dblclick + dispatcher dblclick)
   // call finishTextEditing on a freshly-opened overlay, wiping the existing text.
-  if (state.isEditingText && state.editingAnnotation === annotation) {
+  if (state.isEditingText && (state.editingAnnotation === annotation
+      || (annotation?.id != null && state._textEditSnapshot?.id != null
+        && String(annotation.id) === String(state._textEditSnapshot.id)))) {
     return;
   }
   if (state.isEditingText) {
-    finishTextEditing();
+    cancelActiveTextEditing('superseded');
   }
 
   if (!['textbox', 'callout'].includes(annotation.type)) return;
   if (annotation.locked || annotation.readOnly) return;
 
+  const ownerDocument = getActiveDocument();
+  if (!ownerDocument) return;
+  const ownerGeneration = ownerDocument.lifecycleGeneration;
+  const sourceAnnotation = annotation;
+
   const sourceFamily = annotation.fontFamily || 'Arial';
   let substitution = annotation.richTextSubstitution || null;
   if (!annotation.richText && !/^liberation\s*(sans|serif|mono)/iu.test(sourceFamily)) {
-    const face = resolvePackagedFace(sourceFamily, annotation.fontBold, annotation.fontItalic);
-    if (!window.confirm(
-      `This annotation uses an unsupported font (${sourceFamily}). `
-      + `Editing requires the packaged substitute ${face.family}. Continue?`,
-    )) return;
-    substitution = {
-      ...proposeFontSubstitution(sourceFamily, annotation.fontBold, annotation.fontItalic),
-      approved: true,
-      approvedAt: new Date().toISOString(),
-    };
+    substitution = await requestFontSubstitutionApproval({
+      documentState: ownerDocument,
+      sourceFonts: [sourceFamily],
+      bold: annotation.fontBold,
+      italic: annotation.fontItalic,
+      sampleText: annotation.text || '',
+      scope: 'annotation',
+    });
+    if (!substitution) return false;
   }
+
+  // Font approval is asynchronous. Never open a detached draft against a tab
+  // or document generation that stopped owning the creation gesture.
+  if (getActiveDocument() !== ownerDocument
+      || getDocumentById(ownerDocument.id) !== ownerDocument
+      || ownerDocument.lifecycleGeneration !== ownerGeneration) return false;
 
   // In de doorlopende weergave is het enkelpagina-canvas 0x0 op de
   // vensteroorsprong; de overlay moet daar tegen het canvas van de PAGINA
   // van de annotatie gepositioneerd worden. Anders verschijnt de editor op
   // kale vensterco-ordinaten — als een leeg "spook-tekstvak" over het
   // linkerpaneel — terwijl de echte annotatie op de pagina staat.
-  const _editDoc = getActiveDocument();
-  const isContinuous = _editDoc?.viewMode === 'continuous';
+  const isContinuous = ownerDocument.viewMode === 'continuous';
   let canvas = null;
   if (isContinuous) {
     canvas = document.querySelector(
       `.page-wrapper[data-page="${annotation.page}"] .annotation-canvas`);
   }
   if (!canvas) canvas = annotationCanvas || document.getElementById('annotation-canvas');
-  if (!canvas) return;
+  if (!canvas) return false;
 
+  // Finish any property action that preceded the double-click while the owner
+  // is still unchanged. Property changes made after this point target only the
+  // isolated editor draft and are recorded with Apply as one undo unit.
+  flushPropertyChange();
+  // Existing annotations remain immutable while their transient editor is
+  // open. Text, appearance, metadata, and geometry controls all target this
+  // isolated draft; Apply emits one owner-scoped modify operation and Cancel
+  // simply drops it. New annotations are already detached drafts.
+  annotation = isolateTextAnnotationDraft(sourceAnnotation, { isNew, clone: cloneAnnotation });
   state.isEditingText = true;
   state.editingAnnotation = annotation;
-  state._textEditSnapshot = cloneAnnotation(annotation);
+  state._textEditSnapshot = cloneAnnotation(sourceAnnotation);
   state._textEditSubstitution = substitution;
   state._textEditIsNew = isNew;
 
@@ -91,7 +161,7 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
   // (zelfde formule als clipboard/visibleCenterOnPage). Het viewport-singleton
   // (vpState) hoort bij de ENKELpagina-weergave en blijft na een moduswissel
   // `active` staan; zijn zoom/offsets meenemen zet de overlay naast het scherm.
-  const doc = getActiveDocument();
+  const doc = ownerDocument;
   const useViewport = !isContinuous && vpState && vpState.active && doc?.filePath;
   const scale = useViewport ? vpState.zoom : (doc?.scale || 1.5);
   const offX = useViewport ? vpState.offsetX : 0;
@@ -101,9 +171,10 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
   const scaledWidth = width * scale;
   const scaledHeight = height * scale;
 
-  // Calculate center position of the annotation
-  const centerX = canvasRect.left + offX + (annotation.x + width / 2) * scale;
-  const centerY = canvasRect.top + offY + (annotation.y + height / 2) * scale;
+  // Grow-down editors use a top-left canonical anchor so zoom and content
+  // growth never move the source top edge.
+  const editorLeft = canvasRect.left + offX + annotation.x * scale;
+  const editorTop = canvasRect.top + offY + annotation.y * scale;
 
   // Build a CSS font-family fallback chain matching shapes.js
   // drawTextboxContent — some editors emit "SegoeUI" (no space)
@@ -129,8 +200,8 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
   // Build style object for the textarea overlay
   const styleObj = {
     position: 'absolute',
-    left: `${centerX}px`,
-    top: `${centerY}px`,
+    left: `${editorLeft}px`,
+    top: `${editorTop}px`,
     width: `${scaledWidth}px`,
     height: `${scaledHeight}px`,
     'font-size': `${(annotation.fontSize || 14) * scale}px`,
@@ -144,9 +215,8 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
     outline: 'none',
     'z-index': '1200',
     overflow: 'hidden',
-    transform: annotation.rotation
-      ? `translate(-50%, -50%) rotate(${annotation.rotation}deg)`
-      : 'translate(-50%, -50%)'
+    transform: annotation.rotation ? `rotate(${annotation.rotation}deg)` : 'none',
+    'transform-origin': '0 0',
   };
 
   // Apply text styles
@@ -176,18 +246,43 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
     pageWidth: geometry.pageWidth,
     pageHeight: geometry.pageHeight,
     canonicalBounds: {
-      x: annotation.x + width / 2,
-      y: annotation.y + height / 2,
+      x: annotation.x,
+      y: annotation.y,
       width,
       height,
     },
     sourceScale: scale,
-    sourceStyle: styleObj,
-    sourceClientAnchor: { left: centerX, top: centerY },
+    sourceRotation: geometry.rotation,
+    canonicalStyle: createPageTextEditStyle({
+      geometry: { width, height, zIndex: 1200 },
+      typography: {
+        fontFamily: cssFontFamily,
+        fontSize: annotation.fontSize || 14,
+        lineHeightMultiplier: ls,
+        fontWeight: annotation.fontBold ? 'bold' : 'normal',
+        fontStyle: annotation.fontItalic ? 'italic' : 'normal',
+        textAlign: annotation.textAlign || 'left',
+        color: annotation.textColor || annotation.color || '#000000',
+      },
+      padding: { all: annotation.lineWidth ?? 0 },
+      border: {
+        width: annotation.lineWidth ?? 1,
+        style: 'solid',
+        color: annotation.strokeColor || '#000000',
+        boxSizing: 'border-box',
+      },
+      decoration: {
+        backgroundColor: hasFill(annotation.fillColor) ? annotation.fillColor : '#ffffff',
+        outlineStyle: 'none',
+        textOffset: ((ls - 1) * (annotation.fontSize || 14)) / 2,
+      },
+      layout: { resize: 'none', overflow: 'hidden' },
+    }),
+    sourceClientAnchor: { left: editorLeft, top: editorTop },
     mode: 'annotation-text',
     elementRotation: annotation.rotation || 0,
-    anchor: 'center',
-    generation: doc.generation || doc.renderGeneration || 0,
+    anchor: 'top-left',
+    generation: ownerGeneration,
   });
 
   const initialText = annotation.text || '';
@@ -211,14 +306,67 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
     baseline: annotation.y + (annotation.fontSize || 14),
     baselineDirection: 'increasing-y',
   });
+  const dirtyBaseline = createTextEditDirtyBaseline({
+    text: initialText,
+    richText: richTextDocument,
+    record: annotation,
+  });
 
-  // Commit function: update annotation and refresh display
-  const commitFn = () => {
-    if (!state.isEditingText || !state.editingAnnotation) return;
+  let session = null;
+  let draftHeight = height;
+  const resetEditingState = () => {
+    completeTextEditSession(session?.sessionId);
+    state.isEditingText = false;
+    state.editingAnnotation = null;
+    state.textEditElement = null;
+    state._textEditSnapshot = null;
+    state._textEditSubstitution = null;
+    state._textEditIsNew = false;
+  };
+  const redrawOwnerIfVisible = () => {
+    if (getActiveDocument() !== ownerDocument) return;
+    if (ownerDocument.viewMode === 'continuous') redrawContinuous();
+    else redrawAnnotations();
+    const selectedSource = isNew ? annotation : sourceAnnotation;
+    if (ownerDocument.selectedAnnotation === selectedSource) showProperties(selectedSource);
+  };
+
+  // Commit function: update only the immutable owner document.
+  const commitFn = async (operation) => {
+    if (!state.isEditingText || !state.editingAnnotation) return false;
+
+    let currentOwner = getDocumentById(ownerDocument.id);
+    if (currentOwner !== ownerDocument || currentOwner.lifecycleGeneration !== ownerGeneration) {
+      cancelFn('stale-owner');
+      return false;
+    }
 
     const ann = state.editingAnnotation;
-    const richDraft = getPdfEditorRichText() || richTextDocument;
-    ann.richText = richDraft;
+    const richDraft = await waitForExactAnnotationLayout(operation);
+    currentOwner = getDocumentById(ownerDocument.id);
+    if (!richDraft || !operation?.isCurrent()
+        || currentOwner !== ownerDocument
+        || currentOwner.lifecycleGeneration !== ownerGeneration) return false;
+    // Exact shaping is validation, not an authored mutation. A clean Apply
+    // closes the session without normalizing PDF-number jitter, soft wraps, or
+    // annotation geometry and therefore creates no undo unit.
+    if (cleanTextAnnotationApplyIsNoop({
+      isNew: state._textEditIsNew,
+      isDirty: session?.isDirty?.() === true,
+    })) {
+      hidePdfTextEditor();
+      resetEditingState();
+      redrawOwnerIfVisible();
+      return true;
+    }
+    if (richDraft.region) {
+      draftHeight = richDraft.region.height;
+      ann.x = richDraft.region.x;
+      ann.y = richDraft.region.y;
+      ann.width = richDraft.region.width;
+      ann.height = richDraft.region.height;
+    }
+    ann.richText = cloneRichTextDocument(richDraft);
     ann.richTextSubstitution = substitution;
     ann.textFormatCapabilities = DEFAULT_TEXT_FORMAT_CAPABILITIES;
     ann.text = richTextToPlainText(richDraft);
@@ -238,28 +386,61 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
 
     // Apply auto-grown height back to annotation
     if (state._textEditIsNew) {
-      recordAdd(ann);
+      const applied = runOwnerScopedTextCommit({
+        ownerDocument,
+        attempt: () => applyTextAnnotationDraft({
+          ownerDocument,
+          annotation: ann,
+          // Property controls may have queued bookkeeping for this detached
+          // draft. Flush while it is absent so Apply remains one undo unit.
+          beforeAttach: flushPropertyChange,
+          record: (draft) => executeForDocument(ownerDocument, {
+            type: 'addAnnotation',
+            annotation: cloneAnnotation(draft),
+          }),
+        }),
+        rollback: () => {
+          const index = ownerDocument.annotations?.indexOf(ann) ?? -1;
+          if (index >= 0) ownerDocument.annotations.splice(index, 1);
+        },
+      });
+      if (!applied) {
+        setPdfEditorStatus(i18next.t('textEditor.status.operationFailed', {
+          ns: 'hardening',
+        }), 'invalid');
+        return false;
+      }
     } else if (state._textEditSnapshot && ann.id) {
-      recordModify(ann.id, state._textEditSnapshot, ann);
-    }
-
-    state.isEditingText = false;
-    state.editingAnnotation = null;
-    state.textEditElement = null;
-    state._textEditSnapshot = null;
-    state._textEditSubstitution = null;
-    state._textEditIsNew = false;
-
-    if (getActiveDocument()?.viewMode === 'continuous') {
-      redrawContinuous();
+      const applied = runOwnerScopedTextCommit({
+        ownerDocument,
+        attempt: () => applyExistingTextAnnotationDraft({
+          annotation: sourceAnnotation,
+          draft: ann,
+          clone: cloneAnnotation,
+          record: ({ oldState, newState }) => executeForDocument(ownerDocument, {
+            type: 'modifyAnnotation',
+            id: ann.id,
+            oldState,
+            newState,
+          }),
+        }),
+      });
+      if (!applied) {
+        setPdfEditorStatus(i18next.t('textEditor.status.operationFailed', {
+          ns: 'hardening',
+        }), 'invalid');
+        return false;
+      }
     } else {
-      redrawAnnotations();
+      setPdfEditorStatus(i18next.t('textEditor.status.operationFailed', {
+        ns: 'hardening',
+      }), 'invalid');
+      return false;
     }
-
-    const _doc = getActiveDocument();
-    if (_doc && _doc.selectedAnnotation === ann) {
-      showProperties(ann);
-    }
+    hidePdfTextEditor();
+    resetEditingState();
+    redrawOwnerIfVisible();
+    return true;
   };
 
   // Cancel function: restore original text, reset state, refresh display
@@ -269,14 +450,9 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
     const ann = state.editingAnnotation;
     const snapshot = state._textEditSnapshot;
     const wasNew = state._textEditIsNew;
-    const owner = getActiveDocument();
+    const owner = getDocumentById(ownerDocument.id);
     if (wasNew) {
-      const index = owner?.annotations?.findIndex((item) => item.id === ann.id) ?? -1;
-      if (index >= 0) owner.annotations.splice(index, 1);
-      if (owner) {
-        owner.selectedAnnotations = owner.selectedAnnotations.filter((item) => item.id !== ann.id);
-        if (owner.selectedAnnotation?.id === ann.id) owner.selectedAnnotation = null;
-      }
+      discardTextAnnotationDraft(owner, ann);
     } else if (snapshot) {
       for (const key of Object.keys(ann)) {
         if (!Object.prototype.hasOwnProperty.call(snapshot, key)) delete ann[key];
@@ -284,31 +460,17 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
       Object.assign(ann, cloneAnnotation(snapshot));
     }
 
-    state.isEditingText = false;
-    state.editingAnnotation = null;
-    state.textEditElement = null;
-    state._textEditSnapshot = null;
-    state._textEditSubstitution = null;
-    state._textEditIsNew = false;
-
-    if (getActiveDocument()?.viewMode === 'continuous') {
-      redrawContinuous();
-    } else {
-      redrawAnnotations();
-    }
-
-    const _doc = getActiveDocument();
-    if (_doc && _doc.selectedAnnotation === ann) {
-      showProperties(ann);
-    }
+    hidePdfTextEditor();
+    resetEditingState();
+    redrawOwnerIfVisible();
+    return true;
   };
 
   const keyDown = (event) => {
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      cancelFn();
-      hidePdfTextEditor();
+      cancelActiveTextEditing('escape');
       import('./manager.js').then((module) => module.setTool?.('select'));
       return;
     }
@@ -335,19 +497,38 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
     }
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      commitFn(getTextValue());
-      hidePdfTextEditor();
+      void applyActiveTextEditing();
     }
   };
-  const blur = () => setTimeout(() => {
-    const activeElement = document.activeElement;
-    const propertiesRoot = document.getElementById('properties-panel-root');
-    if (activeElement && propertiesRoot?.contains(activeElement)) return;
-    if (state.isEditingText && state.editingAnnotation === annotation) {
-      commitFn();
-      hidePdfTextEditor();
-    }
-  }, 150);
+  const blur = () => {};
+  // Exact-layout fingerprints include the immutable editor-session identity.
+  // Register before mounting so the overlay's first reactive layout request is
+  // born with the same session identity that will validate its Worker result.
+  // Mounting first creates a race where the initial request has no session ID,
+  // its completed result is rejected as stale, and Apply remains pending.
+  session = registerTextEditSession({
+    ownerDocumentId: ownerDocument.id,
+    ownerDocumentGeneration: ownerGeneration,
+    pageNum: annotation.page,
+    kind: annotation.type,
+    isDirty: () => {
+      const richDraft = getPdfEditorRichText() || richTextDocument;
+      return textEditDraftIsDirty(dirtyBaseline, {
+        text: richTextToPlainText(richDraft),
+        richText: richDraft,
+        record: annotation,
+        geometryChanged: textEditGeometryChanged(draftHeight, height),
+      });
+    },
+    commit: commitFn,
+    cancel: cancelFn,
+  });
+  if (!session) {
+    hidePdfTextEditor();
+    resetEditingState();
+    discardTextAnnotationDraft(ownerDocument, annotation);
+    return false;
+  }
   showPdfTextEditor(styleObj, initialText, {
     onKeyDown: keyDown,
     onBlur: blur,
@@ -358,76 +539,57 @@ export function startTextEditing(annotation, { isNew = false } = {}) {
       displayScale: scale,
       reflowWidth: true,
       growDown: true,
-      onHeightChange: (displayHeight) => {
-        const appHeight = Math.max(10, displayHeight / scale);
-        annotation.height = appHeight;
-        const draft = getPdfEditorRichText();
-        if (draft?.region) draft.region.height = appHeight;
+      expandableRegion: {
+        manualLineBreaks: false,
+        directManipulation: true,
+        width: richTextDocument.region.width,
+        contentWidth: Math.max(1, richTextDocument.region.width - (2 * (annotation.lineWidth || 0))),
+        contentInset: annotation.lineWidth || 0,
+        contentInsetPx: (annotation.lineWidth || 0) * scale,
+        minimumHeight: height,
+        anchorTop: annotation.y,
+        pageBounds: { x: 0, y: 0, width: geometry.pageWidth, height: geometry.pageHeight },
+        columnBounds: null,
+        editorBackground: hasFill(annotation.fillColor) ? annotation.fillColor : '#ffffff',
+        existingBounds: (ownerDocument.annotations || [])
+          .filter((candidate) => candidate !== sourceAnnotation
+            && String(candidate?.id) !== String(annotation.id)
+            && candidate.page === annotation.page)
+          .filter((candidate) => [candidate.x, candidate.y, candidate.width, candidate.height]
+            .every(Number.isFinite))
+          .map((candidate) => ({
+            id: `annotation:${candidate.id}`,
+            x: candidate.x,
+            y: candidate.y,
+            width: candidate.width,
+            height: candidate.height,
+          })),
+        editId: `annotation:${annotation.id}`,
+        displayScale: scale,
+        inkPadding: annotation.lineWidth || 0,
+        inkPaddingPx: (annotation.lineWidth || 0) * scale,
+        onDraftLayout: (layout) => {
+          draftHeight = layout.requiredHeight;
+        },
       },
-      ariaLabel: `Edit formatted ${annotation.type} text`,
+      ariaLabel: i18next.t('textEditor.aria.editAnnotation', {
+        ns: 'hardening',
+        type: annotation.type,
+      }),
     },
   });
+  if (isNew) {
+    ownerDocument.selectedAnnotations = [annotation];
+    ownerDocument.selectedAnnotation = annotation;
+  }
+  if (getActiveDocument() === ownerDocument) showProperties(annotation);
   state.textEditElement = true;
+  return true;
 }
 
 // Finish inline text editing (called externally, e.g. when switching tools)
 export function finishTextEditing() {
-  if (!state.isEditingText || !state.editingAnnotation) return;
-
-  const annotation = state.editingAnnotation;
-
-  // Get the current text value from the Solid store
-  const richDraft = getPdfEditorRichText();
-  if (richDraft) {
-    annotation.richText = richDraft;
-    annotation.richTextSubstitution = state._textEditSubstitution || null;
-    annotation.text = richTextToPlainText(richDraft);
-    annotation.textFormatCapabilities = DEFAULT_TEXT_FORMAT_CAPABILITIES;
-    const primary = richDraft.lines[0]?.runs[0];
-    if (primary) {
-      annotation.fontFamily = primary.faceId.includes('mono') ? 'Liberation Mono'
-        : primary.faceId.includes('serif') ? 'Liberation Serif' : 'Liberation Sans';
-      annotation.fontSize = primary.size;
-      annotation.textColor = primary.color;
-      annotation.fontBold = primary.bold;
-      annotation.fontItalic = primary.italic;
-      annotation.fontUnderline = primary.underline;
-      annotation.fontStrikethrough = primary.strikeout;
-    }
-    annotation.textAlign = richDraft.lines[0]?.alignment || annotation.textAlign || 'left';
-  } else {
-    annotation.text = getTextValue();
-  }
-  annotation.modifiedAt = new Date().toISOString();
-
-  if (state._textEditIsNew) {
-    recordAdd(annotation);
-  } else if (state._textEditSnapshot && annotation.id) {
-    recordModify(annotation.id, state._textEditSnapshot, annotation);
-  }
-
-  hidePdfTextEditor();
-
-  // Reset state
-  state.isEditingText = false;
-  state.editingAnnotation = null;
-  state.textEditElement = null;
-  state._textEditSnapshot = null;
-  state._textEditSubstitution = null;
-  state._textEditIsNew = false;
-
-  // Refresh display
-  if (getActiveDocument()?.viewMode === 'continuous') {
-    redrawContinuous();
-  } else {
-    redrawAnnotations();
-  }
-
-  // Update properties panel
-  const _doc2 = getActiveDocument();
-  if (_doc2 && _doc2.selectedAnnotation === annotation) {
-    showProperties(annotation);
-  }
+  return applyActiveTextEditing();
 }
 
 export function applyActiveAnnotationTextStyle(key, value) {
@@ -453,10 +615,9 @@ export function applyActiveAnnotationTextStyle(key, value) {
     case 'fontUnderline': return applyPdfEditorRichTextFormat({ underline: Boolean(value) });
     case 'fontStrikethrough': return applyPdfEditorRichTextFormat({ strikeout: Boolean(value) });
     case 'textAlign': return applyPdfEditorRichTextParagraphFormat('alignment', value);
-    case 'lineSpacing': {
-      const size = current?.size || 14;
-      return applyPdfEditorRichTextParagraphFormat('baselineAdvance', Number(value) * size);
-    }
+    case 'lineSpacing': return applyPdfEditorRichTextParagraphFormat(
+      'lineSpacingMultiplier', Number(value),
+    );
     default: return false;
   }
 }

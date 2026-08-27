@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Sunting {{label}}",
+    "editValueHint": "{{label}}. Klik dua kali atau tekan Enter untuk menyunting.",
+    "timezoneHint": "Tanggal ditampilkan dalam zona waktu {{timezone}} dan disimpan dalam format ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Setujui penggantian font",
+    "sourceFace": "Font sumber",
+    "sourceFaces": "Font sumber",
+    "unknown": "Tidak diketahui",
+    "packagedSubstitute": "Font pengganti bawaan",
+    "notAvailable": "Tidak tersedia",
+    "sampleText": "Contoh",
+    "sampleFallback": "Rubah cokelat yang cepat melompati anjing malas.",
+    "scope": "Berlaku untuk",
+    "scopeAnnotation": "Anotasi ini",
+    "scopeSelection": "Kotak teks yang dipilih",
+    "scopeParagraph": "Paragraf PDF ini",
+    "scopeFindReplace": "Penyuntingan Cari/Ganti ini",
+    "remember": "Ingat persetujuan ini untuk dokumen yang sedang terbuka",
+    "approve": "Gunakan font pengganti",
+    "cancel": "Batal"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Sunting teks PDF",
+      "editFormatted": "Sunting teks PDF berformat",
+      "editAnnotation": "Sunting teks {{type}} berformat",
+      "editRegion": "Sunting area teks PDF berformat: {{text}}",
+      "editScannedLine": "Sunting baris teks terpindai: {{text}}",
+      "editScannedFixed": "Sunting area tetap teks terpindai: {{text}}",
+      "editScannedReflow": "Sunting area aliran ulang paragraf teks terpindai: {{text}}",
+      "selectedOcrParagraph": "Paragraf OCR yang dipilih dengan {{count}} baris"
+    },
+    "handles": {
+      "move": "Pindahkan kotak teks",
+      "moveHint": "Seret untuk memindahkan kotak teks",
+      "resize": "Ubah ukuran kotak teks",
+      "resizeHint": "Seret untuk mengubah ukuran kotak teks"
+    },
+    "actions": {
+      "apply": "Terapkan",
+      "cancel": "Batal"
+    },
+    "status": {
+      "ocrOverflow": "Seluruh draf OCR terlihat di luar area yang disetujui. Penyimpanan tetap diblokir hingga teks muat dalam validasi area tetap yang tepat.",
+      "scannedRegion": "Teks terpindai sedang disunting di dalam area yang disetujui.",
+      "shaping": "Menyelesaikan tata letak teks yang tepat…",
+      "overlap": "Teks bertumpang tindih dengan konten halaman yang ada. Perubahan boleh diterapkan; objek sumber di sekitarnya tidak akan bergeser.",
+      "lowContrast": "Warna sumber berkontras rendah memiliki latar khusus penyuntingan. Warna yang disimpan tidak berubah.",
+      "layoutRejectedPrefix": "Tata letak teks ditolak:",
+      "layoutRejected": "Tata letak teks ditolak: {{reasons}}",
+      "shapingRejected": "Pembentukan teks ditolak: {{reason}}",
+      "nativeManual": "Teks asli sedang disunting dalam kotak teks dengan baris manual. Tekan Enter untuk membuat baris baru.",
+      "nativeManualContrast": "Teks asli sedang disunting dalam kotak teks dengan baris manual. Tekan Enter untuk membuat baris baru. Warna sumber berkontras rendah memiliki latar khusus penyuntingan; warna yang disimpan tidak berubah.",
+      "nativeGrowing": "Teks asli sedang disunting. Lebar tetap dan area bertambah ke bawah.",
+      "nativeGrowingContrast": "Teks asli sedang disunting. Lebar tetap dan area bertambah ke bawah. Warna sumber berkontras rendah memiliki latar khusus penyuntingan; warna yang disimpan tidak berubah.",
+      "scannedEstimate": "Teks terpindai sedang disunting. Properti font merupakan perkiraan.",
+      "applyRejected": "Penyuntingan teks tidak dapat diterapkan: {{reason}}",
+      "cropBoxRejected": "Teks yang telah dibentuk tidak dapat diterapkan di dalam CropBox halaman.",
+      "layoutTimeout": "Tata letak teks yang tepat tidak selesai tepat waktu. Penyunting tetap terbuka.",
+      "scannedRejected": "Perubahan teks terpindai ditolak: {{reason}}",
+      "lineBreakUnsupported": "Pemisah baris tidak didukung. Gunakan Command-Enter untuk menerapkan penyuntingan satu baris ini.",
+      "ocrOneLine": "Satu baris teks terpindai yang terpisah sedang disunting. Properti font merupakan perkiraan.",
+      "ocrFixed": "Beberapa baris OCR sedang disunting dalam satu area asli yang tetap. Satu paragraf mengalir ulang di dalam area ini; pemisah baris tetap mempertahankan mode baris tetap. Command-Enter untuk menerapkan.",
+      "ocrReflow": "Satu paragraf sedang disunting dalam area OCR asli yang disetujui. Command-Enter untuk menerapkan; luapan akan ditolak.",
+      "operationFailed": "Operasi teks tidak dapat diselesaikan. Dokumen dibiarkan tanpa perubahan.",
+      "staleDraft": "Dokumen berubah saat editor teks terbuka. Draf dibuang.",
+      "multipleOcrParagraphs": "Pilihan mencakup beberapa paragraf OCR. Tinjau kerangka terpisah dan gunakan Gabungkan secara eksplisit. Penggabungan antar kolom tetap dinonaktifkan.",
+      "nativeColumnBoundary": "Paragraf ini melintasi batas kolom asli yang terdeteksi. Pengeditan diblokir dan dokumen dibiarkan tanpa perubahan.",
+      "nativeSourceUnavailable": "Teks yang terlihat tidak dapat ditautkan ke operator sumber yang memenuhi syarat. Dokumen dibiarkan tanpa perubahan.",
+      "nativeDeleteUnavailable": "Teks PDF asli ini tidak dapat dihapus dengan aman karena operator sumber persisnya ambigu. Dokumen dibiarkan tanpa perubahan.",
+      "readOnly": "Teks yang sebelumnya diedit bersifat hanya baca. Dokumen dibiarkan tanpa perubahan."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Batas {{limit}} grafem",
+      "lineThreshold": "Batas {{limit}} baris",
+      "message": "Seluruh tempelan dipertahankan: {{graphemeCount}} grafem dalam {{lineCount}} baris. Batas terlampaui: {{thresholds}}. Pratinjau dibatasi. Gunakan Urungkan Tempel untuk menghapus seluruh sisipan.",
+      "messageWithExpansion": "Seluruh tempelan dipertahankan: {{graphemeCount}} grafem dalam {{lineCount}} baris. Batas terlampaui: {{thresholds}}. Pratinjau dibatasi. Gunakan Urungkan Tempel untuk menghapus seluruh sisipan atau Perluas Kotak untuk menggunakan batas tepat yang telah divalidasi.",
+      "undo": "Urungkan Tempel",
+      "expand": "Perluas Kotak"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Pengelompokan paragraf OCR",
+    "title": "Pengelompokan",
+    "mergeSelected": "Gabungkan yang Dipilih",
+    "mergeSelectedParagraphs": "Gabungkan Paragraf yang Dipilih",
+    "mergePrevious": "Gabungkan dengan Sebelumnya",
+    "mergePreviousHint": "Gabungkan dengan paragraf OCR sebelumnya",
+    "mergeNext": "Gabungkan dengan Berikutnya",
+    "mergeNextHint": "Gabungkan dengan paragraf OCR berikutnya",
+    "splitBefore": "Pisahkan Sebelum",
+    "splitAfter": "Pisahkan Setelah",
+    "reset": "Atur Ulang Pengelompokan Otomatis",
+    "crossColumnDisabled": "Penggabungan antar-kolom dinonaktifkan",
+    "ambiguousBoundariesOnly": "Hanya batas ambigu dalam kolom yang sama yang dapat digabungkan secara manual",
+    "tooManyLines": "Lebih dari 32 baris. Pisahkan paragraf ini secara manual sebelum menyunting.",
+    "mergeDescription": "Teks yang ada dipisahkan oleh pemisah baris tetap yang dipertahankan. Penggabungan hanya diterapkan setelah patch sumber gabungan dan area tetap lolos validasi.",
+    "mergedText": "Teks OCR gabungan",
+    "splitRegion": "Pisahkan Area OCR",
+    "firstRegion": "Area pertama",
+    "secondRegion": "Area kedua",
+    "sourceLines": "Baris sumber: {{lines}}"
+  }
+}

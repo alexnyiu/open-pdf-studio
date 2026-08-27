@@ -56,10 +56,7 @@ const TAB_BAR_HEIGHT_CSS_PX: f64 = 48.0;
 ///      for file-association double-clicks);
 ///   3. spawns its own PID-namespaced PDFium worker pool.
 #[tauri::command]
-pub fn spawn_window_with_pdf(
-    _app: AppHandle,
-    pdf_path: String,
-) -> Result<String, String> {
+pub fn spawn_window_with_pdf(_app: AppHandle, pdf_path: String) -> Result<String, String> {
     if pdf_path.is_empty() {
         return Err("Cannot detach an unsaved document — save it first.".to_string());
     }
@@ -102,9 +99,15 @@ pub fn spawn_window_with_pdf(
         Ok(child) => {
             diag_file(&format!(
                 "[spawn] launched detached process pid={} exe={:?} pdf={}",
-                child.id(), exe, pdf_path
+                child.id(),
+                exe,
+                pdf_path
             ));
-            eprintln!("[spawn] launched detached process pid={} pdf={}", child.id(), pdf_path);
+            eprintln!(
+                "[spawn] launched detached process pid={} pdf={}",
+                child.id(),
+                pdf_path
+            );
             Ok(format!("pid-{}", child.id()))
         }
         Err(e) => {
@@ -139,7 +142,9 @@ pub fn try_dock_pdf_at_screen(
         if label == from_label {
             continue;
         }
-        let Ok(pos) = win.outer_position() else { continue };
+        let Ok(pos) = win.outer_position() else {
+            continue;
+        };
         let Ok(size) = win.outer_size() else { continue };
         let scale = win.scale_factor().unwrap_or(1.0);
         let tab_bar_px = (TAB_BAR_HEIGHT_CSS_PX * scale).round() as i32;
@@ -150,7 +155,12 @@ pub fn try_dock_pdf_at_screen(
         let bottom = pos.y + tab_bar_px;
 
         if screen_x >= left && screen_x < right && screen_y >= top && screen_y < bottom {
-            let _ = win.emit("open-pdf-in-window", OpenPdfInWindowPayload { pdf_path: pdf_path.clone() });
+            let _ = win.emit(
+                "open-pdf-in-window",
+                OpenPdfInWindowPayload {
+                    pdf_path: pdf_path.clone(),
+                },
+            );
             return Ok(Some(label));
         }
     }
@@ -163,7 +173,8 @@ pub fn close_window_by_label(app: AppHandle, label: String) -> Result<(), String
     let Some(win) = app.get_webview_window(&label) else {
         return Err(format!("Window '{label}' not found"));
     };
-    win.destroy().map_err(|e| format!("Failed to close window: {e}"))
+    win.destroy()
+        .map_err(|e| format!("Failed to close window: {e}"))
 }
 
 /// Return the label of the WebViewWindow that issued the call.

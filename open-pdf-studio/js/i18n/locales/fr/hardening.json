@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Modifier {{label}}",
+    "editValueHint": "{{label}}. Double-cliquez ou appuyez sur Entrée pour modifier.",
+    "timezoneHint": "Les dates sont affichées dans le fuseau horaire {{timezone}} et enregistrées au format ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Approuver le remplacement de police",
+    "sourceFace": "Police source",
+    "sourceFaces": "Polices source",
+    "unknown": "Inconnue",
+    "packagedSubstitute": "Police de remplacement intégrée",
+    "notAvailable": "Indisponible",
+    "sampleText": "Aperçu",
+    "sampleFallback": "Portez ce vieux whisky au juge blond qui fume.",
+    "scope": "S'applique à",
+    "scopeAnnotation": "Cette annotation",
+    "scopeSelection": "Les zones de texte sélectionnées",
+    "scopeParagraph": "Ce paragraphe PDF",
+    "scopeFindReplace": "Cette modification Rechercher/Remplacer",
+    "remember": "Mémoriser cette approbation pour le document ouvert",
+    "approve": "Utiliser la police de remplacement",
+    "cancel": "Annuler"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Modifier le texte du PDF",
+      "editFormatted": "Modifier le texte mis en forme du PDF",
+      "editAnnotation": "Modifier le texte {{type}} mis en forme",
+      "editRegion": "Modifier la zone de texte PDF mise en forme : {{text}}",
+      "editScannedLine": "Modifier la ligne de texte numérisée : {{text}}",
+      "editScannedFixed": "Modifier la zone fixe de texte numérisé : {{text}}",
+      "editScannedReflow": "Modifier la zone de redistribution du paragraphe numérisé : {{text}}",
+      "selectedOcrParagraph": "Paragraphe OCR sélectionné comportant {{count}} lignes"
+    },
+    "handles": {
+      "move": "Déplacer la zone de texte",
+      "moveHint": "Faites glisser pour déplacer la zone de texte",
+      "resize": "Redimensionner la zone de texte",
+      "resizeHint": "Faites glisser pour redimensionner la zone de texte"
+    },
+    "actions": {
+      "apply": "Appliquer",
+      "cancel": "Annuler"
+    },
+    "status": {
+      "ocrOverflow": "Le brouillon OCR complet dépasse de sa zone approuvée. L'enregistrement reste bloqué tant que la validation exacte de la zone fixe ne confirme pas que le texte tient dedans.",
+      "scannedRegion": "Modification du texte numérisé dans sa zone approuvée.",
+      "shaping": "Finalisation de la disposition exacte du texte…",
+      "overlap": "Le texte chevauche le contenu existant de la page. La modification peut être appliquée ; les objets source voisins ne seront pas déplacés.",
+      "lowContrast": "Les couleurs source peu contrastées ont un fond visible uniquement pendant la modification. Les couleurs enregistrées restent inchangées.",
+      "layoutRejectedPrefix": "Disposition du texte rejetée :",
+      "layoutRejected": "Disposition du texte rejetée : {{reasons}}",
+      "shapingRejected": "Mise en forme du texte rejetée : {{reason}}",
+      "nativeManual": "Modification du texte natif dans une zone de texte à lignes manuelles. Appuyez sur Entrée pour créer une nouvelle ligne.",
+      "nativeManualContrast": "Modification du texte natif dans une zone de texte à lignes manuelles. Appuyez sur Entrée pour créer une nouvelle ligne. Les couleurs source peu contrastées ont un fond visible uniquement pendant la modification ; les couleurs enregistrées restent inchangées.",
+      "nativeGrowing": "Modification du texte natif. La largeur est fixe et la zone s'agrandit vers le bas.",
+      "nativeGrowingContrast": "Modification du texte natif. La largeur est fixe et la zone s'agrandit vers le bas. Les couleurs source peu contrastées ont un fond visible uniquement pendant la modification ; les couleurs enregistrées restent inchangées.",
+      "scannedEstimate": "Modification du texte numérisé. Les propriétés de la police sont estimées.",
+      "applyRejected": "La modification du texte n'a pas pu être appliquée : {{reason}}",
+      "cropBoxRejected": "Le texte mis en forme ne peut pas être appliqué à l'intérieur de la zone CropBox de la page.",
+      "layoutTimeout": "La disposition exacte du texte ne s'est pas terminée à temps. L'éditeur reste ouvert.",
+      "scannedRejected": "La modification du texte numérisé a été rejetée : {{reason}}",
+      "lineBreakUnsupported": "Les sauts de ligne ne sont pas pris en charge. Utilisez Commande-Entrée pour appliquer cette modification sur une seule ligne.",
+      "ocrOneLine": "Modification d'une ligne isolée de texte numérisé. Les propriétés de la police sont estimées.",
+      "ocrFixed": "Modification de plusieurs lignes OCR dans une seule zone d'origine fixe. Un seul paragraphe est redistribué dans cette zone ; les sauts de ligne forcés conservent le mode de lignes fixes. Commande-Entrée applique la modification.",
+      "ocrReflow": "Modification d'un paragraphe dans sa zone OCR d'origine approuvée. Commande-Entrée applique la modification ; le débordement est rejeté.",
+      "operationFailed": "L’opération sur le texte n’a pas pu être effectuée. Le document n’a pas été modifié.",
+      "staleDraft": "Le document a changé pendant que l’éditeur de texte était ouvert. Le brouillon a été abandonné.",
+      "multipleOcrParagraphs": "La sélection s’étend sur plusieurs paragraphes OCR. Examinez les contours séparés et utilisez explicitement « Fusionner ». La fusion entre colonnes reste désactivée.",
+      "nativeColumnBoundary": "Ce paragraphe franchit une limite de colonne d’origine détectée. La modification a été bloquée et le document n’a pas été modifié.",
+      "nativeSourceUnavailable": "Le texte visible n’a pas pu être associé à des opérateurs source admissibles. Le document n’a pas été modifié.",
+      "nativeDeleteUnavailable": "Ce texte PDF natif ne peut pas être supprimé en toute sécurité, car ses opérateurs source exacts sont ambigus. Le document n’a pas été modifié.",
+      "readOnly": "Le texte précédemment modifié est en lecture seule. Le document n’a pas été modifié."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Limite de {{limit}} graphèmes",
+      "lineThreshold": "Limite de {{limit}} lignes",
+      "message": "La totalité du contenu collé a été conservée : {{graphemeCount}} graphèmes sur {{lineCount}} lignes. Limite dépassée : {{thresholds}}. L'aperçu est limité. Utilisez Annuler le collage pour supprimer toute l'insertion.",
+      "messageWithExpansion": "La totalité du contenu collé a été conservée : {{graphemeCount}} graphèmes sur {{lineCount}} lignes. Limite dépassée : {{thresholds}}. L'aperçu est limité. Utilisez Annuler le collage pour supprimer toute l'insertion ou Agrandir la zone pour adopter les limites exactes validées.",
+      "undo": "Annuler le collage",
+      "expand": "Agrandir la zone"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Regroupement des paragraphes OCR",
+    "title": "Regroupement",
+    "mergeSelected": "Fusionner la sélection",
+    "mergeSelectedParagraphs": "Fusionner les paragraphes sélectionnés",
+    "mergePrevious": "Fusionner avec le précédent",
+    "mergePreviousHint": "Fusionner avec le paragraphe OCR précédent",
+    "mergeNext": "Fusionner avec le suivant",
+    "mergeNextHint": "Fusionner avec le paragraphe OCR suivant",
+    "splitBefore": "Scinder avant",
+    "splitAfter": "Scinder après",
+    "reset": "Réinitialiser le regroupement automatique",
+    "crossColumnDisabled": "Les fusions entre colonnes sont désactivées",
+    "ambiguousBoundariesOnly": "Seules les limites ambiguës d'une même colonne peuvent être fusionnées manuellement",
+    "tooManyLines": "Plus de 32 lignes. Scindez ce paragraphe manuellement avant de le modifier.",
+    "mergeDescription": "Les textes existants sont séparés par un saut de ligne forcé conservé. La fusion n’est appliquée qu’après validation du correctif source combiné et de la zone fixe.",
+    "mergedText": "Texte OCR fusionné",
+    "splitRegion": "Scinder la zone OCR",
+    "firstRegion": "Première zone",
+    "secondRegion": "Deuxième zone",
+    "sourceLines": "Lignes sources : {{lines}}"
+  }
+}

@@ -41,6 +41,15 @@ function manifestPrivateRef(document) {
   return ref.toString();
 }
 
+function manifestOwnerEntry(document) {
+  const pieceInfo = document.catalog.lookup(PDFName.of('PieceInfo'), PDFDict);
+  return pieceInfo.lookup(PDFName.of('OpenPDFStudioTextEdit'), PDFDict);
+}
+
+function manifestLastModified(document) {
+  return manifestOwnerEntry(document).get(PDFName.of('LastModified')).decodeText();
+}
+
 test('owned V3 manifest survives reopen and replaces its private stream by identity', async () => {
   const document = await PDFDocument.create();
   document.addPage([300, 300]);
@@ -71,6 +80,38 @@ test('owned V3 manifest survives reopen and replaces its private stream by ident
   const repeated = await PDFDocument.load(await reopened.save({ useObjectStreams: false }));
   assert.equal(manifestPrivateRef(repeated), firstRef);
   assert.deepEqual(await readOwnedTextEditManifest(repeated), second);
+});
+
+test('owned manifest preserves LastModified until generated content changes', async () => {
+  const sourceDocument = await PDFDocument.create();
+  sourceDocument.addPage([300, 300]);
+  const record = insertedRecord('last-modified-edit');
+  await writeOwnedTextEditManifest(sourceDocument, 'document-1', [record]);
+  const document = await PDFDocument.load(await sourceDocument.save({ useObjectStreams: false }));
+  const loaded = await readOwnedTextEditManifest(document);
+  const fixedLastModified = '2000-01-02T03:04:05.000Z';
+  manifestOwnerEntry(document).set(
+    PDFName.of('LastModified'),
+    PDFString.of(fixedLastModified),
+  );
+
+  const unchanged = await writeOwnedTextEditManifest(
+    document,
+    loaded.documentId,
+    loaded.pages.flatMap((page) => page.edits),
+    loaded,
+  );
+  assert.deepEqual(unchanged, loaded);
+  assert.equal(manifestLastModified(document), fixedLastModified);
+
+  const changedRecord = structuredClone(loaded.pages[0].edits[0]);
+  changedRecord.richText.lines[0].runs[0].text = 'Changed';
+  changedRecord.revision += 1;
+  await writeOwnedTextEditManifest(document, loaded.documentId, [changedRecord], loaded);
+
+  const changedLastModified = manifestLastModified(document);
+  assert.notEqual(changedLastModified, fixedLastModified);
+  assert.equal(new Date(changedLastModified).toISOString(), changedLastModified);
 });
 
 test('owned manifest rejects native edits without exact operator provenance', async () => {

@@ -103,6 +103,70 @@
 
 /* ===== Per-Dialog Overrides ===== */
 
+.font-substitution-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.font-substitution-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.font-substitution-details {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.font-substitution-details > div {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 12px;
+  font-size: 12px;
+}
+
+.font-substitution-details dt,
+.font-substitution-sample-label {
+  color: var(--theme-text-secondary);
+}
+
+.font-substitution-details dd {
+  color: var(--theme-text);
+  overflow-wrap: anywhere;
+}
+
+.font-substitution-sample {
+  min-height: 58px;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--theme-border);
+  background: var(--theme-bg);
+  color: var(--theme-text);
+  font-size: 16px;
+  line-height: 1.35;
+  user-select: text;
+}
+
+.font-substitution-remember {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--theme-text);
+  font-size: 12px;
+}
+
+.font-substitution-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.font-substitution-footer {
+  justify-content: flex-end;
+}
+
 /* Allow text selection in value fields and text inputs */
 .doc-props-value,
 .update-notes,
@@ -3298,6 +3362,24 @@
   gap: 8px;
 }
 
+.unsaved-close-dialog {
+  min-width: 420px;
+  max-width: 560px;
+}
+
+.unsaved-close-message {
+  margin: 4px 0;
+  color: var(--theme-text, #1a1a1a);
+  line-height: 1.5;
+}
+
+.unsaved-close-actions {
+  display: flex;
+  width: 100%;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ===== Sticky Note Popup ===== */
 .sticky-popup {
   position: fixed;
@@ -4429,22 +4511,29 @@ select.ste-field { padding: 2px 4px; cursor: pointer; }
   .ocr-recognition-form { grid-template-columns: 1fr; }
 }
 
-/* macOS OCR workflow status; review UI remains a later phase. */
-.ocr-progress-toast {
+/* Application-wide OCR workflow tray. Jobs remain visible across tab switches. */
+.ocr-progress-tray {
   position: fixed;
   right: 18px;
   bottom: 18px;
   width: min(360px, calc(100vw - 36px));
   max-height: min(560px, calc(100vh - 36px));
   overflow: auto;
+  display: grid;
+  gap: 8px;
+  z-index: 3001;
+}
+.ocr-progress-toast {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
   padding: 12px 14px;
   background: var(--theme-surface, #fff);
   border: 1px solid var(--theme-border, #d4d4d4);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
-  z-index: 3001;
   color: var(--theme-text, #1f1f1f);
 }
-.ocr-progress-collapsed { width: min(310px, calc(100vw - 36px)); }
+.ocr-progress-collapsed { width: 100%; }
 .ocr-progress-terminal { border-inline-start: 3px solid var(--theme-accent, #0078d4); }
 .ocr-progress-title {
   font-size: 12px;
@@ -4452,14 +4541,22 @@ select.ste-field { padding: 2px 4px; cursor: pointer; }
   line-height: 1.3;
 }
 .ocr-progress-document {
+  display: block;
+  width: 100%;
   margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--theme-text-secondary, #666);
+  cursor: pointer;
   font-size: 11px;
   line-height: 1.35;
+  text-align: start;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.ocr-progress-document:hover { color: var(--theme-accent, #0078d4); text-decoration: underline; }
 .ocr-progress-label {
   font-size: 12px;
   margin: 8px 0;

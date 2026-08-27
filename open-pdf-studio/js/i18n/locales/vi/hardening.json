@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "editValue": "Chỉnh sửa {{label}}",
+    "editValueHint": "{{label}}. Nhấp đúp hoặc nhấn Enter để chỉnh sửa.",
+    "timezoneHint": "Ngày được hiển thị theo múi giờ {{timezone}} và lưu ở định dạng ISO 8601."
+  },
+  "fontSubstitution": {
+    "title": "Phê duyệt thay thế phông chữ",
+    "sourceFace": "Phông chữ nguồn",
+    "sourceFaces": "Các phông chữ nguồn",
+    "unknown": "Không xác định",
+    "packagedSubstitute": "Phông chữ thay thế đi kèm",
+    "notAvailable": "Không khả dụng",
+    "sampleText": "Mẫu",
+    "sampleFallback": "Con cáo nâu nhanh nhẹn nhảy qua con chó lười.",
+    "scope": "Áp dụng cho",
+    "scopeAnnotation": "Chú thích này",
+    "scopeSelection": "Các hộp văn bản đã chọn",
+    "scopeParagraph": "Đoạn PDF này",
+    "scopeFindReplace": "Lần chỉnh sửa Tìm/Thay thế này",
+    "remember": "Ghi nhớ phê duyệt này cho tài liệu đang mở",
+    "approve": "Dùng phông chữ thay thế",
+    "cancel": "Hủy"
+  },
+  "textEditor": {
+    "aria": {
+      "editPlain": "Chỉnh sửa văn bản PDF",
+      "editFormatted": "Chỉnh sửa văn bản PDF có định dạng",
+      "editAnnotation": "Chỉnh sửa văn bản {{type}} có định dạng",
+      "editRegion": "Chỉnh sửa vùng văn bản PDF có định dạng: {{text}}",
+      "editScannedLine": "Chỉnh sửa dòng văn bản đã quét: {{text}}",
+      "editScannedFixed": "Chỉnh sửa vùng cố định của văn bản đã quét: {{text}}",
+      "editScannedReflow": "Chỉnh sửa vùng dàn lại đoạn văn đã quét: {{text}}",
+      "selectedOcrParagraph": "Đoạn OCR đã chọn có {{count}} dòng"
+    },
+    "handles": {
+      "move": "Di chuyển hộp văn bản",
+      "moveHint": "Kéo để di chuyển hộp văn bản",
+      "resize": "Đổi kích thước hộp văn bản",
+      "resizeHint": "Kéo để đổi kích thước hộp văn bản"
+    },
+    "actions": {
+      "apply": "Áp dụng",
+      "cancel": "Hủy"
+    },
+    "status": {
+      "ocrOverflow": "Toàn bộ bản nháp OCR hiển thị vượt ra ngoài vùng đã phê duyệt. Việc lưu vẫn bị chặn cho đến khi bước xác thực chính xác vùng cố định xác nhận rằng văn bản vừa khít.",
+      "scannedRegion": "Đang chỉnh sửa văn bản đã quét trong vùng được phê duyệt.",
+      "shaping": "Đang hoàn tất bố cục văn bản chính xác…",
+      "overlap": "Văn bản chồng lên nội dung hiện có của trang. Có thể áp dụng thay đổi; các đối tượng nguồn lân cận sẽ không di chuyển.",
+      "lowContrast": "Màu nguồn có độ tương phản thấp có nền chỉ hiển thị khi chỉnh sửa. Màu đã lưu vẫn giữ nguyên.",
+      "layoutRejectedPrefix": "Bố cục văn bản bị từ chối:",
+      "layoutRejected": "Bố cục văn bản bị từ chối: {{reasons}}",
+      "shapingRejected": "Tạo hình văn bản bị từ chối: {{reason}}",
+      "nativeManual": "Đang chỉnh sửa văn bản gốc trong hộp văn bản có các dòng thủ công. Nhấn Enter để tạo dòng mới.",
+      "nativeManualContrast": "Đang chỉnh sửa văn bản gốc trong hộp văn bản có các dòng thủ công. Nhấn Enter để tạo dòng mới. Màu nguồn có độ tương phản thấp có nền chỉ hiển thị khi chỉnh sửa; màu đã lưu vẫn giữ nguyên.",
+      "nativeGrowing": "Đang chỉnh sửa văn bản gốc. Chiều rộng cố định và vùng mở rộng xuống dưới.",
+      "nativeGrowingContrast": "Đang chỉnh sửa văn bản gốc. Chiều rộng cố định và vùng mở rộng xuống dưới. Màu nguồn có độ tương phản thấp có nền chỉ hiển thị khi chỉnh sửa; màu đã lưu vẫn giữ nguyên.",
+      "scannedEstimate": "Đang chỉnh sửa văn bản đã quét. Các thuộc tính phông chữ là giá trị ước tính.",
+      "applyRejected": "Không thể áp dụng chỉnh sửa văn bản: {{reason}}",
+      "cropBoxRejected": "Không thể áp dụng văn bản đã tạo hình bên trong CropBox của trang.",
+      "layoutTimeout": "Bố cục văn bản chính xác không hoàn tất kịp thời. Trình chỉnh sửa vẫn mở.",
+      "scannedRejected": "Thay đổi văn bản đã quét bị từ chối: {{reason}}",
+      "lineBreakUnsupported": "Không hỗ trợ ngắt dòng. Dùng Command-Enter để áp dụng chỉnh sửa một dòng này.",
+      "ocrOneLine": "Đang chỉnh sửa một dòng văn bản đã quét riêng lẻ. Các thuộc tính phông chữ là giá trị ước tính.",
+      "ocrFixed": "Đang chỉnh sửa nhiều dòng OCR trong một vùng gốc cố định. Một đoạn văn được dàn lại trong vùng này; các ngắt dòng rõ ràng duy trì chế độ dòng cố định. Command-Enter áp dụng thay đổi.",
+      "ocrReflow": "Đang chỉnh sửa một đoạn văn trong vùng OCR gốc đã phê duyệt. Command-Enter áp dụng thay đổi; phần tràn bị từ chối.",
+      "operationFailed": "Không thể hoàn tất thao tác văn bản. Tài liệu không bị thay đổi.",
+      "staleDraft": "Tài liệu đã thay đổi trong khi trình soạn thảo văn bản đang mở. Bản nháp đã bị hủy.",
+      "multipleOcrParagraphs": "Vùng chọn trải dài trên nhiều đoạn OCR. Hãy xem lại từng đường viền riêng và sử dụng rõ ràng lệnh Hợp nhất. Tính năng hợp nhất giữa các cột vẫn bị tắt.",
+      "nativeColumnBoundary": "Đoạn này vượt qua ranh giới cột gốc đã phát hiện. Việc chỉnh sửa đã bị chặn và tài liệu không bị thay đổi.",
+      "nativeSourceUnavailable": "Không thể liên kết văn bản hiển thị với các toán tử nguồn đủ điều kiện. Tài liệu không bị thay đổi.",
+      "nativeDeleteUnavailable": "Không thể xóa an toàn văn bản PDF gốc này vì các toán tử nguồn chính xác của nó không rõ ràng. Tài liệu không bị thay đổi.",
+      "readOnly": "Văn bản đã chỉnh sửa trước đó ở chế độ chỉ đọc. Tài liệu không bị thay đổi."
+    },
+    "pathologicalPaste": {
+      "graphemeThreshold": "Giới hạn {{limit}} cụm ký tự",
+      "lineThreshold": "Giới hạn {{limit}} dòng",
+      "message": "Toàn bộ nội dung dán được giữ lại: {{graphemeCount}} cụm ký tự trên {{lineCount}} dòng. Đã vượt giới hạn: {{thresholds}}. Bản xem trước bị giới hạn. Dùng Hoàn tác Dán để xóa toàn bộ nội dung chèn.",
+      "messageWithExpansion": "Toàn bộ nội dung dán được giữ lại: {{graphemeCount}} cụm ký tự trên {{lineCount}} dòng. Đã vượt giới hạn: {{thresholds}}. Bản xem trước bị giới hạn. Dùng Hoàn tác Dán để xóa toàn bộ nội dung chèn hoặc Mở rộng Hộp để áp dụng các giới hạn chính xác đã xác thực.",
+      "undo": "Hoàn tác Dán",
+      "expand": "Mở rộng Hộp"
+    }
+  },
+  "ocrGrouping": {
+    "label": "Nhóm đoạn văn OCR",
+    "title": "Nhóm",
+    "mergeSelected": "Hợp nhất mục đã chọn",
+    "mergeSelectedParagraphs": "Hợp nhất các đoạn văn đã chọn",
+    "mergePrevious": "Hợp nhất với đoạn trước",
+    "mergePreviousHint": "Hợp nhất với đoạn văn OCR trước",
+    "mergeNext": "Hợp nhất với đoạn sau",
+    "mergeNextHint": "Hợp nhất với đoạn văn OCR sau",
+    "splitBefore": "Tách trước",
+    "splitAfter": "Tách sau",
+    "reset": "Đặt lại tính năng nhóm tự động",
+    "crossColumnDisabled": "Tính năng hợp nhất giữa các cột đã bị tắt",
+    "ambiguousBoundariesOnly": "Chỉ có thể hợp nhất thủ công các ranh giới không rõ ràng trong cùng một cột",
+    "tooManyLines": "Có hơn 32 dòng. Hãy tách đoạn văn này theo cách thủ công trước khi chỉnh sửa.",
+    "mergeDescription": "Các văn bản hiện có được phân tách bằng dấu ngắt dòng cứng được giữ nguyên. Việc hợp nhất chỉ được áp dụng sau khi bản vá nguồn kết hợp và vùng cố định vượt qua bước xác thực.",
+    "mergedText": "Văn bản OCR đã hợp nhất",
+    "splitRegion": "Tách vùng OCR",
+    "firstRegion": "Vùng thứ nhất",
+    "secondRegion": "Vùng thứ hai",
+    "sourceLines": "Các dòng nguồn: {{lines}}"
+  }
+}

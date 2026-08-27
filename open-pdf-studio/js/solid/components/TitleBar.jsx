@@ -124,7 +124,7 @@ export default function TitleBar() {
 
           <div class="quick-access-separator"></div>
 
-          <button class="quick-access-btn" title={`${tCommon('undo')} (Ctrl+Z)`} disabled={!undoEnabled()}
+          <button class="quick-access-btn" data-action="undo" title={`${tCommon('undo')} (Ctrl+Z)`} disabled={!undoEnabled()}
             onClick={() => import('../../core/undo-manager.js').then(m => m.undo())}>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 5.5h6.5a4 4 0 0 1 0 8H6"/>
@@ -132,7 +132,7 @@ export default function TitleBar() {
             </svg>
           </button>
 
-          <button class="quick-access-btn" title={`${tCommon('redo')} (Ctrl+Y)`} disabled={!redoEnabled()}
+          <button class="quick-access-btn" data-action="redo" title={`${tCommon('redo')} (Ctrl+Y)`} disabled={!redoEnabled()}
             onClick={() => import('../../core/undo-manager.js').then(m => m.redo())}>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
               <path d="M13 5.5H6.5a4 4 0 0 0 0 8H10"/>

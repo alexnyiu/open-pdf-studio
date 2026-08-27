@@ -16,6 +16,8 @@ import {
   compareOldPath,
   compareNewPath,
 } from '../../compare/compare-store.js';
+import { ocrWorkflowForDocument } from '../stores/ocrWorkflowStore.js';
+import { documentTabStartsTextEditLifecycle } from '../../text/text-edit-focus-boundary.js';
 
 // Detach threshold — how far the mouse must travel BELOW the tab bar
 // during drag before we treat it as a "detach to new window" gesture.
@@ -323,6 +325,7 @@ function onDocMouseUp(e) {
 export default function DocumentTabs() {
   const { t } = useTranslation('statusbar');
   const { t: tCtx } = useTranslation('context');
+  const { t: tOcr } = useTranslation('ribbon');
 
   const baseName = (p) => ((p || '').split(/[\\/]/).pop() || '').replace(/\.pdf$/i, '');
   const compareTabTip = () => {
@@ -362,6 +365,11 @@ export default function DocumentTabs() {
               + (draggingIndex() === i() ? ' dragging' : '')
               + (dropTargetIndex() === i() ? ' drop-target' : '')}
             data-index={i()}
+            data-text-edit-lifecycle-transition={documentTabStartsTextEditLifecycle({
+              tabIndex: i(),
+              activeDocumentIndex: state.activeDocumentIndex,
+              compareIsFocused: compareFocused(),
+            }) ? 'true' : undefined}
             onClick={() => handleTabClick(i())}
             onAuxClick={(e) => handleMiddleClick(e, i())}
             onDblClick={(e) => handleDoubleClick(e, i())}
@@ -369,6 +377,23 @@ export default function DocumentTabs() {
             onContextMenu={(e) => handleTabContextMenu(e, i())}
           >
             <span class="document-tab-modified">{doc.modified ? '*' : ''}</span>
+            <Show when={ocrWorkflowForDocument(doc.id)}>{(job) => (
+              <span
+                class="document-tab-ocr-badge"
+                classList={{
+                  'is-running': job().finishedAt === null,
+                  'is-failed': job().status === 'failed',
+                  'is-terminal': job().finishedAt !== null,
+                }}
+                title={`${tOcr('organize.ocrProgressTitle')} · ${tOcr(`organize.ocrStates.${job().status === 'running' ? job().currentPageState : job().status}`)} · ${Math.round(job().progress * 100)}%`}
+                aria-label={`${tOcr('organize.ocrProgressTitle')}, ${tOcr(`organize.ocrStates.${job().status === 'running' ? job().currentPageState : job().status}`)}, ${Math.round(job().progress * 100)}%`}
+              >
+                {job().finishedAt === null
+                  ? `${Math.round(job().progress * 100)}%`
+                  : job().status === 'failed' ? '!'
+                    : job().status === 'cancelled' ? '×' : '✓'}
+              </span>
+            )}</Show>
             <Show when={editingIndex() === i()} fallback={
               <span class="document-tab-title" title={doc.filePath || doc.fileName}>{doc.fileName}</span>
             }>
@@ -380,7 +405,8 @@ export default function DocumentTabs() {
                 onClick={(e) => e.stopPropagation()}
               />
             </Show>
-            <span class="document-tab-close" title={t('closeTab')} onClick={(e) => handleCloseTab(e, i())}>&times;</span>
+            <span class="document-tab-close" data-text-edit-lifecycle-transition="true"
+              title={t('closeTab')} onClick={(e) => handleCloseTab(e, i())}>&times;</span>
           </div>
         )}
       </For>
@@ -390,6 +416,7 @@ export default function DocumentTabs() {
       <Show when={compareActive()}>
         <div
           class={'document-tab compare-tab' + (compareFocused() ? ' active' : '')}
+          data-text-edit-lifecycle-transition="true"
           title={compareTabTip()}
           onClick={() => focusCompareTab()}
           onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); exitCompare(); } }}
@@ -400,7 +427,8 @@ export default function DocumentTabs() {
             </svg>
             {t('compareTabTitle') || 'Vergelijken'}
           </span>
-          <span class="document-tab-close" title={t('closeTab')} onClick={(e) => { e.stopPropagation(); exitCompare(); }}>&times;</span>
+          <span class="document-tab-close" data-text-edit-lifecycle-transition="true"
+            title={t('closeTab')} onClick={(e) => { e.stopPropagation(); exitCompare(); }}>&times;</span>
         </div>
       </Show>
 
@@ -426,6 +454,7 @@ export default function DocumentTabs() {
           onMouseLeave={hideCtxMenu}
         >
           <div
+            data-text-edit-lifecycle-transition="true"
             style={{ padding: '6px 14px', cursor: 'pointer' }}
             onMouseEnter={(e) => e.currentTarget.style.background = '#cce4f7'}
             onMouseLeave={(e) => e.currentTarget.style.background = ''}
@@ -448,6 +477,7 @@ export default function DocumentTabs() {
             >{tCtx(revealInFileManagerLabelKey())}</div>
           </Show>
           <div
+            data-text-edit-lifecycle-transition="true"
             style={{ padding: '6px 14px', cursor: 'pointer', 'border-top': '1px solid #d4d4d4' }}
             onMouseEnter={(e) => e.currentTarget.style.background = '#cce4f7'}
             onMouseLeave={(e) => e.currentTarget.style.background = ''}

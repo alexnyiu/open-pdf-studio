@@ -1,19 +1,24 @@
-import { state, getActiveDocument, getPageRotation } from '../core/state.js';
-import { execute } from '../core/undo-manager.js';
+import { state, getActiveDocument, getDocumentById, getPageRotation } from '../core/state.js';
+import i18next from '../i18n/config.js';
+import { execute, executeForDocument } from '../core/undo-manager.js';
 import { redrawAnnotations, redrawContinuous } from '../annotations/rendering.js';
 import { showTextEditProperties, hideProperties } from '../ui/panels/properties-panel.js';
-import { markDocumentModified } from '../ui/chrome/tabs.js';
+import { markDocumentModified, markDocumentModifiedForDocument } from '../ui/chrome/tabs.js';
 import { canvasContainer, continuousContainer, pdfCanvas } from '../ui/dom-elements.js';
 import { showPdfTextEditor, hidePdfTextEditor, getPdfEditorText as getEditorText,
   updatePdfEditorStyle, shiftPdfEditorPosition, setPdfEditorStatus,
-  getPdfEditorRichText, getPdfEditorLayoutState, applyPdfEditorRichTextFormat } from '../bridge.js';
+  getPdfEditorRichText, getPdfEditorLayoutState, applyPdfEditorRichTextFormat,
+  applyPdfEditorRichTextParagraphFormat } from '../bridge.js';
 import {
   DEFAULT_TEXT_FORMAT_CAPABILITIES,
+  canonicalRichTextHash,
+  cloneTextEditRecord,
   createRichTextDocument,
   createTextEditRecordV2,
   createTextLine,
   createTextRun,
   projectTextEditRecord,
+  removeTextEditRecordFromDocument,
   richTextFromPlainText,
   richTextToPlainText,
 } from '../text/rich-text.js';
@@ -23,7 +28,8 @@ import {
   reflowRichTextToWidth,
   unionSelectionGeometry,
 } from '../text/text-edit-selection.js';
-import { proposeFontSubstitution, resolvePackagedFace } from '../text/font-catalog.js';
+import { resolvePackagedFace } from '../text/font-catalog.js';
+import { requestFontSubstitutionApproval } from '../text/font-substitution-approval.js';
 import { openDialog, showMessage } from '../solid/stores/dialogStore.js';
 import { showOcrParagraphMenu } from '../solid/stores/contextMenuStore.js';
 import { injectSyntheticTextSpans, refreshPendingOcrTextLayer, resolveTextLayerFonts } from '../text/text-layer.js';
@@ -68,9 +74,32 @@ import {
   sourceTextLineExtent,
 } from '../text/text-edit-appearance.js';
 import {
+  canonicalDeltaFromDisplayDelta,
   canonicalBoundsFromDisplayRect,
   createPageTextEditPlacement,
+  createPageTextEditStyle,
 } from '../text/page-text-edit-placement.js';
+import { createInsertedTextDraft } from '../text/inserted-text.js';
+import {
+  createTextEditDirtyBaseline,
+  textEditDraftIsDirty,
+} from '../text/text-edit-dirty-state.js';
+import {
+  runOwnerScopedTextCommit,
+  textEditValidationReason,
+} from '../text/text-edit-commit.js';
+import { createNativeTextSourceProjection } from '../text/native-text-source-projection.js';
+import {
+  scannedFontClassFromFamily,
+  scannedStyleSnapshot,
+  syncScannedStyleTouchedKey,
+} from '../text/scanned-style-draft.js';
+import {
+  applyActiveTextEditing,
+  cancelActiveTextEditing,
+  completeTextEditSession,
+  registerTextEditSession,
+} from '../text/text-edit-session.js';
 
 let activeEditor = null;
 let hoverListeners = [];
@@ -87,18 +116,70 @@ let marqueePointerHandlers = null;
 let marqueeState = null;
 const stagedScannedLineSelections = new WeakMap();
 const selectedOcrParagraphs = new Map();
+
+function hardeningText(key, options = {}) {
+  return i18next.t(key, { ns: 'hardening', ...options });
+}
+
+function editorOwnerIsCurrent(editor) {
+  if (!editor?.ownerDocument) return false;
+  return getDocumentById(editor.ownerDocument.id) === editor.ownerDocument
+    && editor.ownerDocument.lifecycleGeneration === editor.ownerDocumentGeneration;
+}
+
+function editorApplyOperationIsCurrent(editor, operation) {
+  return Boolean(editor
+    && operation
+    && activeEditor === editor
+    && editor.sessionId === operation.sessionId
+    && editor.ownerDocument?.id === operation.ownerDocumentId
+    && editor.ownerDocumentGeneration === operation.ownerDocumentGeneration
+    && typeof operation.isCurrent === 'function'
+    && operation.isCurrent()
+    && editorOwnerIsCurrent(editor));
+}
+
+function completeEditorSession(editor) {
+  completeTextEditSession(editor?.sessionId);
+}
+
+function registerActiveEditorSession(editor, ownerDocument, kind = editor?.kind) {
+  if (!editor || !ownerDocument) return null;
+  editor.ownerDocument = ownerDocument;
+  editor.ownerDocumentGeneration = ownerDocument.lifecycleGeneration;
+  const initialRichText = editor.richTextDocument || editor._recordRef?.richText || null;
+  const dirtyBaseline = createTextEditDirtyBaseline({
+    text: editor.originalText,
+    richText: initialRichText,
+    record: editor._recordRef,
+  });
+  editor.dirtyBaseline = dirtyBaseline;
+  const session = registerTextEditSession({
+    ownerDocumentId: ownerDocument.id,
+    ownerDocumentGeneration: ownerDocument.lifecycleGeneration,
+    pageNum: editor.pageNum,
+    kind,
+    isDirty: () => activeEditor === editor && textEditDraftIsDirty(dirtyBaseline, {
+      text: getEditorText(),
+      // Registration precedes mounting by one synchronous call stack. During
+      // that interval, use the isolated source draft instead of stale store
+      // state from a previously closed editor.
+      richText: getPdfEditorRichText() || initialRichText,
+      record: editor._recordRef,
+      transientStyleChanged: (editor.styleTouchedKeys?.size || 0) > 0,
+    }),
+    commit: (operation) => finishPdfTextEditing(operation),
+    cancel: (reason) => cancelPdfTextEditing(reason),
+  });
+  editor.sessionId = session?.sessionId || null;
+  return session;
+}
 // WeakMap: span -> block group, for fast lookup on hover/click
 let spanToBlock = new WeakMap();
 
 globalThis.window?.addEventListener?.('open-pdf-studio:request-text-edit-hover-refresh', () => {
   if (state.isEditingPdfText && state.currentTool === 'editText') enableTextLayerHover();
 });
-
-function cloneTextEditRecord(record) {
-  // Solid stores expose records as proxies, which structuredClone rejects.
-  // Text edit records are intentionally JSON-compatible manifest data.
-  return JSON.parse(JSON.stringify(record));
-}
 
 function showTextEditPropertiesSafely(properties) {
   try {
@@ -119,7 +200,8 @@ function publishPdfTextEditState(editor) {
 function rejectInvalidOwnedTextState() {
   const reason = getActiveDocument()?.textEditReadOnlyReason;
   if (!reason) return false;
-  showMessage(`${reason}. Previously edited text is read-only; the document was left untouched.`);
+  console.warn('[text-edit] Owned text is read-only:', reason);
+  showMessage(hardeningText('textEditor.status.readOnly'));
   return true;
 }
 
@@ -185,7 +267,9 @@ function showOcrParagraphSelection(layer, regions) {
     if (!block) continue;
     const outline = document.createElement('div');
     outline.className = 'edit-text-paragraph-outline edit-text-selection-outline';
-    outline.setAttribute('aria-label', `Selected OCR paragraph with ${region.lineIds.length} lines`);
+    outline.setAttribute('aria-label', hardeningText('textEditor.aria.selectedOcrParagraph', {
+      count: region.lineIds.length,
+    }));
     outline.style.left = `${layerRect.left - parentRect.left + block.rect.left}px`;
     outline.style.top = `${layerRect.top - parentRect.top + block.rect.top}px`;
     outline.style.width = `${Math.max(block.rect.width, 1)}px`;
@@ -275,7 +359,8 @@ function ocrParagraphActionsForSpan({ doc, pageNum, span, context, region, exist
       });
       await complete();
     } catch (error) {
-      showMessage(`OCR paragraph grouping was not changed: ${error?.message || String(error)}`);
+      console.warn('[ocr-paragraph-grouping] Change failed:', error);
+      showMessage(hardeningText('textEditor.status.operationFailed'));
     }
   };
   const splitOwned = (boundaryIndex) => {
@@ -294,17 +379,17 @@ function ocrParagraphActionsForSpan({ doc, pageNum, span, context, region, exist
       : canSplitAfter,
     canReset: groupingTouchesRegion(context.grouping, region),
     mergePreviousReason: previous?.columnId !== region.columnId
-      ? 'Cross-column merges are disabled'
+      ? hardeningText('ocrGrouping.crossColumnDisabled')
       : previousBoundary?.decision !== 'ambiguous'
-        ? 'Only ambiguous same-column boundaries may be merged manually'
+        ? hardeningText('ocrGrouping.ambiguousBoundariesOnly')
         : null,
     mergeNextReason: next?.columnId !== region.columnId
-      ? 'Cross-column merges are disabled'
+      ? hardeningText('ocrGrouping.crossColumnDisabled')
       : nextBoundary?.decision !== 'ambiguous'
-        ? 'Only ambiguous same-column boundaries may be merged manually'
+        ? hardeningText('ocrGrouping.ambiguousBoundariesOnly')
         : null,
     status: region.rejectionReason === OCR_PARAGRAPH_LINE_LIMIT_REASON
-      ? 'More than 32 lines. Split this paragraph manually before editing.' : null,
+      ? hardeningText('ocrGrouping.tooManyLines') : null,
     mergePrevious: () => canMergePrevious && persist(previous.lineIds.at(-1), firstLineId, 'merge',
       [...previous.lineIds, ...region.lineIds]),
     mergeNext: () => canMergeNext && persist(lastLineId, next.lineIds[0], 'merge',
@@ -432,14 +517,18 @@ function selectionItemForRecord(record, pageNum, layer, viewRect = null) {
 async function openCombinedTextBoxEditor() {
   if (selectedTextItems.size < 2 || activeEditor) return;
   if (rejectInvalidOwnedTextState()) return;
+  const ownerDocument = getActiveDocument();
+  if (!ownerDocument) return;
   const items = [...selectedTextItems.values()];
   const unsupported = [...new Set(items.flatMap((item) => item.unsupportedFonts || []))];
   if (unsupported.length) {
-    const proposed = proposeFontSubstitution(unsupported[0], false, false);
-    const face = resolvePackagedFace(unsupported[0], false, false);
-    if (!window.confirm(`The selection uses unsupported fonts (${unsupported.join(', ')}). `
-      + `Combine using the packaged substitute ${face.family}?`)) return;
-    const substitution = { ...proposed, approved: true, approvedAt: new Date().toISOString() };
+    const substitution = await requestFontSubstitutionApproval({
+      documentState: ownerDocument,
+      sourceFonts: unsupported,
+      sampleText: items.map((item) => richTextToPlainText(item.richText)).join('\n'),
+      scope: 'selection',
+    });
+    if (!substitution) return;
     items.forEach((item) => { if (item.unsupportedFonts?.length) item.substitution = substitution; });
   }
   let plan;
@@ -448,7 +537,8 @@ async function openCombinedTextBoxEditor() {
       createId: () => Date.now() + Math.random().toString(36).slice(2, 11),
     });
   } catch (error) {
-    showMessage(`${error instanceof Error ? error.message : String(error)}. The document was left untouched.`);
+    console.warn('[text-edit] Combining selected text boxes failed:', error);
+    showMessage(hardeningText('textEditor.status.operationFailed'));
     return;
   }
   const mergedRichText = reflowRichTextToWidth(plan.richText, Math.max(plan.geometry.width, 1));
@@ -477,17 +567,33 @@ async function openCombinedTextBoxEditor() {
     // merge whose normalized geometry differs from its original snapshot.
     forceCommit: true,
     commit(finalRecord) {
+      const originalTextEdits = [...(doc.textEdits || [])];
       const consumedIds = new Set(originalRecords.map((item) => String(item.record.id)));
-      doc.textEdits = (doc.textEdits || []).filter((record) => !consumedIds.has(String(record.id)));
-      doc.textEdits.splice(Math.min(mergedIndex, doc.textEdits.length), 0, finalRecord);
-      execute({
-        type: 'replaceTextEditSet',
-        originalRecords,
-        mergedRecord: cloneTextEditRecord(finalRecord),
-        mergedIndex,
+      const recorded = runOwnerScopedTextCommit({
+        ownerDocument: doc,
+        attempt() {
+          if (!doc.textEdits) doc.textEdits = [];
+          const remaining = doc.textEdits.filter(
+            (record) => !consumedIds.has(String(record.id)),
+          );
+          doc.textEdits.splice(0, doc.textEdits.length, ...remaining);
+          doc.textEdits.splice(Math.min(mergedIndex, doc.textEdits.length), 0, finalRecord);
+          return executeForDocument(doc, {
+            type: 'replaceTextEditSet',
+            originalRecords,
+            mergedRecord: cloneTextEditRecord(finalRecord),
+            mergedIndex,
+          });
+        },
+        rollback() {
+          if (!doc.textEdits) doc.textEdits = [];
+          doc.textEdits.splice(0, doc.textEdits.length, ...originalTextEdits);
+        },
       });
-      markDocumentModified();
-      reRenderAddedText(plan.page);
+      if (!recorded) return false;
+      try { reRenderAddedText(plan.page); }
+      catch (error) { console.warn('[text-edit] Combined-text refresh failed:', error); }
+      return true;
     },
   });
 }
@@ -657,6 +763,11 @@ function toStandardFontName(displayName, isBold, isItalic) {
 // CSS font-family for the live editor / synthetic span, from a font name.
 function cssFamilyFor(name) {
   const n = (name || '').toLowerCase();
+  if (n.includes('liberation')) {
+    if (n.includes('mono')) return '"Liberation Mono", monospace';
+    if (n.includes('serif') && !n.includes('sans')) return '"Liberation Serif", serif';
+    return '"Liberation Sans", sans-serif';
+  }
   if (n.includes('courier') || n.includes('consolas') || n.includes('mono')) return '"Courier New", Courier, monospace';
   if (n.includes('times') || n.includes('garamond') || n.includes('georgia')
       || n.includes('palatino') || n.includes('cambria') || n.includes('bookman') || n.includes('serif')) return '"Times New Roman", Times, serif';
@@ -771,6 +882,20 @@ function applyStyleStateToEditor(st) {
     'text-underline-offset': '0.08em',
     'text-align': st.alignment || 'left',
   };
+  const canonicalPatch = {
+    typography: {
+      color: st.color || '#000000',
+      fontWeight: st.bold ? 'bold' : 'normal',
+      fontStyle: st.italic ? 'italic' : 'normal',
+      fontFamily: family,
+      textAlign: st.alignment || 'left',
+    },
+    decoration: {
+      textDecorationLine: decorations.length ? decorations.join(' ') : 'none',
+      textDecorationThicknessEm: 0.06,
+      textUnderlineOffsetEm: 0.08,
+    },
+  };
 
   if (activeEditor && st.size > 0) {
     const visualScale = activeEditor.visualScale || activeEditor.scale || 1;
@@ -779,19 +904,42 @@ function applyStyleStateToEditor(st) {
     style['font-size'] = `${fontSizePx}px`;
     style['line-height'] = `${lineHeightPx}px`;
     style.height = `${Math.max(getEditorText().split('\n').length * lineHeightPx, 24)}px`;
+    canonicalPatch.typography.fontSize = st.size;
+    canonicalPatch.typography.lineHeight = lineHeightPx / visualScale;
+    canonicalPatch.geometry = {
+      height: Math.max(getEditorText().split('\n').length * lineHeightPx, 24) / visualScale,
+    };
     const baselineOffset = cssBaselineOffset(
       family, fontSizePx, lineHeightPx, st.bold, st.italic
     );
+    let displayLeft = activeEditor.placement?.sourceClientAnchor?.left;
+    let displayTop = activeEditor.placement?.sourceClientAnchor?.top;
     if (Number.isFinite(activeEditor.editorBaseline)) {
-      style.top = `${activeEditor.editorBaseline - baselineOffset}px`;
+      displayTop = activeEditor.editorBaseline - baselineOffset;
+      style.top = `${displayTop}px`;
     } else if (activeEditor.editorBaseline) {
       const baseline = activeEditor.editorBaseline;
-      style.left = `${baseline.left - baseline.rotationC * baselineOffset}px`;
-      style.top = `${baseline.top - baseline.rotationD * baselineOffset}px`;
+      displayLeft = baseline.left - baseline.rotationC * baselineOffset;
+      displayTop = baseline.top - baseline.rotationD * baselineOffset;
+      style.left = `${displayLeft}px`;
+      style.top = `${displayTop}px`;
+    }
+    const placement = activeEditor.placement;
+    const sourceAnchor = placement?.sourceClientAnchor;
+    if (sourceAnchor && Number.isFinite(displayLeft) && Number.isFinite(displayTop)) {
+      const offset = canonicalDeltaFromDisplayDelta({
+        x: displayLeft - sourceAnchor.left,
+        y: displayTop - sourceAnchor.top,
+      }, {
+        scale: placement.sourceScale,
+        rotation: placement.sourceRotation,
+      });
+      canonicalPatch.geometry.offsetX = offset.x;
+      canonicalPatch.geometry.offsetY = offset.y;
     }
   }
 
-  updatePdfEditorStyle(style);
+  updatePdfEditorStyle(style, canonicalPatch);
 }
 
 function getTextEditGeometry(pageNum, canvasEl) {
@@ -808,11 +956,90 @@ function getTextEditGeometry(pageNum, canvasEl) {
   );
 }
 
+/**
+ * Open a brand-new application-owned text draft at a real page click. The
+ * record remains detached from the owner document until the user explicitly
+ * applies non-empty text; cancellation therefore has no document mutation to
+ * undo or roll back.
+ */
+export function startInsertedTextEditingAtPoint({ x, y, pageNum, canvasEl } = {}) {
+  if (rejectInvalidOwnedTextState()) return false;
+  const ownerDocument = getActiveDocument();
+  if (!ownerDocument || !canvasEl || !canvasEl.parentElement) return false;
+  const ownerGeneration = ownerDocument.lifecycleGeneration;
+  const geometry = getTextEditGeometry(pageNum, canvasEl);
+  let draft;
+  try {
+    draft = createInsertedTextDraft({
+      page: pageNum,
+      x,
+      y,
+      pageWidth: geometry.pageWidth,
+      pageHeight: geometry.pageHeight,
+      pageRotation: geometry.rotation,
+    });
+  } catch (error) {
+    console.warn('[text-edit] Could not create inserted-text draft:', error);
+    showMessage(hardeningText('textEditor.status.operationFailed'));
+    return false;
+  }
+
+  let committed = false;
+  startTextEditEditing(draft, pageNum, canvasEl, {
+    draftOnly: true,
+    commit(finalRecord) {
+      if (committed) return false;
+      if (getDocumentById(ownerDocument.id) !== ownerDocument
+          || ownerDocument.lifecycleGeneration !== ownerGeneration) {
+        showMessage(hardeningText('textEditor.status.staleDraft'));
+        return false;
+      }
+      if (ownerDocument.textEdits?.some((record) => String(record.id) === String(finalRecord.id))) {
+        console.warn('[text-edit] Inserted-text owner record already exists:', finalRecord.id);
+        showMessage(hardeningText('textEditor.status.operationFailed'));
+        return false;
+      }
+      const storedRecord = cloneTextEditRecord(finalRecord);
+      const hadTextEdits = Array.isArray(ownerDocument.textEdits);
+      const recorded = runOwnerScopedTextCommit({
+        ownerDocument,
+        attempt() {
+          if (!ownerDocument.textEdits) ownerDocument.textEdits = [];
+          ownerDocument.textEdits.push(storedRecord);
+          return executeForDocument(ownerDocument, {
+            type: 'addTextEdit',
+            textEdit: cloneTextEditRecord(storedRecord),
+          });
+        },
+        rollback() {
+          const index = ownerDocument.textEdits?.indexOf(storedRecord) ?? -1;
+          if (index >= 0) ownerDocument.textEdits.splice(index, 1);
+          if (!hadTextEdits && ownerDocument.textEdits?.length === 0) {
+            delete ownerDocument.textEdits;
+          }
+        },
+      });
+      if (!recorded) {
+        setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
+        return false;
+      }
+      committed = true;
+      if (getActiveDocument() === ownerDocument) {
+        try { reRenderAddedText(pageNum); }
+        catch (error) { console.warn('[text-edit] Inserted-text refresh failed:', error); }
+      }
+      return true;
+    },
+  });
+  return true;
+}
+
 function pagePlacementForViewportStyle({
   doc,
   pageNum,
   geometry,
-  style,
+  sourceRect,
+  canonicalStyle,
   containerRect,
   pageOffsetX = 0,
   pageOffsetY = 0,
@@ -821,8 +1048,14 @@ function pagePlacementForViewportStyle({
   canonicalBounds = null,
   commitBounds = null,
 }) {
-  const sourceLeft = Number.parseFloat(style.left);
-  const sourceTop = Number.parseFloat(style.top);
+  const sourceLeft = Number(sourceRect?.left);
+  const sourceTop = Number(sourceRect?.top);
+  const sourceWidth = Number(sourceRect?.width);
+  const sourceHeight = Number(sourceRect?.height);
+  if (![sourceLeft, sourceTop, sourceWidth, sourceHeight].every(Number.isFinite)
+      || sourceWidth <= 0 || sourceHeight <= 0) {
+    throw new TypeError('Page text editor source geometry must be finite display pixels');
+  }
   const displayX = (sourceLeft - containerRect.left - pageOffsetX) / sourceScale;
   const displayY = (sourceTop - containerRect.top - pageOffsetY) / sourceScale;
   const anchor = canonicalBounds || (() => {
@@ -836,8 +1069,8 @@ function pagePlacementForViewportStyle({
     return {
       x: point.x,
       y: point.y,
-      width: Number.parseFloat(style.width) / sourceScale,
-      height: Number.parseFloat(style.height) / sourceScale,
+      width: sourceWidth / sourceScale,
+      height: sourceHeight / sourceScale,
     };
   })();
   return createPageTextEditPlacement({
@@ -848,10 +1081,11 @@ function pagePlacementForViewportStyle({
     canonicalBounds: anchor,
     commitBounds,
     sourceScale,
-    sourceStyle: style,
+    sourceRotation: geometry.rotation,
+    canonicalStyle,
     sourceClientAnchor: { left: sourceLeft, top: sourceTop },
     mode,
-    generation: doc.generation || doc.renderGeneration || 0,
+    generation: doc.lifecycleGeneration,
   });
 }
 
@@ -881,11 +1115,17 @@ function expandableNativeEditorOptions(document, pageNum, canvasEl, layer, optio
   const displayScale = Math.max(0.0001, Number(options.displayScale) || 1);
   const inkPaddingPx = Math.max(0, Number(options.inkPaddingPx ?? 2) || 0);
   const inkPadding = inkPaddingPx / displayScale;
+  // Native/owned/inserted text is persisted at region.x with no content inset.
+  // The editor's ink padding is presentation-only and must not reduce the
+  // authored width or move the canonical PDF origin.
+  const contentInset = Math.max(0, Number(options.contentInset) || 0);
   return {
-    manualLineBreaks: true,
+    manualLineBreaks: options.manualLineBreaks ?? true,
     directManipulation: true,
     width: document.region.width,
-    contentWidth: Math.max(0.0001, document.region.width - (inkPadding * 2)),
+    contentWidth: Math.max(0.0001, document.region.width - (contentInset * 2)),
+    contentInset,
+    contentInsetPx: contentInset * displayScale,
     minimumHeight: options.minimumHeight ?? document.region.height,
     anchorTop: options.anchorTop ?? document.region.y + document.region.height,
     pageBounds: { x: 0, y: 0, width: geometry.pageWidth, height: geometry.pageHeight },
@@ -900,23 +1140,46 @@ function expandableNativeEditorOptions(document, pageNum, canvasEl, layer, optio
   };
 }
 
-function nativeLayoutBlocksCommit(editor) {
-  if (!editor?.expandableNative) return false;
+async function nativeLayoutReadyForCommit(editor) {
+  if (!editor?.expandableNative) return true;
   const retainEditorFocus = () => queueMicrotask(() => {
     document.querySelector('.pdf-text-editor.rich-text-editor')?.focus();
   });
-  const layout = getPdfEditorLayoutState();
-  if (layout?.pending) {
-    setPdfEditorStatus('Exact text shaping is still in progress. The editor remains open; apply again when layout finishes.');
-    retainEditorFocus();
-    return true;
+  const deadline = performance.now() + 5_000;
+  let layout = null;
+  while (performance.now() < deadline) {
+    layout = getPdfEditorLayoutState();
+    const draft = getPdfEditorRichText();
+    const validatedDraft = layout?.result?.document;
+    const exactFingerprintMatches = Boolean(
+      layout?.requestedFingerprint
+        && layout.validatedFingerprint === layout.requestedFingerprint,
+    );
+    const exactDraftMatches = Boolean(draft && validatedDraft
+      && canonicalRichTextHash(draft) === canonicalRichTextHash(validatedDraft));
+    if (!layout?.pending && exactFingerprintMatches && exactDraftMatches) {
+      if (layout.valid === true) return true;
+      setPdfEditorStatus(layout.message || hardeningText('textEditor.status.cropBoxRejected'), 'invalid');
+      retainEditorFocus();
+      return false;
+    }
+    setPdfEditorStatus(hardeningText('textEditor.status.shaping'), 'shaping');
+    await new Promise((resolve) => {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
+      else setTimeout(resolve, 4);
+    });
+    if (activeEditor !== editor || !editorOwnerIsCurrent(editor)) return false;
   }
-  if (layout?.valid === false) {
-    setPdfEditorStatus(layout.message || 'The shaped text cannot be committed inside the page CropBox.');
-    retainEditorFocus();
-    return true;
-  }
+  setPdfEditorStatus(layout?.message || hardeningText('textEditor.status.layoutTimeout'), 'invalid');
+  retainEditorFocus();
   return false;
+}
+
+function applyActiveTextEditingWithStatus() {
+  void applyActiveTextEditing().catch((error) => {
+    console.warn('[text-edit] Apply failed:', error);
+    setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
+  });
 }
 
 export function activateEditTextTool() {
@@ -957,7 +1220,7 @@ export function activateEditTextTool() {
 }
 
 export function deactivateEditTextTool() {
-  finishPdfTextEditing();
+  cancelActiveTextEditing('tool-deactivated');
   if (ownedEditCaptureHandler) {
     document.removeEventListener('click', ownedEditCaptureHandler, true);
     ownedEditCaptureHandler = null;
@@ -1494,10 +1757,7 @@ function scannedStyleOverrides(editor) {
   const style = editor.styleState;
   const output = {};
   if (touched.has('fontClass')) {
-    const family = (style.family || '').toLowerCase();
-    output.fontClass = family.includes('courier') || family.includes('mono') ? 'monospace'
-      : family.includes('times') || family.includes('serif') ? 'serif'
-        : 'sans-serif';
+    output.fontClass = scannedFontClassFromFamily(style.family);
   }
   if (touched.has('fontSize')) output.fontSize = style.size;
   if (touched.has('weight')) output.weight = style.bold ? 'bold' : 'normal';
@@ -1556,7 +1816,7 @@ function createScannedRepairPreview(span, selection, editorRect = null, pageCont
     );
     const containerLeft = frame.containerLeft;
     const containerTop = frame.containerTop;
-    const sourceStyle = {
+    const previewCss = {
       position: 'absolute',
       left: `${containerLeft + frame.offsetX + origin.x * frame.scale}px`,
       top: `${containerTop + frame.offsetY + origin.y * frame.scale}px`,
@@ -1566,7 +1826,7 @@ function createScannedRepairPreview(span, selection, editorRect = null, pageCont
       'pointer-events': 'none',
       'image-rendering': 'auto',
     };
-    Object.assign(canvas.style, sourceStyle);
+    Object.assign(canvas.style, previewCss);
     canvas._pageTextEditPlacement = createPageTextEditPlacement({
       documentId: doc.id,
       pageNum,
@@ -1574,13 +1834,17 @@ function createScannedRepairPreview(span, selection, editorRect = null, pageCont
       pageHeight: geometry.pageHeight,
       canonicalBounds: bounds,
       sourceScale: frame.scale,
-      sourceStyle,
+      sourceRotation: geometry.rotation,
+      canonicalStyle: createPageTextEditStyle({
+        geometry: { width: bounds.width, height: bounds.height, zIndex: 1 },
+        layout: { pointerEvents: 'none', imageRendering: 'auto' },
+      }),
       sourceClientAnchor: {
-        left: Number.parseFloat(sourceStyle.left),
-        top: Number.parseFloat(sourceStyle.top),
+        left: containerLeft + frame.offsetX + origin.x * frame.scale,
+        top: containerTop + frame.offsetY + origin.y * frame.scale,
       },
       mode: 'ocr-repair-preview',
-      generation: doc.generation || doc.renderGeneration || 0,
+      generation: doc.lifecycleGeneration,
     });
   }
   document.body.appendChild(canvas);
@@ -1612,10 +1876,11 @@ async function sourceRasterForScannedLine(doc, result) {
 }
 
 async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
-  finishPdfTextEditing();
+  cancelActiveTextEditing('superseded');
   const doc = getActiveDocument();
   const lineId = span.dataset.ocrLineId;
   if (!doc || !lineId) return;
+  const ownerGeneration = Number(doc.lifecycleGeneration) || 0;
   let selection = appliedScannedSelection(
     doc,
     pageNum,
@@ -1653,7 +1918,7 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
       if (selectedRegions.length > 1) {
         const layer = span.closest('.textLayer');
         if (layer) showOcrParagraphSelection(layer, selectedRegions);
-        showMessage('The selection spans multiple OCR paragraphs. Review the separate outlines and use Merge explicitly. Cross-column merges remain disabled.');
+        showMessage(hardeningText('textEditor.status.multipleOcrParagraphs'));
         return;
       }
       const inferredRegion = selectedRegions[0]
@@ -1698,9 +1963,17 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     }
   } catch (error) {
     console.warn('[scanned-text-edit] Eligibility failed:', error);
-    showMessage(`Scanned text cannot be edited: ${error?.message || String(error)}`);
+    showMessage(hardeningText('textEditor.status.operationFailed'));
     return;
   }
+
+  // Rasterization and eligibility evaluation are asynchronous. Never adopt
+  // their result into an editor after the opening gesture's tab or PDF proxy
+  // stopped being current; registering with the newer generation would make
+  // stale OCR geometry appear current.
+  if (getActiveDocument() !== doc
+      || getDocumentById(doc.id) !== doc
+      || (Number(doc.lifecycleGeneration) || 0) !== ownerGeneration) return;
 
   const estimate = selection.content.estimatedStyle;
   const font = scannedDisplayFont(estimate.fontClass.value);
@@ -1779,11 +2052,30 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     styleObj.height = `${previewBounds.height * viewGeometry.visualScale}px`;
     styleObj.transform = geometry.rotation ? `rotate(${geometry.rotation}deg)` : 'none';
     styleObj['transform-origin'] = '0 0';
+    const sourceRect = {
+      left: containerRect.left + pageOffsetX + origin.x * viewGeometry.visualScale,
+      top: containerRect.top + pageOffsetY + origin.y * viewGeometry.visualScale,
+      width: previewBounds.width * viewGeometry.visualScale,
+      height: previewBounds.height * viewGeometry.visualScale,
+    };
     placement = pagePlacementForViewportStyle({
       doc,
       pageNum,
       geometry,
-      style: styleObj,
+      sourceRect,
+      canonicalStyle: createPageTextEditStyle({
+        geometry: { width: previewBounds.width, height: previewBounds.height, zIndex: 1000 },
+        typography: {
+          fontFamily: font.css,
+          fontSize: fontSizePx / viewGeometry.visualScale,
+          lineHeight: lineHeightPx / viewGeometry.visualScale,
+          fontWeight: estimate.weight.value === 'bold' ? 'bold' : 'normal',
+          fontStyle: estimate.italic.value ? 'italic' : 'normal',
+          textAlign: estimate.alignment.value,
+          color: estimate.textColor.value,
+        },
+        decoration: { backgroundColor: 'transparent' },
+      }),
       containerRect,
       pageOffsetX,
       pageOffsetY,
@@ -1801,6 +2093,18 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
   } else {
     preview = createScannedRepairPreview(span, selection, rect);
   }
+  const styleState = {
+    family: font.name,
+    cssFamily: font.css,
+    fontFaceChanged: false,
+    size: estimate.fontSize.value,
+    color: estimate.textColor.value,
+    bold: estimate.weight.value === 'bold',
+    italic: estimate.italic.value,
+    underline: false,
+    strikethrough: false,
+    alignment: estimate.alignment.value,
+  };
   const editor = {
     block: { spans: [] },
     pageNum,
@@ -1816,42 +2120,42 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     fixedRegion,
     paragraphReflow,
     preview,
+    placement,
     committing: false,
     scale: doc.scale || 1,
     visualScale: fontSizePx / estimate.fontSize.value,
     editorBaseline: rect.top + fontSizePx * 0.82,
     lineSpacing: fixedRegion ? selection.content.source.lineSpacing.valuePt : estimate.fontSize.value,
     styleTouchedKeys: new Set(),
-    styleState: {
-      family: font.name,
-      cssFamily: font.css,
-      fontFaceChanged: false,
-      size: estimate.fontSize.value,
-      color: estimate.textColor.value,
-      bold: estimate.weight.value === 'bold',
-      italic: estimate.italic.value,
-      underline: false,
-      strikethrough: false,
-      alignment: estimate.alignment.value,
-    },
+    scannedStyleBaseline: scannedStyleSnapshot(styleState),
+    richTextDocument: paragraphReflow ? null : scannedRichText,
+    styleState,
   };
 
   const cleanup = () => {
+    completeEditorSession(editor);
     preview?.remove();
+    editor.commitOperationId = null;
+    if (activeEditor !== editor) return false;
     hidePdfTextEditor();
-    if (activeEditor === editor) activeEditor = null;
+    activeEditor = null;
     state.pdfTextEditState = null;
     hideProperties();
+    return true;
   };
-  const cancel = () => cleanup();
-  const finish = async () => {
-    if (editor.committing || activeEditor !== editor) return;
+  const cancel = () => {
+    editor.committing = false;
+    return cleanup();
+  };
+  const finish = async (operation) => {
+    if (editor.committing || !editorApplyOperationIsCurrent(editor, operation)) return false;
     const replacementText = getEditorText();
     if (replacementText === editor.originalText && editor.styleTouchedKeys.size === 0) {
       cleanup();
-      return;
+      return true;
     }
     editor.committing = true;
+    editor.commitOperationId = operation.operationId;
     try {
       const richDraft = getPdfEditorRichText();
       if (richDraft && richTextToPlainText(richDraft) !== replacementText) {
@@ -1876,11 +2180,16 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
         && (editor.paragraphReflow || !/[\r\n\u2028\u2029]/u.test(replacementText))
         ? SCANNED_TEXT_REFLOW_LAYOUT_MODE
         : null;
+      if (!editorApplyOperationIsCurrent(editor, operation)) {
+        cleanup();
+        return false;
+      }
       if (editor.existingOwnedEdit) {
         await reviseScannedTextEditForDocument(doc, editor.selectionId, {
           replacementText,
           styleOverrides,
           layoutMode,
+          operation,
         });
       } else {
         await applyScannedTextEditForDocument(doc, {
@@ -1892,22 +2201,45 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
           styleOverrides,
           contextPaddingPx: 24,
           layoutMode,
+        }, {
+          operation,
         });
       }
-      markDocumentModified();
+      if (!editorApplyOperationIsCurrent(editor, operation)) {
+        cleanup();
+        return false;
+      }
+      markDocumentModifiedForDocument(doc);
       cleanup();
-      refreshPendingOcrTextLayer(pageNum);
-      enableTextLayerHover();
+      if (getActiveDocument() === doc) {
+        refreshPendingOcrTextLayer(pageNum);
+        enableTextLayerHover();
+      }
+      return true;
     } catch (error) {
       editor.committing = false;
-      const message = error?.message || String(error);
-      setPdfEditorStatus(`Scanned text change rejected: ${message}`);
-      showMessage(`Scanned text change rejected: ${message}`);
+      editor.commitOperationId = null;
+      if (error?.code === 'SCANNED_TEXT_EDIT_OPERATION_INVALIDATED'
+          || !editorApplyOperationIsCurrent(editor, operation)) {
+        cleanup();
+        return false;
+      }
+      console.warn('[scanned-text-edit] Apply failed:', error);
+      const validationReason = textEditValidationReason(error);
+      const rejection = validationReason
+        ? hardeningText('textEditor.status.scannedRejected', { reason: validationReason })
+        : hardeningText('textEditor.status.operationFailed');
+      setPdfEditorStatus(rejection, 'invalid');
+      if (!validationReason) showMessage(rejection);
+      return false;
     }
   };
   editor._finishEditing = finish;
   editor._cancelEditing = cancel;
   activeEditor = editor;
+  registerActiveEditorSession(editor, doc, paragraphReflow
+    ? 'ocr-reflow'
+    : fixedRegion ? 'ocr-fixed-multiline' : 'ocr-one-line');
   publishPdfTextEditState(editor);
 
   const liveParagraphContext = ocrParagraphContext(doc, pageNum);
@@ -1939,31 +2271,23 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      cancel();
+      cancelActiveTextEditing('escape');
       return;
     }
     if (event.key === 'Enter' && !editor.fixedRegion) {
       event.preventDefault();
       event.stopPropagation();
-      if (event.ctrlKey || event.metaKey) void finish();
-      else setPdfEditorStatus('Line breaks are not supported. Use Command-Enter to apply this one-line edit.');
+      if (event.ctrlKey || event.metaKey) applyActiveTextEditingWithStatus();
+      else setPdfEditorStatus(hardeningText('textEditor.status.lineBreakUnsupported'));
     } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       event.stopPropagation();
-      void finish();
+      applyActiveTextEditingWithStatus();
     } else if (event.key === 'Enter') {
       event.stopPropagation();
     }
   };
-  const handleBlur = () => {
-    setTimeout(() => {
-      if (activeEditor !== editor) return;
-      const activeElement = document.activeElement;
-      const propertiesRoot = document.getElementById('properties-panel-root');
-      if (activeElement && propertiesRoot?.contains(activeElement)) return;
-      void finish();
-    }, 150);
-  };
+  const handleBlur = () => {};
   showPdfTextEditor(styleObj, initialText, {
     onCommit: finish,
     onCancel: cancel,
@@ -1990,23 +2314,26 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
         : [],
       editorBackground: 'transparent',
       direction: 'ltr',
-      ariaLabel: fixedRegion
+      ariaLabel: hardeningText(fixedRegion
         ? paragraphReflow
-          ? `Edit scanned text paragraph reflow region: ${initialText}`
-          : `Edit scanned text fixed region: ${initialText}`
-        : `Edit scanned text line: ${initialText}`,
+          ? 'textEditor.aria.editScannedReflow'
+          : 'textEditor.aria.editScannedFixed'
+        : 'textEditor.aria.editScannedLine', { text: initialText }),
       status: fixedRegion
         ? paragraphReflow
-          ? 'Editing one paragraph inside its approved original OCR region. Command-Enter applies; overflow is rejected.'
-          : 'Editing multiple OCR lines inside one fixed original region. A single paragraph reflows inside this region; hard line breaks preserve fixed-line mode. Command-Enter applies.'
-        : 'Editing one isolated scanned text line. Font properties are estimates.',
+          ? hardeningText('textEditor.status.ocrReflow')
+          : hardeningText('textEditor.status.ocrFixed')
+        : hardeningText('textEditor.status.ocrOneLine'),
     },
   });
 }
 
-function startPdfTextEditing(span, pageNum) {
+async function startPdfTextEditing(span, pageNum) {
   if (rejectInvalidOwnedTextState()) return;
-  finishPdfTextEditing();
+  cancelActiveTextEditing('superseded');
+  const ownerDocument = getActiveDocument();
+  if (!ownerDocument) return;
+  const ownerGeneration = Number(ownerDocument.lifecycleGeneration) || 0;
 
   const textLayer = span.closest('.textLayer');
   if (!textLayer) return;
@@ -2016,8 +2343,7 @@ function startPdfTextEditing(span, pageNum) {
   // re-editable (content, style, position, delete) via startTextEditEditing.
   const editId = span.dataset.editId;
   if (editId) {
-    const doc = getActiveDocument();
-    const rec = doc?.textEdits?.find(e => String(e.id) === editId);
+    const rec = ownerDocument.textEdits?.find(e => String(e.id) === editId);
     if (rec) {
       const canvasEl = textLayer.parentElement?.querySelector('canvas.pdf-canvas')
         || pdfCanvas || document.getElementById('pdf-canvas');
@@ -2029,7 +2355,7 @@ function startPdfTextEditing(span, pageNum) {
   if (!block || block.spans.length === 0) return;
 
   if (block.laneValid === false) {
-    showMessage('This paragraph crosses an inferred native column boundary. Editing was blocked and the document was left untouched.');
+    showMessage(hardeningText('textEditor.status.nativeColumnBoundary'));
     return;
   }
 
@@ -2039,14 +2365,14 @@ function startPdfTextEditing(span, pageNum) {
 
   const sourceProvenance = provenanceForSpans(block.spans);
   if (!sourceProvenance) {
-    showMessage('This paragraph contains visible text that could not be linked to eligible source operators. The document was left untouched.');
+    showMessage(hardeningText('textEditor.status.nativeSourceUnavailable'));
     return;
   }
 
   // An unsaved native edit still sits above the original PDF.js spans. Match
   // those exact operators back to the existing owned record so clicking the
   // line again revises that record instead of creating overlapping ownership.
-  const existingNativeEdit = getActiveDocument()?.textEdits?.find((record) => (
+  const existingNativeEdit = ownerDocument.textEdits?.find((record) => (
     record.page === pageNum
     && sameNativeTextOwnership(record.sourceProvenance, sourceProvenance)
   ));
@@ -2065,19 +2391,22 @@ function startPdfTextEditing(span, pageNum) {
   ))).filter((name) => !/^liberation\s*(sans|serif|mono)/iu.test(name)))];
   let substitution = null;
   if (unsupportedFonts.length > 0) {
-    const proposed = proposeFontSubstitution(
-      unsupportedFonts[0],
-      lineData[0].isBold,
-      lineData[0].isItalic,
-    );
-    const face = resolvePackagedFace(unsupportedFonts[0], lineData[0].isBold, lineData[0].isItalic);
-    const approved = window.confirm(
-      `This PDF uses an unsupported font (${unsupportedFonts.join(', ')}). `
-      + `Editing requires the packaged substitute ${face.family}. Continue with that substitution?`,
-    );
-    if (!approved) return;
-    substitution = { ...proposed, approved: true, approvedAt: new Date().toISOString() };
+    substitution = await requestFontSubstitutionApproval({
+      documentState: ownerDocument,
+      sourceFonts: unsupportedFonts,
+      bold: lineData[0].isBold,
+      italic: lineData[0].isItalic,
+      sampleText: combinedText,
+      scope: 'paragraph',
+    });
+    if (!substitution) return;
   }
+
+  // Font approval is promise-based. A tab switch, close, or proxy replacement
+  // while the dialog is open invalidates the source spans and their geometry.
+  if (getActiveDocument() !== ownerDocument
+      || getDocumentById(ownerDocument.id) !== ownerDocument
+      || (Number(ownerDocument.lifecycleGeneration) || 0) !== ownerGeneration) return;
 
   // PDF metadata from first line (top of block in reading order, highest pdfY)
   const pdfX = lineData[0].pdfX;
@@ -2126,18 +2455,21 @@ function startPdfTextEditing(span, pageNum) {
     + cssBaselineOffset(editorFont, editorFontSize, editorFontSize, editorBold, editorItalic);
   const editorTop = targetBaseline
     - cssBaselineOffset(editorFont, editorFontSize, visualLineHeight, editorBold, editorItalic);
+  const editorLeft = containerRect.left + groupRect.left + offsetX;
+  const editorWidth = Math.max(pdfWidth * (editorFontSize / fontSize), 80);
+  const editorHeight = Math.max(numLines * visualLineHeight, 24);
 
   // Build style object for the Solid overlay
   // Use fixed positioning based on container's viewport position
   const styleObj = {
     position: 'absolute',
-    left: `${containerRect.left + groupRect.left + offsetX}px`,
+    left: `${editorLeft}px`,
     top: `${editorTop}px`,
     // PDF.js fallback-font scaleX can make DOM word bounds far wider than
     // their source operator. Size from PDF geometry so editing does not
     // stretch or jump as soon as the inline editor opens.
-    width: `${Math.max(pdfWidth * (editorFontSize / fontSize), 80)}px`,
-    height: `${Math.max(numLines * visualLineHeight, 24)}px`,
+    width: `${editorWidth}px`,
+    height: `${editorHeight}px`,
     'font-size': `${editorFontSize}px`,
     'line-height': `${visualLineHeight}px`,
     'font-family': editorFont,
@@ -2156,10 +2488,30 @@ function startPdfTextEditing(span, pageNum) {
   const placementOffsetX = placementUsesViewport ? placementViewport.offsetX || 0 : offsetX;
   const placementOffsetY = placementUsesViewport ? placementViewport.offsetY || 0 : offsetY;
   const placement = placementGeometry ? pagePlacementForViewportStyle({
-    doc: getActiveDocument(),
+    doc: ownerDocument,
     pageNum,
     geometry: placementGeometry,
-    style: styleObj,
+    sourceRect: {
+      left: editorLeft,
+      top: editorTop,
+      width: editorWidth,
+      height: editorHeight,
+    },
+    canonicalStyle: createPageTextEditStyle({
+      geometry: {
+        width: editorWidth / placementScale,
+        height: editorHeight / placementScale,
+        zIndex: 1000,
+      },
+      typography: {
+        fontFamily: editorFont,
+        fontSize,
+        lineHeight: visualLineHeight / placementScale,
+        fontWeight: editorBold ? 'bold' : 'normal',
+        fontStyle: editorItalic ? 'italic' : 'normal',
+        color: lineData[0].color || '#000000',
+      },
+    }),
     containerRect,
     pageOffsetX: placementOffsetX,
     pageOffsetY: placementOffsetY,
@@ -2181,9 +2533,10 @@ function startPdfTextEditing(span, pageNum) {
     fontSize,
     lineSpacing,
     numOriginalLines: lineData.length,
-    scale: getActiveDocument()?.scale || 1.5,
+    scale: ownerDocument.scale || 1.5,
     visualScale: editorFontSize / fontSize,
     editorBaseline: targetBaseline,
+    placement,
     // Accumulated style state edited via the properties panel; seeded from the
     // block's detected formatting. Persisted onto the edit record on commit.
     styleState: {
@@ -2202,6 +2555,8 @@ function startPdfTextEditing(span, pageNum) {
     sourceProvenance,
     substitution,
   };
+
+  registerActiveEditorSession(activeEditor, ownerDocument, 'native-source-text');
 
   publishPdfTextEditState(activeEditor);
 
@@ -2222,37 +2577,24 @@ function startPdfTextEditing(span, pageNum) {
   const handleKeyDown = (e) => {
     if (e.key === 'Escape') {
       e.stopPropagation();
-      cancelPdfTextEditing();
+      cancelActiveTextEditing('escape');
       return;
     }
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       e.stopPropagation();
-      finishPdfTextEditing();
+      applyActiveTextEditingWithStatus();
       return;
     }
     if (e.key === 'Enter') {
       // A normal Enter always creates a real PDF line break. Ctrl/Cmd+Enter
-      // commits; blur still commits as before.
+      // commits; clicking or focusing outside the editor/properties boundary
+      // requests the same owner-scoped Apply.
       e.stopPropagation();
     }
   };
 
-  const handleBlur = () => {
-    setTimeout(() => {
-      if (activeEditor) {
-        // Don't close if focus moved to the properties panel.
-        // Use the static mount point from index.html (not the Solid-rendered element).
-        const activeEl = document.activeElement;
-        if (activeEl?.closest?.('.pdf-text-editor')) return;
-        const propsRoot = document.getElementById('properties-panel-root');
-        if (activeEl && propsRoot && propsRoot.contains(activeEl)) {
-          return;
-        }
-        finishPdfTextEditing();
-      }
-    }, 150);
-  };
+  const handleBlur = () => {};
 
   showPdfTextEditor(styleObj, combinedText, {
     onCommit: null,
@@ -2278,33 +2620,35 @@ function startPdfTextEditing(span, pageNum) {
           },
         },
       ),
-      ariaLabel: `Edit formatted PDF text region: ${combinedText}`,
+      ariaLabel: hardeningText('textEditor.aria.editRegion', { text: combinedText }),
     },
   });
 }
 
-function finishPdfTextEditing() {
-  if (!activeEditor) return;
+async function finishPdfTextEditing(operation) {
+  if (!activeEditor) return false;
+
+  const editor = activeEditor;
+  if (!editorApplyOperationIsCurrent(editor, operation)) {
+    return false;
+  }
 
   // If this editor was started via startTextEditEditing, delegate to its own finish handler
   if (activeEditor._finishEditing) {
-    activeEditor._finishEditing();
-    return;
+    return activeEditor._finishEditing(operation);
   }
 
-  if (nativeLayoutBlocksCommit(activeEditor)) return;
+  if (!(await nativeLayoutReadyForCommit(editor))) return false;
+  if (!editorApplyOperationIsCurrent(editor, operation)) {
+    return false;
+  }
 
   const {
     block, pageNum, originalText,
     pdfX, pdfY, pdfWidth, fontSize, lineSpacing, numOriginalLines, styleState
-  } = activeEditor;
+  } = editor;
   const newText = getEditorText();
   const richTextDraft = getPdfEditorRichText();
-
-  hidePdfTextEditor();
-
-  // Show all spans again
-  for (const s of block.spans) s.style.visibility = '';
 
   const st = styleState || {};
   // Did the panel change any formatting relative to the detected block style?
@@ -2319,12 +2663,15 @@ function finishPdfTextEditing() {
 
   // Persist when the text OR the formatting changed (a pure re-style of
   // existing PDF text must be saveable too).
-  const geometryChanged = Boolean(richTextDraft && activeEditor.richTextDocument && (
-    JSON.stringify(richTextDraft.region) !== JSON.stringify(activeEditor.richTextDocument.region)
-  ));
-  const nativeChanged = newText !== originalText || styleChanged || geometryChanged;
-  if (nativeChanged && !activeEditor.sourceProvenance) {
-    showMessage('This paragraph contains visible text that could not be linked to eligible source operators. The document was left untouched.');
+  const nativeChanged = textEditDraftIsDirty(editor.dirtyBaseline, {
+    text: newText,
+    richText: richTextDraft || editor.richTextDocument,
+    transientStyleChanged: styleChanged,
+  });
+  if (nativeChanged && !editor.sourceProvenance) {
+    showMessage(hardeningText('textEditor.status.nativeSourceUnavailable'));
+    setPdfEditorStatus(hardeningText('textEditor.status.nativeSourceUnavailable'), 'invalid');
+    return false;
   } else if (nativeChanged) {
     const { lineData } = block;
     const pdfFontName = lineData[0].pdfFontName || '';
@@ -2342,17 +2689,12 @@ function finishPdfTextEditing() {
       st.family != null ? st.family : (lineData[0].actualFontName || lineData[0].fontFamily),
       finalBold, finalItalic
     );
-    // Capture original span texts before modifying
-    const originalSpanTexts = lineData.map(ld =>
-      ld.spans.map(s => s.textContent)
-    );
-
     // Store the PDF.js loaded font name for canvas rendering (exact visual
     // match). Drop it when the family/weight was changed in the panel so the
     // new StandardFont is used instead of the stale embedded font.
     const loadedFontName = st.fontFaceChanged ? '' : (lineData[0].loadedFontName || '');
 
-    const originalRichText = activeEditor.richTextDocument;
+    const originalRichText = editor.richTextDocument;
     const finalRichText = richTextDraft || richTextFromPlainText(newText, {
       faceId: resolvePackagedFace(fontFamily, finalBold, finalItalic)?.id,
       size: finalSize,
@@ -2368,20 +2710,48 @@ function finishPdfTextEditing() {
       page: pageNum,
       richText: finalRichText,
       original: originalRichText,
-      sourceProvenance: activeEditor.sourceProvenance,
-      substitution: activeEditor.substitution,
+      sourceProvenance: editor.sourceProvenance,
+      substitution: editor.substitution,
+    });
+    const nativeSourceProjection = createNativeTextSourceProjection({
+      pageNum,
+      editId: editRecord.id,
+      lineData,
+      replacementText: newText,
     });
 
-    const doc = getActiveDocument();
-    if (doc) {
-      if (!doc.textEdits) doc.textEdits = [];
-      doc.textEdits.push(editRecord);
+    const doc = editor.ownerDocument;
+    if (!doc || !editorOwnerIsCurrent(editor)) return false;
+    const storedRecord = cloneTextEditRecord(editRecord);
+    const hadTextEdits = Array.isArray(doc.textEdits);
+    const recorded = runOwnerScopedTextCommit({
+      ownerDocument: doc,
+      attempt() {
+        if (!doc.textEdits) doc.textEdits = [];
+        doc.textEdits.push(storedRecord);
+        return executeForDocument(doc, {
+          type: 'addTextEdit',
+          textEdit: cloneTextEditRecord(storedRecord),
+          nativeSourceProjection,
+        });
+      },
+      rollback() {
+        const index = doc.textEdits?.indexOf(storedRecord) ?? -1;
+        if (index >= 0) doc.textEdits.splice(index, 1);
+        if (!hadTextEdits && doc.textEdits?.length === 0) delete doc.textEdits;
+      },
+    });
+    if (!recorded) {
+      setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
+      return false;
+    }
 
+    // Only project the committed record into the transient PDF.js layer after
+    // owner persistence and its undo unit are both durable.
+    try {
       for (const sourceSpan of block.spans) {
         sourceSpan.dataset.editId = String(editRecord.id);
       }
-
-      // Update span text visually: put all new text in first span, blank the rest
       const newLines = newText.split('\n');
       for (let li = 0; li < lineData.length; li++) {
         const lineSpans = lineData[li].spans;
@@ -2392,33 +2762,44 @@ function finishPdfTextEditing() {
           for (const s of lineSpans) s.textContent = '';
         }
       }
-
-      execute({ type: 'addTextEdit', textEdit: cloneTextEditRecord(editRecord) });
-      markDocumentModified();
-      reRenderAddedText(pageNum);
+    } catch (error) {
+      // Persistence and undo recording are already durable. A transient
+      // PDF.js projection failure must not leave a retryable session that
+      // could append the same owner record a second time.
+      console.warn('[text-edit] Native-source projection refresh failed:', error);
+    }
+    if (getActiveDocument() === doc) {
+      try { reRenderAddedText(pageNum); }
+      catch (error) { console.warn('[text-edit] Native-source refresh failed:', error); }
     }
   }
 
+  hidePdfTextEditor();
+  for (const s of block.spans) s.style.visibility = '';
+  completeEditorSession(editor);
   activeEditor = null;
   state.pdfTextEditState = null;
   hideProperties();
+  return true;
 }
 
 function cancelPdfTextEditing() {
-  if (!activeEditor) return;
+  if (!activeEditor) return false;
 
   if (activeEditor._cancelEditing) {
     activeEditor._cancelEditing();
-    return;
+    return true;
   }
 
   const { block } = activeEditor;
   hidePdfTextEditor();
   for (const s of block.spans) s.style.visibility = '';
 
+  completeEditorSession(activeEditor);
   activeEditor = null;
   state.pdfTextEditState = null;
   hideProperties();
+  return true;
 }
 
 /**
@@ -2526,14 +2907,21 @@ export function findTextEditAtPosition(x, y, pageNum, canvasEl) {
 
 export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = null) {
   if (rejectInvalidOwnedTextState()) return;
-  finishPdfTextEditing();
+  cancelActiveTextEditing('superseded');
 
-  const view = projectTextEditRecord(textEdit);
-  const nativeExpandable = textEdit?.schema === 'open-pdf-studio.text-edit-record'
-    && textEdit.version === 2
-    && Boolean(textEdit.original)
-    && Array.isArray(textEdit.sourceProvenance)
-    && textEdit.sourceProvenance.length > 0;
+  // The document-owned record remains immutable for the entire session.
+  // Properties, geometry, and content operate on this isolated draft and the
+  // owner record is replaced only by the Apply undo command.
+  const sourceTextEdit = textEdit;
+  const draftTextEdit = cloneTextEditRecord(sourceTextEdit);
+  const view = projectTextEditRecord(draftTextEdit);
+  const nativeExpandable = draftTextEdit?.schema === 'open-pdf-studio.text-edit-record'
+    && draftTextEdit.version === 2
+    && Boolean(draftTextEdit.original)
+    && Array.isArray(draftTextEdit.sourceProvenance)
+    && draftTextEdit.sourceProvenance.length > 0;
+  const isAddedText = view.originalText === '';
+  const exactExpandable = nativeExpandable || isAddedText;
 
   const editDoc = getActiveDocument();
   const geometry = getTextEditGeometry(pageNum, canvasEl);
@@ -2547,7 +2935,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
 
   const firstBaseY = pageHeight - view.pdfY;
   const maxCharCount = Math.max(...newLines.map(l => l.length), 1);
-  const editWidth = nativeExpandable
+  const editWidth = exactExpandable
     ? Math.max(view.richText.region.width, fontSize)
     : transaction
     ? Math.max(view.pdfWidth || 0, fontSize)
@@ -2576,16 +2964,11 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
   const pageOffsetX = useViewport ? activeViewport.offsetX : offsetX;
   const pageOffsetY = useViewport ? activeViewport.offsetY : offsetY;
 
-  // Map font family to CSS
+  // Map the manifest's packaged face to the matching bundled CSS font. This
+  // avoids both a fallback-font preview and an unnecessary substitution flow
+  // for application-created text.
   const ff = (view.fontFamily || 'LiberationSans').toLowerCase();
-  let cssFontFamily;
-  if (ff.includes('courier')) {
-    cssFontFamily = '"Courier New", Courier, monospace';
-  } else if (ff.includes('times')) {
-    cssFontFamily = '"Times New Roman", Times, serif';
-  } else {
-    cssFontFamily = 'Helvetica, Arial, sans-serif';
-  }
+  const cssFontFamily = cssFamilyFor(view.fontFamily || 'Liberation Sans');
   const editorFontFamily = view.loadedFontName
     ? `"${view.loadedFontName}", ${cssFontFamily}`
     : cssFontFamily;
@@ -2604,14 +2987,16 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
   const baselineTop = containerRect.top + pageOffsetY + rotatedBaseline.y * editScale;
   const editorLeft = baselineLeft - rotationC * baselineOffset;
   const editorTop = baselineTop - rotationD * baselineOffset;
+  const editorWidth = Math.max(scaledWidth, 80);
+  const editorHeight = Math.max(numLines * visualLineHeight, 24);
 
   // Build style object using fixed positioning
   const styleObj = {
     position: 'absolute',
     left: `${editorLeft}px`,
     top: `${editorTop}px`,
-    width: `${Math.max(scaledWidth, 80)}px`,
-    height: `${Math.max(numLines * visualLineHeight, 24)}px`,
+    width: `${editorWidth}px`,
+    height: `${editorHeight}px`,
     'font-size': `${editorFontSize}px`,
     'line-height': `${visualLineHeight}px`,
     'font-family': editorFontFamily,
@@ -2632,81 +3017,158 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
     doc: editDoc,
     pageNum,
     geometry,
-    style: styleObj,
+    sourceRect: {
+      left: editorLeft,
+      top: editorTop,
+      width: editorWidth,
+      height: editorHeight,
+    },
+    canonicalStyle: createPageTextEditStyle({
+      geometry: {
+        width: editorWidth / editScale,
+        height: editorHeight / editScale,
+        zIndex: 1000,
+      },
+      typography: {
+        fontFamily: editorFontFamily,
+        fontSize,
+        lineHeight: ls,
+        fontWeight: editorBold ? 'bold' : 'normal',
+        fontStyle: editorItalic ? 'italic' : 'normal',
+        color: view.color || '#000000',
+      },
+      decoration: {
+        textDecorationLine: decorations.length ? decorations.join(' ') : 'none',
+        textDecorationThicknessEm: 0.06,
+        textUnderlineOffsetEm: 0.08,
+      },
+    }),
     containerRect,
     pageOffsetX,
     pageOffsetY,
     sourceScale: editScale,
-    mode: nativeExpandable ? 'native-expandable' : 'owned-text',
+    mode: nativeExpandable ? 'native-expandable' : isAddedText ? 'inserted-expandable' : 'owned-text',
   });
 
-  const oldTextEdit = cloneTextEditRecord(textEdit);
-  const isAddedText = view.originalText === '';
+  const oldTextEdit = cloneTextEditRecord(sourceTextEdit);
 
-  const finishEditing = () => {
-    if (nativeLayoutBlocksCommit(activeEditor)) return;
+  const finishEditing = async (operation) => {
+    const editor = activeEditor;
+    if (!editorApplyOperationIsCurrent(editor, operation)) {
+      return false;
+    }
+    if (!(await nativeLayoutReadyForCommit(editor))) return false;
+    if (!editorApplyOperationIsCurrent(editor, operation)) {
+      return false;
+    }
     const newText = getEditorText();
     const richTextDraft = getPdfEditorRichText();
-    hidePdfTextEditor();
 
     // Clearing all the text of an INSERTED edit deletes it entirely — this is
     // how the user removes inserted text (issue #264).
     if (isAddedText && newText.trim() === '') {
       if (transaction) {
         hidePdfTextEditor();
+        completeEditorSession(activeEditor);
         activeEditor = null;
         state.pdfTextEditState = null;
         hideProperties();
-        return;
+        return true;
       }
-      removeTextEditRecord(textEdit);
+      if (!removeTextEditRecord(sourceTextEdit, editDoc)) {
+        setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
+        return false;
+      }
+      hidePdfTextEditor();
+      completeEditorSession(activeEditor);
       activeEditor = null;
       state.pdfTextEditState = null;
       hideProperties();
-      return;
+      return true;
     }
 
+    const candidateTextEdit = cloneTextEditRecord(draftTextEdit);
     if (newText.trim() !== '') {
-      if (textEdit.schema === 'open-pdf-studio.text-edit-record' && textEdit.version === 2 && richTextDraft) {
-        textEdit.richText = transaction && !nativeExpandable
-          ? reflowRichTextToWidth(richTextDraft, Math.max(textEdit.richText.region.width, 1))
+      if (candidateTextEdit.schema === 'open-pdf-studio.text-edit-record'
+          && candidateTextEdit.version === 2 && richTextDraft) {
+        candidateTextEdit.richText = transaction && !exactExpandable
+          ? reflowRichTextToWidth(richTextDraft, Math.max(candidateTextEdit.richText.region.width, 1))
           : richTextDraft;
-        if (!transaction) textEdit.revision += 1;
+        if (!transaction) candidateTextEdit.revision += 1;
       } else {
-        textEdit.newText = newText;
+        candidateTextEdit.newText = newText;
       }
     }
-    // Persist when content, style, or position changed. Style/position edits
-    // were applied live to `textEdit`, so compare the whole record.
-    const changed = JSON.stringify(textEdit) !== JSON.stringify(oldTextEdit);
+    // Persist when content, style, or position changed. The document record is
+    // still untouched here; compare and commit the isolated draft atomically.
+    const changed = JSON.stringify(candidateTextEdit) !== JSON.stringify(oldTextEdit);
     if (transaction && (changed || transaction.forceCommit)) {
-      transaction.commit(cloneTextEditRecord(textEdit));
+      const commitResult = transaction.commit(cloneTextEditRecord(candidateTextEdit));
+      if (commitResult !== true) {
+        setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
+        return false;
+      }
     } else if (changed) {
-      execute({ type: 'modifyTextEdit', oldTextEdit, newTextEdit: cloneTextEditRecord(textEdit) });
-      markDocumentModified();
-      reRenderAddedText(pageNum);
+      const ownerIndex = editDoc.textEdits?.findIndex((record) => (
+        String(record.id) === String(oldTextEdit.id)
+      )) ?? -1;
+      if (ownerIndex < 0) {
+        setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
+        return false;
+      }
+      const previousOwnerRecord = editDoc.textEdits[ownerIndex];
+      const committedRecord = cloneTextEditRecord(candidateTextEdit);
+      const recorded = runOwnerScopedTextCommit({
+        ownerDocument: editDoc,
+        attempt() {
+          editDoc.textEdits[ownerIndex] = committedRecord;
+          return executeForDocument(editDoc, {
+            type: 'modifyTextEdit',
+            oldTextEdit,
+            newTextEdit: cloneTextEditRecord(committedRecord),
+          });
+        },
+        rollback() {
+          editDoc.textEdits[ownerIndex] = previousOwnerRecord;
+        },
+      });
+      if (!recorded) {
+        setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
+        return false;
+      }
+      if (getActiveDocument() === editDoc) {
+        try { reRenderAddedText(pageNum); }
+        catch (error) { console.warn('[text-edit] Owned-text refresh failed:', error); }
+      }
     }
 
+    hidePdfTextEditor();
+    completeEditorSession(editor);
     activeEditor = null;
     state.pdfTextEditState = null;
     hideProperties();
+    return true;
   };
 
   const cancelEditing = () => {
-    if (!transaction) restoreTextEditSnapshot(textEdit, oldTextEdit);
     hidePdfTextEditor();
     reRenderAddedText(pageNum);
+    completeEditorSession(activeEditor);
     activeEditor = null;
     state.pdfTextEditState = null;
     hideProperties();
+    return true;
   };
 
   activeEditor = {
     block: { spans: [] },
     pageNum,
     kind: 'record',
-    _recordRef: textEdit,
-    expandableNative: nativeExpandable,
+    _recordRef: draftTextEdit,
+    _sourceRecordRef: sourceTextEdit,
+    _transaction: transaction,
+    richTextDocument: view.richText,
+    expandableNative: exactExpandable,
     originalText: view.newText,
     pdfX: view.pdfX,
     pdfY: view.pdfY,
@@ -2722,6 +3184,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
       rotationC,
       rotationD,
     },
+    placement,
     styleState: {
       family: view.fontFamily || 'Liberation Sans',
       cssFamily: editorFontFamily,
@@ -2736,6 +3199,9 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
     _finishEditing: finishEditing,
     _cancelEditing: cancelEditing
   };
+  registerActiveEditorSession(activeEditor, editDoc, nativeExpandable
+    ? 'owned-native-edit'
+    : isAddedText ? 'inserted-text' : 'owned-text');
   publishPdfTextEditState(activeEditor);
 
   // Show text properties in the right panel
@@ -2756,7 +3222,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
   const handleKeyDown = (e) => {
     if (e.key === 'Escape') {
       e.stopPropagation();
-      cancelEditing();
+      cancelActiveTextEditing('escape');
       return;
     }
     // Alt+Arrow nudges the inserted text (Alt keeps normal caret arrows free).
@@ -2773,7 +3239,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       e.stopPropagation();
-      finishEditing();
+      applyActiveTextEditingWithStatus();
       return;
     }
     if (e.key === 'Enter') {
@@ -2781,21 +3247,7 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
     }
   };
 
-  const handleBlur = () => {
-    setTimeout(() => {
-      if (activeEditor && activeEditor._finishEditing === finishEditing) {
-        // Don't close if focus moved to the properties panel.
-        // Use the static mount point from index.html (not the Solid-rendered element).
-        const activeEl = document.activeElement;
-        if (activeEl?.closest?.('.pdf-text-editor')) return;
-        const propsRoot = document.getElementById('properties-panel-root');
-        if (activeEl && propsRoot && propsRoot.contains(activeEl)) {
-          return;
-        }
-        finishEditing();
-      }
-    }, 150);
-  };
+  const handleBlur = () => {};
 
   showPdfTextEditor(styleObj, view.newText, {
     onCommit: null,
@@ -2806,22 +3258,23 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
       richTextDocument: view.richText,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
       placement,
-      reflowWidth: Boolean(transaction) && !nativeExpandable,
-      expandableRegion: nativeExpandable ? expandableNativeEditorOptions(
+      reflowWidth: Boolean(transaction) && !exactExpandable,
+      expandableRegion: exactExpandable ? expandableNativeEditorOptions(
         view.richText,
         pageNum,
         canvasEl,
         canvasEl.parentElement?.querySelector('.textLayer'),
         {
-          provenance: textEdit.sourceProvenance,
-          editId: textEdit.id,
+          provenance: draftTextEdit.sourceProvenance,
+          editId: draftTextEdit.id,
           displayScale: editScale,
+          manualLineBreaks: nativeExpandable,
           onDraftLayout: (layout) => {
-            if (activeEditor?._recordRef === textEdit) activeEditor.draftLayout = layout;
+            if (activeEditor?._recordRef === draftTextEdit) activeEditor.draftLayout = layout;
           },
         },
       ) : undefined,
-      ariaLabel: `Edit formatted PDF text region: ${view.newText}`,
+      ariaLabel: hardeningText('textEditor.aria.editRegion', { text: view.newText }),
     },
   });
 }
@@ -2832,61 +3285,113 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
 // currently open in the inline editor. Works for both inserted text (a live
 // textEdit record) and existing PDF text (persisted on commit).
 export function applyActiveTextEditStyle(key, value) {
-  if (!activeEditor || !activeEditor.styleState) return;
+  if (!activeEditor || !activeEditor.styleState) return false;
   const st = activeEditor.styleState;
-  if (activeEditor.kind === 'scannedText' && ['fontUnderline', 'fontStrikethrough'].includes(key)) return;
+  if (activeEditor.kind === 'scannedText' && ['fontUnderline', 'fontStrikethrough'].includes(key)) {
+    return false;
+  }
   let scannedTouchedKey = null;
   let richPatch = null;
+  let paragraphPatch = null;
+  let statePatch = null;
   switch (key) {
-    case 'fontFamily':
-      if (st.family !== value) st.fontFaceChanged = true;
-      st.family = value;
+    case 'fontFamily': {
+      if (typeof value !== 'string' || !value.trim()) return false;
+      const faceId = resolvePackagedFace(value, st.bold, st.italic)?.id;
+      if (!faceId) return false;
+      statePatch = {
+        family: value,
+        fontFaceChanged: st.fontFaceChanged === true || st.family !== value,
+      };
       scannedTouchedKey = 'fontClass';
-      richPatch = { faceId: resolvePackagedFace(value, st.bold, st.italic)?.id };
+      richPatch = { faceId };
       break;
+    }
     case 'textFontSize':
     case 'fontSize': {
       const n = parseInt(value);
-      if (!isNaN(n) && n > 0) {
-        st.size = n;
-        scannedTouchedKey = 'fontSize';
-        richPatch = { size: n };
-      }
+      if (!Number.isFinite(n) || n <= 0) return false;
+      statePatch = { size: n };
+      scannedTouchedKey = 'fontSize';
+      richPatch = { size: n };
       break;
     }
     case 'textColor':
-    case 'color': st.color = value; scannedTouchedKey = 'textColor'; richPatch = { color: value }; break;
-    case 'fontBold':
-      if (st.bold !== !!value) st.fontFaceChanged = true;
-      st.bold = !!value;
+    case 'color':
+      if (typeof value !== 'string' || !value.trim()) return false;
+      statePatch = { color: value };
+      scannedTouchedKey = 'textColor';
+      richPatch = { color: value };
+      break;
+    case 'fontBold': {
+      if (typeof value !== 'boolean') return false;
+      const faceId = resolvePackagedFace(st.family, value, st.italic)?.id;
+      if (!faceId) return false;
+      statePatch = {
+        bold: value,
+        fontFaceChanged: st.fontFaceChanged === true || st.bold !== value,
+      };
       scannedTouchedKey = 'weight';
       richPatch = {
-        bold: st.bold,
-        faceId: resolvePackagedFace(st.family, st.bold, st.italic)?.id,
+        bold: value,
+        faceId,
       };
       break;
-    case 'fontItalic':
-      if (st.italic !== !!value) st.fontFaceChanged = true;
-      st.italic = !!value;
+    }
+    case 'fontItalic': {
+      if (typeof value !== 'boolean') return false;
+      const faceId = resolvePackagedFace(st.family, st.bold, value)?.id;
+      if (!faceId) return false;
+      statePatch = {
+        italic: value,
+        fontFaceChanged: st.fontFaceChanged === true || st.italic !== value,
+      };
       scannedTouchedKey = 'italic';
       richPatch = {
-        italic: st.italic,
-        faceId: resolvePackagedFace(st.family, st.bold, st.italic)?.id,
+        italic: value,
+        faceId,
       };
       break;
+    }
     case 'textAlign':
-      if (!['left', 'center', 'right'].includes(value)) return;
-      st.alignment = value;
+      if (!['left', 'center', 'right'].includes(value)) return false;
+      statePatch = { alignment: value };
       scannedTouchedKey = 'alignment';
+      // OCR paragraph reflow intentionally uses a plain textarea so visual
+      // soft wraps never become authored hard lines. Its canonical alignment
+      // is still an owned style override, carried by styleState instead of a
+      // rich-text paragraph draft.
+      if (!(activeEditor.kind === 'scannedText' && activeEditor.paragraphReflow)) {
+        paragraphPatch = ['alignment', value];
+      }
       break;
-    case 'fontUnderline': st.underline = !!value; richPatch = { underline: st.underline }; break;
-    case 'fontStrikethrough': st.strikethrough = !!value; richPatch = { strikeout: st.strikethrough }; break;
-    default: return;
+    case 'lineSpacing':
+      if (!(Number(value) > 0)) return false;
+      paragraphPatch = ['lineSpacingMultiplier', Number(value)];
+      break;
+    case 'fontUnderline':
+      if (typeof value !== 'boolean') return false;
+      statePatch = { underline: value };
+      richPatch = { underline: value };
+      break;
+    case 'fontStrikethrough':
+      if (typeof value !== 'boolean') return false;
+      statePatch = { strikethrough: value };
+      richPatch = { strikeout: value };
+      break;
+    default: return false;
   }
+  if (richPatch && applyPdfEditorRichTextFormat(richPatch) !== true) return false;
+  if (paragraphPatch && applyPdfEditorRichTextParagraphFormat(...paragraphPatch) !== true) return false;
+  if (statePatch) Object.assign(st, statePatch);
   if (activeEditor.kind === 'scannedText' && scannedTouchedKey) {
-    activeEditor.styleTouchedKeys.add(scannedTouchedKey);
+    syncScannedStyleTouchedKey(
+      activeEditor.styleTouchedKeys,
+      activeEditor.scannedStyleBaseline,
+      st,
+      scannedTouchedKey,
+    );
   }
-  if (richPatch) applyPdfEditorRichTextFormat(richPatch);
   applyStyleStateToEditor(st);
   // Record sessions (inserted text or an existing edit record) update live so
   // the user sees the restyle immediately.
@@ -2897,6 +3402,7 @@ export function applyActiveTextEditStyle(key, value) {
     }
     reRenderAddedText(activeEditor._recordRef.page);
   }
+  return true;
 }
 
 // Delete the text edit that is currently open in the inline editor.
@@ -2904,7 +3410,8 @@ export function deleteActiveTextEdit() {
   if (!activeEditor) return;
   if (activeEditor.kind === 'scannedText') {
     const editor = activeEditor;
-    const doc = getActiveDocument();
+    const doc = editor.ownerDocument;
+    completeEditorSession(editor);
     editor.preview?.remove();
     hidePdfTextEditor();
     activeEditor = null;
@@ -2913,15 +3420,21 @@ export function deleteActiveTextEdit() {
     if (doc && editor.existingOwnedEdit) {
       try {
         removeScannedTextEditForDocument(doc, editor.selectionId);
-        markDocumentModified();
-        refreshPendingOcrTextLayer(editor.pageNum);
+        markDocumentModifiedForDocument(doc);
+        if (getActiveDocument() === doc) refreshPendingOcrTextLayer(editor.pageNum);
         enableTextLayerHover();
       } catch (error) {
-        showMessage(`Scanned text removal failed: ${error?.message || String(error)}`);
+        console.warn('[scanned-text-edit] Removal failed:', error);
+        showMessage(hardeningText('textEditor.status.operationFailed'));
       }
     }
     return;
   }
+  if (activeEditor._transaction?.draftOnly) {
+    activeEditor._cancelEditing?.();
+    return;
+  }
+  const editor = activeEditor;
   hidePdfTextEditor();
   // Restore any spans the existing-text session hid.
   if (activeEditor.block && activeEditor.block.spans) {
@@ -2929,12 +3442,13 @@ export function deleteActiveTextEdit() {
   }
   if (activeEditor._recordRef) {
     // Inserted text / existing edit record → drop the record.
-    removeTextEditRecord(activeEditor._recordRef);
+    removeTextEditRecord(activeEditor._sourceRecordRef || activeEditor._recordRef);
   } else if (activeEditor.kind === 'existingText' && activeEditor.originalText) {
     // Native source text may be removed only through exact operator ownership;
     // page-colour cover rectangles are not a safe deletion mechanism.
-    showMessage('This native PDF text cannot be deleted safely because its exact source operators are ambiguous. The document was left untouched.');
+    showMessage(hardeningText('textEditor.status.nativeDeleteUnavailable'));
   }
+  completeEditorSession(editor);
   activeEditor = null;
   state.pdfTextEditState = null;
   hideProperties();
@@ -2943,7 +3457,7 @@ export function deleteActiveTextEdit() {
 // Move the active text edit by a PDF-unit delta (Alt+Arrow keys).
 function nudgeActiveTextEdit(dxPdf, dyPdf) {
   if (!activeEditor) return;
-  const scale = activeEditor.scale || (getActiveDocument()?.scale || 1.5);
+  const scale = activeEditor.scale || (activeEditor.ownerDocument?.scale || 1.5);
   // Convert the PDF-space nudge into the rotated display frame.
   const canvasEl = pdfCanvas || document.getElementById('pdf-canvas');
   const geometry = getTextEditGeometry(activeEditor.pageNum, canvasEl);
@@ -2982,12 +3496,23 @@ function nudgeActiveTextEdit(dxPdf, dyPdf) {
 }
 
 // Remove a textEdit record from the document (undoable).
-function removeTextEditRecord(rec) {
-  const doc = getActiveDocument();
-  if (!doc || !doc.textEdits) return;
-  const index = doc.textEdits.findIndex(e => e.id === rec.id);
-  if (index === -1) return;
-  execute({ type: 'removeTextEdit', textEdit: structuredClone(rec), index });
-  markDocumentModified();
-  reRenderAddedText(rec.page);
+function removeTextEditRecord(rec, ownerDocument = activeEditor?.ownerDocument) {
+  const doc = ownerDocument || getActiveDocument();
+  if (!doc || !doc.textEdits) return false;
+  const removed = runOwnerScopedTextCommit({
+    ownerDocument: doc,
+    attempt: () => removeTextEditRecordFromDocument(doc, rec.id, (snapshot, index) => (
+      executeForDocument(doc, {
+        type: 'removeTextEdit',
+        textEdit: snapshot,
+        index,
+      })
+    )),
+  });
+  if (!removed) return false;
+  if (getActiveDocument() === doc) {
+    try { reRenderAddedText(rec.page); }
+    catch (error) { console.warn('[text-edit] Removed-text refresh failed:', error); }
+  }
+  return true;
 }

@@ -1,10 +1,10 @@
-use lopdf::{Document, Dictionary, Object};
-use crate::graphics_state::GraphicsStateStack;
-use crate::renderer::SkiaRenderer;
+use crate::color;
 use crate::draw_commands::DrawCommandBuffer;
 use crate::fonts::FontRegistry;
-use crate::color;
+use crate::graphics_state::GraphicsStateStack;
+use crate::renderer::SkiaRenderer;
 use crate::RenderError;
+use lopdf::{Dictionary, Document, Object};
 
 // Per-stage image timing accumulators (microseconds). Enabled by setting
 // OPSR_PROFILE_IMAGES=1; otherwise the time-checking code is hot-path-cheap
@@ -18,7 +18,9 @@ static PROF_PREMUL_US: AtomicU64 = AtomicU64::new(0);
 static PROF_DRAW_US: AtomicU64 = AtomicU64::new(0);
 static PROF_DEREF_US: AtomicU64 = AtomicU64::new(0);
 static PROF_IMG_COUNT: AtomicUsize = AtomicUsize::new(0);
-static PROF_SEEN_XOBJ: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<lopdf::ObjectId, u32>>> = std::sync::OnceLock::new();
+static PROF_SEEN_XOBJ: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<lopdf::ObjectId, u32>>,
+> = std::sync::OnceLock::new();
 
 #[inline(always)]
 fn profile_enabled() -> bool {
@@ -44,7 +46,9 @@ fn profile_reset() {
 
 fn profile_dump() {
     let n = PROF_IMG_COUNT.load(Ordering::Relaxed);
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
     eprintln!(
         "  [img-stages n={n}] deref={:>5}us flate={:>5}us predictor={:>5}us jpeg={:>5}us raw={:>5}us premul={:>5}us draw={:>5}us",
         PROF_DEREF_US.load(Ordering::Relaxed),
@@ -59,13 +63,13 @@ fn profile_dump() {
 
 // Dump unique-image diagnostic when profiling.
 pub(crate) fn profile_dump_uniq(seen: &std::collections::HashMap<lopdf::ObjectId, u32>) {
-    if seen.is_empty() { return; }
+    if seen.is_empty() {
+        return;
+    }
     let total: u32 = seen.values().sum();
     let unique = seen.len();
     let max_reuse = seen.values().max().copied().unwrap_or(0);
-    eprintln!(
-        "  [img-uniq] total_refs={total} unique_xobj={unique} max_reuse={max_reuse}"
-    );
+    eprintln!("  [img-uniq] total_refs={total} unique_xobj={unique} max_reuse={max_reuse}");
 }
 
 /// A text span with position, size, and Unicode text content.
@@ -84,8 +88,16 @@ impl TextSpan {
     pub fn to_json(&self) -> String {
         format!(
             r#"{{"x":{},"y":{},"width":{},"height":{},"fontSize":{},"text":"{}"}}"#,
-            self.x, self.y, self.width, self.height, self.font_size,
-            self.text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r")
+            self.x,
+            self.y,
+            self.width,
+            self.height,
+            self.font_size,
+            self.text
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
         )
     }
 }
@@ -101,14 +113,14 @@ impl TextSpan {
 ///
 /// Line moves (Td/TD/T*) update `tlm` then copy to `tm`.
 struct TextState {
-    font_size: f32,            // Tfs — set by Tf operator
-    horizontal_scaling: f32,   // Th — set by Tz operator (1.0 = 100%)
-    char_spacing: f32,         // Tc — set by Tc operator
-    word_spacing: f32,         // Tw — set by Tw operator
-    leading: f32,              // TL — set by TL operator
-    rise: f32,                 // Trise — set by Ts operator
-    tm: [f32; 6],             // Text matrix [a b c d e f]
-    tlm: [f32; 6],            // Text line matrix
+    font_size: f32,          // Tfs — set by Tf operator
+    horizontal_scaling: f32, // Th — set by Tz operator (1.0 = 100%)
+    char_spacing: f32,       // Tc — set by Tc operator
+    word_spacing: f32,       // Tw — set by Tw operator
+    leading: f32,            // TL — set by TL operator
+    rise: f32,               // Trise — set by Ts operator
+    tm: [f32; 6],            // Text matrix [a b c d e f]
+    tlm: [f32; 6],           // Text line matrix
     in_text: bool,
     current_font_name: String,
     // Note: text rendering mode (Tr) lives on the graphics state
@@ -233,7 +245,16 @@ impl Interpreter {
         font_registry: &mut FontRegistry,
         doc_image_cache: Option<&std::sync::Arc<std::sync::RwLock<ImageCache>>>,
     ) -> Result<(), RenderError> {
-        Self::execute_internal(content_bytes, renderer, state, doc, resources, font_registry, 0, doc_image_cache)
+        Self::execute_internal(
+            content_bytes,
+            renderer,
+            state,
+            doc,
+            resources,
+            font_registry,
+            0,
+            doc_image_cache,
+        )
     }
 
     /// Execute content stream with a pixel budget for images. Images larger
@@ -249,7 +270,16 @@ impl Interpreter {
         max_pixels: u32,
         doc_image_cache: Option<&std::sync::Arc<std::sync::RwLock<ImageCache>>>,
     ) -> Result<(), RenderError> {
-        Self::execute_internal(content_bytes, renderer, state, doc, resources, font_registry, max_pixels, doc_image_cache)
+        Self::execute_internal(
+            content_bytes,
+            renderer,
+            state,
+            doc,
+            resources,
+            font_registry,
+            max_pixels,
+            doc_image_cache,
+        )
     }
 
     fn execute_internal(
@@ -263,7 +293,9 @@ impl Interpreter {
         doc_image_cache: Option<&std::sync::Arc<std::sync::RwLock<ImageCache>>>,
     ) -> Result<(), RenderError> {
         let prof = profile_enabled();
-        if prof { profile_reset(); }
+        if prof {
+            profile_reset();
+        }
         // Per-page decoded-image cache. See `ImageCache` doc.
         //
         // PoC 02: if the caller supplied a document-scoped cache, seed the
@@ -292,7 +324,13 @@ impl Interpreter {
         // Targets pages like Barn Relocation p3/p5 (14 unique large
         // FlateDecode + PNG-predictor images per page) where iter-24's
         // dedup cache was a no-op (each image referenced exactly once).
-        Self::predecode_images_parallel(content_bytes, doc, resources, max_image_pixels, &mut img_cache);
+        Self::predecode_images_parallel(
+            content_bytes,
+            doc,
+            resources,
+            max_image_pixels,
+            &mut img_cache,
+        );
 
         let mut has_active_path = false;
         let mut text_state = TextState::new();
@@ -304,8 +342,10 @@ impl Interpreter {
         // (font_object_id, glyph_id) cuts the per-page render time on
         // text-heavy pages by 50-65%. The cache is dropped at end of
         // page render so per-render lifetimes stay tight.
-        let mut glyph_path_cache: std::collections::HashMap<(lopdf::ObjectId, u32), tiny_skia::Path>
-            = std::collections::HashMap::new();
+        let mut glyph_path_cache: std::collections::HashMap<
+            (lopdf::ObjectId, u32),
+            tiny_skia::Path,
+        > = std::collections::HashMap::new();
         // PDF clipping is two-step: `W` (or `W*`) marks the current path
         // as a future clip, then the next path-painting/no-op operator
         // (S/s/f/f*/B/B*/b/b*/n) actually consumes the path. We track the
@@ -319,7 +359,10 @@ impl Interpreter {
         // van een 5M-ops CAD-blad kostte gigabytes aan kleine allocaties;
         // deze lus hergebruikt één Operation-buffer per stap.
         let mut op_stream = crate::content_stream::ContentStreamIter::new(content_bytes);
-        let mut op_buf = lopdf::content::Operation { operator: String::new(), operands: Vec::new() };
+        let mut op_buf = lopdf::content::Operation {
+            operator: String::new(),
+            operands: Vec::new(),
+        };
         while op_stream.next_into(&mut op_buf) {
             let op = &op_buf;
             // If a W/W* was just seen, the next paint op (or n) consumes
@@ -345,16 +388,35 @@ impl Interpreter {
                 "cm" => {
                     if op.operands.len() >= 6 {
                         state.concat_matrix(
-                            Self::f(&op.operands[0]), Self::f(&op.operands[1]),
-                            Self::f(&op.operands[2]), Self::f(&op.operands[3]),
-                            Self::f(&op.operands[4]), Self::f(&op.operands[5]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                            Self::f(&op.operands[4]),
+                            Self::f(&op.operands[5]),
                         );
                     }
                 }
-                "w" => { if let Some(w) = op.operands.first() { state.current.line_width = Self::f(w); } }
-                "J" => { if let Some(v) = op.operands.first() { state.current.line_cap = Self::i(v) as u8; } }
-                "j" => { if let Some(v) = op.operands.first() { state.current.line_join = Self::i(v) as u8; } }
-                "M" => { if let Some(v) = op.operands.first() { state.current.miter_limit = Self::f(v); } }
+                "w" => {
+                    if let Some(w) = op.operands.first() {
+                        state.current.line_width = Self::f(w);
+                    }
+                }
+                "J" => {
+                    if let Some(v) = op.operands.first() {
+                        state.current.line_cap = Self::i(v) as u8;
+                    }
+                }
+                "j" => {
+                    if let Some(v) = op.operands.first() {
+                        state.current.line_join = Self::i(v) as u8;
+                    }
+                }
+                "M" => {
+                    if let Some(v) = op.operands.first() {
+                        state.current.miter_limit = Self::f(v);
+                    }
+                }
                 "d" => {
                     if op.operands.len() >= 2 {
                         if let Object::Array(arr) = &op.operands[0] {
@@ -364,71 +426,281 @@ impl Interpreter {
                     }
                 }
                 // Color - grayscale
-                "g" => { if let Some(v) = op.operands.first() { let (r,g,b) = color::gray_to_rgb(Self::f(v)); state.current.fill_color = (r,g,b,255); } }
-                "G" => { if let Some(v) = op.operands.first() { let (r,g,b) = color::gray_to_rgb(Self::f(v)); state.current.stroke_color = (r,g,b,255); } }
+                "g" => {
+                    if let Some(v) = op.operands.first() {
+                        let (r, g, b) = color::gray_to_rgb(Self::f(v));
+                        state.current.fill_color = (r, g, b, 255);
+                    }
+                }
+                "G" => {
+                    if let Some(v) = op.operands.first() {
+                        let (r, g, b) = color::gray_to_rgb(Self::f(v));
+                        state.current.stroke_color = (r, g, b, 255);
+                    }
+                }
                 // Color - RGB
-                "rg" => { if op.operands.len() >= 3 { state.current.fill_color = color::rgb_to_rgba8(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2])); } }
-                "RG" => { if op.operands.len() >= 3 { state.current.stroke_color = color::rgb_to_rgba8(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2])); } }
+                "rg" => {
+                    if op.operands.len() >= 3 {
+                        state.current.fill_color = color::rgb_to_rgba8(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                        );
+                    }
+                }
+                "RG" => {
+                    if op.operands.len() >= 3 {
+                        state.current.stroke_color = color::rgb_to_rgba8(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                        );
+                    }
+                }
                 // Color - CMYK
-                "k" => { if op.operands.len() >= 4 { let (r,g,b) = color::cmyk_to_rgb(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2]), Self::f(&op.operands[3])); state.current.fill_color = (r,g,b,255); } }
-                "K" => { if op.operands.len() >= 4 { let (r,g,b) = color::cmyk_to_rgb(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2]), Self::f(&op.operands[3])); state.current.stroke_color = (r,g,b,255); } }
+                "k" => {
+                    if op.operands.len() >= 4 {
+                        let (r, g, b) = color::cmyk_to_rgb(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                        );
+                        state.current.fill_color = (r, g, b, 255);
+                    }
+                }
+                "K" => {
+                    if op.operands.len() >= 4 {
+                        let (r, g, b) = color::cmyk_to_rgb(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                        );
+                        state.current.stroke_color = (r, g, b, 255);
+                    }
+                }
                 // Color - colorspace operators (simplified)
-                "sc" | "scn" => {
-                    match op.operands.len() {
-                        3 => { state.current.fill_color = color::rgb_to_rgba8(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2])); }
-                        1 => { let (r,g,b) = color::gray_to_rgb(Self::f(&op.operands[0])); state.current.fill_color = (r,g,b,255); }
-                        4 => { let (r,g,b) = color::cmyk_to_rgb(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2]), Self::f(&op.operands[3])); state.current.fill_color = (r,g,b,255); }
-                        _ => {}
+                "sc" | "scn" => match op.operands.len() {
+                    3 => {
+                        state.current.fill_color = color::rgb_to_rgba8(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                        );
                     }
-                }
-                "SC" | "SCN" => {
-                    match op.operands.len() {
-                        3 => { state.current.stroke_color = color::rgb_to_rgba8(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2])); }
-                        1 => { let (r,g,b) = color::gray_to_rgb(Self::f(&op.operands[0])); state.current.stroke_color = (r,g,b,255); }
-                        4 => { let (r,g,b) = color::cmyk_to_rgb(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2]), Self::f(&op.operands[3])); state.current.stroke_color = (r,g,b,255); }
-                        _ => {}
+                    1 => {
+                        let (r, g, b) = color::gray_to_rgb(Self::f(&op.operands[0]));
+                        state.current.fill_color = (r, g, b, 255);
                     }
-                }
+                    4 => {
+                        let (r, g, b) = color::cmyk_to_rgb(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                        );
+                        state.current.fill_color = (r, g, b, 255);
+                    }
+                    _ => {}
+                },
+                "SC" | "SCN" => match op.operands.len() {
+                    3 => {
+                        state.current.stroke_color = color::rgb_to_rgba8(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                        );
+                    }
+                    1 => {
+                        let (r, g, b) = color::gray_to_rgb(Self::f(&op.operands[0]));
+                        state.current.stroke_color = (r, g, b, 255);
+                    }
+                    4 => {
+                        let (r, g, b) = color::cmyk_to_rgb(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                        );
+                        state.current.stroke_color = (r, g, b, 255);
+                    }
+                    _ => {}
+                },
                 "cs" | "CS" => {}
                 // Path construction
-                "m" => { if op.operands.len() >= 2 { if !has_active_path { renderer.begin_path(); has_active_path = true; } renderer.move_to(Self::f(&op.operands[0]), Self::f(&op.operands[1])); } }
-                "l" => { if op.operands.len() >= 2 { if !has_active_path { renderer.begin_path(); has_active_path = true; } renderer.line_to(Self::f(&op.operands[0]), Self::f(&op.operands[1])); } }
-                "c" => { if op.operands.len() >= 6 { if !has_active_path { renderer.begin_path(); has_active_path = true; } renderer.cubic_to(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2]), Self::f(&op.operands[3]), Self::f(&op.operands[4]), Self::f(&op.operands[5])); } }
-                "v" => { if op.operands.len() >= 4 { if !has_active_path { renderer.begin_path(); has_active_path = true; } renderer.cubic_to(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2]), Self::f(&op.operands[3])); } }
-                "y" => { if op.operands.len() >= 4 { if !has_active_path { renderer.begin_path(); has_active_path = true; } renderer.cubic_to(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2]), Self::f(&op.operands[3]), Self::f(&op.operands[2]), Self::f(&op.operands[3])); } }
-                "re" => { if op.operands.len() >= 4 { if !has_active_path { renderer.begin_path(); has_active_path = true; } renderer.rect(Self::f(&op.operands[0]), Self::f(&op.operands[1]), Self::f(&op.operands[2]), Self::f(&op.operands[3])); } }
-                "h" => { renderer.close_path(); }
+                "m" => {
+                    if op.operands.len() >= 2 {
+                        if !has_active_path {
+                            renderer.begin_path();
+                            has_active_path = true;
+                        }
+                        renderer.move_to(Self::f(&op.operands[0]), Self::f(&op.operands[1]));
+                    }
+                }
+                "l" => {
+                    if op.operands.len() >= 2 {
+                        if !has_active_path {
+                            renderer.begin_path();
+                            has_active_path = true;
+                        }
+                        renderer.line_to(Self::f(&op.operands[0]), Self::f(&op.operands[1]));
+                    }
+                }
+                "c" => {
+                    if op.operands.len() >= 6 {
+                        if !has_active_path {
+                            renderer.begin_path();
+                            has_active_path = true;
+                        }
+                        renderer.cubic_to(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                            Self::f(&op.operands[4]),
+                            Self::f(&op.operands[5]),
+                        );
+                    }
+                }
+                "v" => {
+                    if op.operands.len() >= 4 {
+                        if !has_active_path {
+                            renderer.begin_path();
+                            has_active_path = true;
+                        }
+                        renderer.cubic_to(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                        );
+                    }
+                }
+                "y" => {
+                    if op.operands.len() >= 4 {
+                        if !has_active_path {
+                            renderer.begin_path();
+                            has_active_path = true;
+                        }
+                        renderer.cubic_to(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                        );
+                    }
+                }
+                "re" => {
+                    if op.operands.len() >= 4 {
+                        if !has_active_path {
+                            renderer.begin_path();
+                            has_active_path = true;
+                        }
+                        renderer.rect(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                        );
+                    }
+                }
+                "h" => {
+                    renderer.close_path();
+                }
                 // Path painting
-                "S" => { renderer.stroke(&state.current); has_active_path = false; }
-                "s" => { renderer.close_path(); renderer.stroke(&state.current); has_active_path = false; }
-                "f" | "F" => { renderer.fill(&state.current, false); has_active_path = false; }
-                "f*" => { renderer.fill(&state.current, true); has_active_path = false; }
-                "B" => { renderer.fill_and_stroke(&state.current, false); has_active_path = false; }
-                "B*" => { renderer.fill_and_stroke(&state.current, true); has_active_path = false; }
-                "b" => { renderer.close_path(); renderer.fill_and_stroke(&state.current, false); has_active_path = false; }
-                "b*" => { renderer.close_path(); renderer.fill_and_stroke(&state.current, true); has_active_path = false; }
-                "n" => { has_active_path = false; }
+                "S" => {
+                    renderer.stroke(&state.current);
+                    has_active_path = false;
+                }
+                "s" => {
+                    renderer.close_path();
+                    renderer.stroke(&state.current);
+                    has_active_path = false;
+                }
+                "f" | "F" => {
+                    renderer.fill(&state.current, false);
+                    has_active_path = false;
+                }
+                "f*" => {
+                    renderer.fill(&state.current, true);
+                    has_active_path = false;
+                }
+                "B" => {
+                    renderer.fill_and_stroke(&state.current, false);
+                    has_active_path = false;
+                }
+                "B*" => {
+                    renderer.fill_and_stroke(&state.current, true);
+                    has_active_path = false;
+                }
+                "b" => {
+                    renderer.close_path();
+                    renderer.fill_and_stroke(&state.current, false);
+                    has_active_path = false;
+                }
+                "b*" => {
+                    renderer.close_path();
+                    renderer.fill_and_stroke(&state.current, true);
+                    has_active_path = false;
+                }
+                "n" => {
+                    has_active_path = false;
+                }
                 // Clipping — record the pending clip; the path is captured
                 // and applied to gs.clip_path immediately before the next
                 // paint/no-op operator consumes the path builder.
-                "W" => { pending_clip = Some(false); }
-                "W*" => { pending_clip = Some(true); }
+                "W" => {
+                    pending_clip = Some(false);
+                }
+                "W*" => {
+                    pending_clip = Some(true);
+                }
                 // Text operators
-                "BT" => { text_state.begin_text(); }
-                "ET" => { text_state.in_text = false; }
+                "BT" => {
+                    text_state.begin_text();
+                }
+                "ET" => {
+                    text_state.in_text = false;
+                }
                 "Tf" => {
                     if op.operands.len() >= 2 {
                         if let Object::Name(ref name_bytes) = op.operands[0] {
-                            text_state.current_font_name = String::from_utf8_lossy(name_bytes).to_string();
+                            text_state.current_font_name =
+                                String::from_utf8_lossy(name_bytes).to_string();
                         }
                         text_state.font_size = Self::f(&op.operands[1]);
                     }
                 }
-                "Tc" => { if let Some(v) = op.operands.first() { text_state.char_spacing = Self::f(v); } }
-                "Tw" => { if let Some(v) = op.operands.first() { text_state.word_spacing = Self::f(v); } }
-                "Tz" => { if let Some(v) = op.operands.first() { text_state.horizontal_scaling = Self::f(v) / 100.0; } }
-                "TL" => { if let Some(v) = op.operands.first() { text_state.leading = Self::f(v); } }
-                "Ts" => { if let Some(v) = op.operands.first() { text_state.rise = Self::f(v); } }
+                "Tc" => {
+                    if let Some(v) = op.operands.first() {
+                        text_state.char_spacing = Self::f(v);
+                    }
+                }
+                "Tw" => {
+                    if let Some(v) = op.operands.first() {
+                        text_state.word_spacing = Self::f(v);
+                    }
+                }
+                "Tz" => {
+                    if let Some(v) = op.operands.first() {
+                        text_state.horizontal_scaling = Self::f(v) / 100.0;
+                    }
+                }
+                "TL" => {
+                    if let Some(v) = op.operands.first() {
+                        text_state.leading = Self::f(v);
+                    }
+                }
+                "Ts" => {
+                    if let Some(v) = op.operands.first() {
+                        text_state.rise = Self::f(v);
+                    }
+                }
                 "Tr" => {
                     // PDF 1.7 §9.3.6 — text rendering mode. Mode 2 ("fill,
                     // then stroke") is the standard authoring trick for
@@ -461,30 +733,53 @@ impl Interpreter {
                 "Tm" => {
                     if op.operands.len() >= 6 {
                         text_state.set_text_matrix(
-                            Self::f(&op.operands[0]), Self::f(&op.operands[1]),
-                            Self::f(&op.operands[2]), Self::f(&op.operands[3]),
-                            Self::f(&op.operands[4]), Self::f(&op.operands[5]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                            Self::f(&op.operands[4]),
+                            Self::f(&op.operands[5]),
                         );
                     }
                 }
-                "T*" => { text_state.translate_line(0.0, -text_state.leading); }
+                "T*" => {
+                    text_state.translate_line(0.0, -text_state.leading);
+                }
                 "Tj" => {
                     Self::execute_show_string(
-                        &op.operands, &mut text_state, font_registry,
-                        renderer, state, doc, resources, &mut glyph_path_cache,
+                        &op.operands,
+                        &mut text_state,
+                        font_registry,
+                        renderer,
+                        state,
+                        doc,
+                        resources,
+                        &mut glyph_path_cache,
                     );
                 }
                 "TJ" => {
                     Self::execute_show_array(
-                        &op.operands, &mut text_state, font_registry,
-                        renderer, state, doc, resources, &mut glyph_path_cache,
+                        &op.operands,
+                        &mut text_state,
+                        font_registry,
+                        renderer,
+                        state,
+                        doc,
+                        resources,
+                        &mut glyph_path_cache,
                     );
                 }
                 "'" => {
                     text_state.translate_line(0.0, -text_state.leading);
                     Self::execute_show_string(
-                        &op.operands, &mut text_state, font_registry,
-                        renderer, state, doc, resources, &mut glyph_path_cache,
+                        &op.operands,
+                        &mut text_state,
+                        font_registry,
+                        renderer,
+                        state,
+                        doc,
+                        resources,
+                        &mut glyph_path_cache,
                     );
                 }
                 "\"" => {
@@ -494,13 +789,29 @@ impl Interpreter {
                         text_state.translate_line(0.0, -text_state.leading);
                         let tail = &op.operands[2..];
                         Self::execute_show_string(
-                            tail, &mut text_state, font_registry,
-                            renderer, state, doc, resources, &mut glyph_path_cache,
+                            tail,
+                            &mut text_state,
+                            font_registry,
+                            renderer,
+                            state,
+                            doc,
+                            resources,
+                            &mut glyph_path_cache,
                         );
                     }
                 }
                 "Do" => {
-                    Self::handle_do_execute(&op.operands, renderer, state, doc, resources, font_registry, max_image_pixels, &mut img_cache, doc_image_cache);
+                    Self::handle_do_execute(
+                        &op.operands,
+                        renderer,
+                        state,
+                        doc,
+                        resources,
+                        font_registry,
+                        max_image_pixels,
+                        &mut img_cache,
+                        doc_image_cache,
+                    );
                 }
                 "gs" => {
                     Self::apply_ext_gstate(&op.operands, state, doc, resources);
@@ -551,7 +862,10 @@ impl Interpreter {
             Some(Object::Name(n)) => n,
             _ => return,
         };
-        let xobj_dict = match resources.get(b"XObject").and_then(|o| Self::resolve_dict(o, doc)) {
+        let xobj_dict = match resources
+            .get(b"XObject")
+            .and_then(|o| Self::resolve_dict(o, doc))
+        {
             Ok(d) => d,
             _ => return,
         };
@@ -571,15 +885,28 @@ impl Interpreter {
             Object::Stream(ref s) => s,
             _ => return,
         };
-        let subtype = stream.dict.get(b"Subtype").ok().and_then(|s| s.as_name().ok());
+        let subtype = stream
+            .dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|s| s.as_name().ok());
         if subtype == Some(b"Image" as &[u8]) {
             if profile_enabled() {
-                let m = PROF_SEEN_XOBJ.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+                let m = PROF_SEEN_XOBJ
+                    .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
                 if let Ok(mut g) = m.lock() {
                     *g.entry(resolved_id).or_insert(0) += 1;
                 }
             }
-            Self::handle_image_execute(stream, renderer, state, doc, max_image_pixels, resolved_id, img_cache);
+            Self::handle_image_execute(
+                stream,
+                renderer,
+                state,
+                doc,
+                max_image_pixels,
+                resolved_id,
+                img_cache,
+            );
             return;
         }
         if subtype != Some(b"Form" as &[u8]) {
@@ -589,7 +916,9 @@ impl Interpreter {
         // the parent's effective alpha at the moment of the `Do` operator
         // to use as the composite opacity when blending the offscreen
         // group buffer back onto the parent.
-        let is_transparency_group = stream.dict.get(b"Group")
+        let is_transparency_group = stream
+            .dict
+            .get(b"Group")
             .ok()
             .and_then(|g| Self::resolve_dict(g, doc).ok())
             .and_then(|d| d.get(b"S").ok())
@@ -609,9 +938,12 @@ impl Interpreter {
             if let Ok(arr) = matrix.as_array() {
                 if arr.len() >= 6 {
                     state.concat_matrix(
-                        Self::f(&arr[0]), Self::f(&arr[1]),
-                        Self::f(&arr[2]), Self::f(&arr[3]),
-                        Self::f(&arr[4]), Self::f(&arr[5]),
+                        Self::f(&arr[0]),
+                        Self::f(&arr[1]),
+                        Self::f(&arr[2]),
+                        Self::f(&arr[3]),
+                        Self::f(&arr[4]),
+                        Self::f(&arr[5]),
                     );
                 }
             }
@@ -697,8 +1029,14 @@ impl Interpreter {
                     cur.group_stroke_alpha = parent_fill_alpha;
                     if let Ok(content_bytes) = stream.decompressed_content() {
                         let _ = Self::execute_internal(
-                            &content_bytes, renderer, state, doc, res,
-                            font_registry, max_image_pixels, doc_image_cache,
+                            &content_bytes,
+                            renderer,
+                            state,
+                            doc,
+                            res,
+                            font_registry,
+                            max_image_pixels,
+                            doc_image_cache,
                         );
                     }
                 }
@@ -706,8 +1044,14 @@ impl Interpreter {
         } else {
             if let Ok(content_bytes) = stream.decompressed_content() {
                 let _ = Self::execute_internal(
-                    &content_bytes, renderer, state, doc, res,
-                    font_registry, max_image_pixels, doc_image_cache,
+                    &content_bytes,
+                    renderer,
+                    state,
+                    doc,
+                    res,
+                    font_registry,
+                    max_image_pixels,
+                    doc_image_cache,
                 );
             }
         }
@@ -735,27 +1079,48 @@ impl Interpreter {
             Some(Object::String(b, _)) if !b.is_empty() => b.clone(),
             _ => return,
         };
-        let (font_id_opt, font_entry) = match font_registry.get_font_with_id(&text_state.current_font_name, doc, resources) {
-            Some(fe) => fe,
-            None => return,
-        };
-        if font_entry.parsed.is_none() { return; }
+        let (font_id_opt, font_entry) =
+            match font_registry.get_font_with_id(&text_state.current_font_name, doc, resources) {
+                Some(fe) => fe,
+                None => return,
+            };
+        if font_entry.parsed.is_none() {
+            return;
+        }
         let fill = state.current.fill_color;
         let mode = state.current.text_render_mode;
         let cache_arg = font_id_opt.map(|id| (id, &mut *glyph_cache));
         if font_entry.is_cid {
             crate::text_renderer::render_cid_text_glyphs_skia_with_mode(
-                &bytes, &*font_entry, text_state.font_size,
-                text_state.horizontal_scaling, text_state.char_spacing,
-                text_state.word_spacing, text_state.rise,
-                &mut text_state.tm, fill, renderer, state, cache_arg, mode,
+                &bytes,
+                &*font_entry,
+                text_state.font_size,
+                text_state.horizontal_scaling,
+                text_state.char_spacing,
+                text_state.word_spacing,
+                text_state.rise,
+                &mut text_state.tm,
+                fill,
+                renderer,
+                state,
+                cache_arg,
+                mode,
             );
         } else {
             crate::text_renderer::render_text_glyphs_skia_with_mode(
-                &bytes, &*font_entry, text_state.font_size,
-                text_state.horizontal_scaling, text_state.char_spacing,
-                text_state.word_spacing, text_state.rise,
-                &mut text_state.tm, fill, renderer, state, cache_arg, mode,
+                &bytes,
+                &*font_entry,
+                text_state.font_size,
+                text_state.horizontal_scaling,
+                text_state.char_spacing,
+                text_state.word_spacing,
+                text_state.rise,
+                &mut text_state.tm,
+                fill,
+                renderer,
+                state,
+                cache_arg,
+                mode,
             );
         }
     }
@@ -778,11 +1143,14 @@ impl Interpreter {
             Some(Object::Array(a)) => a,
             _ => return,
         };
-        let (font_id_opt, font_entry) = match font_registry.get_font_with_id(&text_state.current_font_name, doc, resources) {
-            Some(fe) => fe,
-            None => return,
-        };
-        if font_entry.parsed.is_none() { return; }
+        let (font_id_opt, font_entry) =
+            match font_registry.get_font_with_id(&text_state.current_font_name, doc, resources) {
+                Some(fe) => fe,
+                None => return,
+            };
+        if font_entry.parsed.is_none() {
+            return;
+        }
         let is_cid = font_entry.is_cid;
         let fill = state.current.fill_color;
         let mode = state.current.text_render_mode;
@@ -794,17 +1162,35 @@ impl Interpreter {
                         let cache_arg = font_id_opt.map(|id| (id, &mut *glyph_cache));
                         if is_cid {
                             crate::text_renderer::render_cid_text_glyphs_skia_with_mode(
-                                bytes, &*font_entry, text_state.font_size,
-                                text_state.horizontal_scaling, text_state.char_spacing,
-                                text_state.word_spacing, text_state.rise,
-                                &mut text_state.tm, fill, renderer, state, cache_arg, mode,
+                                bytes,
+                                &*font_entry,
+                                text_state.font_size,
+                                text_state.horizontal_scaling,
+                                text_state.char_spacing,
+                                text_state.word_spacing,
+                                text_state.rise,
+                                &mut text_state.tm,
+                                fill,
+                                renderer,
+                                state,
+                                cache_arg,
+                                mode,
                             );
                         } else {
                             crate::text_renderer::render_text_glyphs_skia_with_mode(
-                                bytes, &*font_entry, text_state.font_size,
-                                text_state.horizontal_scaling, text_state.char_spacing,
-                                text_state.word_spacing, text_state.rise,
-                                &mut text_state.tm, fill, renderer, state, cache_arg, mode,
+                                bytes,
+                                &*font_entry,
+                                text_state.font_size,
+                                text_state.horizontal_scaling,
+                                text_state.char_spacing,
+                                text_state.word_spacing,
+                                text_state.rise,
+                                &mut text_state.tm,
+                                fill,
+                                renderer,
+                                state,
+                                cache_arg,
+                                mode,
                             );
                         }
                     }
@@ -846,7 +1232,11 @@ impl Interpreter {
         // pre-decoded in parallel via rayon BEFORE this serial walk runs,
         // so the cache is already warm here for most images.
         if let Some(cached) = img_cache.get(&xobj_id) {
-            let t_draw = if prof { Some(std::time::Instant::now()) } else { None };
+            let t_draw = if prof {
+                Some(std::time::Instant::now())
+            } else {
+                None
+            };
             state.save();
             state.concat_matrix(1.0, 0.0, 0.0, -1.0, 0.0, 1.0);
             renderer.draw_image(cached.w, cached.h, cached.rgba.as_slice(), &state.current);
@@ -865,10 +1255,25 @@ impl Interpreter {
             Some(d) => d,
             None => return,
         };
-        let CachedDecodedImage { w: img_w, h: img_h, rgba: rgba_arc } = decoded;
-        img_cache.insert(xobj_id, CachedDecodedImage { w: img_w, h: img_h, rgba: rgba_arc.clone() });
+        let CachedDecodedImage {
+            w: img_w,
+            h: img_h,
+            rgba: rgba_arc,
+        } = decoded;
+        img_cache.insert(
+            xobj_id,
+            CachedDecodedImage {
+                w: img_w,
+                h: img_h,
+                rgba: rgba_arc.clone(),
+            },
+        );
 
-        let t_draw = if prof { Some(std::time::Instant::now()) } else { None };
+        let t_draw = if prof {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         state.save();
         state.concat_matrix(1.0, 0.0, 0.0, -1.0, 0.0, 1.0);
         renderer.draw_image(img_w, img_h, rgba_arc.as_slice(), &state.current);
@@ -902,7 +1307,10 @@ impl Interpreter {
         // — e.g. text-only form streams). Tolerate failure silently — the
         // serial walk will still call handle_do_execute and any cache miss
         // simply falls through to the serial decode path.
-        let xobj_dict = match resources.get(b"XObject").and_then(|o| Self::resolve_dict(o, doc)) {
+        let xobj_dict = match resources
+            .get(b"XObject")
+            .and_then(|o| Self::resolve_dict(o, doc))
+        {
             Ok(d) => d,
             _ => return,
         };
@@ -913,10 +1321,15 @@ impl Interpreter {
         let mut seen: std::collections::HashSet<lopdf::ObjectId> = std::collections::HashSet::new();
         let mut to_decode: Vec<lopdf::ObjectId> = Vec::new();
         let mut op_stream = crate::content_stream::ContentStreamIter::new(content_bytes);
-        let mut op_buf = lopdf::content::Operation { operator: String::new(), operands: Vec::new() };
+        let mut op_buf = lopdf::content::Operation {
+            operator: String::new(),
+            operands: Vec::new(),
+        };
         while op_stream.next_into(&mut op_buf) {
             let op = &op_buf;
-            if op.operator.as_str() != "Do" { continue; }
+            if op.operator.as_str() != "Do" {
+                continue;
+            }
             let name = match op.operands.first() {
                 Some(Object::Name(n)) => n,
                 _ => continue,
@@ -935,9 +1348,23 @@ impl Interpreter {
             }
             // Confirm subtype is Image — Form XObjects are handled by the
             // recursive walk, not pre-decoded here.
-            let is_image = doc.get_object(resolved_id).ok()
-                .and_then(|o| if let Object::Stream(s) = o { Some(s) } else { None })
-                .and_then(|s| s.dict.get(b"Subtype").ok().and_then(|x| x.as_name().ok()).map(|n| n.to_vec()))
+            let is_image = doc
+                .get_object(resolved_id)
+                .ok()
+                .and_then(|o| {
+                    if let Object::Stream(s) = o {
+                        Some(s)
+                    } else {
+                        None
+                    }
+                })
+                .and_then(|s| {
+                    s.dict
+                        .get(b"Subtype")
+                        .ok()
+                        .and_then(|x| x.as_name().ok())
+                        .map(|n| n.to_vec())
+                })
                 == Some(b"Image".to_vec());
             if is_image {
                 to_decode.push(resolved_id);
@@ -967,8 +1394,7 @@ impl Interpreter {
                     Object::Stream(s) => s,
                     _ => return None,
                 };
-                Self::decode_image_xobject(stream, doc, max_image_pixels)
-                    .map(|d| (id, d))
+                Self::decode_image_xobject(stream, doc, max_image_pixels).map(|d| (id, d))
             })
             .collect();
 
@@ -992,13 +1418,23 @@ impl Interpreter {
         let dict = &stream.dict;
         let width = Self::read_int(dict, b"Width", doc).unwrap_or(0);
         let height = Self::read_int(dict, b"Height", doc).unwrap_or(0);
-        if width == 0 || height == 0 { return None; }
+        if width == 0 || height == 0 {
+            return None;
+        }
 
-        let t_deref = if prof { Some(std::time::Instant::now()) } else { None };
+        let t_deref = if prof {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let filter = dict.get(b"Filter").ok().and_then(|o| match o {
             Object::Name(n) => Some(n.clone()),
             Object::Reference(id) => doc.get_object(*id).ok().and_then(|o| {
-                if let Object::Name(n) = o { Some(n.clone()) } else { None }
+                if let Object::Name(n) = o {
+                    Some(n.clone())
+                } else {
+                    None
+                }
             }),
             Object::Array(arr) => arr.last().and_then(|o| match o {
                 Object::Name(n) => Some(n.clone()),
@@ -1015,7 +1451,11 @@ impl Interpreter {
         // ─── JPEG: use turbojpeg with native scaled DCT decoding ─────────
         let (img_w, img_h, mut rgba) = if is_jpeg {
             let raw = &stream.content;
-            let t = if prof { Some(std::time::Instant::now()) } else { None };
+            let t = if prof {
+                Some(std::time::Instant::now())
+            } else {
+                None
+            };
             let res = Self::decode_jpeg_scaled(raw, max_decode_pixels);
             if let Some(t) = t {
                 PROF_JPEG_US.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
@@ -1023,7 +1463,11 @@ impl Interpreter {
             res?
         } else {
             // ─── Non-JPEG: raw pixel decode + optional box downsample ────
-            let t = if prof { Some(std::time::Instant::now()) } else { None };
+            let t = if prof {
+                Some(std::time::Instant::now())
+            } else {
+                None
+            };
             let res = Self::decode_raw_image(dict, stream, doc, width, height, max_decode_pixels);
             if let Some(t) = t {
                 PROF_RAW_DECODE_US.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
@@ -1037,7 +1481,11 @@ impl Interpreter {
         // (a=255) buffer so we must apply the SMask here.
         if is_jpeg {
             if let Some((sm_w, sm_h, alpha_bytes)) = Self::read_smask_alpha(dict, doc) {
-                let t = if prof { Some(std::time::Instant::now()) } else { None };
+                let t = if prof {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
                 Self::premultiply_with_smask(&mut rgba, img_w, img_h, &alpha_bytes, sm_w, sm_h);
                 if let Some(t) = t {
                     PROF_PREMUL_US.fetch_add(t.elapsed().as_micros() as u64, Ordering::Relaxed);
@@ -1046,7 +1494,11 @@ impl Interpreter {
         }
 
         let rgba_arc = std::sync::Arc::new(rgba);
-        Some(CachedDecodedImage { w: img_w, h: img_h, rgba: rgba_arc })
+        Some(CachedDecodedImage {
+            w: img_w,
+            h: img_h,
+            rgba: rgba_arc,
+        })
     }
 
     /// Resolve and decode an Image XObject's `/SMask` soft-alpha mask.
@@ -1062,7 +1514,11 @@ impl Interpreter {
         let stream = match dict.get(b"SMask").ok()? {
             Object::Stream(s) => Some(s.clone()),
             Object::Reference(id) => doc.get_object(*id).ok().and_then(|obj| {
-                if let Object::Stream(s) = obj { Some(s.clone()) } else { None }
+                if let Object::Stream(s) = obj {
+                    Some(s.clone())
+                } else {
+                    None
+                }
             }),
             _ => None,
         }?;
@@ -1075,16 +1531,21 @@ impl Interpreter {
             Object::Integer(i) => Some(*i as u32),
             _ => None,
         })?;
-        if sm_w == 0 || sm_h == 0 { return None; }
+        if sm_w == 0 || sm_h == 0 {
+            return None;
+        }
 
         // Identify the outermost filter — SMasks may be FlateDecode (raw
         // grayscale bytes) or DCTDecode (JPEG-encoded grayscale).
         let filters: Vec<Vec<u8>> = match sm_dict.get(b"Filter").ok() {
             Some(Object::Name(n)) => vec![n.clone()],
-            Some(Object::Array(arr)) => arr.iter().filter_map(|o| match o {
-                Object::Name(n) => Some(n.clone()),
-                _ => None,
-            }).collect(),
+            Some(Object::Array(arr)) => arr
+                .iter()
+                .filter_map(|o| match o {
+                    Object::Name(n) => Some(n.clone()),
+                    _ => None,
+                })
+                .collect(),
             _ => Vec::new(),
         };
         let outermost = filters.last().map(|v| v.as_slice()).unwrap_or(&[]);
@@ -1097,16 +1558,24 @@ impl Interpreter {
             // by replicating the gray byte across R/G/B with a=255 — we
             // pull the R channel back out as the alpha source.
             let (jw, jh, rgba) = Self::decode_jpeg_scaled(&stream.content, 0)?;
-            if jw != sm_w || jh != sm_h { return None; }
-            if rgba.len() < needed * 4 { return None; }
+            if jw != sm_w || jh != sm_h {
+                return None;
+            }
+            if rgba.len() < needed * 4 {
+                return None;
+            }
             let mut out = Vec::with_capacity(needed);
-            for px in 0..needed { out.push(rgba[px * 4]); }
+            for px in 0..needed {
+                out.push(rgba[px * 4]);
+            }
             return Some((sm_w, sm_h, out));
         }
 
         // FlateDecode / no filter: decompress to raw grayscale bytes.
         let bytes = Self::decompress_image_stream(&stream)?;
-        if bytes.len() < needed { return None; }
+        if bytes.len() < needed {
+            return None;
+        }
         Some((sm_w, sm_h, bytes[..needed].to_vec()))
     }
 
@@ -1137,7 +1606,9 @@ impl Interpreter {
         sm_w: u32,
         sm_h: u32,
     ) {
-        if img_w == 0 || img_h == 0 { return; }
+        if img_w == 0 || img_h == 0 {
+            return;
+        }
         let same_dims = img_w == sm_w && img_h == sm_h;
 
         // Decide whether the mask is a dimming pass (all alpha values >=
@@ -1202,7 +1673,11 @@ impl Interpreter {
         let sm_w_u64 = sm_w as u64;
         let img_w_u64 = img_w as u64;
 
-        for (dy, row) in rgba.chunks_exact_mut(img_w_usize * 4).enumerate().take(img_h as usize) {
+        for (dy, row) in rgba
+            .chunks_exact_mut(img_w_usize * 4)
+            .enumerate()
+            .take(img_h as usize)
+        {
             let sy = ((dy as u64) * sm_h_u64 / img_h_u64) as usize;
             let mask_row_base = sy * sm_w_usize;
             if is_dimming_only {
@@ -1232,7 +1707,11 @@ impl Interpreter {
         dict.get(key).ok().and_then(|o| match o {
             Object::Integer(i) => Some(*i as u32),
             Object::Reference(id) => doc.get_object(*id).ok().and_then(|o| {
-                if let Object::Integer(i) = o { Some(*i as u32) } else { None }
+                if let Object::Integer(i) = o {
+                    Some(*i as u32)
+                } else {
+                    None
+                }
             }),
             _ => None,
         })
@@ -1352,10 +1831,7 @@ impl Interpreter {
     /// Per ISO 32000-1 §8.6.6.3, /Indexed colour spaces have the form
     /// `[/Indexed base hival lookup]` where `lookup` is either a hex/literal
     /// string of `(hival+1) * N` bytes (N = base channels) or a stream.
-    fn resolve_color_space(
-        dict: &Dictionary,
-        doc: &Document,
-    ) -> (usize, usize, Option<Vec<u8>>) {
+    fn resolve_color_space(dict: &Dictionary, doc: &Document) -> (usize, usize, Option<Vec<u8>>) {
         let cs_obj = match dict.get(b"ColorSpace").ok() {
             Some(o) => o,
             None => return (3, 3, None),
@@ -1402,14 +1878,16 @@ impl Interpreter {
                             },
                             Some(Object::Array(ref ba)) => {
                                 // e.g. [/CalRGB <<...>>] or [/ICCBased N]
-                                ba.first().and_then(|o| match o {
-                                    Object::Name(bn) => Some(match bn.as_slice() {
-                                        b"DeviceCMYK" | b"CalCMYK" => 4,
-                                        b"DeviceGray" | b"CalGray" => 1,
-                                        _ => 3,
-                                    }),
-                                    _ => None,
-                                }).unwrap_or(3)
+                                ba.first()
+                                    .and_then(|o| match o {
+                                        Object::Name(bn) => Some(match bn.as_slice() {
+                                            b"DeviceCMYK" | b"CalCMYK" => 4,
+                                            b"DeviceGray" | b"CalGray" => 1,
+                                            _ => 3,
+                                        }),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(3)
                             }
                             _ => 3,
                         };
@@ -1432,15 +1910,24 @@ impl Interpreter {
                     Some(b"CalGray") | Some(b"DeviceGray") => (1, 1, None),
                     Some(b"ICCBased") => {
                         // [/ICCBased <stream>] — read /N from the stream dict.
-                        let n_chans = arr.get(1).cloned().and_then(|o| match o {
-                            Object::Reference(id) => doc.get_object(id).ok().cloned(),
-                            other => Some(other),
-                        }).and_then(|o| match o {
-                            Object::Stream(s) => s.dict.get(b"N").ok().and_then(|n| {
-                                if let Object::Integer(i) = n { Some(*i as usize) } else { None }
-                            }),
-                            _ => None,
-                        }).unwrap_or(3);
+                        let n_chans = arr
+                            .get(1)
+                            .cloned()
+                            .and_then(|o| match o {
+                                Object::Reference(id) => doc.get_object(id).ok().cloned(),
+                                other => Some(other),
+                            })
+                            .and_then(|o| match o {
+                                Object::Stream(s) => s.dict.get(b"N").ok().and_then(|n| {
+                                    if let Object::Integer(i) = n {
+                                        Some(*i as usize)
+                                    } else {
+                                        None
+                                    }
+                                }),
+                                _ => None,
+                            })
+                            .unwrap_or(3);
                         (n_chans, n_chans, None)
                     }
                     _ => (3, 3, None),
@@ -1460,15 +1947,24 @@ impl Interpreter {
         height: u32,
         max_pixels: u32,
     ) -> Option<(u32, u32, Vec<u8>)> {
-        let bits = dict.get(b"BitsPerComponent").ok()
-            .and_then(|o| if let Object::Integer(i) = o { Some(*i as u8) } else { None })
+        let bits = dict
+            .get(b"BitsPerComponent")
+            .ok()
+            .and_then(|o| {
+                if let Object::Integer(i) = o {
+                    Some(*i as u8)
+                } else {
+                    None
+                }
+            })
             .unwrap_or(8);
-        if bits != 8 { return None; }
+        if bits != 8 {
+            return None;
+        }
 
         // Resolve colour space — either direct (DeviceRGB/Gray/CMYK) or an
         // [/Indexed base hival lookup] palette wrapper.
-        let (stream_components, output_components, palette) =
-            Self::resolve_color_space(dict, doc);
+        let (stream_components, output_components, palette) = Self::resolve_color_space(dict, doc);
         let components: usize = output_components;
 
         // lopdf 0.34's decompressed_content() returns Err(Type) for /Image
@@ -1476,7 +1972,9 @@ impl Interpreter {
         // (handles FlateDecode + PNG predictor, raw passthrough otherwise).
         let raw_pixels = Self::decompress_image_stream(stream)?;
         let expected = width as usize * height as usize * stream_components;
-        if raw_pixels.len() < expected { return None; }
+        if raw_pixels.len() < expected {
+            return None;
+        }
 
         // Resolve and decode an /SMask soft-alpha mask if present. We only
         // honour the mask when it's the same resolution as the image —
@@ -1486,9 +1984,13 @@ impl Interpreter {
         // ignored for now; the silhouette alone fixes the bulk of the
         // black-rectangle artefact on rapport-constructie / Text pdf
         // gecombineerd PDFs.
-        let smask_alpha: Option<Vec<u8>> = Self::read_smask_alpha(dict, doc)
-            .and_then(|(sm_w, sm_h, bytes)| {
-                if sm_w == width && sm_h == height { Some(bytes) } else { None }
+        let smask_alpha: Option<Vec<u8>> =
+            Self::read_smask_alpha(dict, doc).and_then(|(sm_w, sm_h, bytes)| {
+                if sm_w == width && sm_h == height {
+                    Some(bytes)
+                } else {
+                    None
+                }
             });
 
         // Determine output size — downsample if over budget
@@ -1543,19 +2045,25 @@ impl Interpreter {
                             .zip(amask.iter().take(n_pixels))
                         {
                             let g2 = pm(g, a);
-                            px[0] = g2; px[1] = g2; px[2] = g2; px[3] = a;
+                            px[0] = g2;
+                            px[1] = g2;
+                            px[2] = g2;
+                            px[3] = a;
                         }
                     } else {
                         for (px, &g) in chunks.zip(raw_pixels.iter().take(n_pixels)) {
-                            px[0] = g; px[1] = g; px[2] = g; px[3] = 255;
+                            px[0] = g;
+                            px[1] = g;
+                            px[2] = g;
+                            px[3] = 255;
                         }
                     }
                 }
                 3 => {
                     let src = &raw_pixels[..n_pixels * 3];
                     if let Some(amask) = alpha_bytes {
-                        for (px_chunk, (src3, &a)) in chunks
-                            .zip(src.chunks_exact(3).zip(amask.iter().take(n_pixels)))
+                        for (px_chunk, (src3, &a)) in
+                            chunks.zip(src.chunks_exact(3).zip(amask.iter().take(n_pixels)))
                         {
                             px_chunk[0] = pm(src3[0], a);
                             px_chunk[1] = pm(src3[1], a);
@@ -1574,11 +2082,13 @@ impl Interpreter {
                 4 => {
                     let src = &raw_pixels[..n_pixels * 4];
                     if let Some(amask) = alpha_bytes {
-                        for (px_chunk, (src4, &a)) in chunks
-                            .zip(src.chunks_exact(4).zip(amask.iter().take(n_pixels)))
+                        for (px_chunk, (src4, &a)) in
+                            chunks.zip(src.chunks_exact(4).zip(amask.iter().take(n_pixels)))
                         {
-                            let c = src4[0]; let m = src4[1];
-                            let y = src4[2]; let k = src4[3];
+                            let c = src4[0];
+                            let m = src4[1];
+                            let y = src4[2];
+                            let k = src4[3];
                             let r = cmyk_r(c, k);
                             let g = cmyk_r(m, k);
                             let b = cmyk_r(y, k);
@@ -1589,8 +2099,10 @@ impl Interpreter {
                         }
                     } else {
                         for (px_chunk, src4) in chunks.zip(src.chunks_exact(4)) {
-                            let c = src4[0]; let m = src4[1];
-                            let y = src4[2]; let k = src4[3];
+                            let c = src4[0];
+                            let m = src4[1];
+                            let y = src4[2];
+                            let k = src4[3];
                             px_chunk[0] = cmyk_r(c, k);
                             px_chunk[1] = cmyk_r(m, k);
                             px_chunk[2] = cmyk_r(y, k);
@@ -1601,11 +2113,17 @@ impl Interpreter {
                 _ => {
                     if let Some(amask) = alpha_bytes {
                         for (px, &a) in chunks.zip(amask.iter().take(n_pixels)) {
-                            px[0] = 0; px[1] = 0; px[2] = 0; px[3] = a;
+                            px[0] = 0;
+                            px[1] = 0;
+                            px[2] = 0;
+                            px[3] = a;
                         }
                     } else {
                         for px in chunks {
-                            px[0] = 0; px[1] = 0; px[2] = 0; px[3] = 255;
+                            px[0] = 0;
+                            px[1] = 0;
+                            px[2] = 0;
+                            px[3] = 255;
                         }
                     }
                 }
@@ -1633,14 +2151,18 @@ impl Interpreter {
                     let pi = raw_pixels[idx] as usize;
                     let p_off = pi * comp_count;
                     if p_off + comp_count <= pal.len() {
-                        for i in 0..comp_count { buf[i] = pal[p_off + i]; }
+                        for i in 0..comp_count {
+                            buf[i] = pal[p_off + i];
+                        }
                         &buf[..comp_count]
                     } else {
-                        for i in 0..comp_count { buf[i] = 0; }
+                        for i in 0..comp_count {
+                            buf[i] = 0;
+                        }
                         &buf[..comp_count]
                     }
                 } else {
-                    &raw_pixels[idx .. idx + stream_comp]
+                    &raw_pixels[idx..idx + stream_comp]
                 };
 
                 let dst_off = ((dy as usize) * (out_w as usize) + dx as usize) * 4;
@@ -1659,8 +2181,10 @@ impl Interpreter {
                         rgba[dst_off + 3] = alpha;
                     }
                     4 => {
-                        let c = comp_slice[0]; let m = comp_slice[1];
-                        let y = comp_slice[2]; let k = comp_slice[3];
+                        let c = comp_slice[0];
+                        let m = comp_slice[1];
+                        let y = comp_slice[2];
+                        let k = comp_slice[3];
                         let r = cmyk_r(c, k);
                         let g = cmyk_r(m, k);
                         let b = cmyk_r(y, k);
@@ -1686,7 +2210,15 @@ impl Interpreter {
         resources: &Dictionary,
         font_registry: &mut crate::fonts::FontRegistry,
     ) -> Result<(), RenderError> {
-        Self::extract_commands_with_text(content_bytes, buf, state, doc, resources, font_registry, None)
+        Self::extract_commands_with_text(
+            content_bytes,
+            buf,
+            state,
+            doc,
+            resources,
+            font_registry,
+            None,
+        )
     }
 
     pub fn extract_commands_with_text(
@@ -1706,7 +2238,10 @@ impl Interpreter {
 
         // Streamende lexer i.p.v. Content::decode — zie execute_internal.
         let mut op_stream = crate::content_stream::ContentStreamIter::new(content_bytes);
-        let mut op_buf = lopdf::content::Operation { operator: String::new(), operands: Vec::new() };
+        let mut op_buf = lopdf::content::Operation {
+            operator: String::new(),
+            operands: Vec::new(),
+        };
         while op_stream.next_into(&mut op_buf) {
             let op = &op_buf;
             // Output-budget-bewaking. Sommige "vector"-bladen hebben een piepkleine
@@ -1839,56 +2374,52 @@ impl Interpreter {
                     }
                 }
                 // Color - colorspace operators
-                "sc" | "scn" => {
-                    match op.operands.len() {
-                        3 => {
-                            state.current.fill_color = color::rgb_to_rgba8(
-                                Self::f(&op.operands[0]),
-                                Self::f(&op.operands[1]),
-                                Self::f(&op.operands[2]),
-                            );
-                        }
-                        1 => {
-                            let (r, g, b) = color::gray_to_rgb(Self::f(&op.operands[0]));
-                            state.current.fill_color = (r, g, b, 255);
-                        }
-                        4 => {
-                            let (r, g, b) = color::cmyk_to_rgb(
-                                Self::f(&op.operands[0]),
-                                Self::f(&op.operands[1]),
-                                Self::f(&op.operands[2]),
-                                Self::f(&op.operands[3]),
-                            );
-                            state.current.fill_color = (r, g, b, 255);
-                        }
-                        _ => {}
+                "sc" | "scn" => match op.operands.len() {
+                    3 => {
+                        state.current.fill_color = color::rgb_to_rgba8(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                        );
                     }
-                }
-                "SC" | "SCN" => {
-                    match op.operands.len() {
-                        3 => {
-                            state.current.stroke_color = color::rgb_to_rgba8(
-                                Self::f(&op.operands[0]),
-                                Self::f(&op.operands[1]),
-                                Self::f(&op.operands[2]),
-                            );
-                        }
-                        1 => {
-                            let (r, g, b) = color::gray_to_rgb(Self::f(&op.operands[0]));
-                            state.current.stroke_color = (r, g, b, 255);
-                        }
-                        4 => {
-                            let (r, g, b) = color::cmyk_to_rgb(
-                                Self::f(&op.operands[0]),
-                                Self::f(&op.operands[1]),
-                                Self::f(&op.operands[2]),
-                                Self::f(&op.operands[3]),
-                            );
-                            state.current.stroke_color = (r, g, b, 255);
-                        }
-                        _ => {}
+                    1 => {
+                        let (r, g, b) = color::gray_to_rgb(Self::f(&op.operands[0]));
+                        state.current.fill_color = (r, g, b, 255);
                     }
-                }
+                    4 => {
+                        let (r, g, b) = color::cmyk_to_rgb(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                        );
+                        state.current.fill_color = (r, g, b, 255);
+                    }
+                    _ => {}
+                },
+                "SC" | "SCN" => match op.operands.len() {
+                    3 => {
+                        state.current.stroke_color = color::rgb_to_rgba8(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                        );
+                    }
+                    1 => {
+                        let (r, g, b) = color::gray_to_rgb(Self::f(&op.operands[0]));
+                        state.current.stroke_color = (r, g, b, 255);
+                    }
+                    4 => {
+                        let (r, g, b) = color::cmyk_to_rgb(
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                        );
+                        state.current.stroke_color = (r, g, b, 255);
+                    }
+                    _ => {}
+                },
                 "cs" | "CS" => {}
                 // Path construction
                 "m" => {
@@ -1916,9 +2447,12 @@ impl Interpreter {
                             has_active_path = true;
                         }
                         buf.cubic_to(
-                            Self::f(&op.operands[0]), Self::f(&op.operands[1]),
-                            Self::f(&op.operands[2]), Self::f(&op.operands[3]),
-                            Self::f(&op.operands[4]), Self::f(&op.operands[5]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                            Self::f(&op.operands[4]),
+                            Self::f(&op.operands[5]),
                         );
                     }
                 }
@@ -1933,9 +2467,12 @@ impl Interpreter {
                             has_active_path = true;
                         }
                         buf.cubic_to(
-                            Self::f(&op.operands[0]), Self::f(&op.operands[1]),
-                            Self::f(&op.operands[0]), Self::f(&op.operands[1]),
-                            Self::f(&op.operands[2]), Self::f(&op.operands[3]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
                         );
                     }
                 }
@@ -1946,9 +2483,12 @@ impl Interpreter {
                             has_active_path = true;
                         }
                         buf.cubic_to(
-                            Self::f(&op.operands[0]), Self::f(&op.operands[1]),
-                            Self::f(&op.operands[2]), Self::f(&op.operands[3]),
-                            Self::f(&op.operands[2]), Self::f(&op.operands[3]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
                         );
                     }
                 }
@@ -1959,8 +2499,10 @@ impl Interpreter {
                             has_active_path = true;
                         }
                         buf.rect(
-                            Self::f(&op.operands[0]), Self::f(&op.operands[1]),
-                            Self::f(&op.operands[2]), Self::f(&op.operands[3]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
                         );
                     }
                 }
@@ -2105,7 +2647,9 @@ impl Interpreter {
                             // document-scoped cache. Cheap for shared fonts
                             // already seen on previous pages.
                             if let Some(font_entry) = font_registry.get_font(
-                                &text_state.current_font_name, doc, resources,
+                                &text_state.current_font_name,
+                                doc,
+                                resources,
                             ) {
                                 // Capture position before rendering for text span
                                 let start_x = text_state.render_x();
@@ -2116,32 +2660,52 @@ impl Interpreter {
                                         if !decoded.trim().is_empty() {
                                             let pre_x = text_state.tm[4];
                                             crate::text_renderer::render_cid_text_glyphs(
-                                                bytes, &*font_entry, text_state.font_size,
-                                                text_state.horizontal_scaling, text_state.char_spacing,
-                                                text_state.word_spacing, text_state.rise,
-                                                &mut text_state.tm, rgba, buf,
+                                                bytes,
+                                                &*font_entry,
+                                                text_state.font_size,
+                                                text_state.horizontal_scaling,
+                                                text_state.char_spacing,
+                                                text_state.word_spacing,
+                                                text_state.rise,
+                                                &mut text_state.tm,
+                                                rgba,
+                                                buf,
                                             );
                                             let width = (text_state.tm[4] - pre_x).abs();
                                             spans.push(TextSpan {
-                                                x: start_x, y: start_y,
-                                                width, height: text_state.font_size.abs(),
+                                                x: start_x,
+                                                y: start_y,
+                                                width,
+                                                height: text_state.font_size.abs(),
                                                 font_size: text_state.font_size.abs(),
                                                 text: decoded,
                                             });
                                         } else {
                                             crate::text_renderer::render_cid_text_glyphs(
-                                                bytes, &*font_entry, text_state.font_size,
-                                                text_state.horizontal_scaling, text_state.char_spacing,
-                                                text_state.word_spacing, text_state.rise,
-                                                &mut text_state.tm, rgba, buf,
+                                                bytes,
+                                                &*font_entry,
+                                                text_state.font_size,
+                                                text_state.horizontal_scaling,
+                                                text_state.char_spacing,
+                                                text_state.word_spacing,
+                                                text_state.rise,
+                                                &mut text_state.tm,
+                                                rgba,
+                                                buf,
                                             );
                                         }
                                     } else {
                                         crate::text_renderer::render_cid_text_glyphs(
-                                            bytes, &*font_entry, text_state.font_size,
-                                            text_state.horizontal_scaling, text_state.char_spacing,
-                                            text_state.word_spacing, text_state.rise,
-                                            &mut text_state.tm, rgba, buf,
+                                            bytes,
+                                            &*font_entry,
+                                            text_state.font_size,
+                                            text_state.horizontal_scaling,
+                                            text_state.char_spacing,
+                                            text_state.word_spacing,
+                                            text_state.rise,
+                                            &mut text_state.tm,
+                                            rgba,
+                                            buf,
                                         );
                                     }
                                 } else if font_entry.parsed.is_some() {
@@ -2150,32 +2714,52 @@ impl Interpreter {
                                         if !decoded.trim().is_empty() {
                                             let pre_x = text_state.tm[4];
                                             crate::text_renderer::render_text_glyphs(
-                                                bytes, &*font_entry, text_state.font_size,
-                                                text_state.horizontal_scaling, text_state.char_spacing,
-                                                text_state.word_spacing, text_state.rise,
-                                                &mut text_state.tm, rgba, buf,
+                                                bytes,
+                                                &*font_entry,
+                                                text_state.font_size,
+                                                text_state.horizontal_scaling,
+                                                text_state.char_spacing,
+                                                text_state.word_spacing,
+                                                text_state.rise,
+                                                &mut text_state.tm,
+                                                rgba,
+                                                buf,
                                             );
                                             let width = (text_state.tm[4] - pre_x).abs();
                                             spans.push(TextSpan {
-                                                x: start_x, y: start_y,
-                                                width, height: text_state.font_size.abs(),
+                                                x: start_x,
+                                                y: start_y,
+                                                width,
+                                                height: text_state.font_size.abs(),
                                                 font_size: text_state.font_size.abs(),
                                                 text: decoded,
                                             });
                                         } else {
                                             crate::text_renderer::render_text_glyphs(
-                                                bytes, &*font_entry, text_state.font_size,
-                                                text_state.horizontal_scaling, text_state.char_spacing,
-                                                text_state.word_spacing, text_state.rise,
-                                                &mut text_state.tm, rgba, buf,
+                                                bytes,
+                                                &*font_entry,
+                                                text_state.font_size,
+                                                text_state.horizontal_scaling,
+                                                text_state.char_spacing,
+                                                text_state.word_spacing,
+                                                text_state.rise,
+                                                &mut text_state.tm,
+                                                rgba,
+                                                buf,
                                             );
                                         }
                                     } else {
                                         crate::text_renderer::render_text_glyphs(
-                                            bytes, &*font_entry, text_state.font_size,
-                                            text_state.horizontal_scaling, text_state.char_spacing,
-                                            text_state.word_spacing, text_state.rise,
-                                            &mut text_state.tm, rgba, buf,
+                                            bytes,
+                                            &*font_entry,
+                                            text_state.font_size,
+                                            text_state.horizontal_scaling,
+                                            text_state.char_spacing,
+                                            text_state.word_spacing,
+                                            text_state.rise,
+                                            &mut text_state.tm,
+                                            rgba,
+                                            buf,
                                         );
                                     }
                                 }
@@ -2192,15 +2776,18 @@ impl Interpreter {
                         // Fetch the font ONCE for the whole TJ array — Arc
                         // makes it trivial to hold across the loop instead
                         // of re-fetching per string like the old code did.
-                        let font_entry_opt = font_registry.get_font(
-                            &text_state.current_font_name, doc, resources,
-                        );
+                        let font_entry_opt =
+                            font_registry.get_font(&text_state.current_font_name, doc, resources);
                         if let Some(font_entry) = font_entry_opt {
                             if font_entry.parsed.is_some() {
                                 let is_cid = font_entry.is_cid;
                                 // For TJ arrays, collect all string parts into one span per run
                                 let collecting = text_spans.is_some();
-                                let mut run_text = if collecting { String::new() } else { String::new() };
+                                let mut run_text = if collecting {
+                                    String::new()
+                                } else {
+                                    String::new()
+                                };
                                 let run_start_x = text_state.render_x();
                                 let run_start_y = text_state.render_y();
                                 let pre_x = text_state.tm[4];
@@ -2211,24 +2798,44 @@ impl Interpreter {
                                             if !bytes.is_empty() {
                                                 if collecting {
                                                     if is_cid {
-                                                        run_text.push_str(&Self::decode_cid_text(bytes, &*font_entry));
+                                                        run_text.push_str(&Self::decode_cid_text(
+                                                            bytes,
+                                                            &*font_entry,
+                                                        ));
                                                     } else {
-                                                        run_text.push_str(&Self::decode_simple_text(bytes, &*font_entry));
+                                                        run_text.push_str(
+                                                            &Self::decode_simple_text(
+                                                                bytes,
+                                                                &*font_entry,
+                                                            ),
+                                                        );
                                                     }
                                                 }
                                                 if is_cid {
                                                     crate::text_renderer::render_cid_text_glyphs(
-                                                        bytes, &*font_entry, text_state.font_size,
-                                                        text_state.horizontal_scaling, text_state.char_spacing,
-                                                        text_state.word_spacing, text_state.rise,
-                                                        &mut text_state.tm, rgba, buf,
+                                                        bytes,
+                                                        &*font_entry,
+                                                        text_state.font_size,
+                                                        text_state.horizontal_scaling,
+                                                        text_state.char_spacing,
+                                                        text_state.word_spacing,
+                                                        text_state.rise,
+                                                        &mut text_state.tm,
+                                                        rgba,
+                                                        buf,
                                                     );
                                                 } else {
                                                     crate::text_renderer::render_text_glyphs(
-                                                        bytes, &*font_entry, text_state.font_size,
-                                                        text_state.horizontal_scaling, text_state.char_spacing,
-                                                        text_state.word_spacing, text_state.rise,
-                                                        &mut text_state.tm, rgba, buf,
+                                                        bytes,
+                                                        &*font_entry,
+                                                        text_state.font_size,
+                                                        text_state.horizontal_scaling,
+                                                        text_state.char_spacing,
+                                                        text_state.word_spacing,
+                                                        text_state.rise,
+                                                        &mut text_state.tm,
+                                                        rgba,
+                                                        buf,
                                                     );
                                                 }
                                             }
@@ -2245,8 +2852,10 @@ impl Interpreter {
                                     if !run_text.trim().is_empty() {
                                         let width = (text_state.tm[4] - pre_x).abs();
                                         spans.push(TextSpan {
-                                            x: run_start_x, y: run_start_y,
-                                            width, height: text_state.font_size.abs(),
+                                            x: run_start_x,
+                                            y: run_start_y,
+                                            width,
+                                            height: text_state.font_size.abs(),
                                             font_size: text_state.font_size.abs(),
                                             text: run_text,
                                         });
@@ -2264,7 +2873,9 @@ impl Interpreter {
                             let (r, g, b, a) = state.current.fill_color;
                             let rgba = Self::color_to_u32(r, g, b, a);
                             if let Some(font_entry) = font_registry.get_font(
-                                &text_state.current_font_name, doc, resources,
+                                &text_state.current_font_name,
+                                doc,
+                                resources,
                             ) {
                                 let start_x = text_state.render_x();
                                 let start_y = text_state.render_y();
@@ -2272,26 +2883,40 @@ impl Interpreter {
                                     let decoded = Self::decode_simple_text(bytes, &*font_entry);
                                     let pre_x = text_state.tm[4];
                                     crate::text_renderer::render_text_glyphs(
-                                        bytes, &*font_entry, text_state.font_size,
-                                        text_state.horizontal_scaling, text_state.char_spacing,
-                                        text_state.word_spacing, text_state.rise,
-                                        &mut text_state.tm, rgba, buf,
+                                        bytes,
+                                        &*font_entry,
+                                        text_state.font_size,
+                                        text_state.horizontal_scaling,
+                                        text_state.char_spacing,
+                                        text_state.word_spacing,
+                                        text_state.rise,
+                                        &mut text_state.tm,
+                                        rgba,
+                                        buf,
                                     );
                                     if !decoded.trim().is_empty() {
                                         let width = (text_state.tm[4] - pre_x).abs();
                                         spans.push(TextSpan {
-                                            x: start_x, y: start_y,
-                                            width, height: text_state.font_size.abs(),
+                                            x: start_x,
+                                            y: start_y,
+                                            width,
+                                            height: text_state.font_size.abs(),
                                             font_size: text_state.font_size.abs(),
                                             text: decoded,
                                         });
                                     }
                                 } else {
                                     crate::text_renderer::render_text_glyphs(
-                                        bytes, &*font_entry, text_state.font_size,
-                                        text_state.horizontal_scaling, text_state.char_spacing,
-                                        text_state.word_spacing, text_state.rise,
-                                        &mut text_state.tm, rgba, buf,
+                                        bytes,
+                                        &*font_entry,
+                                        text_state.font_size,
+                                        text_state.horizontal_scaling,
+                                        text_state.char_spacing,
+                                        text_state.word_spacing,
+                                        text_state.rise,
+                                        &mut text_state.tm,
+                                        rgba,
+                                        buf,
                                     );
                                 }
                             }
@@ -2309,7 +2934,9 @@ impl Interpreter {
                                 let (r, g, b, a) = state.current.fill_color;
                                 let rgba = Self::color_to_u32(r, g, b, a);
                                 if let Some(font_entry) = font_registry.get_font(
-                                    &text_state.current_font_name, doc, resources,
+                                    &text_state.current_font_name,
+                                    doc,
+                                    resources,
                                 ) {
                                     let start_x = text_state.render_x();
                                     let start_y = text_state.render_y();
@@ -2317,26 +2944,40 @@ impl Interpreter {
                                         let decoded = Self::decode_simple_text(bytes, &*font_entry);
                                         let pre_x = text_state.tm[4];
                                         crate::text_renderer::render_text_glyphs(
-                                            bytes, &*font_entry, text_state.font_size,
-                                            text_state.horizontal_scaling, text_state.char_spacing,
-                                            text_state.word_spacing, text_state.rise,
-                                            &mut text_state.tm, rgba, buf,
+                                            bytes,
+                                            &*font_entry,
+                                            text_state.font_size,
+                                            text_state.horizontal_scaling,
+                                            text_state.char_spacing,
+                                            text_state.word_spacing,
+                                            text_state.rise,
+                                            &mut text_state.tm,
+                                            rgba,
+                                            buf,
                                         );
                                         if !decoded.trim().is_empty() {
                                             let width = (text_state.tm[4] - pre_x).abs();
                                             spans.push(TextSpan {
-                                                x: start_x, y: start_y,
-                                                width, height: text_state.font_size.abs(),
+                                                x: start_x,
+                                                y: start_y,
+                                                width,
+                                                height: text_state.font_size.abs(),
                                                 font_size: text_state.font_size.abs(),
                                                 text: decoded,
                                             });
                                         }
                                     } else {
                                         crate::text_renderer::render_text_glyphs(
-                                            bytes, &*font_entry, text_state.font_size,
-                                            text_state.horizontal_scaling, text_state.char_spacing,
-                                            text_state.word_spacing, text_state.rise,
-                                            &mut text_state.tm, rgba, buf,
+                                            bytes,
+                                            &*font_entry,
+                                            text_state.font_size,
+                                            text_state.horizontal_scaling,
+                                            text_state.char_spacing,
+                                            text_state.word_spacing,
+                                            text_state.rise,
+                                            &mut text_state.tm,
+                                            rgba,
+                                            buf,
                                         );
                                     }
                                 }
@@ -2371,13 +3012,22 @@ impl Interpreter {
                     }
                 }
                 "Do" => {
-                    Self::handle_do_extract_with_text(&op.operands, buf, state, doc, resources, font_registry, text_spans.as_deref_mut());
+                    Self::handle_do_extract_with_text(
+                        &op.operands,
+                        buf,
+                        state,
+                        doc,
+                        resources,
+                        font_registry,
+                        text_spans.as_deref_mut(),
+                    );
                 }
                 // Inline image: de BI-dict-paren komen als operanden van de
                 // ID-op binnen; de rauwe data-span levert de lexer.
                 "ID" => {
                     if let Some((s, e)) = op_stream.inline_image_span() {
-                        let data = &content_bytes[s.min(content_bytes.len())..e.min(content_bytes.len())];
+                        let data =
+                            &content_bytes[s.min(content_bytes.len())..e.min(content_bytes.len())];
                         if !Self::handle_inline_image_extract(&op.operands, data, buf) {
                             inline_skipped += 1;
                         }
@@ -2446,9 +3096,15 @@ impl Interpreter {
                         Object::Array(arr) if arr.is_empty() => None,
                         Object::Array(arr) if arr.len() == 1 => match &arr[0] {
                             Object::Name(n) => Some(n.clone()),
-                            _ => { unsupported = true; None }
+                            _ => {
+                                unsupported = true;
+                                None
+                            }
                         },
-                        _ => { unsupported = true; None }
+                        _ => {
+                            unsupported = true;
+                            None
+                        }
                     };
                 }
                 b"D" | b"Decode" => unsupported = true, // kleur-inversies: overslaan
@@ -2464,7 +3120,10 @@ impl Interpreter {
         let flate = match filter.as_deref() {
             None => false,
             Some(b"Fl") | Some(b"FlateDecode") => true,
-            Some(_) => { unsupported = true; false }
+            Some(_) => {
+                unsupported = true;
+                false
+            }
         };
         if unsupported
             || bpc != 8
@@ -2621,7 +3280,10 @@ impl Interpreter {
             Some(Object::Name(n)) => n,
             _ => return,
         };
-        let xobj_dict = match resources.get(b"XObject").and_then(|o| Self::resolve_dict(o, doc)) {
+        let xobj_dict = match resources
+            .get(b"XObject")
+            .and_then(|o| Self::resolve_dict(o, doc))
+        {
             Ok(d) => d,
             _ => return,
         };
@@ -2641,7 +3303,11 @@ impl Interpreter {
             Object::Stream(ref s) => s,
             _ => return,
         };
-        let subtype = stream.dict.get(b"Subtype").ok().and_then(|s| s.as_name().ok());
+        let subtype = stream
+            .dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|s| s.as_name().ok());
 
         if subtype == Some(b"Image" as &[u8]) {
             Self::handle_image_xobject(stream, buf, doc);
@@ -2683,7 +3349,15 @@ impl Interpreter {
         let form_resources = Self::extract_form_resources(&stream.dict, doc);
         let res = form_resources.as_ref().unwrap_or(resources);
         if let Ok(content_bytes) = stream.decompressed_content() {
-            let _ = Self::extract_commands_with_text(&content_bytes, buf, state, doc, res, font_registry, text_spans);
+            let _ = Self::extract_commands_with_text(
+                &content_bytes,
+                buf,
+                state,
+                doc,
+                res,
+                font_registry,
+                text_spans,
+            );
         }
         state.restore();
         buf.restore_state();
@@ -2702,10 +3376,13 @@ impl Interpreter {
         let dict = &stream.dict;
         let filters: Vec<String> = match dict.get(b"Filter").ok() {
             Some(Object::Name(n)) => vec![String::from_utf8_lossy(n).into_owned()],
-            Some(Object::Array(arr)) => arr.iter().filter_map(|o| match o {
-                Object::Name(n) => Some(String::from_utf8_lossy(n).into_owned()),
-                _ => None,
-            }).collect(),
+            Some(Object::Array(arr)) => arr
+                .iter()
+                .filter_map(|o| match o {
+                    Object::Name(n) => Some(String::from_utf8_lossy(n).into_owned()),
+                    _ => None,
+                })
+                .collect(),
             _ => Vec::new(),
         };
 
@@ -2720,7 +3397,11 @@ impl Interpreter {
             return None;
         }
 
-        let t_flate = if prof { Some(std::time::Instant::now()) } else { None };
+        let t_flate = if prof {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         let mut decoder = flate2::read::ZlibDecoder::new(stream.content.as_slice());
         let mut decoded = Vec::with_capacity(stream.content.len() * 4);
         if decoder.read_to_end(&mut decoded).is_err() {
@@ -2737,24 +3418,52 @@ impl Interpreter {
         });
         let predictor = params
             .and_then(|p| p.get(b"Predictor").ok())
-            .and_then(|o| if let Object::Integer(i) = o { Some(*i) } else { None })
+            .and_then(|o| {
+                if let Object::Integer(i) = o {
+                    Some(*i)
+                } else {
+                    None
+                }
+            })
             .unwrap_or(1);
 
         if (10..=15).contains(&predictor) {
-            let t_pred = if prof { Some(std::time::Instant::now()) } else { None };
+            let t_pred = if prof {
+                Some(std::time::Instant::now())
+            } else {
+                None
+            };
             let columns = params
                 .and_then(|p| p.get(b"Columns").ok())
-                .and_then(|o| if let Object::Integer(i) = o { Some(*i as usize) } else { None })
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i as usize)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(1)
                 .max(1);
             let colors = params
                 .and_then(|p| p.get(b"Colors").ok())
-                .and_then(|o| if let Object::Integer(i) = o { Some(*i as usize) } else { None })
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i as usize)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(1)
                 .max(1);
             let bpc = params
                 .and_then(|p| p.get(b"BitsPerComponent").ok())
-                .and_then(|o| if let Object::Integer(i) = o { Some(*i as usize) } else { None })
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i as usize)
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or(8)
                 .max(8);
             let bytes_per_pixel = (colors * bpc) / 8;
@@ -2774,10 +3483,12 @@ impl Interpreter {
             let bpp = bytes_per_pixel;
             for r in 0..n_rows {
                 let row_start = r * stride;
-                if row_start + stride > decoded.len() { break; }
+                if row_start + stride > decoded.len() {
+                    break;
+                }
                 let filter_tag = decoded[row_start];
-                let row = &decoded[row_start + 1 .. row_start + stride];
-                let cur = &mut out[r * row_bytes .. r * row_bytes + row_bytes];
+                let row = &decoded[row_start + 1..row_start + stride];
+                let cur = &mut out[r * row_bytes..r * row_bytes + row_bytes];
                 match filter_tag {
                     0 => {
                         cur.copy_from_slice(row);
@@ -2833,13 +3544,19 @@ impl Interpreter {
                             let pa = (p - left).abs();
                             let pb = (p - up).abs();
                             let pc = (p - upleft).abs();
-                            let pred = if pa <= pb && pa <= pc { left }
-                                       else if pb <= pc { up }
-                                       else { upleft };
+                            let pred = if pa <= pb && pa <= pc {
+                                left
+                            } else if pb <= pc {
+                                up
+                            } else {
+                                upleft
+                            };
                             cur[i] = row[i].wrapping_add(pred as u8);
                         }
                     }
-                    _ => { cur.copy_from_slice(row); }
+                    _ => {
+                        cur.copy_from_slice(row);
+                    }
                 }
                 prev_row.copy_from_slice(cur);
             }
@@ -2855,29 +3572,35 @@ impl Interpreter {
     /// Handle an Image XObject: decode image data and emit DrawImage command.
     /// PDF images live in a 1×1 unit square — the CTM (already on the canvas stack
     /// via cm operators) scales them to the correct page position and size.
-    fn handle_image_xobject(
-        stream: &lopdf::Stream,
-        buf: &mut DrawCommandBuffer,
-        doc: &Document,
-    ) {
+    fn handle_image_xobject(stream: &lopdf::Stream, buf: &mut DrawCommandBuffer, doc: &Document) {
         let dict = &stream.dict;
 
-        let width = dict.get(b"Width")
+        let width = dict
+            .get(b"Width")
             .ok()
             .and_then(|o| match o {
                 Object::Integer(i) => Some(*i as u16),
                 Object::Reference(id) => doc.get_object(*id).ok().and_then(|o| {
-                    if let Object::Integer(i) = o { Some(*i as u16) } else { None }
+                    if let Object::Integer(i) = o {
+                        Some(*i as u16)
+                    } else {
+                        None
+                    }
                 }),
                 _ => None,
             })
             .unwrap_or(0);
-        let height = dict.get(b"Height")
+        let height = dict
+            .get(b"Height")
             .ok()
             .and_then(|o| match o {
                 Object::Integer(i) => Some(*i as u16),
                 Object::Reference(id) => doc.get_object(*id).ok().and_then(|o| {
-                    if let Object::Integer(i) = o { Some(*i as u16) } else { None }
+                    if let Object::Integer(i) = o {
+                        Some(*i as u16)
+                    } else {
+                        None
+                    }
                 }),
                 _ => None,
             })
@@ -2899,7 +3622,11 @@ impl Interpreter {
             let stream = match o {
                 Object::Stream(s) => Some(s.clone()),
                 Object::Reference(id) => doc.get_object(*id).ok().and_then(|obj| {
-                    if let Object::Stream(s) = obj { Some(s.clone()) } else { None }
+                    if let Object::Stream(s) = obj {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
                 }),
                 _ => None,
             }?;
@@ -2931,7 +3658,11 @@ impl Interpreter {
             match o {
                 Object::Name(n) => Some(n.clone()),
                 Object::Reference(id) => doc.get_object(*id).ok().and_then(|o| {
-                    if let Object::Name(n) = o { Some(n.clone()) } else { None }
+                    if let Object::Name(n) = o {
+                        Some(n.clone())
+                    } else {
+                        None
+                    }
                 }),
                 Object::Array(arr) => {
                     // Multiple filters — use the last one (outermost)
@@ -2950,8 +3681,11 @@ impl Interpreter {
             // JPEG — send raw bytes directly (browser decodes via hardware-accelerated createImageBitmap)
             // stream.content contains the raw JPEG bytes before lopdf's decompression
             let raw_content = &stream.content;
-            if !raw_content.is_empty() && raw_content.len() > 2
-                && raw_content[0] == 0xFF && raw_content[1] == 0xD8 {
+            if !raw_content.is_empty()
+                && raw_content.len() > 2
+                && raw_content[0] == 0xFF
+                && raw_content[1] == 0xD8
+            {
                 buf.save_state();
                 buf.transform(1.0, 0.0, 0.0, -1.0, 0.0, 1.0); // flip Y (images are top-down)
                 buf.draw_image(width, height, raw_content);
@@ -2973,7 +3707,8 @@ impl Interpreter {
         }
 
         // For FlateDecode or no filter: decompress and encode as PNG
-        let bits = dict.get(b"BitsPerComponent")
+        let bits = dict
+            .get(b"BitsPerComponent")
             .ok()
             .and_then(|o| match o {
                 Object::Integer(i) => Some(*i as u8),
@@ -3016,9 +3751,7 @@ impl Interpreter {
                     let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
                     let mut i = 0;
                     let n_pixels = width as usize * height as usize;
-                    let pm = |c: u8, a: u8| -> u8 {
-                        ((c as u16 * a as u16 + 127) / 255) as u8
-                    };
+                    let pm = |c: u8, a: u8| -> u8 { ((c as u16 * a as u16 + 127) / 255) as u8 };
                     let pal_chunk = components as usize;
                     let mut pal_buf: [u8; 4] = [0; 4];
                     for px in 0..n_pixels {
@@ -3034,14 +3767,18 @@ impl Interpreter {
                             let pi = raw_pixels.get(i).copied().unwrap_or(0) as usize;
                             let p_off = pi * pal_chunk;
                             if p_off + pal_chunk <= pal.len() {
-                                for j in 0..pal_chunk { pal_buf[j] = pal[p_off + j]; }
+                                for j in 0..pal_chunk {
+                                    pal_buf[j] = pal[p_off + j];
+                                }
                             } else {
-                                for j in 0..pal_chunk { pal_buf[j] = 0; }
+                                for j in 0..pal_chunk {
+                                    pal_buf[j] = 0;
+                                }
                             }
                             i += stream_components as usize;
                             &pal_buf[..pal_chunk]
                         } else {
-                            let s = &raw_pixels[i .. i + stream_components as usize];
+                            let s = &raw_pixels[i..i + stream_components as usize];
                             i += stream_components as usize;
                             s
                         };
@@ -3056,7 +3793,12 @@ impl Interpreter {
                                 let r = comp_slice[0];
                                 let g = comp_slice[1];
                                 let b = comp_slice[2];
-                                rgba.extend_from_slice(&[pm(r, alpha), pm(g, alpha), pm(b, alpha), alpha]);
+                                rgba.extend_from_slice(&[
+                                    pm(r, alpha),
+                                    pm(g, alpha),
+                                    pm(b, alpha),
+                                    alpha,
+                                ]);
                             }
                             4 => {
                                 // CMYK → RGB (simple conversion)
@@ -3067,7 +3809,12 @@ impl Interpreter {
                                 let r = (255.0 * (1.0 - c) * (1.0 - k)) as u8;
                                 let g = (255.0 * (1.0 - m) * (1.0 - k)) as u8;
                                 let b = (255.0 * (1.0 - y) * (1.0 - k)) as u8;
-                                rgba.extend_from_slice(&[pm(r, alpha), pm(g, alpha), pm(b, alpha), alpha]);
+                                rgba.extend_from_slice(&[
+                                    pm(r, alpha),
+                                    pm(g, alpha),
+                                    pm(b, alpha),
+                                    alpha,
+                                ]);
                             }
                             _ => {
                                 rgba.extend_from_slice(&[0, 0, 0, alpha]);
@@ -3131,7 +3878,10 @@ impl Interpreter {
         }
     }
 
-    fn resolve_dict<'a>(obj: &'a Object, doc: &'a Document) -> Result<&'a Dictionary, lopdf::Error> {
+    fn resolve_dict<'a>(
+        obj: &'a Object,
+        doc: &'a Document,
+    ) -> Result<&'a Dictionary, lopdf::Error> {
         match obj {
             Object::Dictionary(d) => Ok(d),
             Object::Reference(id) => {
@@ -3145,9 +3895,10 @@ impl Interpreter {
     fn extract_form_resources(dict: &Dictionary, doc: &Document) -> Option<Dictionary> {
         let res_obj = dict.get(b"Resources").ok()?;
         match res_obj {
-            Object::Reference(rid) => {
-                doc.get_object(*rid).ok().and_then(|o| o.as_dict().ok().cloned())
-            }
+            Object::Reference(rid) => doc
+                .get_object(*rid)
+                .ok()
+                .and_then(|o| o.as_dict().ok().cloned()),
             Object::Dictionary(d) => Some(d.clone()),
             _ => None,
         }
@@ -3160,7 +3911,9 @@ impl Interpreter {
     /// is implicitly clipped to this rectangle in form-coordinate space.
     fn extract_form_bbox(dict: &Dictionary) -> Option<(f32, f32, f32, f32)> {
         let arr = dict.get(b"BBox").ok()?.as_array().ok()?;
-        if arr.len() < 4 { return None; }
+        if arr.len() < 4 {
+            return None;
+        }
         let x0 = Self::f(&arr[0]);
         let y0 = Self::f(&arr[1]);
         let x1 = Self::f(&arr[2]);
@@ -3216,18 +3969,19 @@ impl Interpreter {
         // Extract the form's Matrix (defaults to identity).
         let (ma, mb, mc, md, mtx, mty) = match ap_stream.dict.get(b"Matrix") {
             Ok(Object::Array(arr)) if arr.len() >= 6 => (
-                Self::f(&arr[0]), Self::f(&arr[1]),
-                Self::f(&arr[2]), Self::f(&arr[3]),
-                Self::f(&arr[4]), Self::f(&arr[5]),
+                Self::f(&arr[0]),
+                Self::f(&arr[1]),
+                Self::f(&arr[2]),
+                Self::f(&arr[3]),
+                Self::f(&arr[4]),
+                Self::f(&arr[5]),
             ),
             _ => (1.0, 0.0, 0.0, 1.0, 0.0, 0.0),
         };
 
         // Step 1: transform BBox by Matrix to get axis-aligned T.
         let (bx0, by0, bx1, by1) = bbox;
-        let corners = [
-            (bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1),
-        ];
+        let corners = [(bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)];
         let mut tx_min = f32::INFINITY;
         let mut ty_min = f32::INFINITY;
         let mut tx_max = f32::NEG_INFINITY;
@@ -3317,9 +4071,14 @@ impl Interpreter {
         use std::io::Read;
         let filters = match stream.dict.get(b"Filter") {
             Ok(Object::Name(n)) => vec![String::from_utf8_lossy(n).to_string()],
-            Ok(Object::Array(arr)) => arr.iter().filter_map(|o| {
-                o.as_name().ok().map(|n| String::from_utf8_lossy(n).to_string())
-            }).collect(),
+            Ok(Object::Array(arr)) => arr
+                .iter()
+                .filter_map(|o| {
+                    o.as_name()
+                        .ok()
+                        .map(|n| String::from_utf8_lossy(n).to_string())
+                })
+                .collect(),
             _ => Vec::new(),
         };
         if filters.is_empty() {
@@ -3350,7 +4109,10 @@ impl Interpreter {
 
         // Streamende lexer i.p.v. Content::decode — zie execute_internal.
         let mut op_stream = crate::content_stream::ContentStreamIter::new(content_bytes);
-        let mut op_buf = lopdf::content::Operation { operator: String::new(), operands: Vec::new() };
+        let mut op_buf = lopdf::content::Operation {
+            operator: String::new(),
+            operands: Vec::new(),
+        };
         while op_stream.next_into(&mut op_buf) {
             let op = &op_buf;
             match op.operator.as_str() {
@@ -3360,9 +4122,12 @@ impl Interpreter {
                 "cm" => {
                     if op.operands.len() >= 6 {
                         state.concat_matrix(
-                            Self::f(&op.operands[0]), Self::f(&op.operands[1]),
-                            Self::f(&op.operands[2]), Self::f(&op.operands[3]),
-                            Self::f(&op.operands[4]), Self::f(&op.operands[5]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                            Self::f(&op.operands[4]),
+                            Self::f(&op.operands[5]),
                         );
                     }
                 }
@@ -3379,11 +4144,14 @@ impl Interpreter {
                     }
                 }
                 "TL" => {
-                    if let Some(v) = op.operands.first() { text_state.leading = Self::f(v); }
+                    if let Some(v) = op.operands.first() {
+                        text_state.leading = Self::f(v);
+                    }
                 }
                 "Td" => {
                     if op.operands.len() >= 2 {
-                        text_state.translate_line(Self::f(&op.operands[0]), Self::f(&op.operands[1]));
+                        text_state
+                            .translate_line(Self::f(&op.operands[0]), Self::f(&op.operands[1]));
                     }
                 }
                 "TD" => {
@@ -3397,31 +4165,47 @@ impl Interpreter {
                 "Tm" => {
                     if op.operands.len() >= 6 {
                         text_state.set_text_matrix(
-                            Self::f(&op.operands[0]), Self::f(&op.operands[1]),
-                            Self::f(&op.operands[2]), Self::f(&op.operands[3]),
-                            Self::f(&op.operands[4]), Self::f(&op.operands[5]),
+                            Self::f(&op.operands[0]),
+                            Self::f(&op.operands[1]),
+                            Self::f(&op.operands[2]),
+                            Self::f(&op.operands[3]),
+                            Self::f(&op.operands[4]),
+                            Self::f(&op.operands[5]),
                         );
                     }
                 }
                 "T*" => text_state.translate_line(0.0, -text_state.leading),
                 "Tc" => {
-                    if let Some(v) = op.operands.first() { text_state.char_spacing = Self::f(v); }
+                    if let Some(v) = op.operands.first() {
+                        text_state.char_spacing = Self::f(v);
+                    }
                 }
                 "Tw" => {
-                    if let Some(v) = op.operands.first() { text_state.word_spacing = Self::f(v); }
+                    if let Some(v) = op.operands.first() {
+                        text_state.word_spacing = Self::f(v);
+                    }
                 }
                 "Tz" => {
-                    if let Some(v) = op.operands.first() { text_state.horizontal_scaling = Self::f(v) / 100.0; }
+                    if let Some(v) = op.operands.first() {
+                        text_state.horizontal_scaling = Self::f(v) / 100.0;
+                    }
                 }
                 "Ts" => {
-                    if let Some(v) = op.operands.first() { text_state.rise = Self::f(v); }
+                    if let Some(v) = op.operands.first() {
+                        text_state.rise = Self::f(v);
+                    }
                 }
                 "Tj" => {
                     if let Some(Object::String(bytes, _)) = op.operands.first() {
                         if !bytes.is_empty() {
                             Self::emit_text_span(
-                                bytes, &mut text_state, font_registry, doc, resources,
-                                state, spans,
+                                bytes,
+                                &mut text_state,
+                                font_registry,
+                                doc,
+                                resources,
+                                state,
+                                spans,
                             );
                         }
                     }
@@ -3433,8 +4217,13 @@ impl Interpreter {
                                 Object::String(bytes, _) => {
                                     if !bytes.is_empty() {
                                         Self::emit_text_span(
-                                            bytes, &mut text_state, font_registry, doc, resources,
-                                            state, spans,
+                                            bytes,
+                                            &mut text_state,
+                                            font_registry,
+                                            doc,
+                                            resources,
+                                            state,
+                                            spans,
                                         );
                                     }
                                 }
@@ -3451,8 +4240,13 @@ impl Interpreter {
                     if let Some(Object::String(bytes, _)) = op.operands.first() {
                         if !bytes.is_empty() {
                             Self::emit_text_span(
-                                bytes, &mut text_state, font_registry, doc, resources,
-                                state, spans,
+                                bytes,
+                                &mut text_state,
+                                font_registry,
+                                doc,
+                                resources,
+                                state,
+                                spans,
                             );
                         }
                     }
@@ -3465,8 +4259,13 @@ impl Interpreter {
                         if let Object::String(bytes, _) = &op.operands[2] {
                             if !bytes.is_empty() {
                                 Self::emit_text_span(
-                                    bytes, &mut text_state, font_registry, doc, resources,
-                                    state, spans,
+                                    bytes,
+                                    &mut text_state,
+                                    font_registry,
+                                    doc,
+                                    resources,
+                                    state,
+                                    spans,
                                 );
                             }
                         }
@@ -3474,7 +4273,14 @@ impl Interpreter {
                 }
                 // Form XObjects can contain nested text — recurse into them.
                 "Do" => {
-                    Self::handle_do_text_only(&op.operands, spans, state, doc, resources, font_registry);
+                    Self::handle_do_text_only(
+                        &op.operands,
+                        spans,
+                        state,
+                        doc,
+                        resources,
+                        font_registry,
+                    );
                 }
                 _ => {} // skip path/color/image/everything else
             }
@@ -3523,8 +4329,13 @@ impl Interpreter {
                         decoded.push('\u{FFFD}');
                     }
                     let w0 = 0.5; // approximate em width — good enough for hit-testing
-                    let tw = if cid == 32 || cid == 3 { text_state.word_spacing } else { 0.0 };
-                    let tx = (w0 * text_state.font_size + text_state.char_spacing + tw) * text_state.horizontal_scaling;
+                    let tw = if cid == 32 || cid == 3 {
+                        text_state.word_spacing
+                    } else {
+                        0.0
+                    };
+                    let tx = (w0 * text_state.font_size + text_state.char_spacing + tw)
+                        * text_state.horizontal_scaling;
                     total_advance_text_units += tx;
                     text_state.tm[4] += tx * text_state.tm[0];
                     text_state.tm[5] += tx * text_state.tm[1];
@@ -3545,14 +4356,27 @@ impl Interpreter {
                     decoded.push(ch);
 
                     let w0 = if let Some(parsed) = parsed_opt {
-                        if let Some(gid) = crate::fonts::FontRegistry::char_to_glyph_id(font_entry, byte) {
+                        if let Some(gid) =
+                            crate::fonts::FontRegistry::char_to_glyph_id(font_entry, byte)
+                        {
                             if let Some(g) = parsed.glyphs.get(&gid) {
                                 g.advance_width / parsed.units_per_em as f32
-                            } else { 0.5 }
-                        } else { 0.5 }
-                    } else { 0.5 };
-                    let tw = if byte == 32 { text_state.word_spacing } else { 0.0 };
-                    let tx = (w0 * text_state.font_size + text_state.char_spacing + tw) * text_state.horizontal_scaling;
+                            } else {
+                                0.5
+                            }
+                        } else {
+                            0.5
+                        }
+                    } else {
+                        0.5
+                    };
+                    let tw = if byte == 32 {
+                        text_state.word_spacing
+                    } else {
+                        0.0
+                    };
+                    let tx = (w0 * text_state.font_size + text_state.char_spacing + tw)
+                        * text_state.horizontal_scaling;
                     total_advance_text_units += tx;
                     text_state.tm[4] += tx * text_state.tm[0];
                     text_state.tm[5] += tx * text_state.tm[1];
@@ -3616,7 +4440,10 @@ impl Interpreter {
             Some(Object::Name(n)) => n,
             _ => return,
         };
-        let xobj_dict = match resources.get(b"XObject").and_then(|o| Self::resolve_dict(o, doc)) {
+        let xobj_dict = match resources
+            .get(b"XObject")
+            .and_then(|o| Self::resolve_dict(o, doc))
+        {
             Ok(d) => d,
             _ => return,
         };
@@ -3636,7 +4463,11 @@ impl Interpreter {
             Object::Stream(ref s) => s,
             _ => return,
         };
-        let subtype = stream.dict.get(b"Subtype").ok().and_then(|s| s.as_name().ok());
+        let subtype = stream
+            .dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|s| s.as_name().ok());
         if subtype != Some(b"Form" as &[u8]) {
             return;
         }
@@ -3645,9 +4476,12 @@ impl Interpreter {
             if let Ok(arr) = matrix.as_array() {
                 if arr.len() >= 6 {
                     state.concat_matrix(
-                        Self::f(&arr[0]), Self::f(&arr[1]),
-                        Self::f(&arr[2]), Self::f(&arr[3]),
-                        Self::f(&arr[4]), Self::f(&arr[5]),
+                        Self::f(&arr[0]),
+                        Self::f(&arr[1]),
+                        Self::f(&arr[2]),
+                        Self::f(&arr[3]),
+                        Self::f(&arr[4]),
+                        Self::f(&arr[5]),
                     );
                 }
             }
@@ -3762,7 +4596,9 @@ mod inline_image_tests {
         let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         enc.write_all(&row).unwrap();
         let compressed = enc.finish().unwrap();
-        let mut content = b"BI /W 3 /H 1 /BPC 8 /CS /RGB /F /Fl /DP <</Predictor 15 /Columns 3 /Colors 3>> ID ".to_vec();
+        let mut content =
+            b"BI /W 3 /H 1 /BPC 8 /CS /RGB /F /Fl /DP <</Predictor 15 /Columns 3 /Colors 3>> ID "
+                .to_vec();
         content.extend_from_slice(&compressed);
         content.extend_from_slice(b" EI");
         let buf = extract(&content);
@@ -3777,9 +4613,13 @@ mod inline_image_tests {
     #[test]
     fn inline_image_exotisch_filter_wordt_overgeslagen() {
         // DCTDecode inline: buiten dekking → géén DrawImage, wel doorlopen.
-        let content = b"BI /W 2 /H 2 /BPC 8 /CS /RGB /F /DCT ID \xde\xad\xbe\xef EI 1 0 0 1 5 5 cm".to_vec();
+        let content =
+            b"BI /W 2 /H 2 /BPC 8 /CS /RGB /F /DCT ID \xde\xad\xbe\xef EI 1 0 0 1 5 5 cm".to_vec();
         let buf = extract(&content);
-        assert!(first_draw_image(&buf).is_none(), "DCT-inline mag niet geemit worden");
+        assert!(
+            first_draw_image(&buf).is_none(),
+            "DCT-inline mag niet geemit worden"
+        );
         // de cm ná EI is nog verwerkt (stream niet ontspoord)
         assert!(buf.iter().any(|&b| b == 12), "Transform na EI ontbreekt");
     }

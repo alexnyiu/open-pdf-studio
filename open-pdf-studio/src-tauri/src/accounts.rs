@@ -53,7 +53,10 @@ fn load_config() -> AccountsConfig {
             if let Ok(cfg) = serde_json::from_str::<AccountsConfig>(&text) {
                 return cfg;
             }
-            log::warn!("[Accounts] Config op {} onleesbaar — dev-defaults gebruikt", path);
+            log::warn!(
+                "[Accounts] Config op {} onleesbaar — dev-defaults gebruikt",
+                path
+            );
         }
     }
     AccountsConfig::default()
@@ -176,20 +179,41 @@ async fn fetch_userinfo(
         .await
         .map_err(|e| format!("userinfo onbereikbaar: {e}"))?;
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| format!("userinfo lezen: {e}"))?;
-    eprintln!("[Accounts] userinfo status={} bodylen={}", status, text.len());
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("userinfo lezen: {e}"))?;
+    eprintln!(
+        "[Accounts] userinfo status={} bodylen={}",
+        status,
+        text.len()
+    );
     if !status.is_success() {
         return Err(format!("userinfo {status}: {text}"));
     }
-    let claims: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("userinfo geen JSON ({e}) — body: {}", &text[..text.len().min(120)]))?;
+    let claims: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "userinfo geen JSON ({e}) — body: {}",
+            &text[..text.len().min(120)]
+        )
+    })?;
     let sub = claims
         .get("sub")
         .and_then(|v| v.as_str())
         .ok_or("userinfo zonder sub")?
         .to_string();
-    let field = |k: &str| claims.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
-    Ok(UserInfo { sub, name: field("name"), email: field("email") })
+    let field = |k: &str| {
+        claims
+            .get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    Ok(UserInfo {
+        sub,
+        name: field("name"),
+        email: field("email"),
+    })
 }
 
 // ── Loopback-callback ──────────────────────────────────────────────────
@@ -345,12 +369,16 @@ pub async fn accounts_sign_in(app: tauri::AppHandle) -> Result<UserInfo, String>
         .text()
         .await
         .map_err(|e| format!("token-respons lezen: {e}"))?;
-    eprintln!("[Accounts] token-exchange status={} bodylen={}", token_status, token_text.len());
+    eprintln!(
+        "[Accounts] token-exchange status={} bodylen={}",
+        token_status,
+        token_text.len()
+    );
     if !token_status.is_success() {
         return Err(format!("token-exchange {token_status}: {token_text}"));
     }
-    let token: TokenResponse = serde_json::from_str(&token_text)
-        .map_err(|e| format!("token-respons onleesbaar: {e}"))?;
+    let token: TokenResponse =
+        serde_json::from_str(&token_text).map_err(|e| format!("token-respons onleesbaar: {e}"))?;
     eprintln!("[Accounts] id_token_present={}", token.id_token.is_some());
 
     store_tokens(
@@ -431,11 +459,7 @@ enum ApiBody {
     File { name: String, bytes: Vec<u8> },
 }
 
-async fn api_request(
-    method: &str,
-    path: &str,
-    body: ApiBody,
-) -> Result<(u16, String), String> {
+async fn api_request(method: &str, path: &str, body: ApiBody) -> Result<(u16, String), String> {
     let cfg = load_config();
     let client = reqwest::Client::new();
     let mut access = keyring_get("access_token").ok_or("niet ingelogd")?;
@@ -484,7 +508,9 @@ async fn api_request(
 
 fn parse_api_result(status: u16, text: String) -> Result<serde_json::Value, String> {
     if status == 413 {
-        return Err("cloud-opslag vol (quota bereikt) — beheer je opslag in de OpenAEC-portal".into());
+        return Err(
+            "cloud-opslag vol (quota bereikt) — beheer je opslag in de OpenAEC-portal".into(),
+        );
     }
     if !(200..300).contains(&status) {
         return Err(format!("Accounts API gaf {status}: {text}"));
@@ -510,11 +536,17 @@ pub async fn accounts_fetch(
 
 /// Upload van een bestand (bv. een PDF) naar de OpenAEC cloud-opslag.
 #[tauri::command]
-pub async fn accounts_upload_file(file_name: String, content: Vec<u8>) -> Result<serde_json::Value, String> {
+pub async fn accounts_upload_file(
+    file_name: String,
+    content: Vec<u8>,
+) -> Result<serde_json::Value, String> {
     let (status, text) = api_request(
         "POST",
         "/me/files",
-        ApiBody::File { name: file_name, bytes: content },
+        ApiBody::File {
+            name: file_name,
+            bytes: content,
+        },
     )
     .await?;
     parse_api_result(status, text)

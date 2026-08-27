@@ -81,23 +81,24 @@ function Separator() {
 }
 
 function OcrParagraphMenuContent() {
+  const { t } = useTranslation('hardening');
   const actions = () => ocrParagraphTarget()?.actions;
   return (
     <>
-      <MenuItem label="Merge Selected Paragraphs" disabled={!actions()?.canMergeSelected}
+      <MenuItem label={t('ocrGrouping.mergeSelectedParagraphs')} disabled={!actions()?.canMergeSelected}
         onClick={() => actions()?.mergeSelected()} />
       <Separator />
-      <MenuItem label="Merge Previous" disabled={!actions()?.canMergePrevious}
+      <MenuItem label={t('ocrGrouping.mergePrevious')} disabled={!actions()?.canMergePrevious}
         onClick={() => actions()?.mergePrevious()} />
-      <MenuItem label="Merge Next" disabled={!actions()?.canMergeNext}
+      <MenuItem label={t('ocrGrouping.mergeNext')} disabled={!actions()?.canMergeNext}
         onClick={() => actions()?.mergeNext()} />
       <Separator />
-      <MenuItem label="Split Before" disabled={!actions()?.canSplitBefore}
+      <MenuItem label={t('ocrGrouping.splitBefore')} disabled={!actions()?.canSplitBefore}
         onClick={() => actions()?.splitBefore()} />
-      <MenuItem label="Split After" disabled={!actions()?.canSplitAfter}
+      <MenuItem label={t('ocrGrouping.splitAfter')} disabled={!actions()?.canSplitAfter}
         onClick={() => actions()?.splitAfter()} />
       <Separator />
-      <MenuItem label="Reset Automatic Grouping" disabled={!actions()?.canReset}
+      <MenuItem label={t('ocrGrouping.reset')} disabled={!actions()?.canReset}
         onClick={() => actions()?.reset()} />
     </>
   );
@@ -695,7 +696,7 @@ function PageMenuContent() {
       <Separator />
 
       <MenuItem icon={propertiesIcon} label={t('page.propertiesMenu')} onClick={() => {
-        import('../stores/dialogStore.js').then(m => m.openDialog('doc-properties'));
+        import('../../ui/chrome/dialogs.js').then(m => m.showDocPropertiesDialog());
       }} />
 
       {/* Toon het geopende bestand in de bestandsbeheerder van het OS —

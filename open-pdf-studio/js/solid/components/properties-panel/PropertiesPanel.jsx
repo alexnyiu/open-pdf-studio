@@ -59,6 +59,7 @@ export default function PropertiesPanel() {
   return (
     <Show when={panelVisible() && !nativePanelHidden()}>
       <div class={`properties-panel-outer ${panelCollapsed() ? 'collapsed' : ''}`}
+        data-text-edit-focus-boundary="true"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}>
         <Show when={panelCollapsed()}>

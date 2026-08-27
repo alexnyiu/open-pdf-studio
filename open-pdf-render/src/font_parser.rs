@@ -174,7 +174,6 @@ pub fn parse_type1(
     })
 }
 
-
 impl OutlineCollector {
     fn new() -> Self {
         OutlineCollector {
@@ -234,8 +233,8 @@ impl OutlineCollector {
 /// Parse a TrueType/OpenType font from raw bytes.
 /// Extracts glyph outlines and builds a Unicode-to-glyph-ID mapping.
 pub fn parse_truetype(font_data: &[u8]) -> Result<ParsedFont, String> {
-    let face =
-        ttf_parser::Face::parse(font_data, 0).map_err(|e| format!("Failed to parse font: {}", e))?;
+    let face = ttf_parser::Face::parse(font_data, 0)
+        .map_err(|e| format!("Failed to parse font: {}", e))?;
 
     let units_per_em = face.units_per_em();
     let num_glyphs = face.number_of_glyphs();
@@ -245,9 +244,7 @@ pub fn parse_truetype(font_data: &[u8]) -> Result<ParsedFont, String> {
     // Extract outlines for all glyphs
     for gid in 0..num_glyphs {
         let glyph_id = ttf_parser::GlyphId(gid);
-        let advance_width = face
-            .glyph_hor_advance(glyph_id)
-            .unwrap_or(0) as f32;
+        let advance_width = face.glyph_hor_advance(glyph_id).unwrap_or(0) as f32;
 
         let mut collector = OutlineCollector::new();
         let has_outline = face.outline_glyph(glyph_id, &mut collector).is_some();
@@ -284,7 +281,9 @@ pub fn parse_truetype(font_data: &[u8]) -> Result<ParsedFont, String> {
     if let Some(cmap_table) = face.tables().cmap {
         for sub in cmap_table.subtables {
             // Skip Unicode-capable subtables — they're already covered above.
-            if sub.is_unicode() { continue; }
+            if sub.is_unicode() {
+                continue;
+            }
             for code in 0u32..=255 {
                 if let Some(gid) = sub.glyph_index(code) {
                     if gid.0 != 0 {
