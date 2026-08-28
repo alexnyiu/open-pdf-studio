@@ -11,6 +11,25 @@ try {
   await access(executablePath);
 }
 
+async function publishSyntheticPageReadiness(page) {
+  const ready = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    const {
+      PAGE_EDIT_READY_LAYERS,
+      capturePageEditReadinessIdentity,
+      markPageEditLayerReady,
+      pageEditReadinessSatisfied,
+    } = await import('/js/pdf/page-edit-readiness.js');
+    const documentState = state.documents[state.activeDocumentIndex];
+    const readinessToken = capturePageEditReadinessIdentity(documentState, 1);
+    for (const layerName of PAGE_EDIT_READY_LAYERS) {
+      markPageEditLayerReady(documentState, 1, layerName, readinessToken);
+    }
+    return pageEditReadinessSatisfied(documentState, 1);
+  });
+  assert.equal(ready, true, 'the synthetic page must satisfy the production edit-readiness barrier');
+}
+
 const browser = await chromium.launch({
   headless: true,
   ...(executablePath ? { executablePath } : {}),
@@ -100,6 +119,7 @@ try {
       id: 'native-paragraph-test-document', lifecycleGeneration: 0,
       currentPage: 1, scale: 1, viewMode: 'single',
       annotations: [], selectedAnnotations: [], textEdits: [], undoStack: [], redoStack: [],
+      pageEditReadiness: {},
       pdfDoc: { numPages: 1, getPage: async () => ({
         getTextContent: async () => ({ items: [], styles: {} }),
         getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
@@ -138,6 +158,7 @@ try {
   assert.ok(outline.x <= targetBox.x && outline.x + outline.width < 540,
     'paragraph outline must not include the adjacent table cell');
 
+  await publishSyntheticPageReadiness(page);
   await target.click();
   const editor = page.locator('.pdf-text-editor');
   await editor.waitFor({ state: 'visible' });
@@ -419,6 +440,7 @@ try {
   }));
   assert.ok(hitTargetState.rect.width > 0 && hitTargetState.rect.height > 0);
   assert.equal(hitTargetState.pointerEvents, 'auto');
+  await publishSyntheticPageReadiness(page);
   await page.locator('[data-owned-text-edit-hit]').first().click({ force: true });
   await page.waitForTimeout(100);
   if (await editor.count() === 0) {
@@ -483,6 +505,7 @@ try {
 
   // Shift-click combines an owned paragraph and an untouched native box. The
   // first owned record keeps its stable id and the set replacement is atomic.
+  await publishSyntheticPageReadiness(page);
   await page.keyboard.down('Shift');
   await page.locator('[data-owned-text-edit-hit]').first().click({ force: true });
   const afterOwnedSelection = await page.locator('.edit-text-selection-box').count();
@@ -544,6 +567,7 @@ try {
   });
   assert.equal(await page.locator('[data-owned-text-edit-hit]').count(), 2,
     'text-layer rebuild must recreate one hit region per canonical line');
+  await publishSyntheticPageReadiness(page);
   await page.locator('[data-owned-text-edit-hit]').last().click();
   await editor.waitFor({ state: 'visible' });
   assert.match((await editor.innerText()).replace(/\n\n/gu, '\n'), /Combined paragraph one\nCombined paragraph two/u);
@@ -627,6 +651,7 @@ try {
       id: 'native-side-by-side-document', lifecycleGeneration: 0,
       currentPage: 1, scale: 1, viewMode: 'single',
       annotations: [], selectedAnnotations: [], textEdits: [], undoStack: [], redoStack: [],
+      pageEditReadiness: {},
       pdfDoc: { numPages: 1, getPage: async () => ({
         getTextContent: async () => ({ items: [], styles: {} }),
         getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
@@ -644,6 +669,7 @@ try {
   const rightTargetBox = await rightTarget.boundingBox();
   assert.ok(leftOutline.x + leftOutline.width < rightTargetBox.x,
     'side-by-side paragraph outline must stop before the neighboring column');
+  await publishSyntheticPageReadiness(page);
   await leftTarget.click();
   await editor.waitFor({ state: 'visible' });
   await page.waitForFunction(() => {
@@ -769,6 +795,7 @@ try {
     const { state } = await import('/js/core/state.ts');
     return String(state.documents[0].textEdits[0].id);
   });
+  await publishSyntheticPageReadiness(page);
   await page.locator(`[data-owned-text-edit-hit][data-edit-id="${leftEditId}"]`).first().click({ force: true });
   await editor.waitFor({ state: 'visible' });
   const reopenedContinuationFormat = await page.evaluate(async () => {

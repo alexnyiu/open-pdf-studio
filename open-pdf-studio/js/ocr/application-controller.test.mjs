@@ -1020,12 +1020,17 @@ test('typed OCR undo and redo restore search text, ownership, dirty state, and r
   assert.equal(getPendingOcrTextItems(activeDocument, 1).length, 2);
   writePageTextCache(activeDocument, activeDocument.pdfDoc, 1, { text: 'cached' });
   dispatchedEvents.length = 0;
+  const beforeUndoRevision = activeDocument.revisionState.contentRevision;
 
   await undo();
 
   assert.equal(getPendingOcrTextItems(activeDocument, 1).length, 0);
   assert.equal(activeDocument.ocr.dirty, false);
-  assert.equal(activeDocument.modified, false);
+  assert.equal(activeDocument.modified, true);
+  assert.equal(activeDocument.revisionState.contentRevision, beforeUndoRevision + 1);
+  assert.ok(
+    activeDocument.revisionState.contentRevision > activeDocument.revisionState.persistedRevision,
+  );
   assert.equal(textCacheSnapshot().some((entry) => entry.documentId === activeDocument.id), false);
   assert.ok(dispatchedEvents.includes('open-pdf-studio:ocr-page-state-changed'));
 

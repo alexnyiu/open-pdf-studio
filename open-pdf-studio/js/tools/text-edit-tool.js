@@ -155,7 +155,16 @@ function spanAtClientPoint(layer, point, selector = 'span') {
   if (!layer || !point) return null;
   const target = document.elementFromPoint?.(point?.x, point?.y);
   const span = target?.closest?.(selector);
-  return span && layer?.contains(span) ? span : null;
+  if (span && layer?.contains(span)) return span;
+  const x = Number(point.x);
+  const y = Number(point.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return [...layer.querySelectorAll(selector)].reverse().find((candidate) => {
+    const rect = candidate.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0
+      && x >= rect.left && x <= rect.right
+      && y >= rect.top && y <= rect.bottom;
+  }) || null;
 }
 
 function hardeningText(key, options = {}) {
@@ -1277,7 +1286,54 @@ export function activateEditTextTool() {
   if (!ownedEditCaptureHandler) {
     ownedEditCaptureHandler = (event) => {
       if (!state.isEditingPdfText || state.currentTool !== 'editText') return;
-      const span = event.target instanceof Element ? event.target.closest('span[data-edit-id]') : null;
+      const target = event.target instanceof Element ? event.target : null;
+      let scannedSpan = target?.closest('span[data-ocr-owner][data-ocr-line-id]') || null;
+      let scannedLayer = scannedSpan?.closest('.textLayer') || null;
+      if (!scannedSpan && target?.matches('canvas.pdf-canvas, #pdf-canvas')) {
+        const point = { x: event.clientX, y: event.clientY };
+        scannedLayer = [...document.querySelectorAll('.textLayer[data-page]')].find((layer) => {
+          const pageNum = parseInt(layer.dataset.page || '', 10);
+          return layer.isConnected
+            && livePageCanvas(pageNum, layer) === target
+            && Boolean(spanAtClientPoint(
+              layer,
+              point,
+              'span[data-ocr-owner][data-ocr-line-id]',
+            ));
+        }) || null;
+        scannedSpan = spanAtClientPoint(
+          scannedLayer,
+          point,
+          'span[data-ocr-owner][data-ocr-line-id]',
+        );
+      }
+      if (scannedSpan) {
+        const layer = scannedLayer || scannedSpan.closest('.textLayer');
+        if (!layer) return;
+        const pageNum = parseInt(layer?.dataset.page || '', 10)
+          || getActiveDocument()?.currentPage || 1;
+        const explicitLineIds = stagedScannedLineSelections.get(scannedSpan)
+          || explicitScannedLineSelection(scannedSpan);
+        stagedScannedLineSelections.delete(scannedSpan);
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.shiftKey) {
+          const context = ocrParagraphContext(getActiveDocument(), pageNum);
+          const region = context
+            && paragraphRegionForLine(context.regions, scannedSpan.dataset.ocrLineId);
+          if (region) toggleOcrParagraphSelection(pageNum, layer, region);
+          return;
+        }
+        startTextLayerEditAtClientPointWhenReady({
+          pageNum,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          preferredOcrLineId: scannedSpan.dataset.ocrLineId || '',
+          stagedLineIds: explicitLineIds,
+        });
+        return;
+      }
+      const span = target?.closest('span[data-edit-id]') || null;
       if (!span) return;
       const layer = span.closest('.textLayer');
       const pageNum = parseInt(layer?.dataset.page || '', 10)

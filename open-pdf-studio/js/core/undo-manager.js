@@ -150,10 +150,35 @@ function revisionMutationForCommand(cmd, result = { pages: new Set(), structural
 
 function noteUndoCommandMutation(doc, cmd, reasonPrefix = 'command') {
   const mutation = revisionMutationForCommand(cmd);
-  return noteDocumentMutation(doc, {
+  const contentRevision = noteDocumentMutation(doc, {
     pages: [...mutation.pages],
     structural: mutation.structural,
     reason: `${reasonPrefix}:${cmd.type}`,
+  });
+  scheduleRevisionReadinessRebuild(doc, contentRevision);
+  return contentRevision;
+}
+
+const _revisionReadinessRebuilds = new Map();
+
+function scheduleRevisionReadinessRebuild(doc, expectedRevision) {
+  if (!doc?.id || typeof document === 'undefined') return;
+  const ticket = {};
+  _revisionReadinessRebuilds.set(String(doc.id), ticket);
+  queueMicrotask(async () => {
+    if (_revisionReadinessRebuilds.get(String(doc.id)) !== ticket) return;
+    _revisionReadinessRebuilds.delete(String(doc.id));
+    const active = getActiveDocument();
+    if (active?.id !== doc.id
+        || Number(active.revisionState?.contentRevision) !== Number(expectedRevision)) return;
+    try {
+      const { setViewMode } = await import('../pdf/renderer.js');
+      if (getActiveDocument()?.id !== doc.id
+          || Number(doc.revisionState?.contentRevision) !== Number(expectedRevision)) return;
+      await setViewMode(doc.viewMode);
+    } catch (error) {
+      console.warn('[undo] current-revision edit-readiness rebuild failed:', error);
+    }
   });
 }
 
@@ -867,12 +892,16 @@ export function recordModify(annotationId, oldState, newState) {
 }
 
 export function recordPageRotation(pageNum, oldRotation, newRotation) {
-  execute({
+  // rotatePage() has already published the persistent content mutation before
+  // its awaited render. This recorder only adds the already-applied rotation
+  // to the undo stack; publishing it again would clear the fresh readiness
+  // barrier and start a competing render for a second content revision.
+  executeForDocument(getActiveDocument(), {
     type: 'rotatePage',
     pageNum,
     oldRotation,
     newRotation
-  });
+  }, { noteRevision: false });
 }
 
 export function recordDocumentMetadata(oldState, newState) {

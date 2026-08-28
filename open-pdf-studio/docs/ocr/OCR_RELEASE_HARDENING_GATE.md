@@ -17,6 +17,7 @@ approving review, and these exact GitHub check names:
 - `Desktop build (windows-latest)`
 - `Desktop build (macos-26)`
 - `macOS packaged editor acceptance`
+- `save/render coherence report verification`
 - `macOS editor and OCR performance`
 - `macOS OCR release-hardening decision`
 
@@ -84,6 +85,7 @@ node scripts/evaluate-ocr-release-hardening.mjs \
   --required-job-result static-verification=skipped \
   --required-job-result build=skipped \
   --required-job-result packaged-macos-editor-acceptance=skipped \
+  --required-job-result save-render-coherence-report-verification=skipped \
   --required-job-result macos-editor-ocr-performance=skipped
 ```
 

@@ -746,7 +746,8 @@ try {
   await waitForOwnership('none');
   await waitUi('[data-ocr-owner="open-pdf-studio"]', (value) => !value.found);
   assert.equal(await search(engineText, 0), 0);
-  assert.equal((await listTabs()).tabs.find((tab) => tab.active)?.modified, false);
+  assert.equal((await listTabs()).tabs.find((tab) => tab.active)?.modified, true,
+    'undo is a new content revision and retains persistence debt until saved');
   await click('[data-ocr-action="redo"]');
   await waitForOwnership('pending');
   assert.equal(await search(engineText, 1), 1);
@@ -777,7 +778,12 @@ try {
   await callTool('app_set_zoom', { scale: 1 });
   await callTool('app_set_view_mode', { mode: 'continuous' });
   const continuousGeometry = await ocrGeometry('continuous');
-  assertGeometryNear(continuousGeometry.normalized, baselineGeometry.normalized, 'continuous-mode OCR alignment');
+  assertGeometryNear(
+    continuousGeometry.normalized,
+    baselineGeometry.normalized,
+    `continuous-mode OCR alignment; baseline=${JSON.stringify(baselineGeometry)}; `
+      + `continuous=${JSON.stringify(continuousGeometry)}`,
+  );
   await callTool('app_set_view_mode', { mode: 'single' });
   await callTool('app_set_zoom', { scale: 1 });
   await click('#rotate-right');

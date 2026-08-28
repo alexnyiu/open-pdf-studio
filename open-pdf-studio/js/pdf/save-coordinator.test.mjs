@@ -415,6 +415,36 @@ test('document close cancels pre-persistence work and prevents publication', asy
   assert.equal(published, false);
 });
 
+test('document close after proxy installation cancels the adopted generation publication', async () => {
+  const document = owner();
+  const proxyInstalled = deferred();
+  const continueSynchronization = deferred();
+  let published = false;
+  const coordinator = createSaveCoordinator({ resolveDocumentById: () => document });
+  const save = coordinator.request({
+    documentId: document.id,
+    documentGeneration: 1,
+    requestedRevision: 1,
+    execute: async (context) => {
+      context.assertPersistenceOwnership();
+      document.lifecycleGeneration = 2;
+      context.adoptDocumentGeneration(2);
+      proxyInstalled.resolve();
+      await continueSynchronization.promise;
+      context.assertSynchronizationOwnership('after-required-page-rebuild');
+      published = true;
+      return true;
+    },
+  });
+  await proxyInstalled.promise;
+  assert.equal(coordinator.debugSnapshot(document.id)?.active?.documentGeneration, 2);
+  coordinator.cancelDocument(document.id, 2, 'document-close');
+  document.lifecycleGeneration = 3;
+  continueSynchronization.resolve();
+  assert.equal(await save, false);
+  assert.equal(published, false);
+});
+
 test('editor wait resolves from its completion promise before serialization', async () => {
   const document = owner();
   const editor = deferred();

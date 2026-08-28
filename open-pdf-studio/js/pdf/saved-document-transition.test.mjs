@@ -17,6 +17,7 @@ import {
   documentRevisionReadinessSatisfied,
 } from '../core/document-revision-state.runtime.js';
 import { captureRenderPublicationToken } from './render-publication-token.js';
+import { SaveRequestSupersededError } from './save-coordinator.js';
 import {
   PAGE_EDIT_READY_LAYERS,
   markPageEditLayerReady,
@@ -284,6 +285,28 @@ test('a post-save edit cannot be cancelled by a late pre-save transition', async
   await transition;
   await activation;
   assert.equal(registeredGeneration, 2);
+});
+
+test('post-persistence document close suppresses stale synchronization without recoverable failure', async () => {
+  const document = persistedDocument();
+  let installedGeneration = null;
+  const transition = synchronizeSavedDocument(transitionInput(document, {
+    adoptDocumentGeneration(generation) {
+      installedGeneration = generation;
+    },
+    assertSynchronizationOwnership(stage) {
+      if (stage === 'after-proxy-install') {
+        throw new SaveRequestSupersededError(stage);
+      }
+    },
+  }));
+  await assert.rejects(transition, (error) => (
+    error instanceof SaveRequestSupersededError
+      && error.stage === 'after-proxy-install'
+  ));
+  assert.equal(installedGeneration, 2);
+  assert.notEqual(document.revisionState.saveState, 'saved-refresh-failed');
+  assert.equal(hasRecoverableSavedDocumentSynchronization(document.id), false);
 });
 
 test('active-tab wrapper identity does not suppress the immutable owner transition', async () => {

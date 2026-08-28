@@ -47,6 +47,9 @@ jobs:
       - name: Run full unit, OCR, lifecycle, and quality suites
         run: npm run test
 
+      - name: Run large-PDF performance unit guardrails
+        run: npm run test:large-pdf-performance:unit
+
       - name: Build production frontend
         run: npm run build
 
@@ -70,6 +73,7 @@ jobs:
           --command "npm ci"
           --command "npm run typecheck"
           --command "npm run test"
+          --command "npm run test:large-pdf-performance:unit"
           --command "npm run build"
           --command "git diff --check"
           --command "cargo test -p open-pdf-studio"
@@ -459,6 +463,70 @@ jobs:
           path: ${{ runner.temp }}/test-artifacts
           if-no-files-found: error
 
+  save-render-coherence-report-verification:
+    name: save/render coherence report verification
+    needs: packaged-macos-editor-acceptance
+    if: always()
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: open-pdf-studio
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Download packaged editor evidence
+        id: download_evidence
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ocr-release-hardening-evidence-packaged-editor
+          path: ${{ runner.temp }}/test-artifacts
+
+      - name: Verify save/render coherence release report
+        id: verify_report
+        if: always()
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/save-render-coherence-evidence/logs"
+          node scripts/verify-save-render-coherence-report.mjs \
+            --input "$RUNNER_TEMP/test-artifacts/packaged-editor/reports/save-render-coherence.json" \
+            --commit "$GITHUB_SHA" \
+            2>&1 | tee "$RUNNER_TEMP/save-render-coherence-evidence/logs/report-verification.log"
+
+      - name: Record save/render coherence gate evidence
+        if: always()
+        run: >-
+          node scripts/write-release-gate-evidence.mjs
+          --gate-id save-render-coherence-report-verification
+          --status "${{ steps.download_evidence.outcome == 'success' && steps.verify_report.outcome == 'success' && 'PASS' || 'FAIL' }}"
+          --output "$RUNNER_TEMP/save-render-coherence-evidence/gates/save-render-coherence-report-verification.json"
+          --command "node scripts/verify-save-render-coherence-report.mjs --commit $GITHUB_SHA"
+          --artifact "packaged-editor/reports/save-render-coherence.json"
+
+      - name: Upload save/render coherence verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-release-hardening-evidence-save-render-coherence
+          path: ${{ runner.temp }}/save-render-coherence-evidence
+          if-no-files-found: error
+
+      - name: Enforce save/render coherence report verification
+        if: always()
+        env:
+          DOWNLOAD_OUTCOME: ${{ steps.download_evidence.outcome }}
+          VERIFICATION_OUTCOME: ${{ steps.verify_report.outcome }}
+        run: |
+          test "$DOWNLOAD_OUTCOME" = success
+          test "$VERIFICATION_OUTCOME" = success
+
   macos-editor-ocr-performance:
     name: macOS editor and OCR performance
     needs: build
@@ -568,6 +636,7 @@ jobs:
       - static-verification
       - build
       - packaged-macos-editor-acceptance
+      - save-render-coherence-report-verification
       - macos-editor-ocr-performance
     if: always()
     runs-on: ubuntu-22.04
@@ -652,6 +721,7 @@ jobs:
             --required-job-result "static-verification=${{ needs.static-verification.result }}" \
             --required-job-result "build=${{ needs.build.result }}" \
             --required-job-result "packaged-macos-editor-acceptance=${{ needs.packaged-macos-editor-acceptance.result }}" \
+            --required-job-result "save-render-coherence-report-verification=${{ needs.save-render-coherence-report-verification.result }}" \
             --required-job-result "macos-editor-ocr-performance=${{ needs.macos-editor-ocr-performance.result }}" \
             --output output/ocr-release-hardening/acceptance.json
 

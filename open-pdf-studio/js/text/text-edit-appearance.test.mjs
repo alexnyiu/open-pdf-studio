@@ -8,6 +8,7 @@ import {
   getPageRotationMatrix,
   getTextLayerCssMatrix,
   invertPageRotation,
+  pdfJsViewportPointInTextLayerSpace,
   restoreTextEditSnapshot,
   rawPdfTextLayerViewportOptions,
   resolveTextEditPageGeometry,
@@ -120,6 +121,26 @@ test('unified text layers stay in unrotated raw PDF user space', () => {
   assert.deepEqual(rawPdfTextLayerViewportOptions(1.25), { scale: 0.8, rotation: 0 });
   assert.deepEqual(rawPdfTextLayerViewportOptions(1), { scale: 1, rotation: 0 });
   assert.deepEqual(rawPdfTextLayerViewportOptions(0), { scale: 1, rotation: 0 });
+});
+
+test('PDF.js OCR projection removes UserUnit only for raw-unit continuous hosts', () => {
+  const viewport = {
+    userUnit: 1.25,
+    convertToViewportPoint(x, y) {
+      return [x * 1.25, (240 - y) * 1.25];
+    },
+  };
+  assert.deepEqual(pdfJsViewportPointInTextLayerSpace(
+    viewport,
+    20,
+    200,
+    { rawUnitHost: true },
+  ), [20, 40]);
+  assert.deepEqual(pdfJsViewportPointInTextLayerSpace(viewport, 20, 200), [25, 50]);
+  assert.deepEqual(pdfJsViewportPointInTextLayerSpace({
+    userUnit: 1,
+    convertToViewportPoint: (x, y) => [x, y],
+  }, 20, 40), [20, 40]);
 });
 
 test('source text line extent preserves gaps between PDF.js word spans', () => {

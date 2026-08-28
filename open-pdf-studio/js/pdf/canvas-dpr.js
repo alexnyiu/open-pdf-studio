@@ -14,6 +14,29 @@ export function canvasBackingDimensions(cssWidth, cssHeight, dpr) {
   };
 }
 
+export function singlePageOverlaySurfaceDimensions({
+  viewportActive,
+  viewportWidth,
+  viewportHeight,
+  pageWidth,
+  pageHeight,
+}) {
+  const positive = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : 0;
+  };
+  const page = {
+    width: positive(pageWidth),
+    height: positive(pageHeight),
+  };
+  if (!viewportActive) return page;
+  const viewport = {
+    width: positive(viewportWidth),
+    height: positive(viewportHeight),
+  };
+  return viewport.width > 0 && viewport.height > 0 ? viewport : page;
+}
+
 export function overlayCanvasTransform({ viewportActive, zoom, offsetX, offsetY, legacyScale, dpr }) {
   const pixelRatio = normalizedCanvasDpr(dpr);
   const scale = (viewportActive ? Number(zoom) : Number(legacyScale)) * pixelRatio;

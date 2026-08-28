@@ -18,7 +18,10 @@ import {
   prefetchNativeOcrPageRaster,
   runNativeOcrPageForDocument,
 } from './native-controller.js';
-import { isPdfForegroundIdle } from '../pdf/foreground-activity.js';
+import {
+  isPdfForegroundIdle,
+  notePdfForegroundActivity,
+} from '../pdf/foreground-activity.js';
 import { backgroundRenderAdmissionAllowed } from '../pdf/render-resource-budget.js';
 import { assertOcrPageGeometryV1 } from './contracts/page-geometry.v1.js';
 import { assertOcrResultV2 } from './contracts/v2.js';
@@ -307,6 +310,26 @@ export class ApplicationOcrJob {
       }),
     };
   }
+
+  releaseTerminalResources() {
+    this.before = null;
+    this.ownerPdfDocument = null;
+    this.sourceFingerprint = null;
+    this.resolveCancellation = null;
+    this.cancellationSignal = null;
+    this.prefetchedPage = null;
+    this.activePrefetchReceipt = null;
+    this.options.createPageRequest = null;
+    this.options.documentFingerprint = null;
+    this.options.modelPack = null;
+    this.options.onProgress = null;
+    for (const page of this.pages.values()) {
+      page.request = null;
+      page.token = null;
+      page.measuredStageCosts = null;
+      page.performance = null;
+    }
+  }
 }
 
 export class OcrApplicationController {
@@ -409,6 +432,10 @@ export class OcrApplicationController {
       this.jobs.delete(job.jobId);
       if (activeDocumentApplicationJobs.get(document.id) === job) {
         activeDocumentApplicationJobs.delete(document.id);
+      }
+      job.releaseTerminalResources();
+      if (document.performanceProfile?.largeDocument === true || pages.length >= 50) {
+        notePdfForegroundActivity('ocr-terminal-memory-release', 250);
       }
     });
     return job;

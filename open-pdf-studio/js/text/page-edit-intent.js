@@ -16,6 +16,22 @@ function frozenPoint(point) {
   return Object.freeze({ x, y });
 }
 
+const pendingIntentCounts = new Map();
+
+function beginIntent(documentId) {
+  pendingIntentCounts.set(documentId, (pendingIntentCounts.get(documentId) || 0) + 1);
+}
+
+function endIntent(documentId) {
+  const remaining = (pendingIntentCounts.get(documentId) || 0) - 1;
+  if (remaining > 0) pendingIntentCounts.set(documentId, remaining);
+  else pendingIntentCounts.delete(documentId);
+}
+
+export function pageEditIntentPendingForDocument(documentId) {
+  return (pendingIntentCounts.get(String(documentId || '')) || 0) > 0;
+}
+
 /**
  * Preserve a page/point through saved-document synchronization, then replay
  * exactly once against the current proxy generation after page edit readiness.
@@ -41,22 +57,27 @@ export async function runPageEditIntent({
   const documentId = String(documentState.id);
   const page = positivePage(pageNum);
   const preservedPoint = frozenPoint(point);
-  if ((await waitForSynchronization(documentId)) !== true) {
-    return Object.freeze({ activated: false, reason: 'synchronization-failed' });
+  beginIntent(documentId);
+  try {
+    if ((await waitForSynchronization(documentId)) !== true) {
+      return Object.freeze({ activated: false, reason: 'synchronization-failed' });
+    }
+    const readyOwner = resolveDocument(documentId);
+    if (!readyOwner) return Object.freeze({ activated: false, reason: 'document-closed' });
+    const readyGeneration = Number(readyOwner.lifecycleGeneration) || 0;
+    await awaitReadiness(readyOwner, page);
+    const currentOwner = resolveDocument(documentId);
+    if (currentOwner !== readyOwner
+        || (Number(currentOwner?.lifecycleGeneration) || 0) !== readyGeneration) {
+      throw new DOMException('Document lifecycle changed before edit replay', 'AbortError');
+    }
+    const value = await activate({
+      documentState: currentOwner,
+      pageNum: page,
+      point: preservedPoint,
+    });
+    return Object.freeze({ activated: true, value });
+  } finally {
+    endIntent(documentId);
   }
-  const readyOwner = resolveDocument(documentId);
-  if (!readyOwner) return Object.freeze({ activated: false, reason: 'document-closed' });
-  const readyGeneration = Number(readyOwner.lifecycleGeneration) || 0;
-  await awaitReadiness(readyOwner, page);
-  const currentOwner = resolveDocument(documentId);
-  if (currentOwner !== readyOwner
-      || (Number(currentOwner?.lifecycleGeneration) || 0) !== readyGeneration) {
-    throw new DOMException('Document lifecycle changed before edit replay', 'AbortError');
-  }
-  const value = await activate({
-    documentState: currentOwner,
-    pageNum: page,
-    point: preservedPoint,
-  });
-  return Object.freeze({ activated: true, value });
 }

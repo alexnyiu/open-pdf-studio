@@ -52,6 +52,7 @@ import {
   commitTextEditingForDocument,
   getActiveTextEditSession,
 } from '../text/text-edit-session.js';
+import { pageEditIntentPendingForDocument } from '../text/page-edit-intent.js';
 import { isPdfForegroundIdle, notePdfForegroundActivity } from './foreground-activity.js';
 import { createSaveCoordinator, SaveRequestSupersededError } from './save-coordinator.js';
 import { throwIfSaveFaultInjected } from './save-fault-injection.js';
@@ -245,6 +246,9 @@ const saveCoordinator = createSaveCoordinator({
   automaticRetryMs: TEXT_EDIT_AUTO_SAVE_RETRY_MS,
   automaticMaxCoalesceMs: TEXT_EDIT_AUTO_SAVE_MAX_COALESCE_MS,
   shouldDeferAutomatic: ({ documentId }) => {
+    if (pageEditIntentPendingForDocument(documentId)) {
+      return { reason: 'pending-page-edit-intent', retryAfterMs: TEXT_EDIT_AUTO_SAVE_RETRY_MS };
+    }
     const activeSession = getActiveTextEditSession();
     if (String(activeSession?.ownerDocumentId || '') === String(documentId || '')) {
       return { reason: 'live-text-session', retryAfterMs: TEXT_EDIT_AUTO_SAVE_RETRY_MS };
@@ -373,6 +377,7 @@ async function synchronizePersistedOwner({
   savedBytes,
   preparedPdfJsDocument,
   diagnostic,
+  coordinatorContext,
 }) {
   const result = await synchronizeSavedDocument({
     documentState: owner,
@@ -383,6 +388,8 @@ async function synchronizePersistedOwner({
     bytes: savedBytes,
     preparedPdfJsDocument,
     diagnostic,
+    adoptDocumentGeneration: coordinatorContext?.adoptDocumentGeneration,
+    assertSynchronizationOwnership: coordinatorContext?.assertSynchronizationOwnership,
     ...productionSavedTransitionCallbacks(outputPath, savedBytes),
   });
   markDocumentSavedForDocument(owner);
@@ -397,6 +404,8 @@ async function synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext) 
       await retrySavedDocumentSynchronization(owner.id, {
         requestId: coordinatorContext.requestId,
         diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
+        adoptDocumentGeneration: coordinatorContext.adoptDocumentGeneration,
+        assertSynchronizationOwnership: coordinatorContext.assertSynchronizationOwnership,
       });
       markDocumentSavedForDocument(owner);
       return { saved: true, candidateBytes };
@@ -416,9 +425,11 @@ async function synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext) 
       savedBytes,
       preparedPdfJsDocument: candidate,
       diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
+      coordinatorContext,
     });
     return { saved: true, candidateBytes };
   } catch (error) {
+    if (error instanceof SaveRequestSupersededError) throw error;
     const exactError = error instanceof Error ? error.message : String(error);
     markDocumentSaveState(owner, 'saved-refresh-failed', {
       requestId: null,
@@ -3365,6 +3376,7 @@ async function performSavePDF(saveAsPath = null, {
       savedBytes,
       preparedPdfJsDocument: transitionCandidate,
       diagnostic: (event, details) => coordinatorContext?.diagnostic(event, details),
+      coordinatorContext,
     });
 
     return { saved: true, candidateBytes: savedBytes.byteLength };

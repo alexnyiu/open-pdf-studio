@@ -381,9 +381,16 @@ async function runSynchronization(record, { retry = false } = {}) {
     invalidateSemanticState,
     rebuildEditableMetadata,
     restartSemanticPreload,
+    adoptDocumentGeneration,
+    assertSynchronizationOwnership,
     changedPages,
     diagnostic,
   } = record;
+  const assertOwned = (stage) => {
+    if (typeof assertSynchronizationOwnership === 'function') {
+      assertSynchronizationOwnership(stage);
+    }
+  };
   const viewState = record.viewState || captureViewState(documentState);
   record.viewState = viewState;
   markDocumentSaveState(documentState, 'synchronizing', {
@@ -392,6 +399,7 @@ async function runSynchronization(record, { retry = false } = {}) {
   });
   diagnostic?.('synchronizing', { retry });
   try {
+    assertOwned('before-synchronization');
     let installResult = record.installResult;
     if (!record.proxyInstalled) {
       throwIfSaveFaultInjected('proxy-install');
@@ -404,6 +412,12 @@ async function runSynchronization(record, { retry = false } = {}) {
       });
       record.installResult = installResult || {};
       record.proxyInstalled = true;
+      if (typeof adoptDocumentGeneration === 'function') {
+        adoptDocumentGeneration(
+          installResult?.lifecycleGeneration ?? documentState.lifecycleGeneration,
+        );
+      }
+      assertOwned('after-proxy-install');
       markLivePdfRevision(documentState, requestedRevision);
     }
     if (!record.semanticInvalidated) {
@@ -414,6 +428,7 @@ async function runSynchronization(record, { retry = false } = {}) {
         filePath,
         previousFilePath: record.previousFilePath,
       });
+      assertOwned('after-semantic-invalidation');
       record.semanticInvalidated = true;
     }
     let requiredPages = Array.isArray(installResult?.requiredPages)
@@ -421,6 +436,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       : positivePages(null, viewState.pageNumber || documentState.currentPage);
     setVisibleRequiredPages(documentState, requiredPages);
     await invalidateRevision({ documentState, requestedRevision, requiredPages, viewState });
+    assertOwned('after-revision-invalidation');
     clearPageEditReadiness(documentState, requiredPages);
     const readiness = await rebuildRequiredPages({
       documentState,
@@ -429,6 +445,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       viewState,
       installResult: installResult || {},
     }) || {};
+    assertOwned('after-required-page-rebuild');
     if (Array.isArray(readiness.requiredPages)) {
       requiredPages = positivePages(readiness.requiredPages);
       setVisibleRequiredPages(documentState, requiredPages);
@@ -440,6 +457,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       changedPages,
       viewState,
     });
+    assertOwned('after-editable-metadata-rebuild');
     for (const page of positivePages(readiness.renderReadyPages)) {
       if (requiredPages.includes(page)) markPageRenderReady(documentState, page, requestedRevision);
     }
@@ -454,7 +472,9 @@ async function runSynchronization(record, { retry = false } = {}) {
       requiredPages,
       changedPages,
     });
+    assertOwned('after-semantic-preload-restart');
     await restoreViewState(documentState, viewState);
+    assertOwned('after-view-state-restore');
     throwIfSaveFaultInjected('render-readiness');
     const ready = await waitForEditReadiness({
       documentState,
@@ -462,6 +482,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       requiredPages,
       viewState,
     });
+    assertOwned('after-edit-readiness');
     if (ready !== true) throw new Error('The saved document did not reach edit readiness');
     const synchronizedRevisions = initializeDocumentRevisionState(documentState);
     if (synchronizedRevisions.contentRevision === Number(requestedRevision)
@@ -478,6 +499,14 @@ async function runSynchronization(record, { retry = false } = {}) {
     recoverableSynchronizations.delete(documentState.id);
     return { saved: true, synchronized: true, requiredPages };
   } catch (error) {
+    if (error?.code === 'SAVE_REQUEST_SUPERSEDED') {
+      if (!record.proxyInstalled) {
+        try { await preparedPdfJsDocument?.destroy?.(); } catch {}
+      }
+      diagnostic?.('superseded', { retry, stage: error.stage || 'synchronization' });
+      recoverableSynchronizations.delete(documentState.id);
+      throw error;
+    }
     const wrapped = error instanceof SavedDocumentSynchronizationError
       ? error
       : new SavedDocumentSynchronizationError(
@@ -550,6 +579,8 @@ export async function synchronizeSavedDocument(input) {
 export async function retrySavedDocumentSynchronization(documentId, {
   requestId,
   diagnostic,
+  adoptDocumentGeneration,
+  assertSynchronizationOwnership,
 } = {}) {
   const id = String(documentId || '');
   const active = activeSynchronizations.get(id);
@@ -558,6 +589,12 @@ export async function retrySavedDocumentSynchronization(documentId, {
   if (!record) throw new RangeError('No recoverable saved-document synchronization is available');
   if (requestId !== undefined) record.requestId = requestId;
   if (diagnostic !== undefined) record.diagnostic = diagnostic;
+  if (adoptDocumentGeneration !== undefined) {
+    record.adoptDocumentGeneration = adoptDocumentGeneration;
+  }
+  if (assertSynchronizationOwnership !== undefined) {
+    record.assertSynchronizationOwnership = assertSynchronizationOwnership;
+  }
   const hold = deferred();
   const promise = runSynchronization(record, { retry: true })
     .then((result) => {

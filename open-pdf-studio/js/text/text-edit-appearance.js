@@ -18,6 +18,26 @@ export function rawPdfTextLayerViewportOptions(userUnit = 1) {
 }
 
 /**
+ * Convert a raw PDF point into a PDF.js TextLayer's local frame. Continuous
+ * layout sizes its page and TextLayer hosts in raw page units, so that path
+ * removes `/UserUnit` from the viewport transform. Single-page layout either
+ * requests a raw-unit viewport or sizes its host from the full viewport and
+ * therefore must retain the transform unchanged.
+ */
+export function pdfJsViewportPointInTextLayerSpace(viewport, x, y, { rawUnitHost = false } = {}) {
+  if (typeof viewport?.convertToViewportPoint !== 'function') return null;
+  const point = viewport.convertToViewportPoint(x, y);
+  if (!Array.isArray(point) || point.length !== 2 || !point.every(Number.isFinite)) return null;
+  const numericUserUnit = Number(viewport.userUnit);
+  const userUnit = Number.isFinite(numericUserUnit) && numericUserUnit > 0
+    ? numericUserUnit
+    : 1;
+  return rawUnitHost
+    ? [point[0] / userUnit, point[1] / userUnit]
+    : point;
+}
+
+/**
  * Return the occupied horizontal source interval for one PDF text line.
  * PDF.js may split one show-text operator into word spans. Summing their
  * widths drops the explicit gaps, while DOM bounds can be distorted by a

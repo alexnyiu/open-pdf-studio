@@ -1,4 +1,9 @@
-import { state, getNextUntitledName, getActiveDocument } from '../core/state.js';
+import {
+  state,
+  getNextUntitledName,
+  getActiveDocument,
+  getDocumentById,
+} from '../core/state.js';
 import { showLoading, hideLoading } from '../ui/chrome/dialogs.js';
 import { updateAllStatus } from '../ui/chrome/status-bar.js';
 import { setViewMode, fitPage } from './renderer.js';
@@ -27,6 +32,18 @@ import { extractStampImagesHybrid } from './loader/image-extraction.js';
 import { convertPdfAnnotation } from './loader/annotation-converter.js';
 import { statusReplyFromPdfAnnotation, applyStatusReplies } from './loader/status-replies.js';
 import { assertPdfDocumentResourceLimits } from './resource-limits.js';
+import { documentLifecycleOwnerMatches } from './save-state.js';
+
+function captureDocumentLifecycleOwner(doc) {
+  return Object.freeze({
+    id: String(doc?.id || ''),
+    lifecycleGeneration: Number(doc?.lifecycleGeneration) || 0,
+  });
+}
+
+function documentLifecycleIsOpen(owner) {
+  return documentLifecycleOwnerMatches(owner, getDocumentById(owner?.id));
+}
 
 
 // Convert one batch of pdf.js annotations and push them to doc.annotations,
@@ -248,7 +265,7 @@ async function checkPdfACompliance(doc) {
     if (part) {
       doc.pdfaCompliance = { part, conformance: conformance || null };
       // Only show bar if this document is active
-      if (state.documents[state.activeDocumentIndex] === doc) {
+      if (documentLifecycleOwnerMatches(doc, getActiveDocument())) {
         showPdfABar(part, conformance, doc);
       }
     }
@@ -294,6 +311,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
 } = {}) {
   const doc = state.documents[docIndex];
   if (!doc) return;
+  let loadOwner = captureDocumentLifecycleOwner(doc);
 
   // Guard against loading into a document that's already loading
   if (doc._isLoading) return;
@@ -304,9 +322,9 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
   let fileLocked = false;
 
   // Helper: check if this document is the currently active one
-  const isActive = () => state.documents[state.activeDocumentIndex] === doc;
+  const isActive = () => documentLifecycleOwnerMatches(loadOwner, getActiveDocument());
   // Helper: check if document was closed during async operations
-  const isClosed = () => !state.documents.includes(doc);
+  const isClosed = () => !documentLifecycleIsOpen(loadOwner);
 
   try {
     const _t0 = performance.now();
@@ -458,6 +476,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
       verbosity: 0,
     }).promise;
     const previousPdfDocument = replaceDocumentPdfProxy(doc, openedPdfDocument, 'document-load');
+    loadOwner = captureDocumentLifecycleOwner(getDocumentById(loadOwner.id) || doc);
     if (recoveryRevision !== null) {
       const restoredRevision = Number(recoveryRevision);
       const revisionState = initializeDocumentRevisionState(doc);
@@ -605,37 +624,40 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
       }).catch(() => { /* presets zijn optioneel — negeer leesfouten */ });
     }
 
-    // Load persisted measure scale for this document (data-only)
-    {
-      const { loadDocumentScale } = await import('../annotations/measurement.js');
+    // Measurement scale is optional, data-only metadata. Its module graph
+    // reaches annotation rendering and therefore must never sit in the
+    // critical path before current-page annotation loading and edit readiness.
+    void import('../annotations/measurement.js').then(async ({
+      loadDocumentScale,
+      saveDocumentScale,
+    }) => {
       if (isClosed()) return;
-      loadDocumentScale(doc);
-    }
-
-    // Auto-detect scale from title block text if no scale is already set (fire-and-forget)
-    if (!doc.measureScale) {
-      import('../annotations/scale-bar.js').then(async ({ detectScaleFromPdf }) => {
-        if (isClosed() || doc.measureScale) return;
-        try {
-          const result = await detectScaleFromPdf(1);
-          if (isClosed() || doc.measureScale) return;
-          if (result && result.ratio > 0) {
-            const pixelsPerUnit = 72 / (25.4 * result.ratio);
-            doc.measureScale = {
-              pixelsPerUnit,
-              unit: 'mm',
-              method: 'auto-detect',
-              scaleRatio: `1:${result.ratio}`,
-            };
-            const { saveDocumentScale } = await import('../annotations/measurement.js');
-            saveDocumentScale();
-            console.log(`Auto-detected scale: 1:${result.ratio} from "${result.scaleText}"`);
-          }
-        } catch (e) {
-          // Non-critical — ignore auto-detect failures
+      const owner = getDocumentById(loadOwner.id);
+      if (!documentLifecycleOwnerMatches(loadOwner, owner)) return;
+      loadDocumentScale(owner);
+      if (owner.measureScale || !isActive()) return;
+      const { detectScaleFromPdf } = await import('../annotations/scale-bar.js');
+      if (isClosed() || owner.measureScale || !isActive()) return;
+      try {
+        const result = await detectScaleFromPdf(1);
+        if (isClosed() || owner.measureScale || !isActive()) return;
+        if (result && result.ratio > 0) {
+          const pixelsPerUnit = 72 / (25.4 * result.ratio);
+          owner.measureScale = {
+            pixelsPerUnit,
+            unit: 'mm',
+            method: 'auto-detect',
+            scaleRatio: `1:${result.ratio}`,
+          };
+          saveDocumentScale();
+          console.log(`Auto-detected scale: 1:${result.ratio} from "${result.scaleText}"`);
         }
-      });
-    }
+      } catch (e) {
+        // Non-critical — ignore auto-detect failures
+      }
+    }).catch(() => {
+      // Optional scale metadata cannot block document readiness.
+    });
 
     // UI updates — only if active
     if (isActive()) {
@@ -666,7 +688,9 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
     // Page 1 annotations are already loaded by ensureAnnotationsForPage() during
     // the first render. The rest load lazily page-by-page as the user navigates,
     // plus this background task pre-loads remaining pages without blocking the UI.
-    loadExistingAnnotations(doc).then(async () => {
+    const annotationOwnerDocument = getDocumentById(loadOwner.id);
+    if (!documentLifecycleOwnerMatches(loadOwner, annotationOwnerDocument)) return;
+    loadExistingAnnotations(annotationOwnerDocument).then(async () => {
       console.log(`[PERF-BG] loadExistingAnnotations .then() callback START`);
       if (isClosed()) return;
       // Sync doc.measureScale from any loaded scaleBar annotations
@@ -859,6 +883,14 @@ export async function createBlankPDF(widthPt, heightPt, numPages) {
       // Mark as modified so Ctrl+S triggers Save As right away
       markDocumentModified({ reason: 'document:create-blank' });
       try { await fitPage(); } catch (e) { console.warn('[blank-pdf] fitPage failed:', e); }
+      // The committed blank-document mutation advances contentRevision and
+      // intentionally clears the page edit-readiness owner created by the
+      // initial load. Rebuild the current view after that mutation so the
+      // first inserted-text/textbox/callout action cannot wait forever on a
+      // revision that never rendered.
+      try { await setViewMode(doc?.viewMode || 'single'); } catch (e) {
+        console.warn('[blank-pdf] readiness rebuild failed:', e);
+      }
       updateWindowTitle();
       return;
     }
@@ -996,6 +1028,11 @@ async function loadAnnotationsForSinglePage(doc, pageNum, waitForColors = false)
 
   const stampAnnots = annotations.filter(a => a.subtype === 'Stamp');
   const hasSquareAnnotations = annotations.some(a => a.subtype === 'Square');
+  // FreeText ownership, paragraph alignment, and callout geometry live in
+  // dictionary entries that pdf.js does not expose consistently. Publishing
+  // a page before those entries are available can misclassify a callout as a
+  // textbox until the best-effort background color pass happens to replace it.
+  const needsExactFreeTextMetadata = annotations.some(a => a.subtype === 'FreeText');
   const needsExtraData = annotations.some(a => ['FreeText', 'Square', 'Circle', 'Line', 'PolyLine', 'Polygon', 'Ink', 'Text', 'Highlight', 'Underline', 'StrikeOut', 'Squiggly', 'Stamp'].includes(a.subtype));
 
   let stampImageMap = null;
@@ -1003,7 +1040,7 @@ async function loadAnnotationsForSinglePage(doc, pageNum, waitForColors = false)
 
   // Resolve pdf-lib doc early so both stamp images and colors can use it
   let pdfLibDoc = doc._sharedPdfLibDoc || null;
-  if (!pdfLibDoc && (waitForColors || hasSquareAnnotations)) {
+  if (!pdfLibDoc && (waitForColors || hasSquareAnnotations || needsExactFreeTextMetadata)) {
     const _pl0 = performance.now();
     pdfLibDoc = await getSharedPdfLibDoc(doc);
     console.log(`[PERF] page ${pageNum}: getSharedPdfLibDoc: ${(performance.now() - _pl0).toFixed(0)}ms`);
@@ -1061,8 +1098,10 @@ export async function loadExistingAnnotations(doc) {
   if (!doc) {
     doc = getActiveDocument();
   }
+  if (doc?.id) doc = getDocumentById(doc.id) || doc;
   if (!doc || !doc.pdfDoc) return;
 
+  const annotationOwner = captureDocumentLifecycleOwner(doc);
   const loadId = ++doc._annotationLoadId;
   const pdfDoc = doc.pdfDoc;
   const numPages = pdfDoc.numPages;
@@ -1074,11 +1113,12 @@ export async function loadExistingAnnotations(doc) {
 
   for (let batchStart = 1; batchStart <= numPages; batchStart += BATCH_SIZE) {
     if (loadId !== doc._annotationLoadId) return;
-    if (!state.documents.includes(doc)) return;
+    if (!documentLifecycleIsOpen(annotationOwner)) return;
 
     // Foreground interaction owns the parser/render backends. Resume this
     // document-wide scan only after the shared 250 ms settle window.
-    const stillCurrent = () => loadId === doc._annotationLoadId && state.documents.includes(doc);
+    const stillCurrent = () => loadId === doc._annotationLoadId
+      && documentLifecycleIsOpen(annotationOwner);
     if (!await waitForPdfForegroundIdle({ isCurrent: stillCurrent })) return;
 
     const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, numPages);
@@ -1099,23 +1139,23 @@ export async function loadExistingAnnotations(doc) {
 
     // Fetch all pages in this batch in parallel
     const pages = await Promise.all(pagesToLoad.map(p => pdfDoc.getPage(p)));
-    if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) return;
+    if (loadId !== doc._annotationLoadId || !documentLifecycleIsOpen(annotationOwner)) return;
 
     // Fetch all annotations in this batch in parallel
     const annotResults = await Promise.all(pages.map(page => page.getAnnotations()));
-    if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) return;
+    if (loadId !== doc._annotationLoadId || !documentLifecycleIsOpen(annotationOwner)) return;
 
     // Resolve pdf-lib doc once per batch (cached after first call)
     const pdfLibDoc = await getSharedPdfLibDoc(doc);
-    if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) return;
+    if (loadId !== doc._annotationLoadId || !documentLifecycleIsOpen(annotationOwner)) return;
 
     // Process each page's annotations — yield after every page to keep UI responsive
     for (let i = 0; i < pages.length; i++) {
-      if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) return;
+      if (loadId !== doc._annotationLoadId || !documentLifecycleIsOpen(annotationOwner)) return;
 
       // Yield to the browser so UI stays responsive during background loading
       await new Promise(r => setTimeout(r, 0));
-      if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) return;
+      if (loadId !== doc._annotationLoadId || !documentLifecycleIsOpen(annotationOwner)) return;
 
       const pageNum = pagesToLoad[i];
       const page = pages[i];
@@ -1139,12 +1179,12 @@ export async function loadExistingAnnotations(doc) {
         } catch (e) {
           console.warn('[loader] hybrid stamp extraction failed:', e);
         }
-        if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) return;
+        if (loadId !== doc._annotationLoadId || !documentLifecycleIsOpen(annotationOwner)) return;
       }
 
       if (needsExtraData && pdfLibDoc) {
         annotColorMap = await extractAnnotationColors(pageNum, pdfLibDoc);
-        if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) return;
+        if (loadId !== doc._annotationLoadId || !documentLifecycleIsOpen(annotationOwner)) return;
       }
 
       await _convertAndPushAnnotations(annotations, pageNum, viewport, stampImageMap, annotColorMap, doc);
@@ -1152,25 +1192,32 @@ export async function loadExistingAnnotations(doc) {
   }
 
   // Fix up pages that were loaded on-demand without color data
-  if (doc._pagesNeedingColorUpdate.size > 0 && loadId === doc._annotationLoadId && state.documents.includes(doc)) {
+  if (doc._pagesNeedingColorUpdate.size > 0
+      && loadId === doc._annotationLoadId
+      && documentLifecycleIsOpen(annotationOwner)) {
     const pdfLibDoc = await getSharedPdfLibDoc(doc);
-    if (pdfLibDoc && loadId === doc._annotationLoadId && state.documents.includes(doc)) {
+    if (pdfLibDoc && loadId === doc._annotationLoadId
+        && documentLifecycleIsOpen(annotationOwner)) {
       for (const pageNum of doc._pagesNeedingColorUpdate) {
-        if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) break;
+        if (loadId !== doc._annotationLoadId
+            || !documentLifecycleIsOpen(annotationOwner)) break;
 
         // Yield to keep UI responsive
         await new Promise(r => setTimeout(r, 0));
-        if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) break;
+        if (loadId !== doc._annotationLoadId
+            || !documentLifecycleIsOpen(annotationOwner)) break;
 
         // Remove old annotations for this page
         doc.annotations = doc.annotations.filter(a => a.page !== pageNum);
 
         // Reload with full color data
         const page = await pdfDoc.getPage(pageNum);
-        if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) break;
+        if (loadId !== doc._annotationLoadId
+            || !documentLifecycleIsOpen(annotationOwner)) break;
         const viewport = page.getViewport({ scale: 1 });
         const annotations = await page.getAnnotations();
-        if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) break;
+        if (loadId !== doc._annotationLoadId
+            || !documentLifecycleIsOpen(annotationOwner)) break;
 
         if (annotations.length === 0) continue;
 

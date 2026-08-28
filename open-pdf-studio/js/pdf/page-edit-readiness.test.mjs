@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createInitialDocumentRevisionState } from '../core/document-revision-state.runtime.js';
@@ -75,6 +76,20 @@ test('page edit readiness resolves only after every required current layer settl
   assert.equal(readyEvent.pageNum, 1);
 });
 
+test('the first layer publication mutates the readiness entry retained by a reactive map', () => {
+  const documentState = owner();
+  const retained = {};
+  documentState.pageEditReadiness = new Proxy(retained, {
+    set(target, property, value) {
+      target[property] = { ...value, layers: { ...value.layers } };
+      return true;
+    },
+  });
+  const token = captureRenderPublicationToken(documentState, 1, 'reactive-readiness');
+  assert.equal(markPageEditLayerReady(documentState, 1, 'raster', token), true);
+  assert.equal(pageEditReadinessSnapshot(documentState, 1).layers.raster, true);
+});
+
 test('stale layer completion cannot satisfy a newer content revision', () => {
   const documentState = owner();
   const stale = captureRenderPublicationToken(documentState, 1, 'stale-readiness');
@@ -135,4 +150,123 @@ test('an affected content revision change rejects the old readiness wait', async
     pages: [1],
   });
   await assert.rejects(pending, { name: 'AbortError' });
+});
+
+test('desktop blank-document creation rebuilds readiness after its committed mutation', async () => {
+  const source = await readFile(new URL('./loader.js', import.meta.url), 'utf8');
+  const desktopStart = source.indexOf('if (isTauri() && window.__TAURI__?.path');
+  const desktopEnd = source.indexOf('// ─── Browser fallback', desktopStart);
+  const desktopBlankCreation = source.slice(desktopStart, desktopEnd);
+  const mutation = desktopBlankCreation.indexOf(
+    "markDocumentModified({ reason: 'document:create-blank' })",
+  );
+  const rebuild = desktopBlankCreation.indexOf("setViewMode(doc?.viewMode || 'single')");
+  assert.ok(mutation >= 0, 'blank-document creation must record its persistent mutation');
+  assert.ok(rebuild > mutation, 'the new content revision must rebuild page edit readiness');
+});
+
+test('loader cancellation follows immutable document lifecycle ownership', async () => {
+  const source = await readFile(new URL('./loader.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /state\.documents\.includes\(doc\)/u);
+  assert.doesNotMatch(source, /state\.documents\[state\.activeDocumentIndex\] === doc/u);
+  assert.match(
+    source,
+    /let loadOwner = captureDocumentLifecycleOwner\(doc\)/u,
+  );
+  assert.match(
+    source,
+    /loadOwner = captureDocumentLifecycleOwner\(getDocumentById\(loadOwner\.id\) \|\| doc\)/u,
+  );
+  assert.match(
+    source,
+    /const annotationOwner = captureDocumentLifecycleOwner\(doc\)/u,
+  );
+  assert.doesNotMatch(
+    source,
+    /const \{ loadDocumentScale \} = await import\('\.\.\/annotations\/measurement\.js'\)/u,
+  );
+  assert.match(
+    source,
+    /void import\('\.\.\/annotations\/measurement\.js'\)\.then/u,
+  );
+});
+
+test('the first rendered page hydrates annotations even after its text layer exists', async () => {
+  const source = await readFile(new URL('./renderer.js', import.meta.url), 'utf8');
+  const annotationStart = source.indexOf('// Ensure annotations for this page are loaded');
+  const annotationEnd = source.indexOf('// Final stale-doc check', annotationStart);
+  const annotationReadiness = source.slice(annotationStart, annotationEnd);
+  assert.match(
+    annotationReadiness,
+    /!doc\._loadedAnnotationPages\.has\(pageNum\)/u,
+    'a newly created text layer must not suppress first-page annotation hydration',
+  );
+  assert.match(annotationReadiness, /await ensureAnnotationsForPage\(pageNum\)/u);
+});
+
+test('first-page FreeText hydration waits for exact ownership and callout metadata', async () => {
+  const source = await readFile(new URL('./loader.js', import.meta.url), 'utf8');
+  const singlePageStart = source.indexOf('async function loadAnnotationsForSinglePage');
+  const singlePageEnd = source.indexOf('// Ensure annotations are loaded', singlePageStart);
+  const singlePageLoader = source.slice(singlePageStart, singlePageEnd);
+  assert.match(
+    singlePageLoader,
+    /needsExactFreeTextMetadata = annotations\.some\(a => a\.subtype === 'FreeText'\)/u,
+  );
+  assert.match(
+    singlePageLoader,
+    /waitForColors \|\| hasSquareAnnotations \|\| needsExactFreeTextMetadata/u,
+    'FreeText must not publish a provisional textbox before exact dictionary metadata is loaded',
+  );
+});
+
+test('persistent undo commands schedule readiness rebuilding for their new revision', async () => {
+  const source = await readFile(new URL('../core/undo-manager.js', import.meta.url), 'utf8');
+  const mutationHelperStart = source.indexOf('function noteUndoCommandMutation');
+  const mutationHelperEnd = source.indexOf('\n}\n', mutationHelperStart);
+  const mutationHelper = source.slice(mutationHelperStart, mutationHelperEnd);
+  assert.match(mutationHelper, /noteDocumentMutation\(doc,/u);
+  assert.match(
+    mutationHelper,
+    /scheduleRevisionReadinessRebuild\(doc, contentRevision\)/u,
+  );
+});
+
+test('rotation recording does not publish the already-rendered mutation twice', async () => {
+  const undoSource = await readFile(new URL('../core/undo-manager.js', import.meta.url), 'utf8');
+  const recorderStart = undoSource.indexOf('export function recordPageRotation');
+  const recorderEnd = undoSource.indexOf('\n}\n', recorderStart);
+  const recorder = undoSource.slice(recorderStart, recorderEnd);
+  assert.match(recorder, /executeForDocument\(getActiveDocument\(\),/u);
+  assert.match(recorder, /\{ noteRevision: false \}\)/u);
+
+  const rendererSource = await readFile(new URL('./renderer.js', import.meta.url), 'utf8');
+  const rotationStart = rendererSource.indexOf('export async function rotatePage');
+  const rotationEnd = rendererSource.indexOf('// Clear the PDF view', rotationStart);
+  const rotation = rendererSource.slice(rotationStart, rotationEnd);
+  assert.match(rotation, /noteDocumentMutation\(doc,/u);
+  assert.match(
+    rotation,
+    /renderContinuous\(true, \{\s*synchronization: true,\s*requiredPages: \[pageNum\],\s*\}\)/u,
+    'continuous rotation must suppress competing scheduler work until its current page is ready',
+  );
+
+  const undoStart = undoSource.indexOf('export async function undo()');
+  const redoStart = undoSource.indexOf('export async function redo()');
+  const redoEnd = undoSource.indexOf('// ---- Undo transaction support', redoStart);
+  assert.match(undoSource.slice(undoStart, redoStart), /noteUndoCommandMutation\(/u);
+  assert.match(undoSource.slice(redoStart, redoEnd), /noteUndoCommandMutation\(/u);
+});
+
+test('leaving the vector viewport transfers its authoritative zoom to continuous layout', async () => {
+  const source = await readFile(new URL('./renderer.js', import.meta.url), 'utf8');
+  const viewModeStart = source.indexOf('export async function setViewMode(mode)');
+  const viewModeEnd = source.indexOf('// ─── Adjacent-page prefetch', viewModeStart);
+  const viewMode = source.slice(viewModeStart, viewModeEnd);
+  assert.match(viewMode, /doc\.scale = Number\(liveViewport\.zoom\)/u);
+
+  const setZoomStart = source.indexOf('export async function setZoom(newScale)');
+  const setZoomEnd = source.indexOf('// Helper: pick the right', setZoomStart);
+  const setZoom = source.slice(setZoomStart, setZoomEnd);
+  assert.match(setZoom, /doc\.scale = Number\(vp\.zoom\) \|\| newScale/u);
 });

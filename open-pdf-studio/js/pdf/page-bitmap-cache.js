@@ -193,6 +193,25 @@ function _registerEntry(key, entry, filePath, pageNum) {
   });
 }
 
+function _releaseSupersededRevisionEntries(request) {
+  if (!request?.key) return;
+  const current = request.key;
+  for (const [key, entry] of _cache) {
+    const cached = entry?.rasterKey;
+    if (!cached
+        || cached.documentId !== current.documentId
+        || cached.lifecycleGeneration !== current.lifecycleGeneration) continue;
+    const obsoleteContent = cached.contentRevision !== current.contentRevision;
+    const obsoletePage = cached.pageNum === current.pageNum
+      && cached.pageRevision !== current.pageRevision;
+    if (!obsoleteContent && !obsoletePage) continue;
+    try { entry.bitmap?.close?.(); } catch {}
+    _cache.delete(key);
+    unregisterRenderResource(_resourceKey(key));
+  }
+  _recordDecodedBitmapMemory();
+}
+
 // Compute the zoom bucket (power of 2) to render at, given a target scale.
 // We round UP to the next power of 2 so we always have at least the requested
 // resolution.
@@ -297,6 +316,7 @@ export function setCachedBitmapEntry(
   const request = context
     ? _rasterRequest(filePath, pageNum, rotation, context.targetRasterScale || zoomBucket, context)
     : null;
+  _releaseSupersededRevisionEntries(request);
   const key = request ? _rasterCacheKey(request) : _legacyKey(filePath, pageNum, rotation, zoomBucket);
   const prev = _cache.get(key);
   if (prev && prev.bitmap && prev.bitmap !== bitmap) {

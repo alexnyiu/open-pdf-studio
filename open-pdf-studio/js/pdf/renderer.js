@@ -66,6 +66,7 @@ import {
   serializePageRasterKey,
 } from './page-raster.js';
 import { planVisiblePageTiles } from './page-tile-plan.js';
+import { singlePageOverlaySurfaceDimensions } from './canvas-dpr.js';
 import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
 import {
   cancelPdfJsRenderTasksForDocument,
@@ -767,7 +768,8 @@ async function _renderPageImpl(pageNum, { requireEditReady = false } = {}) {
 
   // Ensure annotations for this page are loaded (on-demand if background hasn't reached it yet)
   // Skip heavy operations during vector zoom (only needed on first load / page change)
-  if (!_skipBitmapRender || !document.querySelector('.textLayer')) {
+  if (requireEditReady || !_skipBitmapRender || !document.querySelector('.textLayer')
+      || !doc._loadedAnnotationPages.has(pageNum)) {
     console.log(`[PERF] renderPage(${pageNum}) ensureAnnotations START: ${(performance.now() - _rp0).toFixed(0)}ms`);
     await ensureAnnotationsForPage(pageNum);
     if (_isStaleDoc(doc, publicationToken)) return;
@@ -782,8 +784,19 @@ async function _renderPageImpl(pageNum, { requireEditReady = false } = {}) {
   // overwrite the annotation canvas of the now-active document.
   if (_isStaleDoc(doc, publicationToken)) return;
 
-  // Resize annotation canvas and redraw in one synchronous block — no blink
-  setupCanvasHiDPI(annotationCanvas, viewport.width, viewport.height);
+  // Resize annotation canvas and redraw in one synchronous block — no blink.
+  // The unified single-page viewport owns a fixed visible host surface and
+  // centers the PDF page inside it with offsetX/offsetY. Shrinking the overlay
+  // to the scaled page width after Save clips annotations on the centered side
+  // and makes them impossible to hit even though the base image is current.
+  const overlaySurface = singlePageOverlaySurfaceDimensions({
+    viewportActive: Boolean(_skipBitmapRender && window.__pdfViewport?.active && doc.filePath),
+    viewportWidth: pdfCanvas.clientWidth,
+    viewportHeight: pdfCanvas.clientHeight,
+    pageWidth: viewport.width,
+    pageHeight: viewport.height,
+  });
+  setupCanvasHiDPI(annotationCanvas, overlaySurface.width, overlaySurface.height);
   redrawAnnotations();
   markLayer('annotations');
 
@@ -1411,6 +1424,14 @@ function renderContinuousPage(pageNum, priority = 100, kind = 'foreground') {
   const densityRevision = Math.round(requestedRasterScale(doc.scale, getCanvasDPR()) * 10000);
   const pageRevision = Number(doc.pageRenderRevisions?.[pageNum]) || 0;
   const publicationToken = captureRenderPublicationToken(doc, pageNum, 'continuous-scheduler');
+  let countedAsInFlight = false;
+  const releaseInFlight = () => {
+    if (!countedAsInFlight) return;
+    countedAsInFlight = false;
+    if (typeof window !== 'undefined') {
+      window.__pdfRenderInFlight = Math.max(0, (window.__pdfRenderInFlight || 1) - 1);
+    }
+  };
   return _continuousRenderScheduler.schedule({
     key: `${ownerKey}:${pageNum}:${pageRevision}:${scaleRevision}:${densityRevision}`,
     ownerKey,
@@ -1418,14 +1439,16 @@ function renderContinuousPage(pageNum, priority = 100, kind = 'foreground') {
     kind,
     publicationToken,
     publicationDocument: doc,
+    onRetire: releaseInFlight,
     run: async ({ isCurrent }) => {
-      if (typeof window !== 'undefined') window.__pdfRenderInFlight = (window.__pdfRenderInFlight || 0) + 1;
+      if (typeof window !== 'undefined') {
+        countedAsInFlight = true;
+        window.__pdfRenderInFlight = (window.__pdfRenderInFlight || 0) + 1;
+      }
       try {
         return await _renderContinuousPageNow(pageNum, isCurrent, kind);
       } finally {
-        if (typeof window !== 'undefined') {
-          window.__pdfRenderInFlight = Math.max(0, (window.__pdfRenderInFlight || 1) - 1);
-        }
+        releaseInFlight();
       }
     },
   }).catch((error) => {
@@ -2970,6 +2993,15 @@ function _prevSpreadAnchor(anchor) {
 export async function setViewMode(mode) {
   const doc = getActiveDocument();
   if (!doc?.pdfDoc) return;
+  const liveViewport = window.__pdfViewport;
+  if (doc.viewMode === 'single' && liveViewport?.active && doc.filePath
+      && Number.isFinite(Number(liveViewport.zoom)) && Number(liveViewport.zoom) > 0) {
+    // The vector viewport updates its zoom synchronously but publishes the
+    // mirrored document scale on the next animation frame. A view-mode switch
+    // can happen before that frame, so carry the authoritative zoom into the
+    // continuous layout before tearing the viewport down.
+    doc.scale = Number(liveViewport.zoom);
+  }
   cancelPendingDocumentZoom();
   cancelDeferredZoomRenders();
 
@@ -3295,6 +3327,7 @@ export async function zoomIn() {
   if (vp && vp.active && doc.filePath) {
     const m = await import('./pdf-viewport.js');
     m.zoomStepAtCenter(+1);
+    doc.scale = Number(vp.zoom) || doc.scale;
     return;
   }
   if (doc.viewMode === 'continuous') {
@@ -3313,6 +3346,7 @@ export async function zoomOut() {
   if (vp && vp.active && doc.filePath) {
     const m = await import('./pdf-viewport.js');
     m.zoomStepAtCenter(-1);
+    doc.scale = Number(vp.zoom) || doc.scale;
     return;
   }
   if (doc.viewMode === 'continuous') {
@@ -3345,6 +3379,7 @@ export async function setZoom(newScale) {
       const m = await import('./pdf-viewport.js');
       const dpr = window.devicePixelRatio || 1;
       m.setZoomAtPoint(pdfCanvas.width / dpr / 2, pdfCanvas.height / dpr / 2, newScale);
+      doc.scale = Number(vp.zoom) || newScale;
     }
     return;
   }
@@ -3663,7 +3698,10 @@ export async function rotatePage(delta, targetPage) {
 
   // Re-render
   if (doc?.viewMode === 'continuous') {
-    await renderContinuous(true);
+    await renderContinuous(true, {
+      synchronization: true,
+      requiredPages: [pageNum],
+    });
   } else {
     await renderPage(pageNum);
   }

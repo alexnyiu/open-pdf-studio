@@ -8,6 +8,7 @@ const clock = () => globalThis.performance?.now?.() ?? Date.now();
 export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 } = {}) {
   const queued = new Map();
   const running = new Map();
+  const retired = new Map();
   let sequence = 0;
   let interactionUntil = 0;
   let wakeTimer = null;
@@ -32,9 +33,21 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
   };
 
   const settleCancelled = (entry, reason = 'cancelled') => {
+    if (entry.settled) return false;
     entry.valid = false;
+    entry.settled = true;
     statistics.cancelled += 1;
     entry.resolve({ status: 'cancelled', reason });
+    return true;
+  };
+
+  const retireRunning = (key, entry, reason) => {
+    if (running.get(key) !== entry) return false;
+    running.delete(key);
+    retired.set(`${key}:${entry.sequence}`, entry);
+    try { entry.onRetire?.(reason); } catch { /* retirement must still settle */ }
+    settleCancelled(entry, reason);
+    return true;
   };
 
   const nextEntry = () => [...queued.values()]
@@ -64,20 +77,23 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
         isCurrent: () => entryIsCurrent(entry) && running.get(entry.key) === entry,
       }))
         .then((value) => {
-          if (entryIsCurrent(entry)) {
+          if (entryIsCurrent(entry) && !entry.settled) {
+            entry.settled = true;
             statistics.completed += 1;
             entry.resolve({ status: 'complete', value });
           } else {
             recordRejectedRenderPublication(entry.publicationToken, 'scheduler-after-run');
-            statistics.cancelled += 1;
-            entry.resolve({ status: 'cancelled', reason: 'stale' });
+            settleCancelled(entry, 'stale');
           }
         }, (error) => {
+          if (entry.settled) return;
+          entry.settled = true;
           statistics.failed += 1;
           entry.reject(error);
         })
         .finally(() => {
           if (running.get(entry.key) === entry) running.delete(entry.key);
+          retired.delete(`${entry.key}:${entry.sequence}`);
           pump();
         });
     }
@@ -91,6 +107,7 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
       kind = 'foreground',
       publicationToken = null,
       publicationDocument = null,
+      onRetire = null,
       run,
     }) {
       if (!key || typeof run !== 'function') throw new TypeError('Render work requires a key and run callback');
@@ -104,8 +121,8 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
       });
       queued.set(key, {
         key, ownerKey, priority: Number(priority) || 0, kind, run,
-        publicationToken, publicationDocument,
-        sequence: ++sequence, valid: true, resolve, reject, promise,
+        publicationToken, publicationDocument, onRetire,
+        sequence: ++sequence, valid: true, settled: false, resolve, reject, promise,
       });
       statistics.scheduled += 1;
       statistics.maxQueued = Math.max(statistics.maxQueued, queued.size);
@@ -120,9 +137,10 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
         settleCancelled(entry, 'foreground-resumed');
       }
       // A native render may not be interruptible at the FFI boundary, but it
-      // can be invalidated immediately so its completion never publishes.
-      for (const entry of running.values()) {
-        if (entry.kind === 'background') entry.valid = false;
+      // can be retired immediately so it neither publishes nor occupies the
+      // foreground slot while its underlying callback unwinds.
+      for (const [key, entry] of [...running]) {
+        if (entry.kind === 'background') retireRunning(key, entry, 'foreground-resumed');
       }
       wake();
     },
@@ -132,7 +150,10 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
         queued.delete(key);
         settleCancelled(entry, reason);
       }
-      for (const entry of running.values()) if (entry.ownerKey === ownerKey) entry.valid = false;
+      for (const [key, entry] of [...running]) {
+        if (entry.ownerKey === ownerKey) retireRunning(key, entry, reason);
+      }
+      pump();
     },
     cancelWhere(predicate, reason = 'cancelled') {
       for (const [key, entry] of queued) {
@@ -140,12 +161,16 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
         queued.delete(key);
         settleCancelled(entry, reason);
       }
-      for (const entry of running.values()) if (predicate(entry)) entry.valid = false;
+      for (const [key, entry] of [...running]) {
+        if (predicate(entry)) retireRunning(key, entry, reason);
+      }
+      pump();
     },
     snapshot() {
       return {
         queued: [...queued.values()].map(({ key, ownerKey, priority, kind }) => ({ key, ownerKey, priority, kind })),
         running: [...running.values()].map(({ key, ownerKey, priority, kind }) => ({ key, ownerKey, priority, kind })),
+        retired: [...retired.values()].map(({ key, ownerKey, priority, kind }) => ({ key, ownerKey, priority, kind })),
         backgroundPaused: isBackgroundPaused(),
         statistics: { ...statistics },
       };

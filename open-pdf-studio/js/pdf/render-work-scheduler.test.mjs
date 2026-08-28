@@ -49,6 +49,60 @@ test('foreground interaction invalidates a running background completion', async
   assert.equal(scheduler.snapshot().statistics.cancelled, 1);
 });
 
+test('cancelled old-owner work cannot starve a new foreground owner', async () => {
+  const scheduler = createRenderWorkScheduler();
+  let releaseOld;
+  const oldBarrier = new Promise((resolve) => { releaseOld = resolve; });
+  const old = scheduler.schedule({
+    key: 'old-page',
+    ownerKey: 'old-document:1',
+    run: () => oldBarrier,
+  });
+
+  scheduler.cancelOwner('old-document:1', 'document-closed');
+  assert.equal((await old).status, 'cancelled');
+  assert.equal(scheduler.snapshot().retired.length, 1);
+
+  let newStarted = false;
+  const current = scheduler.schedule({
+    key: 'current-page',
+    ownerKey: 'current-document:1',
+    run: () => { newStarted = true; return 'current pixels'; },
+  });
+  assert.equal((await current).status, 'complete');
+  assert.equal(newStarted, true, 'the current owner must not wait for the retired callback');
+
+  releaseOld('late pixels');
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(scheduler.snapshot().statistics.cancelled, 1);
+});
+
+test('retiring running work releases its external foreground lease exactly once', async () => {
+  const scheduler = createRenderWorkScheduler();
+  let releaseOld;
+  const oldBarrier = new Promise((resolve) => { releaseOld = resolve; });
+  let retireCalls = 0;
+  const old = scheduler.schedule({
+    key: 'retired-render',
+    ownerKey: 'old-document:1',
+    onRetire(reason) {
+      retireCalls += 1;
+      assert.equal(reason, 'document-closed');
+    },
+    run: () => oldBarrier,
+  });
+
+  scheduler.cancelOwner('old-document:1', 'document-closed');
+  assert.equal((await old).status, 'cancelled');
+  assert.equal(retireCalls, 1);
+
+  releaseOld('late pixels');
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(retireCalls, 1, 'late completion must not retire the same lease twice');
+});
+
 test('scheduler rejects a completion whose publication revision advanced while running', async () => {
   const revisionState = createInitialDocumentRevisionState();
   revisionState.contentRevision = 1;

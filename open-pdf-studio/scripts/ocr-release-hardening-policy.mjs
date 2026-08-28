@@ -11,6 +11,7 @@ export const REQUIRED_CHECK_NAMES = Object.freeze([
   'Desktop build (windows-latest)',
   'Desktop build (macos-26)',
   'macOS packaged editor acceptance',
+  'save/render coherence report verification',
   'macOS editor and OCR performance',
   'macOS OCR release-hardening decision',
 ]);
@@ -19,6 +20,7 @@ export const REQUIRED_UPSTREAM_JOB_IDS = Object.freeze([
   'static-verification',
   'build',
   'packaged-macos-editor-acceptance',
+  'save-render-coherence-report-verification',
   'macos-editor-ocr-performance',
 ]);
 
@@ -28,6 +30,7 @@ export const REQUIRED_GATE_IDS = Object.freeze([
   'desktop-build-windows-latest',
   'desktop-build-macos-26',
   'packaged-macos-editor-acceptance',
+  'save-render-coherence-report-verification',
   'macos-editor-ocr-performance',
   'macos-ocr-release-hardening',
 ]);
@@ -38,6 +41,7 @@ export const GATE_EVIDENCE_CONTRACTS = Object.freeze({
   'desktop-build-windows-latest': 'open-pdf-studio.release-gate-evidence',
   'desktop-build-macos-26': 'open-pdf-studio.release-gate-evidence',
   'packaged-macos-editor-acceptance': 'open-pdf-studio.editor-packaged-acceptance',
+  'save-render-coherence-report-verification': 'open-pdf-studio.release-gate-evidence',
   'macos-editor-ocr-performance': 'open-pdf-studio.editor-performance',
   'macos-ocr-release-hardening': 'open-pdf-studio.release-gate-evidence',
   'repository-controls': 'open-pdf-studio.repository-controls',

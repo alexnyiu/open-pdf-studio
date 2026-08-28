@@ -186,3 +186,9 @@ test('click-away auto-save is limited to normal file-backed PDF owners', () => {
     filePath: 'C:\\Users\\Example\\INetCache\\Content.Outlook\\ABC\\report.pdf',
   }), false);
 });
+
+test('automatic save admission defers while a page edit intent is awaiting readiness', async () => {
+  const source = await readFile(new URL('./saver.js', import.meta.url), 'utf8');
+  assert.match(source, /pageEditIntentPendingForDocument\(documentId\)/u);
+  assert.match(source, /reason: 'pending-page-edit-intent'/u);
+});

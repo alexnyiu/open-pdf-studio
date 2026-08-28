@@ -91,6 +91,7 @@ function pageSummary(pageNumber, stateName = 'completed', failure = null) {
     cache: 'disabled',
     retained: stateName === 'completed',
     measuredStageCosts: null,
+    performance: null,
   };
 }
 
@@ -201,13 +202,27 @@ test('the normal macOS application action owns a production controller and calls
     assert.equal(ocrWorkflowService.status(document.id).counts.completed, 0);
     assert.doesNotMatch(JSON.stringify(ocrWorkflowService.snapshot()), /\/private\/customer/);
 
-    fake.completion.resolve(terminalSummary({ jobId: fake.handle.jobId, documentId: document.id }));
+    const completed = terminalSummary({ jobId: fake.handle.jobId, documentId: document.id });
+    completed.pages[0].measuredStageCosts = { sampleCount: 1, costsMs: { recognizing: 1 } };
+    completed.pages[0].performance = {
+      rasterMs: 1,
+      lifecycle: [{ stage: 'released' }],
+      resources: { transferredBuffersDropped: true },
+    };
+    completed.performance = { contract: 'aggregate-performance-evidence' };
+    fake.completion.resolve(completed);
     await fake.handle.completion;
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(ocrWorkflowService.activeJobs.has(document.id), false);
     assert.equal(ocrWorkflowService.status(document.id).terminalSummary.status, 'completed');
     assert.equal(ocrWorkflowService.status(document.id).currentPageState, 'completed');
     assert.equal(ocrWorkflowService.status(document.id).counts.completed, 1);
+    assert.equal(ocrWorkflowService.status(document.id).pages[0].performance, null);
+    assert.equal(ocrWorkflowService.status(document.id).terminalSummary.pages[0].performance, null);
+    assert.equal(
+      ocrWorkflowService.status(document.id).terminalSummary.performance.contract,
+      'aggregate-performance-evidence',
+    );
   } finally {
     ocrWorkflowService.controller.startDocumentJob = originalStart;
     ocrWorkflowService.modelState.requireInstalled = originalRequireInstalled;

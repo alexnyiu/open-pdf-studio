@@ -153,6 +153,7 @@ export function reflowRichTextToWidth(document, width, measure = estimatedAdvanc
   let lineRuns = [];
   let lineWidth = 0;
   let baseline = document.lines[0].baseline;
+  let lineAlignment = document.lines[0].alignment;
   const sign = document.region.baselineDirection === 'increasing-y' ? 1 : -1;
   const pushLine = (breakAfter) => {
     const fallback = lineRuns[0] || document.lines[0].runs[0];
@@ -160,7 +161,7 @@ export function reflowRichTextToWidth(document, width, measure = estimatedAdvanc
     output.push(createTextLine(lineRuns.length ? lineRuns : [createTextRun('', fallback)], {
       baseline,
       baselineAdvance: advance,
-      alignment: 'left',
+      alignment: lineAlignment,
       breakAfter,
     }));
     baseline += sign * advance;
@@ -174,6 +175,7 @@ export function reflowRichTextToWidth(document, width, measure = estimatedAdvanc
     else lineRuns.push(createTextRun(unit, style));
   };
   for (const sourceLine of document.lines) {
+    if (lineRuns.length === 0) lineAlignment = sourceLine.alignment;
     for (const run of sourceLine.runs) {
       const tokens = run.text.match(/\s+|[^\s]+/gu) || [''];
       for (const token of tokens) {

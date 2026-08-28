@@ -197,6 +197,7 @@ test('CI makes every hardening branch and protected-main gate explicit', async (
     'npm ci',
     'npm run typecheck',
     'npm run test',
+    'npm run test:large-pdf-performance:unit',
     'npm run build',
     'git diff --check',
     'cargo test -p open-pdf-studio',
@@ -206,6 +207,7 @@ test('CI makes every hardening branch and protected-main gate explicit', async (
     'npm run test:modal-hardening:ui',
     'npm run test:editor-coverage:macos',
     'npm run test:editor-acceptance:macos',
+    'node scripts/verify-save-render-coherence-report.mjs',
     'npm run test:ocr-production-100-page:macos',
     'npm run test:editor-performance:macos',
   ]) {
@@ -218,6 +220,11 @@ test('CI makes every hardening branch and protected-main gate explicit', async (
   assert.match(workflow, /OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME:.*browser_acceptance\.outcome/);
   assert.match(workflow, /OPEN_PDF_STUDIO_EDITOR_COVERAGE_MANIFEST:.*editor-coverage-manifest\.json/);
   assert.match(workflow, /OPEN_PDF_STUDIO_OCR_100_PAGE_REPORT:.*ocr-production-100-page\.json/);
+  assert.match(
+    workflow,
+    /verify-save-render-coherence-report\.mjs[\s\S]*?--commit "\$GITHUB_SHA"/,
+  );
+  assert.match(workflow, /name: ocr-release-hardening-evidence-save-render-coherence/);
   assert.match(workflow, /if: always\(\)[\s\S]*?Upload final release decision/);
   for (const dependency of REQUIRED_UPSTREAM_JOB_IDS) {
     assert.match(

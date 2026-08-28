@@ -78,7 +78,7 @@ function currentEntry(documentState, pageNum, { create = false } = {}) {
     failure: null,
   };
   map[page] = entry;
-  return entry;
+  return map[page] || entry;
 }
 
 function dispatchReadinessEvent(type, detail) {

@@ -260,6 +260,32 @@ export function createSaveCoordinator({
         ownsPublication() {
           return ownsBoundary(record, request, 'after-replacement');
         },
+        adoptDocumentGeneration(nextGeneration) {
+          const generation = Number(nextGeneration) || 0;
+          const previousGeneration = request.documentGeneration;
+          const owner = resolveDocumentById(request.documentId);
+          if (record.active !== request
+              || record.cancelledGeneration === previousGeneration
+              || !owner
+              || (Number(owner.lifecycleGeneration) || 0) !== generation) {
+            throw new SaveRequestSupersededError('proxy-generation-adoption');
+          }
+          request.documentGeneration = generation;
+          if (record.pending?.documentGeneration === previousGeneration) {
+            record.pending.documentGeneration = generation;
+          }
+          emit('proxy-generation-adopted', request, {
+            previousGeneration,
+            documentGeneration: generation,
+          });
+          return true;
+        },
+        assertSynchronizationOwnership(stage = 'synchronization') {
+          if (!ownsBoundary(record, request, stage)) {
+            throw new SaveRequestSupersededError(stage);
+          }
+          return true;
+        },
         ownsDocument() {
           return record.active === request
             && requestOwnerMatches(request)

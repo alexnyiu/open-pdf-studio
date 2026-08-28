@@ -162,8 +162,10 @@ async function runCoverage(options) {
   const lifecycleEvidence = [];
   const matrixCases = [];
   const lifecycleCases = [];
+  const fixtureDiagnostics = {};
   let app = null;
   let failureDiagnostics = null;
+  let lastEditorOpenGesture = null;
 
   await mkdir(coverageDir, { recursive: true });
   // A previous successful manifest must never survive a failed or interrupted
@@ -360,10 +362,18 @@ async function runCoverage(options) {
 
     async function setViewMode(mode) {
       const selector = mode === 'single' ? '#single-page' : '#continuous';
+      const before = await call('app_get_viewport_state');
       const action = await click(selector, true);
       const viewport = await waitUntil(`view mode ${mode}`, async () => {
         const state = await call('app_get_viewport_state');
-        return state.doc?.viewMode === mode && state.doc?.bookSpread === false ? state : null;
+        if (state.doc?.viewMode !== mode || state.doc?.bookSpread !== false) return null;
+        if (!before.editorSession) return state;
+        if (state.editorSession?.sessionId !== before.editorSession.sessionId) return null;
+        const editor = await ui('.pdf-text-editor', false);
+        const expectedHostReady = mode === 'single'
+          ? editor.pageTextEditHost?.parentId === 'canvas-container'
+          : editor.pageTextEditHost?.parentClass?.includes('canvas-container-cont');
+        return editor.found && editor.visible && expectedHostReady ? state : null;
       });
       return { selector, action, observed: viewport.doc.viewMode };
     }
@@ -374,12 +384,50 @@ async function runCoverage(options) {
       let current = observedRotation(before);
       const clicks = [];
       for (let attempt = 0; current !== target && attempt < 4; attempt += 1) {
+        const priorPlacementAt = Number(
+          before.editorSession
+            ? (await call('app_get_viewport_state')).editorMetrics?.placementDebug?.at
+            : 0,
+        ) || 0;
         clicks.push(await click('#view-rotate-right', true));
-        const viewport = await waitUntil(`page rotation ${target}`, async () => {
-          const state = await call('app_get_viewport_state');
-          const next = observedRotation(state);
-          return next !== current ? state : null;
-        });
+        let viewport;
+        try {
+          viewport = await waitUntil(`page rotation ${target}`, async () => {
+            const state = await call('app_get_viewport_state');
+            const next = observedRotation(state);
+            if (next === current) return null;
+            if (!before.editorSession) return state;
+            if (state.editorSession?.sessionId !== before.editorSession.sessionId) return null;
+            const placement = state.editorMetrics?.placementDebug;
+            const editor = await ui('.pdf-text-editor', false);
+            return placement?.phase === 'attached'
+              && Number(placement.at) > priorPlacementAt
+              && editor.found
+              && editor.visible
+              && editor.pageTextEditHost?.attached === true
+              ? state : null;
+          });
+        } catch (error) {
+          const [state, editor] = await Promise.all([
+            call('app_get_viewport_state').catch(() => null),
+            ui('.pdf-text-editor', false).catch(() => null),
+          ]);
+          throw new Error(`${error.message}; rotation-transition=${JSON.stringify({
+            requested: target,
+            priorPlacementAt,
+            observed: observedRotation(state),
+            viewMode: state?.doc?.viewMode ?? null,
+            saveState: state?.documentSaveState ?? null,
+            readiness: state?.pageEditReadiness ?? null,
+            session: state?.editorSession ?? null,
+            placement: state?.editorMetrics?.placementDebug ?? null,
+            renderPublications: state?.renderPublicationDiagnostics ?? null,
+            renderResources: state?.renderResources ?? null,
+            renderedSurfaces: state?.renderedSurfaceStates ?? null,
+            nativeRenderResources: state?.nativeRenderResources ?? null,
+            editor,
+          })}`);
+        }
         current = observedRotation(viewport);
       }
       assert.equal(current, target, `page rotation did not reach ${target}`);
@@ -574,6 +622,35 @@ async function runCoverage(options) {
       await createAnnotationText('callout', 'Coverage callout text', [0.56, 0.42], [0.82, 0.55]);
       const savedAnnotations = await call('app_save_pdf', { path: fixturePaths.annotation });
       assert.equal(savedAnnotations.ok, true, savedAnnotations.error);
+      await waitUntil('production annotation fixture save coherence', async () => {
+        const viewport = await call('app_get_viewport_state');
+        const revision = viewport.documentSaveState;
+        const page = String(viewport.doc?.currentPage || 1);
+        return viewport.doc?.filePath === fixturePaths.annotation
+          && revision?.saveState === 'saved'
+          && revision.persistedRevision === revision.contentRevision
+          && revision.livePdfRevision === revision.contentRevision
+          && revision.pageRenderReadyRevisions?.[page] === revision.contentRevision
+          && revision.pageSemanticReadyRevisions?.[page] === revision.contentRevision
+          && viewport.pageEditReadiness?.ready === true
+          ? viewport : null;
+      }, 90_000);
+      const liveAnnotations = await listAnnotations();
+      assert.equal(liveAnnotations.some((annotation) => annotation.type === 'textbox'), true);
+      assert.equal(liveAnnotations.some((annotation) => annotation.type === 'callout'), true);
+      await closeAllTabs();
+
+      // The matrix must consume a real production-reopened artifact, not
+      // state retained by the untitled document that created the fixture.
+      await openPdf(fixturePaths.annotation);
+      await establishBaseViewport();
+      await waitUntil('production annotation fixture reopen', async () => {
+        const annotations = await listAnnotations();
+        return annotations.some((annotation) => annotation.type === 'textbox')
+          && annotations.some((annotation) => annotation.type === 'callout')
+          ? annotations : null;
+      }, 90_000);
+      fixtureDiagnostics.annotationBaseline = await fileIdentity(fixturePaths.annotation);
       await closeAllTabs();
     }
 
@@ -587,6 +664,13 @@ async function runCoverage(options) {
       );
       const point = center(hit.rect);
       const pointer = await call('app_mouse_click', point);
+      lastEditorOpenGesture = {
+        editorFamily: adapter.id,
+        selector: adapter.selector,
+        hit,
+        point,
+        pointer,
+      };
       assert.equal(pointer.ok, true, pointer.error);
       return waitForEditor(adapter);
     }
@@ -687,6 +771,8 @@ async function runCoverage(options) {
       },
     ];
     assert.deepEqual(adapters.map((adapter) => adapter.id), EDITOR_COVERAGE_DIMENSIONS.editorFamilies);
+    for (const adapter of adapters) adapter.baselinePath = adapter.path;
+    const familyResetCounts = new Map();
     const startFamilyIndex = options.startFamily
       ? adapters.findIndex((adapter) => adapter.id === options.startFamily) : 0;
     if (options.startFamily && startFamilyIndex < 0) {
@@ -698,30 +784,90 @@ async function runCoverage(options) {
 
     async function resetFamily(adapter) {
       await closeAllTabs();
+      // Rotation and lifecycle cases are genuine persisted mutations. Give
+      // every case a fresh working copy so one required case cannot alter the
+      // production-created fixture consumed by a later family or scenario.
+      const resetCount = (familyResetCounts.get(adapter.id) || 0) + 1;
+      familyResetCounts.set(adapter.id, resetCount);
+      adapter.path = path.join(runDir, `${adapter.id}-case-${resetCount}.pdf`);
+      if (adapter.baselinePath === fixturePaths.annotation) {
+        const currentBaseline = await fileIdentity(adapter.baselinePath);
+        assert.deepEqual(
+          currentBaseline,
+          fixtureDiagnostics.annotationBaseline,
+          'the production annotation fixture changed after reopen verification',
+        );
+        fixtureDiagnostics[`${adapter.id}BaselineBeforeCase${resetCount}`] = currentBaseline;
+      }
+      await copyFile(adapter.baselinePath, adapter.path);
+      if (adapter.baselinePath === fixturePaths.annotation) {
+        const copiedFixture = await fileIdentity(adapter.path);
+        assert.equal(
+          copiedFixture.sha256,
+          fixtureDiagnostics.annotationBaseline.sha256,
+          `${adapter.id} working copy differs from its reopen-verified production baseline`,
+        );
+        fixtureDiagnostics[`${adapter.id}Case${resetCount}`] = copiedFixture;
+      }
       await openPdf(adapter.path);
       await establishBaseViewport();
     }
 
     async function assertPersistedText(adapter, expected, phase) {
-      if (adapter.id === 'textbox' || adapter.id === 'callout') {
-        return waitUntil(`${adapter.id} ${phase} text`, async () => {
-          const annotation = (await listAnnotations()).find((candidate) => candidate.type === adapter.id);
-          return normalize(annotation?.text) === normalize(expected) ? annotation : null;
-        });
+      try {
+        if (adapter.id === 'textbox' || adapter.id === 'callout') {
+          return await waitUntil(`${adapter.id} ${phase} text`, async () => {
+            const annotation = (await listAnnotations()).find((candidate) => candidate.type === adapter.id);
+            return normalize(annotation?.text) === normalize(expected) ? annotation : null;
+          });
+        }
+        let selector = adapter.selector;
+        if (adapter.id === 'native-source-text'
+            && (phase === 'replacement' || phase === 'committed')) {
+          selector = '.textLayer span[data-owned-text-edit-hit="true"]';
+        } else if (adapter.id === 'ocr-one-line'
+            && (phase === 'replacement' || phase === 'committed')) {
+          // The accessible label is the current canonical OCR edit text, so an
+          // exact source-label selector cannot locate the span after commit.
+          selector = '.textLayer span[data-scanned-text-edit-hit-only="true"]';
+        }
+        return await waitUi(selector, (value) => {
+          if (!value.found || !value.visible) return false;
+          const actual = value.accessibility?.label ?? value.text;
+          return normalize(actual).includes(normalize(expected).slice(0, 80));
+        }, 90_000);
+      } catch (error) {
+        await captureApplyDiagnostics(adapter, `persisted-text-${phase}`, { expected });
+        throw error;
       }
-      let selector = adapter.selector;
-      if (adapter.id === 'native-source-text' && phase === 'replacement') {
-        selector = '.textLayer span[data-owned-text-edit-hit="true"]';
-      } else if (adapter.id === 'ocr-one-line' && phase === 'replacement') {
-        // The accessible label is the current canonical OCR edit text, so an
-        // exact source-label selector cannot locate the span after commit.
-        selector = '.textLayer span[data-scanned-text-edit-hit-only="true"]';
+    }
+
+    async function waitForSavedCoherence(description, afterContentRevision) {
+      let latestViewport = null;
+      try {
+        return await waitUntil(description, async () => {
+          const viewport = await call('app_get_viewport_state');
+          latestViewport = viewport;
+          const revision = viewport.documentSaveState;
+          const page = String(viewport.doc?.currentPage || 1);
+          if (!revision || revision.saveState !== 'saved'
+              || revision.contentRevision <= afterContentRevision
+              || revision.persistedRevision !== revision.contentRevision
+              || revision.livePdfRevision !== revision.contentRevision
+              || revision.pageRenderReadyRevisions?.[page] !== revision.contentRevision
+              || revision.pageSemanticReadyRevisions?.[page] !== revision.contentRevision
+              || viewport.pageEditReadiness?.ready !== true) return null;
+          return viewport;
+        }, 90_000);
+      } catch (error) {
+        throw new Error(`${error.message}; save-coherence=${JSON.stringify({
+          afterContentRevision,
+          document: latestViewport?.doc ?? null,
+          revision: latestViewport?.documentSaveState ?? null,
+          readiness: latestViewport?.pageEditReadiness ?? null,
+          session: latestViewport?.editorSession ?? null,
+        })}`);
       }
-      return waitUi(selector, (value) => {
-        if (!value.found || !value.visible) return false;
-        const actual = value.accessibility?.label ?? value.text;
-        return normalize(actual).includes(normalize(expected).slice(0, 80));
-      }, 90_000);
     }
 
     async function assertLiveEditor(adapter, sessionId = null) {
@@ -747,7 +893,13 @@ async function runCoverage(options) {
     }
 
     async function assertViewOnlySessionClean(adapter, sessionId, transition) {
-      const { viewport } = await assertLiveEditor(adapter, sessionId);
+      let viewport;
+      try {
+        ({ viewport } = await assertLiveEditor(adapter, sessionId));
+      } catch (error) {
+        await captureApplyDiagnostics(adapter, 'view-only-session', { transition });
+        throw error;
+      }
       assert.equal(
         viewport.editorSession.dirty,
         false,
@@ -790,6 +942,8 @@ async function runCoverage(options) {
         session: viewportState?.editorSession ?? null,
         layout: viewportState?.editorMetrics?.exactLayout ?? null,
         layoutState: viewportState?.editorMetrics?.layoutState ?? null,
+        lastEditorOpenGesture,
+        fixtureDiagnostics: structuredClone(fixtureDiagnostics),
         recentConsole,
       };
       return failureDiagnostics;
@@ -1083,6 +1237,9 @@ async function runCoverage(options) {
       }
       assert.ok(originalAlignmentSelector, 'the source paragraph alignment is not represented');
       assert.ok(alignmentSelector, 'no alternate production paragraph-alignment control is available');
+      const propertiesStartRevision = Number(
+        propertiesSession.viewport.documentSaveState?.contentRevision,
+      ) || 0;
       await click(alignmentSelector, false);
       const propertiesLive = await assertLiveEditor(
         adapter,
@@ -1105,7 +1262,11 @@ async function runCoverage(options) {
         `${adapter.id} paragraph click-away did not hit the visible page-status input`,
       );
       await waitUi('.pdf-text-editor', (value) => !value.found, 90_000);
-      await assertPersistedText(adapter, adapter.expected, 'original');
+      await waitForSavedCoherence(
+        `${adapter.id} paragraph formatting save coherence`,
+        propertiesStartRevision,
+      );
+      await assertPersistedText(adapter, adapter.expected, 'committed');
       const committedPropertiesHistory = await waitUntil(`${adapter.id} paragraph formatting undo`, async () => {
         const undoState = await ui('.quick-access-btn[data-action="undo"]', false);
         return undoState.found && undoState.visible && undoState.disabled === false ? undoState : null;
@@ -1114,16 +1275,43 @@ async function runCoverage(options) {
       // Re-open the real committed record. A first edit of native source text
       // becomes an owned-native record; all other families retain their kind.
       const committedAdapter = adapter.id === 'native-source-text'
-        ? { ...adapter, id: 'owned-native-edit' } : adapter;
+        ? {
+          ...adapter,
+          id: 'owned-native-edit',
+          selector: '.textLayer span[data-owned-text-edit-hit="true"]',
+        }
+        : adapter;
       await openAdapterForPhase(committedAdapter, 'properties-formatting-reopen');
-      const persistedAlignment = await waitUi(alignmentSelector, (value) => (
-        value.found && value.visible && value.active === true
-      ), 10_000);
+      let persistedAlignment;
+      try {
+        persistedAlignment = await waitUi(alignmentSelector, (value) => (
+          value.found && value.visible && value.active === true
+        ), 10_000);
+      } catch (error) {
+        await captureApplyDiagnostics(adapter, 'properties-formatting-reopen', {
+          alignmentSelector,
+          originalAlignmentSelector,
+        });
+        throw error;
+      }
       assert.equal(persistedAlignment.active, true,
         `${adapter.id} paragraph alignment was not retained on re-edit`);
       await cancelEditor();
 
+      const beforePropertiesUndo = await call('app_get_viewport_state');
       await click('.quick-access-btn[data-action="undo"]', false);
+      await waitUntil(`${adapter.id} paragraph formatting Undo revision`, async () => {
+        const viewport = await call('app_get_viewport_state');
+        return Number(viewport.documentSaveState?.contentRevision) > Number(
+          beforePropertiesUndo.documentSaveState?.contentRevision,
+        ) && viewport.documentSaveState?.saveState === 'pending'
+          ? viewport : null;
+      });
+      await click('.quick-access-btn[data-action="save"]', false);
+      await waitForSavedCoherence(
+        `${adapter.id} paragraph formatting Undo save coherence`,
+        Number(beforePropertiesUndo.documentSaveState?.contentRevision) || 0,
+      );
       await assertPersistedText(adapter, adapter.expected, 'original');
       await waitUntil(`${adapter.id} paragraph formatting single Undo`, async () => {
         const [undoState, redoState] = await Promise.all([
@@ -1159,6 +1347,7 @@ async function runCoverage(options) {
         'inspect persisted paragraph alignment',
         'Cancel re-edit',
         'Undo once',
+        'click visible Save',
         're-open and inspect original alignment',
         'Cancel',
       ]);

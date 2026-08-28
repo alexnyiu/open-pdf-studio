@@ -1,7 +1,10 @@
 import { state, getActiveDocument, getPageRotation } from '../core/state.js';
 import { isTauri, invoke } from '../core/platform.js';
 import * as pdfjsLib from 'pdfjs-dist';
-import { resolveTextEditPageGeometry } from './text-edit-appearance.js';
+import {
+  pdfJsViewportPointInTextLayerSpace,
+  resolveTextEditPageGeometry,
+} from './text-edit-appearance.js';
 import { assessPdfJsTextContent } from '../ocr/existing-text.js';
 import { projectTextEditRecord } from './rich-text.js';
 import { matchOwnedReplacementTextItems } from './native-text-matching.js';
@@ -77,7 +80,11 @@ export function projectOcrItemToTextLayer(textLayerDiv, item) {
   let points;
   if (context.kind === 'pdfjs') {
     if (typeof context.viewport?.convertToViewportPoint !== 'function') return null;
-    points = item.polygon.points.map(([x, y]) => context.viewport.convertToViewportPoint(x, y));
+    points = item.polygon.points
+      .map(([x, y]) => pdfJsViewportPointInTextLayerSpace(context.viewport, x, y, {
+        rawUnitHost: context.viewMode === 'continuous',
+      }));
+    if (points.some((point) => !point)) return null;
   } else if (context.kind === 'cropped-display') {
     const pageGeometry = item.pageGeometry || context.pageGeometry;
     if (!pageGeometry?.transformChain) return null;

@@ -69,6 +69,23 @@ function summaryFailures(summary) {
     .map((page) => ({ pageNumber: page.pageNumber, ...clone(page.failure) }));
 }
 
+function terminalWorkflowPages(pages) {
+  return pages.map((page) => ({
+    pageNumber: page.pageNumber,
+    state: page.state,
+    fraction: page.fraction,
+    attempts: page.attempts,
+    retries: page.retries,
+    retryableFailureSeen: page.retryableFailureSeen,
+    failure: page.failure ? clone(page.failure) : null,
+    staleRejected: page.staleRejected,
+    cache: page.cache,
+    retained: page.retained,
+    measuredStageCosts: null,
+    performance: null,
+  }));
+}
+
 /**
  * Application-lifetime owner for production OCR jobs. The controller and its
  * returned handles stay here; UI stores receive only cloneable status data.
@@ -531,12 +548,12 @@ export class OcrWorkflowService {
     if (!state || state.jobId !== summary.jobId) return;
     state.status = summary.status;
     state.progress = summary.progress;
-    state.pages = clone(summary.pages);
+    state.pages = terminalWorkflowPages(summary.pages);
     state.counts = pageCounts(state.pages);
     const focusPage = terminalFocusPage(state.pages, summary.status);
     state.currentPageNumber = focusPage?.pageNumber ?? state.currentPageNumber;
     state.currentPageState = focusPage?.state ?? state.currentPageState;
-    state.terminalSummary = clone(summary);
+    state.terminalSummary = { ...summary, pages: state.pages };
     state.failureDetails = summaryFailures(summary);
     state.cancellationAvailable = false;
     state.finishedAt = summary.finishedAt ?? new Date().toISOString();

@@ -660,6 +660,7 @@ test('required upstream CI job outcomes fail the final decision closed', () => {
     'static-verification=failure',
     'build=cancelled',
     'packaged-macos-editor-acceptance=skipped',
+    'save-render-coherence-report-verification=success',
     'macos-editor-ocr-performance=success',
     'malformed',
   ]);

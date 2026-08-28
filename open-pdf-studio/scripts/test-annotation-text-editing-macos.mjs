@@ -230,7 +230,10 @@ async function runAcceptance(options) {
     return waitUntil('visible annotation text editor', async () => {
       const editor = await ui('.pdf-text-editor');
       if (editor.found && editor.visible) {
-        if (!editor.focused) await clickVisible('.pdf-text-editor');
+        if (!editor.focused) {
+          await clickVisible('.pdf-text-editor');
+          return null;
+        }
         const [apply, cancel, substitutionDialog] = await Promise.all([
           ui('.pdf-text-editor-apply'),
           ui('.pdf-text-editor-cancel'),
@@ -267,10 +270,24 @@ async function runAcceptance(options) {
 
   async function cancelEditor() {
     await waitEditor();
+    const beforeEscape = await callTool('app_get_viewport_state');
+    report.lastEscapeBefore = {
+      editorSession: beforeEscape.editorSession,
+      currentTool: beforeEscape.currentTool,
+    };
     const escaped = await callTool('app_key', { key: 'Escape' });
+    report.lastEscape = escaped;
     assert.equal(escaped.ok, true, escaped.error);
     await waitUntil('editor Escape cleanup', async () => {
       const editor = await ui('.pdf-text-editor');
+      if (editor.found) {
+        const viewport = await callTool('app_get_viewport_state');
+        report.lastEscapeAfter = {
+          editor,
+          editorSession: viewport.editorSession,
+          currentTool: viewport.currentTool,
+        };
+      }
       return !editor.found ? true : null;
     }, 30_000);
     report.checks.escapeDiscard = 'PASS';
@@ -280,9 +297,38 @@ async function runAcceptance(options) {
     await callTool('app_fit_page');
     return waitUntil('blank document page canvas', async () => {
       const viewport = await callTool('app_get_viewport_state');
+      report.pageReadinessDiagnostics = {
+        doc: viewport.doc,
+        documentSaveState: viewport.documentSaveState,
+        pageEditReadiness: viewport.pageEditReadiness,
+        renderPublicationDiagnostics: viewport.renderPublicationDiagnostics,
+      };
       return viewport.canvas?.cssWidth > 200 && viewport.canvas?.cssHeight > 200
+        && viewport.pageEditReadiness?.ready === true
+        && viewport.renderPublicationDiagnostics?.activePdfJsTasks === 0
         ? viewport : null;
     }, 60_000);
+  }
+
+  async function waitForAutomaticSave(label) {
+    const viewport = await waitUntil(`${label} automatic save`, async () => {
+      const current = await callTool('app_get_viewport_state');
+      const revisions = current.documentSaveState;
+      return revisions?.saveState === 'saved'
+        && revisions.activeSaveRequestId == null
+        && revisions.contentRevision === revisions.persistedRevision
+        && revisions.persistedRevision === revisions.livePdfRevision
+        && current.pageEditReadiness?.ready === true
+        && current.renderPublicationDiagnostics?.activePdfJsTasks === 0
+        ? current : null;
+    }, 60_000);
+    report.automaticSaveEvidence ||= [];
+    report.automaticSaveEvidence.push({
+      label,
+      documentSaveState: viewport.documentSaveState,
+      pageEditReadiness: viewport.pageEditReadiness,
+    });
+    return viewport;
   }
 
   function canvasPoint(viewport, fractionX, fractionY) {
@@ -383,6 +429,12 @@ async function runAcceptance(options) {
     const point = await annotationScreenPoint(annotation);
     const pointer = await callTool('app_mouse_click', { ...point, double: true });
     assert.equal(pointer.ok, true, pointer.error);
+    report.lastAnnotationPointer = {
+      annotationId: annotation.id,
+      annotationType: annotation.type,
+      point,
+      target: pointer.target,
+    };
     await waitEditor();
     return { point, target: pointer.target };
   }
@@ -398,6 +450,7 @@ async function runAcceptance(options) {
     const applyPointer = await openAnnotationEditorByPointer(annotation);
     await replaceEditorText(finalText);
     await applyEditor();
+    await waitForAutomaticSave(`${type} re-edit`);
     const changed = await activeAnnotationByText(type, finalText);
     return { annotation: changed, cancelPointer, applyPointer };
   }
@@ -429,6 +482,7 @@ async function runAcceptance(options) {
     const applyPointer = await openInsertedEditorByPointer(originalText);
     await replaceEditorText(finalText);
     await applyEditor();
+    await waitForAutomaticSave('inserted-text re-edit');
     const span = await insertedSpan(finalText);
     return { editId: span.dataset.editId, cancelPointer, applyPointer };
   }

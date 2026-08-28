@@ -59,6 +59,20 @@ test('reflow distinguishes generated soft wraps from authored hard breaks and gr
   assert.equal(flowed.region.y + flowed.region.height, source.region.y + source.region.height);
 });
 
+test('reflow preserves paragraph alignment across generated soft wraps', () => {
+  const source = createRichTextDocument([
+    createTextLine([createTextRun('one two three', { size: 10 })], {
+      alignment: 'center',
+      baseline: 90,
+      breakAfter: 'hard',
+    }),
+  ], { x: 10, y: 20, width: 100, height: 20 });
+  const flowed = reflowRichTextToWidth(source, 30);
+  assert.ok(flowed.lines.length > 1);
+  assert.deepEqual(flowed.lines.map((line) => line.alignment),
+    Array(flowed.lines.length).fill('center'));
+});
+
 test('reflow shrinks after deletion without crossing the immutable minimum height', () => {
   const expanded = createRichTextDocument([
     createTextLine([createTextRun('short', { size: 10 })], { baseline: 90, breakAfter: 'hard' }),

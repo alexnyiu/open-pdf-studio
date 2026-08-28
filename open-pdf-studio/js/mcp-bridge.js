@@ -525,11 +525,14 @@ async function handleMouseClick(params) {
     // entering text-edit mode on a textbox/callout).
     detail: double ? 2 : 1,
   };
-  const target = targetAt(x, y);
+  const moveTarget = targetAt(x, y);
 
   // Standard sequence: move -> down -> up (pointer + mouse pairs), then
-  // click/contextmenu.
-  dispatchPointerAndMouse(target, 'move', x, y, { button: 0, buttons: 0, ...mods });
+  // click/contextmenu. A production mouse move can change hit testing (the
+  // unified Select tool swaps the text and annotation layers under the
+  // pointer), so resolve the press target again after dispatching the move.
+  dispatchPointerAndMouse(moveTarget, 'move', x, y, { button: 0, buttons: 0, ...mods });
+  const target = targetAt(x, y);
   dispatchPointerAndMouse(target, 'down', x, y, { button, buttons: buttonsMask, ...mods });
   dispatchPointerAndMouse(target, 'up', x, y, { button, buttons: 0, ...mods });
 

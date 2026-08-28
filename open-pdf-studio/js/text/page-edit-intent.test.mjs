@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { runPageEditIntent } from './page-edit-intent.js';
+import {
+  pageEditIntentPendingForDocument,
+  runPageEditIntent,
+} from './page-edit-intent.js';
 
 function deferred() {
   let resolve;
@@ -27,11 +30,13 @@ test('a text click during synchronization preserves its page and point and repla
     awaitReadiness: () => readiness.promise,
     activate: (activation) => { activations.push(activation); return 'opened'; },
   });
+  assert.equal(pageEditIntentPendingForDocument(documentState.id), true);
   synchronization.resolve(true);
   await Promise.resolve();
   assert.equal(activations.length, 0);
   readiness.resolve();
   const result = await intent;
+  assert.equal(pageEditIntentPendingForDocument(documentState.id), false);
   assert.equal(result.activated, true);
   assert.equal(result.value, 'opened');
   assert.equal(activations.length, 1);
@@ -57,5 +62,6 @@ test('a lifecycle change rejects a queued edit without activation', async () => 
   documentState.lifecycleGeneration += 1;
   readiness.resolve();
   await assert.rejects(intent, { name: 'AbortError' });
+  assert.equal(pageEditIntentPendingForDocument(documentState.id), false);
   assert.equal(activations, 0);
 });

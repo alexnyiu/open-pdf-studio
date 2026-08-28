@@ -5,6 +5,7 @@ import {
   canvasBackingDimensions,
   overlayCanvasTransform,
   overlayVisibleBounds,
+  singlePageOverlaySurfaceDimensions,
 } from './canvas-dpr.js';
 
 test('overlay backing stores preserve CSS dimensions at DPR 1, 2, and fractional DPR', () => {
@@ -44,4 +45,21 @@ test('viewport transform applies DPR exactly once and retains CSS-space culling'
     width: 600,
     height: 400,
   });
+});
+
+test('single-page viewport keeps overlays on the complete visible host surface', () => {
+  assert.deepEqual(singlePageOverlaySurfaceDimensions({
+    viewportActive: true,
+    viewportWidth: 775,
+    viewportHeight: 697,
+    pageWidth: 538,
+    pageHeight: 697,
+  }), { width: 775, height: 697 });
+  assert.deepEqual(singlePageOverlaySurfaceDimensions({
+    viewportActive: false,
+    viewportWidth: 775,
+    viewportHeight: 697,
+    pageWidth: 538,
+    pageHeight: 697,
+  }), { width: 538, height: 697 });
 });
