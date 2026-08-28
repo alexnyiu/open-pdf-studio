@@ -7,6 +7,7 @@ import {
   markPageSemanticReady,
   setVisibleRequiredPages,
 } from '../core/document-revision-state.runtime.js';
+import { clearPageEditReadiness } from './page-edit-readiness.js';
 
 const activeSynchronizations = new Map();
 const recoverableSynchronizations = new Map();
@@ -84,6 +85,7 @@ async function loadSavedDocumentDerivedInvalidators() {
     formLayers,
     platform,
     stateModule,
+    pageReadiness,
   ] = await Promise.all([
     import('./renderer.js'),
     import('./tile-cache.js'),
@@ -97,9 +99,13 @@ async function loadSavedDocumentDerivedInvalidators() {
     import('./form-layer.js'),
     import('../core/platform.js'),
     import('../core/state.js'),
+    import('./page-edit-readiness.js'),
   ]);
   return {
     clearReadiness: (documentState, pages) => clearPageReadiness(documentState, pages),
+    clearEditReadiness: (documentState, pages) => (
+      pageReadiness.clearPageEditReadiness(documentState, pages)
+    ),
     cancelWholePreload: (documentState) => wholePreload.cancelWholePdfPreload(documentState),
     invalidateSemantic: invalidateSavedDocumentSemanticState,
     clearBitmap: (filePath) => renderer.clearBitmapJSCacheForFile(filePath),
@@ -155,6 +161,7 @@ export async function invalidateSavedDocumentDerivedState({
   const cachePaths = [...new Set([previousFilePath, filePath, documentState.filePath].filter(Boolean))];
 
   invalidators.clearReadiness(documentState, pages);
+  invalidators.clearEditReadiness(documentState, pages);
   invalidators.cancelWholePreload(documentState);
   invalidators.cancelThumbnails(documentState);
   await invalidators.invalidateSemantic({ documentState, requestedRevision, changedPages: pages });
@@ -187,9 +194,10 @@ export async function rebuildSavedDocumentEditableMetadata({
 }) {
   const revisions = initializeDocumentRevisionState(documentState);
   if (revisions.livePdfRevision !== Number(requestedRevision)) return [];
-  const [{ preloadEditableMetadataPage }, publication] = await Promise.all([
+  const [{ preloadEditableMetadataPage }, publication, readiness] = await Promise.all([
     import('./editable-metadata-preload.js'),
     import('./render-publication-token.js'),
+    import('./page-edit-readiness.js'),
   ]);
   const required = positivePages(requiredPages);
   const changed = changedPages === null ? [] : positivePages(changedPages);
@@ -205,7 +213,17 @@ export async function rebuildSavedDocumentEditableMetadata({
     if (!publication.renderPublicationTokenIsCurrent(token, documentState)
         || initializeDocumentRevisionState(documentState).livePdfRevision
           !== Number(requestedRevision)) return ready;
-    if (result && required.includes(pageNum)) ready.push(pageNum);
+    if (result) {
+      readiness.markPageEditLayerReady(documentState, pageNum, 'editableMetadata', token);
+      if (required.includes(pageNum)) ready.push(pageNum);
+    } else if (required.includes(pageNum)) {
+      readiness.failPageEditReadiness(
+        documentState,
+        pageNum,
+        'Editable metadata did not publish for the current saved revision',
+        token,
+      );
+    }
   }
   return ready;
 }
@@ -396,11 +414,12 @@ async function runSynchronization(record, { retry = false } = {}) {
       });
       record.semanticInvalidated = true;
     }
-    const requiredPages = Array.isArray(installResult?.requiredPages)
+    let requiredPages = Array.isArray(installResult?.requiredPages)
       ? positivePages(installResult.requiredPages)
       : positivePages(null, viewState.pageNumber || documentState.currentPage);
     setVisibleRequiredPages(documentState, requiredPages);
     await invalidateRevision({ documentState, requestedRevision, requiredPages, viewState });
+    clearPageEditReadiness(documentState, requiredPages);
     const readiness = await rebuildRequiredPages({
       documentState,
       requestedRevision,
@@ -408,6 +427,10 @@ async function runSynchronization(record, { retry = false } = {}) {
       viewState,
       installResult: installResult || {},
     }) || {};
+    if (Array.isArray(readiness.requiredPages)) {
+      requiredPages = positivePages(readiness.requiredPages);
+      setVisibleRequiredPages(documentState, requiredPages);
+    }
     const metadataReadyPages = await rebuildEditableMetadata({
       documentState,
       requestedRevision,

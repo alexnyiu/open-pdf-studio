@@ -16,6 +16,12 @@ import {
   documentIsEditReady,
   documentRevisionReadinessSatisfied,
 } from '../core/document-revision-state.runtime.js';
+import { captureRenderPublicationToken } from './render-publication-token.js';
+import {
+  PAGE_EDIT_READY_LAYERS,
+  markPageEditLayerReady,
+  pageEditReadinessSatisfied,
+} from './page-edit-readiness.js';
 
 let documentSequence = 0;
 
@@ -151,6 +157,7 @@ test('central saved-document invalidation invokes every visual, semantic, and en
   const record = (name) => (...args) => { calls.push([name, ...args]); };
   const dependencies = {
     clearReadiness: record('readiness'),
+    clearEditReadiness: record('edit-readiness'),
     cancelWholePreload: record('whole-preload'),
     cancelThumbnails: record('thumbnail-work'),
     invalidateSemantic: async (...args) => record('semantic')(...args),
@@ -179,7 +186,7 @@ test('central saved-document invalidation invokes every visual, semantic, and en
 
   const names = calls.map(([name]) => name);
   for (const expected of [
-    'readiness', 'whole-preload', 'thumbnail-work', 'semantic',
+    'readiness', 'edit-readiness', 'whole-preload', 'thumbnail-work', 'semantic',
     'bitmap', 'tiles', 'vectors', 'page-types', 'native',
     'low-resolution', 'thumbnails', 'layers', 'performance', 'initialize-performance',
   ]) assert.ok(names.includes(expected), `${expected} was not invoked`);
@@ -199,6 +206,7 @@ test('non-structural saved-document invalidation restamps geometry and cache own
     changedPages: [2],
     dependencies: {
       clearReadiness: noop,
+      clearEditReadiness: noop,
       cancelWholePreload: noop,
       cancelThumbnails: noop,
       invalidateSemantic: async () => {},
@@ -290,6 +298,50 @@ test('active-tab wrapper identity does not suppress the immutable owner transiti
     },
   }));
   assert.equal(installedOwner, document.id);
+});
+
+test('the visible-page barrier can expand required pages before metadata readiness', async () => {
+  const document = persistedDocument();
+  const result = await synchronizeSavedDocument(transitionInput(document, {
+    rebuildRequiredPages: async () => ({
+      requiredPages: [2, 3],
+      renderReadyPages: [2, 3],
+      semanticReadyPages: [2, 3],
+    }),
+    rebuildEditableMetadata: async ({ requiredPages }) => {
+      assert.deepEqual(requiredPages, [2, 3]);
+      return requiredPages;
+    },
+  }));
+  assert.deepEqual(result.requiredPages, [2, 3]);
+  assert.equal(documentRevisionReadinessSatisfied(document, 2), true);
+  assert.equal(documentRevisionReadinessSatisfied(document, 3), true);
+});
+
+test('an inactive document installs without shared-canvas publication and renders when active', async () => {
+  const document = persistedDocument();
+  let visibleRenderCalls = 0;
+  const result = await synchronizeSavedDocument(transitionInput(document, {
+    installProxy: async ({ documentState: owner, preparedPdfJsDocument }) => {
+      owner.pdfDoc = preparedPdfJsDocument;
+      owner.lifecycleGeneration += 1;
+      return { isActiveDocument: false, requiredPages: [] };
+    },
+    rebuildRequiredPages: async ({ requiredPages }) => {
+      visibleRenderCalls += requiredPages.length;
+      return { requiredPages: [], renderReadyPages: [], semanticReadyPages: [] };
+    },
+  }));
+  assert.deepEqual(result.requiredPages, []);
+  assert.equal(visibleRenderCalls, 0);
+  assert.equal(document.revisionState.livePdfRevision, 1);
+  assert.deepEqual(document.pageEditReadiness, {});
+
+  const token = captureRenderPublicationToken(document, 2, 'inactive-tab-activation');
+  for (const layer of PAGE_EDIT_READY_LAYERS) {
+    assert.equal(markPageEditLayerReady(document, 2, layer, token), true);
+  }
+  assert.equal(pageEditReadinessSatisfied(document, 2), true);
 });
 
 test('Save As transition preserves path-owned view, selection, rotations, and search state', () => {

@@ -2,6 +2,10 @@ import { state, getActiveDocument } from '../core/state.js';
 import { goToPage } from './renderer.js';
 import { openExternal } from '../core/platform.js';
 import i18next from '../i18n/config.js';
+import {
+  captureRenderPublicationToken,
+  renderPublicationTokenIsCurrent,
+} from './render-publication-token.js';
 
 /**
  * Link Layer Management Module
@@ -10,6 +14,21 @@ import i18next from '../i18n/config.js';
 
 // Store references to link layers for cleanup
 const linkLayers = new Map();
+
+function captureLinkLayerPublication(pageNum) {
+  const documentState = getActiveDocument();
+  if (!documentState?.pdfDoc) return null;
+  return {
+    documentState,
+    token: captureRenderPublicationToken(documentState, pageNum, 'link-layer'),
+  };
+}
+
+function linkLayerPublicationIsCurrent(publication) {
+  return Boolean(publication
+    && getActiveDocument() === publication.documentState
+    && renderPublicationTokenIsCurrent(publication.token, publication.documentState));
+}
 
 /**
  * Creates a link layer for a PDF page
@@ -20,8 +39,11 @@ const linkLayers = new Map();
  * @returns {Promise<HTMLElement>} The created link layer element
  */
 export async function createLinkLayer(page, viewport, container, pageNum) {
+  const publication = captureLinkLayerPublication(pageNum);
+  if (!publication) return null;
   // Get annotations from PDF page with intent 'display' to include link annotations
   const annotations = await page.getAnnotations({ intent: 'display' });
+  if (!linkLayerPublicationIsCurrent(publication)) return null;
 
   // Filter for link annotations
   const linkAnnotations = annotations.filter(ann => ann.subtype === 'Link');
@@ -52,6 +74,7 @@ export async function createLinkLayer(page, viewport, container, pageNum) {
   }
 
   // Append link layer at the end so it's on top of everything
+  if (!linkLayerPublicationIsCurrent(publication)) return null;
   container.appendChild(linkLayerDiv);
 
   // Store reference for cleanup

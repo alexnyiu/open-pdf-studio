@@ -51,6 +51,7 @@ import {
 } from '../text/text-edit-dirty-state.js';
 import { runOwnerScopedTextCommit } from '../text/text-edit-commit.js';
 import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-transition.js';
+import { awaitPageEditReady } from '../pdf/page-edit-readiness.js';
 
 async function waitForExactAnnotationLayout(operation) {
   const deadline = performance.now() + 5_000;
@@ -99,6 +100,15 @@ export async function startTextEditing(annotation, { isNew = false } = {}) {
   if (!(await waitForSavedDocumentSynchronization(ownerDocument.id))) return false;
   ownerDocument = getDocumentById(ownerDocument.id);
   if (!ownerDocument) return false;
+  if (ownerDocument.pdfDoc) {
+    try {
+      await awaitPageEditReady(ownerDocument, annotation.page || ownerDocument.currentPage || 1);
+    } catch (error) {
+      if (error?.name !== 'AbortError') console.warn('[text-edit] Page readiness failed:', error);
+      return false;
+    }
+  }
+  if (getActiveDocument() !== ownerDocument) return false;
   const ownerGeneration = ownerDocument.lifecycleGeneration;
   const sourceAnnotation = annotation;
 

@@ -184,6 +184,22 @@ function noteDocumentMutation(documentState, {
     delete state.pageRenderReadyRevisions[page];
     delete state.pageSemanticReadyRevisions[page];
   }
+  if (structural || changedPages.length === 0) {
+    documentState.pageEditReadiness = {};
+  } else if (documentState.pageEditReadiness) {
+    for (const page of changedPages) delete documentState.pageEditReadiness[page];
+  }
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function"
+      && typeof CustomEvent === "function") {
+    window.dispatchEvent(new CustomEvent("opds:page-edit-readiness-cleared", {
+      detail: {
+        documentId: String(documentState.id || ""),
+        lifecycleGeneration: Number(documentState.lifecycleGeneration) || 0,
+        contentRevision: nextRevision,
+        pages: structural || changedPages.length === 0 ? null : [...changedPages]
+      }
+    }));
+  }
   if (structural) {
     state.pendingStructuralChange = true;
     state.pendingChangedPages = null;

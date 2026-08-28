@@ -279,14 +279,28 @@ function productionSavedTransitionCallbacks(outputPath, savedBytes) {
       }
       const renderer = await import('./renderer.js');
       if (owner.viewMode === 'continuous' || owner.viewMode === 'book') {
-        const rendered = await renderer.renderContinuous(true);
-        const completed = (rendered?.requiredPages || requiredPages)
-          .filter((page) => requiredPages.includes(page));
-        return { renderReadyPages: completed, semanticReadyPages: completed };
+        return renderer.renderContinuous(true, {
+          synchronization: true,
+          requiredPages,
+        });
       }
       const page = requiredPages[0] || owner.currentPage || 1;
-      await renderer.renderPage(page);
-      return { renderReadyPages: [page], semanticReadyPages: [page] };
+      const rendered = await renderer.renderPage(page, { requireEditReady: true });
+      if (getActiveDocument() !== owner) {
+        return {
+          requiredPages: [],
+          renderReadyPages: [],
+          semanticReadyPages: [],
+          ready: true,
+          inactive: true,
+        };
+      }
+      const completed = rendered?.ready === true ? [page] : [];
+      return {
+        requiredPages: [page],
+        renderReadyPages: completed,
+        semanticReadyPages: completed,
+      };
     },
     restoreViewState: async (owner, snapshot) => {
       restoreSavedDocumentViewState(owner, snapshot, {
@@ -294,9 +308,11 @@ function productionSavedTransitionCallbacks(outputPath, savedBytes) {
         scrollContainer: document.getElementById('pdf-container'),
       });
     },
-    waitForEditReadiness: async ({ documentState: owner, requiredPages }) => (
-      requiredPages.every((page) => documentRevisionReadinessSatisfied(owner, page))
-    ),
+    waitForEditReadiness: async ({ documentState: owner, requiredPages }) => {
+      const { awaitPageEditReady } = await import('./page-edit-readiness.js');
+      await Promise.all(requiredPages.map((page) => awaitPageEditReady(owner, page)));
+      return requiredPages.every((page) => documentRevisionReadinessSatisfied(owner, page));
+    },
   };
 }
 

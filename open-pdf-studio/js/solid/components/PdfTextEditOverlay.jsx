@@ -1413,6 +1413,7 @@ export default function PdfTextEditOverlay() {
     window.addEventListener('resize', markPlacementDirty);
     window.addEventListener('opds:viewport-revision', handleViewportRevision);
     window.addEventListener('opds:page-rendered', markPlacementDirty);
+    window.addEventListener('opds:page-edit-ready', markPlacementDirty);
     window.addEventListener('opds:dpr-change', markPlacementDirty);
     onCleanup(() => {
       if (richEditorActive) {
@@ -1427,6 +1428,7 @@ export default function PdfTextEditOverlay() {
       window.removeEventListener('resize', markPlacementDirty);
       window.removeEventListener('opds:viewport-revision', handleViewportRevision);
       window.removeEventListener('opds:page-rendered', markPlacementDirty);
+      window.removeEventListener('opds:page-edit-ready', markPlacementDirty);
       window.removeEventListener('opds:dpr-change', markPlacementDirty);
       observer?.disconnect();
       mutationObserver?.disconnect();

@@ -6,13 +6,19 @@ import {
 } from './document-lifecycle-state.js';
 
 test('lifecycle advancement cancels the owner before incrementing generation', () => {
-  const documentState = { id: 'owner', lifecycleGeneration: 7, pdfDoc: { id: 'old' } };
+  const documentState = {
+    id: 'owner',
+    lifecycleGeneration: 7,
+    pdfDoc: { id: 'old' },
+    pageEditReadiness: { 1: { ready: true } },
+  };
   const observations = [];
   const generation = advanceDocumentLifecycleState(documentState, 'reload', (id, reason) => {
     observations.push({ id, reason, generation: documentState.lifecycleGeneration });
   });
   assert.deepEqual(observations, [{ id: 'owner', reason: 'reload', generation: 7 }]);
   assert.equal(generation, 8);
+  assert.deepEqual(documentState.pageEditReadiness, {});
 });
 
 test('proxy replacement crosses one lifecycle boundary and returns the prior proxy', () => {

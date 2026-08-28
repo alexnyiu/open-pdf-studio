@@ -12,6 +12,7 @@ import {
   findTextEditAtPosition,
   startInsertedTextEditingAtPoint,
   startTextEditEditing,
+  startTextEditingAtPointWhenReady,
 } from './text-edit-tool.js';
 import { markDocumentModified } from '../ui/chrome/tabs.js';
 import { recordAdd, recordModify, recordBulkModify } from '../core/undo-manager.js';
@@ -231,6 +232,7 @@ export function buildToolContext(e, coords) {
     findTextEditAtPosition,
     startInsertedTextEditingAtPoint,
     startTextEditEditing,
+    startTextEditingAtPointWhenReady,
 
     // Stamps and signatures
     showStampPicker,

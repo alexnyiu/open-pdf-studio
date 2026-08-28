@@ -42,6 +42,7 @@ test('a complete render publication token accepts only its exact owner revision'
   assert.equal(token.lifecycleGeneration, 4);
   assert.equal(token.pdfDocument, document.pdfDoc);
   assert.equal(token.contentRevision, 1);
+  assert.equal(token.livePdfRevision, 1);
   assert.equal(token.pageRevision, 1);
 });
 
@@ -53,6 +54,9 @@ const races = [
   }],
   ['tile generation', 'tile', (document) => { document.revisionState.pageContentRevisions[1] = 2; }],
   ['low-resolution preview', 'preview', (document) => { document.revisionState.contentRevision = 2; }],
+  ['old live PDF revision', 'live-pdf-revision', (document) => {
+    document.revisionState.livePdfRevision = 2;
+  }],
   ['thumbnail render', 'thumbnail', (document) => {
     document.pdfDoc = { id: 'proxy-b' };
     document.lifecycleGeneration += 1;

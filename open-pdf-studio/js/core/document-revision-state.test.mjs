@@ -63,10 +63,12 @@ test('initial document revision state is coherent and aliases page content ident
 
 test('one committed mutation advances content and only affected page identity', () => {
   const doc = createDocument();
+  doc.pageEditReadiness = { 1: { ready: true }, 2: { ready: true } };
   assert.equal(noteDocumentMutation(doc, { pages: [2], reason: 'annotation:add' }), 1);
   assert.equal(doc.modified, true);
   assert.equal(doc.revisionState.saveState, 'pending');
   assert.deepEqual(doc.revisionState.pageContentRevisions, { 2: 1 });
+  assert.deepEqual(doc.pageEditReadiness, { 1: { ready: true } });
   assert.equal(documentHasRevisionPersistenceDebt(doc), true);
 });
 
@@ -101,12 +103,14 @@ test('undo and redo identities stay monotonic even when logical content repeats'
 
 test('structural mutation invalidates every page readiness and geometry identity', () => {
   const doc = createDocument();
+  doc.pageEditReadiness = { 1: { ready: true }, 2: { ready: true } };
   doc.revisionState.pageRenderReadyRevisions = { 1: 0, 2: 0 };
   doc.revisionState.pageSemanticReadyRevisions = { 1: 0, 2: 0 };
   noteDocumentMutation(doc, { structural: true, reason: 'page:rotate' });
   assert.deepEqual(doc.revisionState.pageContentRevisions, { 1: 1, 2: 1 });
   assert.deepEqual(doc.revisionState.pageRenderReadyRevisions, {});
   assert.deepEqual(doc.revisionState.pageSemanticReadyRevisions, {});
+  assert.deepEqual(doc.pageEditReadiness, {});
   assert.equal(doc.pageGeometryIndex, null);
   assert.equal(doc.pageGeometryBaseDimensions, null);
   assert.equal(doc.pageGeometryRevision, null);

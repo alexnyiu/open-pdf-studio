@@ -254,6 +254,19 @@ export interface DocumentState {
     lifecycleGeneration: number;
     contentRevision: number;
   } | null;
+  pageEditReadiness?: Record<number, {
+    identity: {
+      documentId: string;
+      pdfDocument: any;
+      lifecycleGeneration: number;
+      contentRevision: number;
+      pageRevision: number;
+      livePdfRevision: number;
+      pageNum: number;
+    };
+    layers: Record<string, boolean>;
+    failure: string | null;
+  }>;
   /** Compatibility alias of revisionState.pageContentRevisions. */
   pageRenderRevisions: Record<number, number>;
   currentPage: number;

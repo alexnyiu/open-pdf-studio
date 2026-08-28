@@ -74,10 +74,7 @@ export const editTextTool = {
 
   onPointerDown(ctx) {
     const { x, y, pageNum, canvas } = ctx;
-    const hitEdit = ctx.findTextEditAtPosition(x, y, pageNum, canvas);
-    if (hitEdit) {
-      ctx.startTextEditEditing(hitEdit, pageNum, canvas);
-    }
+    ctx.startTextEditingAtPointWhenReady({ x, y, pageNum, canvasEl: canvas });
   },
 };
 

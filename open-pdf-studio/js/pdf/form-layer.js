@@ -2,6 +2,10 @@ import { state, getActiveDocument } from '../core/state.js';
 import { AnnotationLayer } from 'pdfjs-dist';
 import { showFormFieldsBar as showBar, hideFormFieldsBar as hideBar } from '../bridge.js';
 import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
+import {
+  captureRenderPublicationToken,
+  renderPublicationTokenIsCurrent,
+} from './render-publication-token.js';
 
 // Sub-module imports
 import { parseJSConstants, parseJSFunctions, decodeJSString, getMessagesForBlurAction } from './form-layer/js-parser.js';
@@ -15,6 +19,21 @@ const annotIdToFieldName = new Map();
 
 // Store references to form layers for cleanup
 const formLayers = new Map();
+
+function captureFormLayerPublication(pageNum) {
+  const documentState = getActiveDocument();
+  if (!documentState?.pdfDoc) return null;
+  return {
+    documentState,
+    token: captureRenderPublicationToken(documentState, pageNum, 'form-layer'),
+  };
+}
+
+function formLayerPublicationIsCurrent(publication) {
+  return Boolean(publication
+    && getActiveDocument() === publication.documentState
+    && renderPublicationTokenIsCurrent(publication.token, publication.documentState));
+}
 
 // Cached document-level JavaScript and parsed data
 let documentJS = null;
@@ -80,7 +99,10 @@ export function getAnnotIdToFieldName() {
  * Creates form layer for a PDF page
  */
 export async function createFormLayer(page, viewport, container, pageNum) {
+  const publication = captureFormLayerPublication(pageNum);
+  if (!publication) return null;
   const annotations = await page.getAnnotations({ intent: 'display' });
+  if (!formLayerPublicationIsCurrent(publication)) return null;
 
   const widgetAnnotations = annotations.filter(ann => ann.subtype === 'Widget');
   if (widgetAnnotations.length === 0) return null;
@@ -102,6 +124,7 @@ export async function createFormLayer(page, viewport, container, pageNum) {
   formLayerDiv.className = 'formLayer annotationLayer';
   formLayerDiv.dataset.page = pageNum;
 
+  if (!formLayerPublicationIsCurrent(publication)) return null;
   container.appendChild(formLayerDiv);
 
   const annotationLayer = new AnnotationLayer({
@@ -122,11 +145,19 @@ export async function createFormLayer(page, viewport, container, pageNum) {
     annotationStorage,
     imageResourcesPath: '',
   });
+  if (!formLayerPublicationIsCurrent(publication)) {
+    formLayerDiv.remove();
+    return null;
+  }
 
   // Load and parse document-level JavaScript (contains validation functions + messages)
   if (!documentJS) {
     try {
-      const jsActions = await getActiveDocument()?.pdfDoc?.getJSActions();
+      const jsActions = await publication.documentState.pdfDoc?.getJSActions();
+      if (!formLayerPublicationIsCurrent(publication)) {
+        formLayerDiv.remove();
+        return null;
+      }
       if (jsActions) {
         documentJS = Object.values(jsActions).flat().join('\n');
         jsConstants = parseJSConstants(documentJS);
@@ -137,6 +168,10 @@ export async function createFormLayer(page, viewport, container, pageNum) {
     }
   }
 
+  if (!formLayerPublicationIsCurrent(publication)) {
+    formLayerDiv.remove();
+    return null;
+  }
   applyFieldRestrictions(formLayerDiv, widgetAnnotations);
 
   formLayers.set(pageNum, formLayerDiv);

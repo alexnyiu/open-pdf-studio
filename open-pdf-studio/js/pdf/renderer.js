@@ -81,6 +81,27 @@ import {
   tileCacheSet,
 } from './tile-cache.js';
 import { createLowResolutionPreviewKey } from './low-resolution-preview-key.js';
+import {
+  failPageEditReadiness,
+  markPageEditLayerReady,
+  pageEditReadinessSatisfied,
+} from './page-edit-readiness.js';
+import { awaitRequiredPageRenders } from './visible-page-render-barrier.js';
+
+const RENDER_EDIT_READY_LAYERS = Object.freeze(['raster', 'annotations', 'text', 'links', 'forms']);
+
+function markRendererLayerReady(doc, pageNum, layer, publicationToken) {
+  return markPageEditLayerReady(doc, pageNum, layer, publicationToken);
+}
+
+function failRendererReadiness(doc, pageNum, error, publicationToken) {
+  failPageEditReadiness(
+    doc,
+    pageNum,
+    error instanceof Error ? error.message : String(error || 'page render failed'),
+    publicationToken,
+  );
+}
 
 function scheduleBackgroundMetadata(centerPage, direction) {
   const doc = getActiveDocument();
@@ -246,7 +267,7 @@ function _startJankDetector() {
 _startJankDetector();
 
 // Render PDF page (single page mode)
-export async function renderPage(pageNum) {
+export async function renderPage(pageNum, options = {}) {
   // In-flight counter exposed for MCP test harness — `waitForRenderIdle()`
   // polls `window.__pdfRenderInFlight === 0` to know when a synthetic zoom
   // event has fully settled (bitmap painted, tile rendered, state updated).
@@ -260,7 +281,7 @@ export async function renderPage(pageNum) {
     ? captureRenderPublicationToken(owner, pageNum, 'page-rendered-event')
     : null;
   try {
-    const result = await _renderPageImpl(pageNum);
+    const result = await _renderPageImpl(pageNum, options);
     const current = getActiveDocument();
     if (current && current.id === ownerId
         && (Number(current.lifecycleGeneration) || 0) === ownerGeneration
@@ -285,7 +306,7 @@ export async function renderPage(pageNum) {
   }
 }
 
-async function _renderPageImpl(pageNum) {
+async function _renderPageImpl(pageNum, { requireEditReady = false } = {}) {
   const _rp0 = performance.now();
   console.log(`[PERF] renderPage(${pageNum}) START`);
   // Clear search highlights immediately to prevent stale highlights
@@ -300,6 +321,11 @@ async function _renderPageImpl(pageNum) {
   // Validate page number against THIS document's page count
   if (!Number.isInteger(pageNum) || pageNum < 1 || pageNum > pdfDoc.numPages) return;
   const publicationToken = captureRenderPublicationToken(doc, pageNum, 'single-page');
+  const completedLayers = new Set();
+  const markLayer = (layer) => {
+    if (markRendererLayerReady(doc, pageNum, layer, publicationToken)) completedLayers.add(layer);
+  };
+  const failReadiness = (error) => failRendererReadiness(doc, pageNum, error, publicationToken);
 
   // Stamp this invocation with a fresh render-generation. Re-checked after
   // each await before any canvas / viewport mutation — see `_isStaleGen`
@@ -491,8 +517,11 @@ async function _renderPageImpl(pageNum) {
               if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
             }
             if (window.__pdfViewport) window.__pdfViewport.dirty = true;
+            markLayer('text');
+            if (doc.revisionState?.saveState !== 'synchronizing') markLayer('editableMetadata');
           } catch (e) {
             console.warn('[render] Text layer failed:', e);
+            failReadiness(e);
           }
 
           console.log(`[render] ✅ Vector viewport: ${dims.w}x${dims.h} pt, origin=(${dims.x0},${dims.y0})`);
@@ -515,7 +544,13 @@ async function _renderPageImpl(pageNum) {
       const _useRaster = !_skipBitmapRender &&
         (!_vectorAllowed || !vr.hasCachedCommands(doc.filePath, pageNum, userRotation));
       if (_useRaster) {
-        const { initViewport, setPage, wireEvents, viewport: pdfVP } =
+        const {
+          initViewport,
+          renderViewportNow,
+          setPage,
+          wireEvents,
+          viewport: pdfVP,
+        } =
           await import('./pdf-viewport.js');
         if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
 
@@ -557,7 +592,22 @@ async function _renderPageImpl(pageNum) {
 
         // Kick async bitmap fill — fires viewport.dirty when arrives.
         const _orch = await import('./bitmap-orchestrator.js');
-        _orch.ensureBitmapForCurrentView();
+        const rasterPromise = _orch.ensureBitmapForCurrentView();
+        if (requireEditReady) {
+          await rasterPromise;
+          if (_isStaleDoc(doc, publicationToken)) return { ready: false };
+          if (!renderViewportNow()) {
+            const error = new Error('The synchronized raster viewport did not publish current pixels');
+            failReadiness(error);
+            return { ready: false };
+          }
+          markLayer('raster');
+        } else {
+          void Promise.resolve(rasterPromise).then(() => {
+            if (_isStaleDoc(doc, publicationToken) || !renderViewportNow()) return;
+            markLayer('raster');
+          }).catch((error) => failReadiness(error));
+        }
         // Tile will be ensured on the first zoom change via the _anchorAt hook
         // (Step 4); for the initial fit we let _render() display whatever
         // getBestAvailableBitmap provides immediately.
@@ -622,8 +672,10 @@ async function _renderPageImpl(pageNum) {
       await renderTask.promise;
       if (_isStaleDoc(doc, publicationToken)) return;
       state.renderEngine = 'Raster (PDF.js)';
+      markLayer('raster');
     } catch (e) {
       console.warn('[render] Blank-doc PDF.js render failed:', e);
+      failReadiness(e);
     }
   }
 
@@ -646,29 +698,40 @@ async function _renderPageImpl(pageNum) {
   const currentSinglePageTextLayer = container?.querySelector(
     `.textLayer[data-page="${pageNum}"]`,
   );
-  if (!_skipBitmapRender || !currentSinglePageTextLayer) {
+  if (requireEditReady || !_skipBitmapRender || !currentSinglePageTextLayer
+      || !pageEditReadinessSatisfied(doc, pageNum, {
+        requiredLayers: ['text', 'links', 'forms'],
+      })) {
     try {
       const textViewport = _skipBitmapRender
         ? page.getViewport(rawPdfTextLayerViewportOptions(page.userUnit))
         : viewport;
-      await createSinglePageTextLayer(page, textViewport);
+      const textLayerResult = await createSinglePageTextLayer(page, textViewport);
       if (_isStaleDoc(doc, publicationToken)) return;
+      if (!textLayerResult) throw new Error('The current single-page text layer was not published');
+      markLayer('text');
+      if (doc.revisionState?.saveState !== 'synchronizing') markLayer('editableMetadata');
     } catch (e) {
       console.warn('Failed to create text layer:', e);
+      failReadiness(e);
     }
 
     try {
       await createSinglePageLinkLayer(page, viewport);
       if (_isStaleDoc(doc, publicationToken)) return;
+      markLayer('links');
     } catch (e) {
       console.warn('Failed to create link layer:', e);
+      failReadiness(e);
     }
 
     try {
       await createSinglePageFormLayer(page, viewport);
       if (_isStaleDoc(doc, publicationToken)) return;
+      markLayer('forms');
     } catch (e) {
       console.warn('Failed to create form layer:', e);
+      failReadiness(e);
     }
 
     // editText tool: annotation-canvas must drop below the textLayer so
@@ -712,6 +775,16 @@ async function _renderPageImpl(pageNum) {
   // Resize annotation canvas and redraw in one synchronous block — no blink
   setupCanvasHiDPI(annotationCanvas, viewport.width, viewport.height);
   redrawAnnotations();
+  markLayer('annotations');
+
+  if (_skipBitmapRender && !completedLayers.has('raster')) {
+    const viewportModule = await import('./pdf-viewport.js');
+    if (!_isStaleDoc(doc, publicationToken) && viewportModule.renderViewportNow()) {
+      markLayer('raster');
+    } else if (!_isStaleDoc(doc, publicationToken)) {
+      failReadiness(new Error('The vector viewport did not publish current pixels'));
+    }
+  }
 
   // Re-apply search highlights after re-render
   onPageRendered();
@@ -728,6 +801,12 @@ async function _renderPageImpl(pageNum) {
     surfaceBytes: Math.ceil(viewport.width) * Math.ceil(viewport.height) * 4,
   });
   console.log(`[PERF] renderPage(${pageNum}) TOTAL: ${(performance.now() - _rp0).toFixed(0)}ms`);
+  return {
+    pageNum,
+    ready: pageEditReadinessSatisfied(doc, pageNum, {
+      requiredLayers: RENDER_EDIT_READY_LAYERS,
+    }),
+  };
 }
 
 // Render page offscreen and swap canvases atomically to avoid zoom flicker.
@@ -1301,7 +1380,14 @@ function renderContinuousPage(pageNum, priority = 100, kind = 'foreground') {
     );
     const needsVisibleSharpness = wrapper?.dataset?.rasterQuality === RasterQuality.PREVIEW
       && (kind === 'foreground' || wrapper.dataset.strictlyVisible === 'true');
-    if (!needsVisibleSharpness) return Promise.resolve();
+    if (!needsVisibleSharpness && pageEditReadinessSatisfied(doc, pageNum, {
+      requiredLayers: RENDER_EDIT_READY_LAYERS,
+    })) {
+      return Promise.resolve({
+        status: 'complete',
+        value: { pageNum, ready: true, reused: true },
+      });
+    }
     _renderedPages.delete(pageNum);
   }
   const ownerKey = _continuousOwnerKey(doc);
@@ -1328,6 +1414,8 @@ function renderContinuousPage(pageNum, priority = 100, kind = 'foreground') {
     },
   }).catch((error) => {
     console.warn(`[render-continuous] scheduled page ${pageNum} failed:`, error);
+    failRendererReadiness(doc, pageNum, error, publicationToken);
+    return { status: 'failed', reason: error?.message || String(error) };
   });
 }
 
@@ -1513,13 +1601,11 @@ async function _ensureContinuousSharpTiles({
 
 // Render a single page inside its mounted wrapper.
 async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 'foreground') {
-  if (_renderedPages.has(pageNum)) return;
-
   const pageWrapper = document.querySelector(`#continuous-container .page-wrapper[data-page="${pageNum}"]`);
-  if (!pageWrapper) return;
+  if (!pageWrapper) throw new Error(`Required page ${pageNum} is not mounted`);
 
   const canvasContainer = pageWrapper.querySelector('.canvas-container-cont');
-  if (!canvasContainer) return;
+  if (!canvasContainer) throw new Error(`Required page ${pageNum} has no canvas container`);
 
   // Cancel any in-progress render for this page
   if (_continuousRenderTasks.has(pageNum)) {
@@ -1528,15 +1614,17 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   }
 
   const doc = state.documents[state.activeDocumentIndex];
-  if (!doc || !doc.pdfDoc) return;
+  if (!doc || !doc.pdfDoc) throw new Error(`Required page ${pageNum} lost its document owner`);
   const publicationToken = captureRenderPublicationToken(doc, pageNum, 'continuous-page');
+  const markLayer = (layer) => markRendererLayerReady(doc, pageNum, layer, publicationToken);
+  const failReadiness = (error) => failRendererReadiness(doc, pageNum, error, publicationToken);
   const expectedScale = doc.scale;
   const startedAt = performance.now();
   _renderedPages.add(pageNum);
   const page = await doc.pdfDoc.getPage(pageNum);
   if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected || doc.scale !== expectedScale) {
     _renderedPages.delete(pageNum);
-    return;
+    return { pageNum, ready: false };
   }
   const extraRotation = getPageRotation(pageNum);
   const vpOpts = { scale: doc.scale };
@@ -1614,8 +1702,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   // showing a slow-rendered PDF.js fallback that hides the actual Rust bug).
   if (!isTauri() || !doc.filePath) {
     state.renderEngine = 'UNSUPPORTED';
-    console.error(`[render-continuous] HARD ERROR: page ${pageNum} cannot render without Tauri+filePath. NO FALLBACK.`);
-    return;
+    throw new Error(`Page ${pageNum} cannot render without Tauri and a saved file path`);
   }
 
   // Logical layout stays in CSS/PDF coordinates. Settled pixels are rendered
@@ -1700,7 +1787,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
       state.renderEngine = 'ERROR';
       console.error(`[render-continuous] HARD ERROR: page ${pageNum} Rust threw. NO FALLBACK.`, error);
       _renderedPages.delete(pageNum);
-      return;
+      throw error;
     }
   }
   if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected
@@ -1710,14 +1797,14 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
       try { directRasterImage.removeAttribute('src'); } catch {}
     }
     _renderedPages.delete(pageNum);
-    return;
+    return { pageNum, ready: false };
   }
   if ((!rasterEntry?.bitmap && !rasterEntry?.image) || rasterEntry.w <= 0 || rasterEntry.h <= 0) {
     directImageLease?.cancel?.('empty-raster');
     state.renderEngine = 'ERROR';
     console.error(`[render-continuous] HARD ERROR: page ${pageNum} returned no raster. NO FALLBACK.`);
     _renderedPages.delete(pageNum);
-    return;
+    throw new Error(`Page ${pageNum} returned no raster`);
   }
 
   if (directRasterImage) {
@@ -1731,7 +1818,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
     if (!geometryCanvas) {
       directImageLease?.cancel?.('publication-failed');
       _renderedPages.delete(pageNum);
-      return;
+      throw new Error(`Page ${pageNum} raster publication failed`);
     }
     pdfCanvasEl = geometryCanvas;
     directImageLease?.complete?.();
@@ -1803,6 +1890,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
       quality: publishedQuality,
     },
   );
+  markLayer('raster');
 
   const fullQualityPaintedAt = performance.now();
   pageWrapper.querySelectorAll('.page-preview-image, .page-preview-canvas')
@@ -1825,6 +1913,10 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   const semanticLayoutKey = [
     doc.id,
     Number(doc.lifecycleGeneration) || 0,
+    Number(doc.revisionState?.contentRevision) || 0,
+    Number(doc.revisionState?.livePdfRevision) || 0,
+    Number(doc.revisionState?.pageContentRevisions?.[pageNum]
+      ?? doc.pageRenderRevisions?.[pageNum]) || 0,
     pageNum,
     Math.round(doc.scale * 10_000),
     extraRotation || 0,
@@ -1839,27 +1931,35 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
 
   // Create text layer
   try {
-    await createTextLayer(page, viewport, canvasContainer, pageNum);
+    const textLayerResult = await createTextLayer(page, viewport, canvasContainer, pageNum);
+    if (!textLayerResult) throw new Error(`The current text layer for page ${pageNum} was not published`);
+    markLayer('text');
+    if (doc.revisionState?.saveState !== 'synchronizing') markLayer('editableMetadata');
   } catch (e) {
     console.warn(`Failed to create text layer for page ${pageNum}:`, e);
+    failReadiness(e);
   }
-  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected) return;
+  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected) return { ready: false };
 
   // Create link layer
   try {
     await createLinkLayer(page, viewport, canvasContainer, pageNum);
+    markLayer('links');
   } catch (e) {
     console.warn(`Failed to create link layer for page ${pageNum}:`, e);
+    failReadiness(e);
   }
-  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected) return;
+  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected) return { ready: false };
 
   // Create form layer
   try {
     await createFormLayer(page, viewport, canvasContainer, pageNum);
+    markLayer('forms');
   } catch (e) {
     console.warn(`Failed to create form layer for page ${pageNum}:`, e);
+    failReadiness(e);
   }
-  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected) return;
+  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected) return { ready: false };
 
   // Re-apply overlay state for newly created form/link layers
     if (state.currentTool === 'select' || state.currentTool === 'editText') {
@@ -1874,6 +1974,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   const annotationCtxEl = annotationCanvasEl.getContext('2d');
   renderAnnotationsForPage(annotationCtxEl, pageNum, viewport.width, viewport.height);
   _trackMountedCanvas(doc, pageNum, annotationCanvasEl, 'annotation');
+  markLayer('annotations');
 
   // Re-apply search highlights after re-render
   onPageRendered();
@@ -1892,6 +1993,12 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
     completedAt - startedAt,
   );
   recordPerformanceSample('pageInteractiveReadyMs', completedAt - startedAt);
+  return {
+    pageNum,
+    ready: pageEditReadinessSatisfied(doc, pageNum, {
+      requiredLayers: RENDER_EDIT_READY_LAYERS,
+    }),
+  };
 }
 
 function _continuousLayout(doc) {
@@ -2078,7 +2185,11 @@ function _teardownContinuousWindow(reason = 'continuous-teardown') {
   }
 }
 
-function _updateContinuousVirtualWindow({ force = false, interactionSettled = false } = {}) {
+function _updateContinuousVirtualWindow({
+  force = false,
+  interactionSettled = false,
+  scheduleRenders = true,
+} = {}) {
   const doc = getActiveDocument();
   const stateForWindow = _continuousWindow;
   if (!doc || !_continuousWindowMatches(doc) || doc.facingSpread) return;
@@ -2151,15 +2262,17 @@ function _updateContinuousVirtualWindow({ force = false, interactionSettled = fa
     if (force) _renderedPages.delete(pageNum);
   }
 
-  const coldRenderAllowed = force || interactionSettled || isPdfForegroundIdle();
-  for (const pageNum of renderOrder) {
-    if (!coldRenderAllowed && !_hasReusableContinuousBitmap(doc, pageNum)) continue;
-    void renderContinuousPage(
-      pageNum,
-      1000 - Math.abs(pageNum - centerPage),
-      (strictlyVisible.has(pageNum) || stateForWindow.intersecting?.has(pageNum))
-        ? 'foreground' : 'background',
-    );
+  if (scheduleRenders) {
+    const coldRenderAllowed = force || interactionSettled || isPdfForegroundIdle();
+    for (const pageNum of renderOrder) {
+      if (!coldRenderAllowed && !_hasReusableContinuousBitmap(doc, pageNum)) continue;
+      void renderContinuousPage(
+        pageNum,
+        1000 - Math.abs(pageNum - centerPage),
+        (strictlyVisible.has(pageNum) || stateForWindow.intersecting?.has(pageNum))
+          ? 'foreground' : 'background',
+      );
+    }
   }
   if (typeof window !== 'undefined') {
     window.__continuousMountedPageCount = mounted.size;
@@ -2623,7 +2736,10 @@ function _syncCurrentPageFromScroll(container) {
 }
 
 // Render all pages (continuous mode) — creates placeholders, lazily renders visible pages
-export async function renderContinuous(forceRebuild = false) {
+export async function renderContinuous(forceRebuild = false, {
+  synchronization = false,
+  requiredPages: requestedRequiredPages = [],
+} = {}) {
   clearHighlights();
   const doc = getActiveDocument();
   if (!doc?.pdfDoc) return;
@@ -2634,7 +2750,6 @@ export async function renderContinuous(forceRebuild = false) {
   const continuousContainer = document.getElementById('continuous-container');
   const scrollContainer = document.getElementById('pdf-container');
   if (!continuousContainer || !scrollContainer) return;
-  const requiredRenderPromises = [];
   const requiredPages = [];
 
   try {
@@ -2701,7 +2816,6 @@ export async function renderContinuous(forceRebuild = false) {
       wrapper.style.justifySelf = rightSide ? 'start' : 'end';
       continuousContainer.appendChild(wrapper);
       requiredPages.push(pageNum);
-      requiredRenderPromises.push(renderContinuousPage(pageNum, 1000, 'foreground'));
     }
   } else {
     const index = await ensureDocumentPageGeometryIndex(doc);
@@ -2720,6 +2834,7 @@ export async function renderContinuous(forceRebuild = false) {
       intersecting: new Set(),
       horizontalOffsetPx: 0,
       verticalOffsetPx: 0,
+      synchronizing: synchronization,
     };
     if (typeof IntersectionObserver === 'function') {
       const ownerKey = _continuousWindow.ownerKey;
@@ -2735,7 +2850,8 @@ export async function renderContinuous(forceRebuild = false) {
               entry.target.dataset.visibleAt = String(performance.now());
             }
             entry.target.dataset.strictlyVisible = 'true';
-            if (isPdfForegroundIdle() || _hasReusableContinuousBitmap(doc, pageNum)) {
+            if (!current.synchronizing
+                && (isPdfForegroundIdle() || _hasReusableContinuousBitmap(doc, pageNum))) {
               void renderContinuousPage(pageNum, 2_000, 'foreground');
             }
           } else {
@@ -2745,10 +2861,44 @@ export async function renderContinuous(forceRebuild = false) {
         }
       }, { root: scrollContainer, threshold: 0.01 });
     }
-    _updateContinuousVirtualWindow({ interactionSettled: true });
+    _updateContinuousVirtualWindow({
+      interactionSettled: true,
+      scheduleRenders: !synchronization,
+    });
+    if (!synchronization) {
+      requestAnimationFrame(() => _updateContinuousVirtualWindow({ interactionSettled: true }));
+    }
+    const visiblePages = index.visiblePages({
+      scrollTop: scrollContainer.scrollTop,
+      viewportHeight: scrollContainer.clientHeight,
+      scale: doc.scale,
+      layout: _continuousLayout(doc),
+      overscanPx: 0,
+      maxPages: 9,
+    });
+    requiredPages.push(...(synchronization ? visiblePages : [doc.currentPage]));
+  }
+
+  requiredPages.push(...requestedRequiredPages);
+  const normalizedRequiredPages = [...new Set(requiredPages.map(Number)
+    .filter((pageNum) => Number.isInteger(pageNum)
+      && pageNum > 0
+      && pageNum <= pdfDoc.numPages))];
+  const barrier = await awaitRequiredPageRenders(normalizedRequiredPages, (pageNum) => (
+    renderContinuousPage(pageNum, 2_000, 'foreground')
+  ));
+  if (getActiveDocument() !== doc) {
+    return {
+      requiredPages: [],
+      renderReadyPages: [],
+      semanticReadyPages: [],
+      ready: true,
+      inactive: true,
+    };
+  }
+  if (_continuousWindowMatches(doc)) {
+    _continuousWindow.synchronizing = false;
     requestAnimationFrame(() => _updateContinuousVirtualWindow({ interactionSettled: true }));
-    requiredPages.push(doc.currentPage);
-    requiredRenderPromises.push(renderContinuousPage(doc.currentPage, 2_000, 'foreground'));
   }
 
   updateAllStatus();
@@ -2756,8 +2906,12 @@ export async function renderContinuous(forceRebuild = false) {
   if (pdfDoc.numPages > 1 && !doc.facingSpread) {
     scheduleNearbyLowResPreviews(pdfDoc, doc.currentPage, 1);
   }
-  await Promise.all(requiredRenderPromises);
-  return { requiredPages };
+  return {
+    requiredPages: barrier.requiredPages,
+    renderReadyPages: barrier.completedPages,
+    semanticReadyPages: barrier.completedPages,
+    ready: barrier.ready,
+  };
 }
 
 // Setup pointer events for continuous mode pages

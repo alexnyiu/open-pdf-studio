@@ -2,6 +2,7 @@ import { getActiveDocument, getPageRotation } from '../core/state.js';
 import { getRotatedPageSize, normalizePageRotation } from './text-edit-appearance.js';
 import { recordPageTextEditPlacementRead } from './page-text-edit-metrics.js';
 import { pageTextEditHostMatchesPlacement } from './page-text-edit-host-identity.js';
+import { pageEditReadinessSatisfied } from '../pdf/page-edit-readiness.js';
 
 export { pageTextEditHostMatchesPlacement } from './page-text-edit-host-identity.js';
 
@@ -24,7 +25,9 @@ function pageContainer(pageNum, activeDocument, root = document) {
 export function ensurePageTextEditHost(placement, root = document) {
   const activeDocument = getActiveDocument();
   if (!placement || String(activeDocument?.id) !== placement.documentId
-      || Number(activeDocument?.lifecycleGeneration) !== Number(placement.generation)) return null;
+      || Number(activeDocument?.lifecycleGeneration) !== Number(placement.generation)
+      || (activeDocument.pdfDoc
+        && !pageEditReadinessSatisfied(activeDocument, placement.pageNum))) return null;
   const container = pageContainer(placement.pageNum, activeDocument, root);
   if (!container) return null;
   const hosts = [...container.children]
@@ -52,7 +55,9 @@ export function ensurePageTextEditHost(placement, root = document) {
 export function findPageTextEditHost(placement, root = document) {
   const activeDocument = getActiveDocument();
   if (!placement || String(activeDocument?.id) !== placement.documentId
-      || Number(activeDocument?.lifecycleGeneration) !== Number(placement.generation)) return null;
+      || Number(activeDocument?.lifecycleGeneration) !== Number(placement.generation)
+      || (activeDocument.pdfDoc
+        && !pageEditReadinessSatisfied(activeDocument, placement.pageNum))) return null;
   const container = pageContainer(placement.pageNum, activeDocument, root);
   if (!container) return null;
   return [...container.children]

@@ -7,6 +7,17 @@ export function advanceDocumentLifecycleState(
   if (!documentState) return 0;
   cancelForDocument(documentState.id, reason);
   documentState.lifecycleGeneration = (Number(documentState.lifecycleGeneration) || 0) + 1;
+  documentState.pageEditReadiness = {};
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function'
+      && typeof CustomEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('opds:document-lifecycle-changed', {
+      detail: {
+        documentId: String(documentState.id || ''),
+        lifecycleGeneration: documentState.lifecycleGeneration,
+        reason: String(reason),
+      },
+    }));
+  }
   return documentState.lifecycleGeneration;
 }
 

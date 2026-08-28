@@ -22,6 +22,7 @@ export function captureRenderPublicationToken(documentState, pageNum, source = '
     lifecycleGeneration: nonNegativeRevision(documentState.lifecycleGeneration),
     pdfDocument: documentState.pdfDoc,
     contentRevision: nonNegativeRevision(documentState.revisionState?.contentRevision),
+    livePdfRevision: nonNegativeRevision(documentState.revisionState?.livePdfRevision),
     pageRevision: nonNegativeRevision(
       documentState.revisionState?.pageContentRevisions?.[page]
       ?? documentState.pageRenderRevisions?.[page],
@@ -36,6 +37,7 @@ export function renderPublicationTokenIsCurrent(token, documentState) {
     && nonNegativeRevision(documentState.lifecycleGeneration) === token.lifecycleGeneration
     && documentState.pdfDoc === token.pdfDocument
     && nonNegativeRevision(documentState.revisionState?.contentRevision) === token.contentRevision
+    && nonNegativeRevision(documentState.revisionState?.livePdfRevision) === token.livePdfRevision
     && nonNegativeRevision(
       documentState.revisionState?.pageContentRevisions?.[token.pageNum]
       ?? documentState.pageRenderRevisions?.[token.pageNum],

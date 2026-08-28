@@ -1001,6 +1001,13 @@ function _render() {
   }
 }
 
+/** Synchronously paint the currently installed viewport state for barriers. */
+export function renderViewportNow() {
+  if (!viewport.active || !_canvas) return false;
+  _render();
+  return viewport.pageType !== 'raster' || Boolean(viewport.currentBitmap);
+}
+
 // ─── Load Page ──────────────────────────────────────────────────────────────
 
 // When true, the next setPage() call leaves zoom/offset alone instead of
