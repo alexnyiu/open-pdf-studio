@@ -2,265 +2,191 @@
 
 ## Baseline and final commits
 
-- Baseline: `d105926ed7760fa274308dc83f9a6609b49c9bfd`
-- Baseline title: `Improve text-edit auto-save persistence and diagnostics`
-- Final: Pending
+- Baseline: `d105926ed7760fa274308dc83f9a6609b49c9bfd` (`Improve text-edit auto-save persistence and diagnostics`)
+- Final implementation candidate: `7a778d4262efe1350fc9590085cabe879ae47529`
+- Closure report: the documentation-only commit containing this file
 - Branch: `ocr-release-hardening`
-- Platform: macOS Darwin 25.6.0 arm64
-- Node: v25.6.1
-- npm: 11.9.0
-- Rust: rustc 1.97.1, cargo 1.97.1
-- Tauri CLI dependency: `^2.10.0`
+- Local qualification host: macOS Darwin 25.6.0 arm64; Node v25.6.1; npm 11.9.0; rustc/cargo 1.97.1; Tauri CLI 2.10.0
 
 ## Root cause resolved
 
-The baseline split persistence, live-proxy replacement, render publication, semantic metadata, and edit activation across unrelated dirty flags and fire-and-forget work. The implementation now carries one monotonic document/page revision contract from mutation through serialization, atomic replacement, proxy installation, visible raster/semantic rebuilding, and post-save edit activation.
+The baseline treated a successful disk replacement, a clean dirty flag, the live PDF.js proxy, visible pixels, semantic layers, native source provenance, and cache contents as if they were one state. Automatic save could therefore persist newer bytes without installing them into the live editor, while clean same-path Save could hide that synchronization debt. In-flight work was owned by paths, wrappers, or unrevisioned page identities, allowing an older result to publish after a save.
+
+The repair carries immutable document/lifecycle/proxy/content/page/request identity through mutation, serialization, atomic replacement, live-proxy installation, derived-state invalidation, visible and semantic rebuilding, and subsequent edit activation. A save is not finally `saved` until the persisted revision is installed and required pages are edit-ready.
 
 ## Architecture implemented
 
-- revision state: Implemented in Phase 1; explicit content, serialized, persisted, live-PDF, visible-render, visible-semantic, and page readiness identities now fail closed on impossible transitions
-- save coordinator: Implemented in Phase 2; one revision-owned queue per document coordinates automatic and manual requests through bounded editor completion, persistence-boundary ownership, follow-up scheduling, and lifecycle cancellation
-- automatic persistence and click-away intent: Implemented in Phase 8; short latest-wins debounce is capped by a maximum coalescing window, yields to live editors/foreground rendering/other saves, records duration and candidate bytes, and replays one captured safe outside action only after successful commit and pointer settlement
-- proxy synchronization: Implemented in Phase 3; automatic and manual persistence share one saved-document transition, with live revision advancement, view restoration, edit activation holding, and Phase-B-only recovery
-- publication tokens: Implemented in Phase 4; foreground and background raster, tile, preview, thumbnail, vector, metadata, and whole-document preload work publish only for their exact document, proxy, lifecycle, content revision, and page revision
-- semantic invalidation: Implemented in Phase 5; live-proxy installation clears editable metadata, native provenance, search text, and preload completion state before required-page metadata is rebuilt and edit readiness is published
-- edit readiness: Implemented in Phase 7; Saved and editor activation await revisioned raster, annotation, text, link, form, and editable-metadata readiness for every required visible page, with lifecycle cancellation and queued point replay
-- cache invalidation: Implemented in Phase 6; one saved-document invalidator clears both old and new Save As paths and all raster, tile, preview, thumbnail, vector, page-type, geometry, semantic, DOM-layer, preload, and native generations before registering the new owner
-- UI recovery: Implemented in Phase 9; selected-document save state drives a persistent non-modal status with retry-save, refresh-only retry, acknowledged failure, and last-resort persisted-document reopen actions plus an MCP/debug revision snapshot
+- revision state: explicit content, serialized, persisted, live-PDF, visible-render, visible-semantic, per-page content, and per-layer readiness revisions with fail-closed transition assertions
+- save coordinator: one serialized, revision-owned queue per document; automatic requests coalesce, manual Save joins/flushes, ownership is rechecked at the replacement boundary, and follow-up work is guaranteed for newer revisions
+- proxy synchronization: automatic, manual, Save As, clean-debt, and retry-refresh paths use one saved-document transition; validated bytes install before central invalidation/rebuild and partial success remains explicit
+- publication tokens: raster, continuous, tile, preview, vector, thumbnail, semantic, metadata, preload, and native-engine work validates document ID, lifecycle, direct proxy, document revision, page revision, and request identity at publication boundaries
+- edit readiness: native, owned, OCR/scanned, and inserted-text activation waits for the current raster, annotation, text, link, form, editable-metadata, and provenance layers; queued pointer intent replays once against the replacement generation
+- cache invalidation: one saved-document invalidator covers old/new Save As paths and every document-derived visual, semantic, geometry, preload, thumbnail, and engine cache; precisely reusable pages remain revision-stamped
+- UI recovery: per-document Pending, Saving, Refreshing, Saved, Save failed, and Saved/editor refresh failed states; retry-save, refresh-only retry, and safe reopen actions; structured debug snapshots and deterministic fault injection
 
 ## Finding disposition
 
 | Finding | Status | Commit | Files | Tests/evidence |
 |---|---|---|---|---|
-| F-01 | Resolved in Phase 1 | `6dc046f9` | `open-pdf-studio/js/pdf/save-state.js`, `open-pdf-studio/js/core/document-revision-state.runtime.js` | Deterministic regression now passes; same-path no-op rejects synchronization debt |
-| F-02 | Resolved in Phase 4 | `b3934494` | render publication tokens across renderer, viewport raster orchestration, thumbnails, and caches | Old asynchronous work is rejected after proxy, lifecycle, content, or page-revision change |
-| F-03 | Resolved in Phases 3 and 7 | `c593ec19`, `fbbf3d96` | saved-document transition plus visible-page/edit-readiness barrier | Every persisted revision enters mandatory proxy synchronization and waits for all required visible child renders and semantic layers |
-| F-04 | Resolved in Phases 4 and 7 | `b3934494`, `fbbf3d96` | revisioned render/layer publication and page readiness | Deterministic deferred-result races cover raster, continuous, semantic-layer, metadata, and queued edit publication |
-| F-05 | Resolved in Phase 5 | `b18ce88e` | saved semantic transition, revision-owned editable metadata/native provenance/search caches | Content identity advances once and stale semantic entries cannot survive a live-proxy transition |
-| F-06 | Resolved in Phase 6 | `e3044e89` | central derived-state invalidation and revision-owned raster/tile/preview/thumbnail/vector/page-type keys | Same-path caches distinguish lifecycle, content, and page revisions and are cleared through one transition hook |
-| F-07 | Resolved in Phase 2 | `eca8b23e` | `open-pdf-studio/js/pdf/save-coordinator.js`, `open-pdf-studio/js/core/undo-manager.js` | Newer revisions force an owned follow-up; old serialization cannot replace or mark clean |
-| F-08 | Resolved in Phases 3 and 9 | `c593ec19`, Phase 9 commit | saved-document transition edit hold and document-scoped recovery UI | A requested next edit starts only after the new proxy generation is ready; partial persistence/refresh success remains visible and recoverable without another write |
-| F-09 | Resolved in Phases 3 and 7 | `c593ec19`, `fbbf3d96` | immutable owner lookup, inactive install, and revisioned queued edit replay | Active-tab changes cannot publish into shared canvases; an inactive owner installs without drawing and renders under the same contract when selected |
-| F-10 | Resolved in Phase 4 | `b3934494` | PDF.js task registry and native request IDs | PDF.js tasks are actively cancelled on revision change; uncancellable native completions are rejected before publication |
-| F-11 | Resolved in Phase 5 | `b18ce88e` | explicit document/revision metadata preload and changed-page-first rebuild | Required-page native metadata is rebuilt before semantic/edit readiness; uncertain provenance changes clear the whole source cache |
-| F-12 | Resolved in Phase 6 | `e3044e89` | structural revision invalidation plus revision-stamped geometry/performance index | Structural replacement rebuilds page geometry under the new proxy/lifecycle/content identity before shells consume it |
-| F-13 | Resolved in Phases 4 and 6 | `e3044e89` | revision-owned tile, preview, thumbnail, vector, and bitmap caches | Async insertions reject stale owners and synchronous lookup keys cannot cross a saved revision |
-| F-14 | Resolved in Phase 6 | `e3044e89` | revision-owned compatibility bitmap, page-type, vector image, and thumbnail resource keys | No production content cache is owned by path and page alone |
-| F-15 | Resolved in Phases 4–6 | `e3044e89` | whole-document/editable-metadata token validation and central preload cancellation/restart | Old preloads cannot insert metadata or mark a new revision complete; visible thumbnails restart first from the new proxy |
-| F-16 | Resolved in Phases 3, 7, and 8 | `c593ec19`, `fbbf3d96`, `672fea0c` | saved-document transition, page-edit readiness ownership, and foreground-aware automatic scheduling | `livePdfRevision` advances only after candidate proxy install; final Saved and new edit sessions wait for exact current raster and semantics; automatic serialization yields to critical rendering |
-| F-17 | Resolved in Phases 2 and 8 | `eca8b23e`, `672fea0c` | save coordinator persistence/publication boundaries and bounded automatic admission | Superseded and closed-document requests cannot publish stale state; repeated automatic requests are latest-wins and cannot defer past their coalescing deadline |
-| F-18 | Resolved in Phases 2 and 9 | `eca8b23e`, Phase 9 commit | save coordinator editor promise/deadline and durable selected-document failure state | Save waits on the session commit promise and fails visibly at a bounded deadline; exact failure remains diagnostic while the concise UI persists until acknowledgement or recovery |
-| F-19 | Resolved in Phase 8 | `672fea0c` | `open-pdf-studio/js/text/text-edit-click-away-intent.js`, `open-pdf-studio/js/solid/components/PdfTextEditOverlay.jsx` | Captured safe toolbar/text-region intent replays once after successful Apply; failed, stale, destructive, and browser-delivered actions do not replay |
-| F-20 | Reproduced | Pending | CI run 33148195868 | Static verification fails 19 OCR tests because untracked generated PNG fixtures are absent in a clean checkout |
-| F-21 | Pending | Pending | Pending | Pending |
-| F-22 | Reproduced | Pending | `open-pdf-studio/scripts/test-save-continue-editing-macos.mjs` | Explicitly red packaged scenario outline |
-| F-23 | Blocked | N/A | GitHub repository settings | `gh issue create` returned: `the 'alexnyiu/open-pdf-studio' repository has disabled issues` |
+| F-01 | Fixed | `6dc046f9`, `eca8b23e`, `c593ec19`, `601affb3` | `document-revision-state.*`, `save-state.js`, `save-coordinator.js`, `saved-document-transition.js`, `saver.js` | Red-first state sequence; coordinator/transition tests; packaged A1/A22 no-reopen report |
+| F-02 | Fixed | `b3934494`, `e3044e89` | `tile-cache.js`, `render-publication-token.js`, `renderer.js` | Deferred stale tile/publication tests; high-zoom coverage |
+| F-03 | Fixed | `c593ec19`, `fbbf3d96` | `visible-page-render-barrier.js`, `page-edit-readiness.js`, `saved-document-transition.js` | Deferred continuous child-render barrier tests; revisioned acceptance states |
+| F-04 | Fixed | `b3934494`, `fbbf3d96` | `render-publication-token.js`, `renderer.js`, semantic layers | Deferred old raster/DOM/layer completions reject publication and release ownership |
+| F-05 | Fixed | `b18ce88e`, `fbbf3d96` | `editable-metadata-preload.js`, `native-text-provenance.js`, `semantic-revision-identity.js` | Metadata/provenance races; packaged second and third native edits |
+| F-06 | Fixed | `b3934494`, `e3044e89` | `left-panel.js`, `thumbnail-document-owner.js` | Thumbnail proxy/task/resource race tests; 384-case packaged matrix |
+| F-07 | Fixed | `eca8b23e` | `save-coordinator.js`, `saver.js` | Deferred two-save ordering, final pre-replacement ownership, follow-up revision, tab/close tests |
+| F-08 | Fixed | `c593ec19`, `92734427` | `saved-document-transition.js`, `save-fault-injection.js`, `document-save-status.js` | Persisted-plus-refresh-failed state, no-write retry, and recovery UI tests |
+| F-09 | Fixed | `c593ec19`, `fbbf3d96`, `601affb3` | `page-edit-intent.js`, `page-edit-readiness.js`, `text-edit-tool.js` | Immediate queued edit/lifecycle tests; packaged edits B and C without reopen |
+| F-10 | Fixed | `b3934494`, `e3044e89` | `low-resolution-preview-key.js`, `renderer.js` | Preview identity/race tests; stale draw rejection |
+| F-11 | Fixed | `b18ce88e` | `whole-pdf-preload.js`, `pdf-preload-controller.js` | Deferred preload revision test; new-revision completion cannot be spoofed |
+| F-12 | Fixed | `e3044e89` | `document-performance.js`, geometry owner state, central invalidator | Geometry revision/structural invalidation tests; page-operation packaged coverage |
+| F-13 | Fixed | `b3934494`, `e3044e89` | `vector-renderer.js`, `revision-owned-engine-caches.test.mjs` | Old vector command/image owner is invisible after revision change |
+| F-14 | Fixed | `e3044e89` | `page-type-cache.js`, central invalidator | Revision-owned page-type tests and structural scenario coverage |
+| F-15 | Fixed | `b3934494`, `e3044e89` | `page-bitmap-cache.js`, `page-raster.js` | Legacy facade fails closed without a live owner; compatibility/raster tests |
+| F-16 | Fixed | `c593ec19`, `fbbf3d96` | `saved-document-transition.js`, lifecycle/readiness ownership | Wrapper replacement with same immutable document ID remains valid; tab-switch acceptance |
+| F-17 | Fixed | `eca8b23e`, `672fea0c` | `save-coordinator.js`, text-edit session registry | Event-driven editor completion, bounded failure, automatic latest-wins/admission tests |
+| F-18 | Fixed | `92734427` | `StatusBar.jsx`, `document-save-status.js`, recovery/fault injection | Automatic failure stays visible/retryable; exact diagnostic retained by owner |
+| F-19 | Fixed | `672fea0c` | `text-edit-click-away-intent.js`, `PdfTextEditOverlay.jsx` | Exactly-once toolbar/text replay; failed, stale, destructive, and browser-delivered actions do not replay |
+| F-20 | macOS fixed; other platforms deferred | `5c377ea9`, `2d4c193c`, `7a778d42` | `.github/workflows/ci.yml`, OCR corpus test, OCR PDF candidate validator | Node/runtime and macOS corpus proof corrected; macOS is the active qualification target, while Linux/Windows remain outside the current scope |
+| F-21 | Blocked | `5c377ea9` | `BRANCH_PROTECTION_REQUIRED.md` | Exact upstream `main` check/review/update/force-push/deletion settings recorded; implementing account lacks rule administration |
+| F-22 | Fixed | `a5422b1e`, `601affb3`, `5c377ea9` | save/continue script, verifier, aggregate packaged runner, CI | Packaged A1/A22 edits A/B/C, independent extraction/reopen, revision equality, 0 stale publications |
+| F-23 | Fixed | N/A | Upstream tracking history | Parent `OpenAEC-Foundation/open-pdf-studio#345`; linked workstreams `#346`–`#350` contain scope, acceptance, commits, and evidence |
 
 ## Test commands and results
 
-### Phase 0 baseline
+All commands below passed unless an expected red-first/baseline result is stated.
 
-| Command | Result |
+### Baseline and red-first evidence
+
+- `NPM_CONFIG_CACHE=/tmp/open-pdf-studio-save-coherence-npm-cache npm ci`
+- `npm run typecheck`
+- `npm run test`
+- `npm run build`
+- `git diff --check`
+- `cargo test -p open-pdf-studio`
+- `cargo test -p pdfium-worker`
+- F-01 state test: expected failure before production changes because clean same-path Save accepted synchronization debt
+- packaged save/continue outline: expected failure before the production path and report contract existed
+- baseline GitHub run `33148195868`: failed in clean-checkout OCR fixture/runtime setup before downstream jobs; classified as an existing branch/CI-environment regression
+
+### Final local static and unit gates
+
+From `open-pdf-studio/`:
+
+| Command | Outcome |
 |---|---|
-| `npm ci` | Environment failure: root-owned `~/.npm` cache returned `EPERM` |
-| `NPM_CONFIG_CACHE=/tmp/open-pdf-studio-save-coherence-npm-cache npm ci` | PASS; locked dependency install completed |
+| `npm ci` with the task-specific cache | PASS; 128 packages; existing audit inventory 2 low, 6 high, 1 critical was not auto-modified |
 | `npm run typecheck` | PASS |
-| `npm run test` | PASS locally with generated fixture PNGs present |
-| `npm run build` | PASS |
-| `git diff --check` | PASS |
-| `cargo test -p open-pdf-studio` | PASS: 75 unit tests plus focused integration tests; one pool-parity test ignored by existing configuration |
-| `cargo test -p pdfium-worker` | PASS: 15 passed, 2 ignored by existing configuration |
-| `node --test js/pdf/save-state.test.mjs` after red test | EXPECTED FAIL: F-01 returned `true` instead of `false` for disk-clean synchronization debt |
-| `node scripts/test-save-continue-editing-macos.mjs` | EXPECTED FAIL: authoritative packaged scenario not implemented yet |
+| `npm run test` | PASS |
+| `npm run test:editor-lifecycle:unit` | PASS, 206/206 |
+| `npm run test:large-pdf-performance:unit` | PASS, 57/57 |
+| `npm run test:quality` | PASS, 69/69 |
+| `npm run build` | PASS, 1,298 modules |
+| `node --test scripts/ocr-quality-benchmark.test.mjs` | PASS, 8/8; exact reproduction on macOS and byte/hash self-consistency everywhere |
+| `NPM_CONFIG_CACHE=... npx --yes node@24.19.0 --test js/ocr/pdf-persistence.test.mjs` | PASS, 5/5 under the exact hosted Node runtime |
 
-### Baseline CI classification
+From repository root:
 
-- GitHub Actions run: https://github.com/alexnyiu/open-pdf-studio/actions/runs/33148195868
-- Category: existing branch regression in clean-checkout fixture provisioning.
-- Failure: 19 OCR tests fail after missing generated PNG fixtures produce `ENOENT`; the first missing file is `open-pdf-studio/tests/fixtures/ocr/quality-v1/punctuation-unicode.png`.
-- Consequence: frontend build, whitespace, Rust, desktop build, packaged editor acceptance, and performance jobs are skipped.
-- Local/CI difference: the PNG files exist locally but `git ls-files` contains only the fixture Markdown and JSON files.
-
-### Phase 1 revision model
-
-| Command | Result |
+| Command | Outcome |
 |---|---|
-| `npm run typecheck` | PASS |
-| `node --test js/core/document-revision-state.test.mjs js/pdf/save-state.test.mjs js/pdf/page-raster.test.mjs` | PASS: 20/20 |
-| `npm run test:editor-lifecycle:unit` | PASS: 123/123 |
-| `npm run test:unit` | PASS: 225/225 |
 | `git diff --check` | PASS |
+| `cargo test -p open-pdf-studio` | PASS; all configured unit/integration tests, existing explicitly ignored parity cases unchanged |
+| `cargo test -p pdfium-worker` | PASS, 15 passed and existing ignored integration coverage unchanged |
 
-- All document instances initialize one stable revision-state object.
-- `pageRenderRevisions` remains a compatibility alias of `pageContentRevisions`; there are not two independent counters.
-- Persistence debt and live-proxy synchronization debt are separate, and disk-clean state cannot suppress required synchronization.
-- Persistent mutation entry points route through the revision helper or the typed undo-command boundary; OCR/scanned inner state retains the existing `modified` compatibility marker while its owning command advances revision identity exactly once.
+### Packaged macOS gates
 
-### Phase 2 save coordinator
+Packaged app source candidate `5c377ea9`; final-candidate macOS rerun against `7a778d42` is pending:
 
-| Command | Result |
+`/Users/alexander/Personal Projects/open-pdf-studio/target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app`
+
+| Command | Outcome |
 |---|---|
-| `npm run typecheck` | PASS |
-| `node --test js/pdf/save-coordinator.test.mjs js/pdf/save-state.test.mjs js/text/text-edit-session.test.mjs js/core/document-lifecycle.test.mjs` | PASS: 33/33 |
-| `npm run test:editor-lifecycle:unit` | PASS: 123/123 |
-| `npm run test:unit` | PASS: 225/225 |
-| `npm run build` | PASS |
-| `git diff --check` | PASS |
-
-- Automatic requests debounce and coalesce to the newest content revision; manual Save flushes or joins the same document queue.
-- Each queue transaction carries immutable document ID, lifecycle generation, request ID, requested revision, kind, and Save As path.
-- The final ownership assertion is adjacent to native atomic replacement or non-macOS writing, and publication is rechecked after replacement.
-- A request cancelled during the point-of-no-return operation permits the native replacement to finish but cannot install a proxy or publish clean state.
-- Editor completion is promise-driven through the existing session registry, with a 15-second failure boundary rather than polling.
-- Structured diagnostics are bounded to the latest 200 document/request/revision events.
-
-### Phase 3 saved-document transition
-
-| Command | Result |
-|---|---|
-| `npm run typecheck` | PASS |
-| `node --test js/pdf/saved-document-transition.test.mjs js/pdf/save-coordinator.test.mjs js/pdf/save-state.test.mjs js/core/document-revision-state.test.mjs js/text/text-edit-session.test.mjs` | PASS: 47/47 |
-| `npm run test:editor-lifecycle:unit` | PASS: 123/123 |
-| `npm run test:unit` | PASS: 225/225 |
-| `npm run build` | PASS |
-| `git diff --check` | PASS |
-
-- The former automatic cache-only branch is removed. Automatic and manual Save both install the already validated PDF.js candidate.
-- Proxy replacement is owner-ID based, captures page/PDF-space scroll anchor plus view/tool/selection/search state, and restores without reviving a transient editor.
-- `livePdfRevision` advances only after proxy installation; page render and semantic readiness then gate final `Saved` state.
-- Textbox, native-source, and scanned-text entry points wait for the document-scoped transition and register against the post-save lifecycle generation.
-- A disk-clean but unsynchronized document runs Phase B from retained/cached validated bytes without serializing or replacing the destination again.
-- Refresh failure retains persisted revision, bytes, candidate/reload path, and exposes Phase-B-only retry; successful retry does not rewrite the file.
-
-### Phase 4 asynchronous publication ownership
-
-| Command | Result |
-|---|---|
-| `npm run typecheck` | PASS |
-| `node --test js/pdf/render-publication-token.test.mjs js/pdf/render-work-scheduler.test.mjs js/pdf/tile-cache.test.mjs js/pdf/page-bitmap-cache.test.mjs` | PASS: 26/26 |
-| `npm run test:editor-lifecycle:unit` | PASS |
-| `npm run test:unit` | PASS |
-| `npm run build` | PASS |
-| `git diff --check` | PASS |
-
-- Publication tokens capture request ID, immutable document ID, lifecycle generation, direct PDF.js proxy identity, document content revision, page content revision, and page number.
-- Foreground single-page/continuous rendering and viewport raster orchestration validate after asynchronous boundaries and before canvas, DOM, cache, event, or document-state publication.
-- PDF.js render tasks are registered and actively cancelled when their token becomes stale; native render calls carry request IDs and all late results are rejected before publication.
-- Bitmap, tile, vector, preview, thumbnail, metadata, and whole-document preload paths close or revoke stale resources and use bounded rejection diagnostics.
-- Deterministic paused-result tests cover every race required by the plan, including direct tile-cache insertion and scheduler completion rejection.
-
-### Phase 5 semantic invalidation and preload rebuilding
-
-| Command | Result |
-|---|---|
-| `npm run typecheck` | PASS |
-| `node --test js/pdf/saved-document-transition.test.mjs js/pdf/editable-metadata-preload.test.mjs js/pdf/pdf-preload-controller.test.mjs js/text/native-text-provenance.test.mjs js/search/text-cache.test.mjs` | PASS: 27/27 |
-| `npm run test:editor-lifecycle:unit` | PASS |
-| `npm run test:unit` | PASS |
-| `npm run build` | PASS |
-| `git diff --check` | PASS |
-
-- Saved semantic invalidation runs only after the validated candidate proxy is installed and `livePdfRevision` advances; the former pre-install metadata clear was removed.
-- Editable metadata controllers and native source provenance caches are owned by direct proxy, lifecycle, content revision, and live-PDF revision, even when the outer document object remains stable.
-- Required foreground metadata bypasses background-idle admission and is rebuilt before page semantic readiness; precisely changed pages are attempted first.
-- Whole-document preload status carries revision identity, restarts after required-page rebuilding, and stale runs cannot publish `complete` for a newer revision.
-- Search waits for saved-document synchronization, refuses persisted-newer-than-live or refresh-failed owners, and caches page text under direct proxy plus document/page revision identity.
-
-### Phase 6 centralized visual and engine cache invalidation
-
-| Command | Result |
-|---|---|
-| `npm run typecheck` | PASS |
-| `node --test js/core/document-revision-state.test.mjs js/pdf/page-raster.test.mjs js/pdf/page-bitmap-cache.test.mjs js/pdf/tile-cache.test.mjs js/pdf/revision-owned-engine-caches.test.mjs js/pdf/low-resolution-preview-key.test.mjs js/pdf/document-performance.test.mjs js/pdf/saved-document-transition.test.mjs js/ui/panels/thumbnail-document-owner.test.mjs` | PASS: 43/43 |
-| `npm run test:large-pdf-performance:unit` | PASS: 55/55 |
-| `npm run test:editor-lifecycle:unit` | PASS: 123/123 |
-| `npm run test:unit` | PASS: 227/227 |
-| `npm run build` | PASS |
-| `git diff --check` | PASS |
-
-- `invalidateSavedDocumentDerivedState` is the single post-install transition hook. It cancels old preload/thumbnail work, clears page readiness, semantic state, all visual/engine caches, visible text/link/form layers, and PDFium state for both the prior and destination Save As paths.
-- Page raster, tile, vector command/image, page-type, low-resolution preview, and thumbnail resource identities include document, lifecycle, global content revision, and page revision in addition to their rendering parameters.
-- The legacy bitmap compatibility facade fails closed without a live revision-owned document context and writes into the formal page-raster registry rather than a path-only entry.
-- Thumbnail state always replaces its retained PDF.js proxy after save, clears old promises/tasks/resources, primes the active and visible pages first, then restarts ordinary and whole-document generation.
-- Page geometry carries direct proxy/lifecycle/content identity. Structural or uncertain saves clear and synchronously initialize performance geometry; precise non-structural saves restamp retained dimensions before new cache owners are registered.
-- Deterministic tests prove that denser old rasters/tiles cannot satisfy a new revision, old page-type/vector entries are invisible, low-resolution preview keys change, stale resources close, and the central hook invokes every required invalidator.
-
-### Phase 7 visible-page and edit-readiness barrier
-
-| Command | Result |
-|---|---|
-| `node --test js/core/document-revision-state.test.mjs js/pdf/page-edit-readiness.test.mjs js/pdf/render-publication-token.test.mjs js/pdf/saved-document-transition.test.mjs js/pdf/visible-page-render-barrier.test.mjs js/text/page-edit-intent.test.mjs` | PASS: 46/46 |
-| `npm run test:editor-lifecycle:unit` | PASS: 161/161 |
-| `npm run test:unit` | PASS: 227/227 |
-| `npm run test:large-pdf-performance:unit` | PASS: 55/55 |
-| `npm run typecheck` | PASS |
-| `npm run build` | PASS |
-| `git diff --check` | PASS |
-
-- `renderContinuous(true, { synchronization: true })` mounts required visible wrappers without launching background work, awaits the scheduler result for each current page, then resumes ordinary preview/background scheduling after the barrier settles.
-- Page edit readiness is owned by direct document/proxy identity, lifecycle, content revision, live-PDF revision, page revision, and page number. Raster, annotations, text, links, forms, and editable metadata publish independently through current tokens; any current layer failure fails closed.
-- Single-page, continuous, book, and facing-spread rebuilding report the exact required page set. A tab switch during rebuilding cannot publish into another document's shared canvases; an inactive saved owner carries no visible requirement until selected again.
-- Textbox, owned/native PDF text, scanned text, and inserted text entry points wait for saved-document synchronization and page edit readiness before hit-testing or session registration. A click made during synchronization retains its page/point and replays once against the replacement layer.
-- Proxy replacement and every affected mutation clear page readiness. Lifecycle or revision changes reject old waiters, and the page editor host refuses a stale generation instead of reattaching a pre-save contenteditable subtree.
-- The deterministic tests cover deferred visible children, complete multi-layer readiness, stale completions, queued point replay, lifecycle rejection, inactive-tab installation/return, and the existing immediate post-save edit-session race.
-
-### Phase 8 bounded auto-save and deterministic click-away intent
-
-| Command | Result |
-|---|---|
-| `node --test js/pdf/save-coordinator.test.mjs js/text/text-edit-click-away-intent.test.mjs js/text/text-edit-focus-boundary.test.mjs` | PASS: 30/30 |
-| `npm run test:editor-lifecycle:unit` | PASS: 183/183 |
-| `npm run test:unit` | PASS: 227/227 |
-| `npm run test:large-pdf-performance:unit` | PASS: 55/55 |
-| `npm run typecheck` | PASS |
-| `npm run build` | PASS |
-| `git diff --check` | PASS |
-
-- Automatic text-edit persistence uses a 120 ms latest-revision debounce with an 800 ms maximum coalescing window. Manual Save still flushes the same queue immediately.
-- Automatic serialization cannot start while another save owns the coordinator, the same document has a live text session, or foreground render/save work is critical. Admission retries are bounded at 50 ms and execute immediately after the blocker settles once the coalescing deadline has elapsed.
-- Coordinator completion/failure diagnostics include serialization duration and serialized candidate byte size when available; the existing bounded 200-event browser history remains the evidence surface.
-- The outside pointer target, client point, document owner, lifecycle generation, and stable text identifiers are captured before pointerdown is consumed. A document-level gesture guard survives editor unmount and absorbs the original compatibility click.
-- Successful Apply replays a valid focus/button/menu action once or sends another text-region point through the revisioned readiness queue. Failed/stale actions do not replay; destructive actions visibly require a second click; a browser-delivered action suppresses replay.
-- Deterministic tests cover quick-edit latest-wins coalescing, maximum-window persistence, active-save/live-session deferral, duration/size evidence, exactly-once toolbar activation, readiness-routed text replay, failed commit, destructive action, compatibility-click consumption, and no double replay.
-
-### Phase 9 durable save status, recovery, and diagnostics
-
-| Command | Result |
-|---|---|
-| `node --test js/core/document-revision-state.test.mjs js/pdf/save-fault-injection.test.mjs js/pdf/save-coordinator.test.mjs js/pdf/saved-document-transition.test.mjs js/ui/chrome/document-save-status.test.mjs` | PASS: 47/47 |
-| `npm run test:editor-lifecycle:unit` | PASS: 193/193 |
-| `npm run test:unit` | PASS: 227/227 |
-| `npm run test:large-pdf-performance:unit` | PASS: 55/55 |
-| `npm run typecheck` | PASS |
-| `npm run build` | PASS |
-| `git diff --check` | PASS |
-
-- The status bar derives its non-modal save chip from the selected document's authoritative `revisionState`; switching tabs cannot display another owner's progress or failure.
-- `pending`, `saving`, `persisted`, `synchronizing`, `saved`, `failed`, and `saved-refresh-failed` have distinct concise states. Failure identities remain visible across later edits until acknowledged or recovered, while exact errors stay in document diagnostics.
-- Retry save resolves the owner's current content revision at click time. Retry refresh calls only `synchronizePersistedOwnerWithoutWrite`; deterministic source and transition tests prove it cannot enter `performSavePDF` or replace the destination again.
-- A failed refresh-only retry reveals Reopen. Reopen is allowed only when content equals the persisted revision, reloads that path through the production loader, resets the live revision/readiness owner, and cannot discard newer persistence debt.
-- The structured MCP/`window.__documentSaveDebug` snapshot contains document ID, content/serialized/persisted/live/visible revisions, save state, active request ID, and exact save/synchronization errors. `window.__textEditAutoSaveDebug` remains unchanged for compatibility.
-- Test-only deterministic fault injection is wired at serialization, persistence, proxy-install, and render-readiness boundaries. It has no production UI entry point.
-- Required state/UI tests cover automatic failure with retained debt, persisted-but-refresh-failed partial success, no-write refresh retry, latest-revision save retry, independent tab status, exact debug transitions, and last-resort reopen gating.
+| `npm run package:ocr-release-hardening:arm64` | PASS; ad-hoc hardened-runtime bundle, strict signature verification and PDFium probe pass; notarization skipped because credentials were unavailable |
+| `npm run test:editor-coverage:macos` | PASS, 384 matrix + 72 lifecycle cases |
+| `npm run test:annotation-text-editing:macos` | PASS; insertion, textbox, callout, click-away, Escape, save/reopen, repeat-save, genuine re-edit |
+| `npm run test:native-text-editing:macos` | PASS |
+| `npm run test:ocr-production-100-page:macos` | PASS; 100/100 complete, 0 failed/skipped, 100 children reaped, external PDF.js/PDFium readers pass, cancellation 55/45 with no late results |
+| `npm run test:editor-performance:macos` | PASS |
+| explicit coherence script and verifier | PASS |
+| `OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME=success npm run test:editor-acceptance:macos` | PASS; browser, coverage, coherence, native, annotation, OCR workflow/save/one-line/regions/reflow suites |
 
 ## Packaged acceptance
 
-- app artifact: Pending
-- report artifact: Pending
-- scenarios passed: Pending
-- stale publication count: Pending
+- app artifact: `/Users/alexander/Personal Projects/open-pdf-studio/target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app`
+- executable: `Contents/MacOS/open-pdf-studio`, 71,994,896 bytes, SHA-256 `7cc836dd571ac3e7711dd9bd1f9e5bf63ef285cd7186d9123a571344c50a6aa6`
+- aggregate report: `open-pdf-studio/test-artifacts/packaged-editor/acceptance.json`, PASS
+- coherence report: `open-pdf-studio/test-artifacts/save-render-coherence/report.json`, PASS
+- scenarios: A1 and A22 execute through the packaged production UI; A2–A21 have packaged or deterministic evidence; no synthetic state seeding or test-only app entry point
+- final revisions: content = serialized = persisted = live PDF = visible render = visible semantic = 3
+- text: edits A, B, and C exist in saved bytes, live semantics, and independent reopen; no reopen occurred before edits B or C
+- visual: geometry preserved; clean manual Save preserved bytes; mounted/direct page crops differ by 0%, below the 0.1% maximum
+- stale publication count: 0; rejected stale publication count after synchronization barriers: 0
 
 ## Performance comparison
 
-Pending Phase 10 measurements.
+The prior qualified packaged snapshot is `14019611`; the coherence candidate measurement is `5c377ea9`. The baseline defect did not have a valid save/synchronize workflow, so no misleading before latency is invented for that broken path. Coordinator tests directly assert bounded serialization duration/candidate-size diagnostics; packaged readiness and large-document behavior are covered by the tables below.
+
+| Metric | Prior qualified | Candidate | Guardrail/result |
+|---|---:|---:|---|
+| typing-to-paint p95 | 12 ms | 12 ms | PASS, < 16 ms |
+| warm exact validation | 15 ms | 15 ms | PASS, < 100 ms |
+| maximum ordinary typing task | 3 ms | 4 ms | PASS, < 50 ms |
+| active exact-layout tasks | 1 | 1 | PASS, bounded |
+| idle placement reads/writes | 0 / 0 | 0 / 0 | PASS |
+| history entries / approximate bytes | 2 / 24,184 | 2 / 24,184 | PASS |
+| OCR UI publication maximum | 8.0645 Hz | 8.0645 Hz | PASS, <= 10 Hz |
+| OCR bookkeeping CPU | 0.00374% | 0.00539% | PASS |
+| OCR progress / late cancel publication | monotonic / none | monotonic / none | PASS |
+
+The 100-page production run recorded parent RSS baseline 319,504,384 bytes, peak parent 337,838,080, peak child 207,847,424, settled parent 236,617,728, and settled delta 0 against a 33,554,432-byte allowance. Required page metadata reached 100/100, owned OCR streams were exactly one per page, all 100 child processes were reaped, and no stale/generation token error occurred.
 
 ## CI and protection evidence
 
-- workflow run: Baseline failure recorded above
-- required checks: Pending
-- admin blockers: GitHub Issues are disabled, preventing the required parent and linked workstream issues. Repository-rule administration remains to be verified in Phase 11.
+- baseline failure: `https://github.com/alexnyiu/open-pdf-studio/actions/runs/33148195868`
+- first candidate diagnostic: `https://github.com/alexnyiu/open-pdf-studio/actions/runs/33199296147` proved Node 20 incompatibility and cross-platform fixture reproduction mismatch
+- second candidate diagnostic: `https://github.com/alexnyiu/open-pdf-studio/actions/runs/33199740679` proved the remaining modern-PDF.js/Node 24 `toHex` incompatibility
+- final code-candidate workflow: `https://github.com/alexnyiu/open-pdf-studio/actions/runs/33200096495`; all JavaScript, OCR, lifecycle, quality, performance-unit, build, and diff checks passed before the workflow stopped at the Linux desktop build because the clean checkout did not contain its target sidecar
+- macOS required check producers remain: `Desktop build (macos-26)`; `macOS packaged editor acceptance`; `save/render coherence report verification`; `macOS editor and OCR performance`; `macOS OCR release-hardening decision`
+- Linux and Windows hosted build closure is explicitly deferred by the current macOS-only scope; the Linux sidecar failure is not reported as a macOS defect or as a passing cross-platform gate
+- checks are fail-closed and downstream jobs depend on real upstream artifacts; the coherence verifier is a separate required job
+- administrative blocker: the implementing account can read but cannot administer the authoritative `OpenAEC-Foundation/open-pdf-studio` rules. `BRANCH_PROTECTION_REQUIRED.md` records the exact required checks, PR/review/up-to-date requirements, and force-push/deletion prohibitions. F-21 must be closed by an upstream administrator and revalidated on an upstream pull request.
+
+## Final source audit
+
+The five required `rg` searches were rerun against `7a778d42` and every match was reviewed rather than mechanically removed.
+
+- path/page matches: page raster, bitmap, tile, thumbnail, preview, vector, geometry, and page-type owners also include immutable document ID, lifecycle, content revision, and page revision. The old compatibility facade registers with the formal raster owner and is cleared centrally; no content lookup is path-and-page only.
+- active-document wrapper equality: remaining comparisons only protect publication into the active shared DOM/canvas or fail closed. Mutation, persistence, synchronization, and cache authority use document ID, lifecycle generation, direct PDF.js proxy, and revisions; owner resolution remains valid when a reactive wrapper changes.
+- direct `modified` assignments: `true` remains a compatibility mirror within mutation/undo boundaries that call `noteDocumentMutation`; the loader sets `false` only after validated recovery state converges. Clean/save decisions use revision debt, not this Boolean.
+- 250/750 ms timers: loader/renderer delays are background-admission settling windows; foreground retry and allocator relief recheck lifecycle, requested revision, and foreground idleness. None is proof of save, render, semantic, or edit readiness.
+- fire-and-forget render/preload/get-page calls: continuous render work is owned by `createRenderWorkScheduler` and publication tokens, preload coordinators carry revision/generation ownership and catch failures, metadata warmup publishes nothing directly, and cancellation/clear paths are idempotent cleanup.
+- stale-result cleanup: PDF.js tasks are cancelled and unregistered; in-flight leases release once; rejected raster/bitmap resources close; object URLs/streams/candidates transfer or dispose exactly once; central invalidation cancels old preload/thumbnail/native generations before reuse.
+- save state paths: deterministic tests cover success, superseded request, pre-persistence cancellation, cancellation after the persistence point of no return, persistence failure, saved-refresh-failed partial success, and refresh-only recovery.
+
+## Final release audit
+
+| Criterion | Result |
+|---|---|
+| F-01 through F-19 and F-22 have code plus deterministic/packaged evidence | PASS |
+| F-20 macOS CI/runtime compatibility has deterministic evidence | PASS |
+| Automatic and manual save share one persistence/synchronization contract | PASS |
+| Disk-clean state cannot hide live/editor synchronization debt | PASS |
+| Required visible/semantic edit-readiness barrier is revision-owned | PASS |
+| Old render, layer, preload, thumbnail, metadata, and engine work cannot publish after revision change | PASS |
+| All listed caches are revision-owned or centrally invalidated | PASS |
+| Save/refresh failure is visible and recoverable without unsafe editing | PASS |
+| Exact packaged edit/save/edit-again/no-reopen scenario passes | PASS |
+| Final local macOS static, desktop-package, coherence, performance, and release-hardening gates execute and pass | PENDING FINAL MACOS VALIDATION |
+| Linux and Windows hosted desktop/package gates execute and pass | UNVERIFIED — deferred by macOS-only scope |
+| Authoritative upstream `main` protection is configured and live-verified | UNVERIFIED — external administrator required |
+| Tracking history contains reproduction, ownership, acceptance, commits, and evidence | PASS |
+| Final clean-checkout reproduction at the closure commit | PENDING FINAL VALIDATION |
+
+Release decision: **NO-GO** for a cross-platform/upstream merge until deferred Linux/Windows workflow closure and the documented F-21 administrator action are completed. macOS qualification remains pending only on the final clean-candidate rerun below; this decision does not misclassify deferred platforms or the external protection gap as macOS runtime defects.
 
 ## Remaining risks
 
-- Packaged acceptance, performance qualification, and CI enforcement remain for Phases 10–12.
-- The source audit named by the supplied plan, `open-pdf-studio-ocr-release-hardening-bug-audit.md`, was not present in the workspace, Downloads, or Documents search scope.
+- Upstream `main` protection remains external administrative work; do not merge without applying and live-verifying `BRANCH_PROTECTION_REQUIRED.md`.
+- Linux and Windows hosted build/package evidence is deferred and must not be inferred from the macOS result.
+- The local macOS artifact is usable and ad-hoc signed for acceptance but is not Developer ID/notarization evidence.
+- The existing npm audit inventory remains outside this coherence fix; no broad dependency upgrade or audit rewrite was authorized.
