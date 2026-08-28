@@ -842,8 +842,6 @@ export default function PdfTextEditOverlay() {
     if (!sessionId) return null;
     const ownerDocumentId = session.ownerDocumentId;
     const ownerDocumentGeneration = session.ownerDocumentGeneration;
-    let dirty = true;
-    try { dirty = session.isDirty?.() === true; } catch { /* persist fail-safe */ }
     const refocusCurrentSession = () => queueMicrotask(() => {
       if (active() && getActiveTextEditSession()?.sessionId === sessionId) {
         (richEditorRef || textareaRef)?.focus?.({ preventScroll: true });
@@ -851,7 +849,10 @@ export default function PdfTextEditOverlay() {
     });
     outsideApplyPromise = applyActiveTextEditing('click-away')
       .then((result) => {
-        if (result === true && dirty) {
+        // A successful commit is the authoritative persistence boundary. Do
+        // not depend on an earlier dirty-state snapshot: composition and
+        // editor-family adapters may finalize their draft during commit.
+        if (result === true) {
           void import('../../pdf/saver.js')
             .then(({ scheduleCommittedTextEditSave }) => scheduleCommittedTextEditSave(
               ownerDocumentId,
@@ -1188,6 +1189,24 @@ export default function PdfTextEditOverlay() {
 
   const pointFromDom = (node, offset) => {
     if (!richEditorRef || !node) return null;
+    // WebKit represents Select All on a contenteditable as a range whose
+    // endpoints are the editor root (offset 0 through childElementCount), not
+    // as endpoints inside the first and last text nodes. Translate those root
+    // boundaries explicitly so a following paste replaces the whole canonical
+    // document instead of reusing a stale caret selection.
+    if (node === richEditorRef) {
+      const lineElements = [...richEditorRef.querySelectorAll(':scope > [data-rich-line-index]')];
+      if (lineElements.length === 0) return null;
+      if (offset <= 0) {
+        return { line: Number(lineElements[0].dataset.richLineIndex), offset: 0 };
+      }
+      const line = lineElements[Math.min(lineElements.length - 1, offset - 1)];
+      const graphemeOffsets = graphemeOffsetsForLine(line);
+      return {
+        line: Number(line.dataset.richLineIndex),
+        offset: Math.max(0, graphemeOffsets.length - 1),
+      };
+    }
     const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
     const line = element?.closest?.('[data-rich-line-index]');
     if (!line || !richEditorRef.contains(line)) return null;
@@ -1282,8 +1301,12 @@ export default function PdfTextEditOverlay() {
   });
 
   const insertCanonicalRichText = (insertedText, { historyKind = 'typing' } = {}) => {
-    syncRichDocument();
+    // Capture the live DOM selection before synchronizing content. A Solid
+    // draft update can reconcile the editable DOM and collapse a root-level
+    // Select All range, which would otherwise turn paste into insertion at an
+    // older caret.
     syncRichSelection();
+    syncRichDocument();
     const current = richTextDocument();
     const selection = richTextSelection();
     if (!current || !selection) return false;

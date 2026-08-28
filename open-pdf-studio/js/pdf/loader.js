@@ -82,6 +82,19 @@ export function setCachedPdfBytes(filePath, bytes) {
 }
 
 /**
+ * Records bytes that already passed the complete save validation pipeline
+ * without replacing the live PDF.js proxy. Click-away text persistence uses
+ * this so the disk state advances while the current viewport, render surfaces,
+ * and editor lifecycle remain uninterrupted.
+ */
+export function cacheValidatedSavedPdfBytes(filePath, bytes) {
+  if (!filePath || !(bytes instanceof Uint8Array) || bytes.length === 0) {
+    throw new TypeError('Validated saved PDF bytes and path are required');
+  }
+  originalBytesCache.set(filePath, bytes.slice());
+}
+
+/**
  * Reload a document's pdfDoc from new bytes (used by Find & Replace).
  * Updates the pdf.js document object without reloading the entire UI.
  */
@@ -122,11 +135,12 @@ export async function reloadDocumentFromBytes(doc, bytes) {
  */
 export async function installValidatedSavedPdfDocument(doc, filePath, bytes, preparedPdfJsDocument) {
   if (!doc || !preparedPdfJsDocument) throw new TypeError('Validated saved PDF state is required');
+  const isActiveDocument = state.documents[state.activeDocumentIndex] === doc;
   const previousPdfJsDocument = doc.pdfDoc;
   doc._sharedPdfLibDoc = null;
   doc._sharedPdfLibDocPromise = null;
   replaceDocumentPdfProxy(doc, preparedPdfJsDocument, 'validated-save-install');
-  originalBytesCache.set(filePath, bytes.slice());
+  cacheValidatedSavedPdfBytes(filePath, bytes);
   _attachPdfDocGetPageRecovery(doc, filePath);
   try {
     const { invalidateTextCache } = await import('../search/text-cache.js');
@@ -134,7 +148,7 @@ export async function installValidatedSavedPdfDocument(doc, filePath, bytes, pre
   } catch (_) {}
   try { await previousPdfJsDocument?.destroy?.(); } catch (_) {}
 
-  if (state.documents[state.activeDocumentIndex] === doc) {
+  if (isActiveDocument) {
     try {
       const renderer = await import('./renderer.js');
       if (doc.viewMode === 'continuous' || doc.viewMode === 'book') {

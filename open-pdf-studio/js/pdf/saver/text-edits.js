@@ -52,7 +52,9 @@ async function prepareRecords(records) {
     if (record.original && !record.sourceProvenance) {
       throw new Error(`Native text edit ${record.id} cannot be saved because its source operators are not provenance-linked`);
     }
-    const layout = await shapeOwnedTextEditForPersistence(record.richText);
+    const layout = await shapeOwnedTextEditForPersistence(record.richText, {
+      nativeSource: Boolean(record.original && record.sourceProvenance),
+    });
     if (layout.overflow) {
       throw new Error(`Text edit ${record.id} rejected: ${layout.rejectionReasons.join('; ')}`);
     }

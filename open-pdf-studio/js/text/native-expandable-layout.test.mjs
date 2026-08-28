@@ -7,6 +7,7 @@ import {
   richTextToPlainText,
 } from './rich-text.js';
 import { layoutExpandableNativeText } from './native-expandable-layout.js';
+import { shapeOwnedTextEditForPersistence } from './font-catalog.js';
 
 function documentFor(text, region = {}) {
   const baseline = region.baseline ?? 90;
@@ -247,6 +248,21 @@ test('automatic substitution compensates an exact 0.393557 PDF-point width delta
   assert.equal(result.document.region.x, source.region.x);
   assert.equal(result.document.region.y + result.document.region.height,
     source.region.y + source.region.height);
+
+  const persistenceLayout = await shapeOwnedTextEditForPersistence(result.document, {
+    nativeSource: true,
+  });
+  assert.equal(persistenceLayout.overflow, false,
+    persistenceLayout.rejectionReasons.join('; '));
+});
+
+test('native persistence still rejects painted advance beyond validated geometry', async () => {
+  const source = documentFor('EUV advanced lithography substitute width', { width: 20 });
+  const persistenceLayout = await shapeOwnedTextEditForPersistence(source, {
+    nativeSource: true,
+  });
+  assert.equal(persistenceLayout.overflow, true);
+  assert.match(persistenceLayout.rejectionReasons.join('; '), /fixed region width/u);
 });
 
 test('substitution compensation above one point or across a column boundary fails closed', async () => {

@@ -662,7 +662,20 @@ async function handleKey(params) {
   }
   target.dispatchEvent(new KeyboardEvent('keydown', makeKeyInit(key, init)));
   target.dispatchEvent(new KeyboardEvent('keyup',   makeKeyInit(key, init)));
-  return { ok: true, key, modifiers: init, target: describeTarget(target) };
+  const selection = window.getSelection?.();
+  return {
+    ok: true,
+    key,
+    modifiers: init,
+    target: describeTarget(target),
+    selection: selection ? {
+      textLength: selection.toString().replaceAll('\u200b', '').length,
+      anchorAtTarget: selection.anchorNode === target,
+      anchorOffset: selection.anchorOffset,
+      focusAtTarget: selection.focusNode === target,
+      focusOffset: selection.focusOffset,
+    } : null,
+  };
 }
 
 async function handleType(params) {
@@ -697,6 +710,32 @@ async function handleType(params) {
     ? await import('/js/text/page-text-edit-metrics.js').catch(() => null)
     : null;
   placementMetrics?.resetPageTextEditPlacementMetrics?.();
+
+  if (params?.asPaste === true) {
+    const target = document.activeElement ?? document.body;
+    const tag = target.tagName ? target.tagName.toLowerCase() : '';
+    const isEditable = tag === 'input' || tag === 'textarea' || target.isContentEditable === true;
+    if (!isEditable) return { ok: false, error: 'active target is not editable' };
+    const selectionBefore = window.getSelection?.();
+    const selectedTextLength = selectionBefore
+      ? selectionBefore.toString().replaceAll('\u200b', '').length : 0;
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, 'clipboardData', {
+      configurable: true,
+      value: Object.freeze({ getData: (format) => format === 'text/plain' ? text : '' }),
+    });
+    target.dispatchEvent(pasteEvent);
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    return {
+      ok: true,
+      typed: text.length,
+      editable: true,
+      target: describeTarget(target),
+      inputMode: 'paste-event',
+      selectedTextLength,
+      resultingText: target.textContent?.replaceAll('\u200b', '').replaceAll('\r', '') || '',
+    };
+  }
 
   let typed = 0;
   let lastTarget = document.body;
@@ -762,7 +801,14 @@ async function handleType(params) {
     // microtask. Let that finish before the next synthetic keystroke so the
     // acceptance driver follows the same ordered editing path as real input.
     if (target.isContentEditable === true && !framePaced && !measurePerformance) {
-      await Promise.resolve();
+      if (richHardBreak) {
+        // Enter replaces the canonical rich-text line tree and restores the
+        // caret into the new nodes. Wait for that render boundary before the
+        // next synthetic character, matching the ordering of physical input.
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      } else {
+        await Promise.resolve();
+      }
     }
     if (framePaced || measurePerformance) {
       const paintStartedAt = taskStartedAt;
@@ -1046,6 +1092,9 @@ async function handleGetViewportState() {
     textSelection,
     editorMetrics,
     editorSession,
+    textEditAutoSave: window.__textEditAutoSaveDebug
+      ? { ...window.__textEditAutoSaveDebug }
+      : null,
     ocrWorkflowMetrics,
     performanceProfile,
     pageGeometry,

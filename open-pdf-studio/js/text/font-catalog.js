@@ -324,8 +324,51 @@ export async function shapeRichTextDocument(document, { antialiasMargin = 1 } = 
  * exact-layout worker commits. PDF vector text does not need the raster-only
  * antialias padding used by approximate preview bounds.
  */
-export function shapeOwnedTextEditForPersistence(document) {
-  return shapeRichTextDocument(document, { antialiasMargin: 0 });
+export async function shapeOwnedTextEditForPersistence(document, { nativeSource = false } = {}) {
+  const layout = await shapeRichTextDocument(document, { antialiasMargin: 0 });
+  if (!nativeSource) return layout;
+
+  // Exact native layout validates the visible glyph advance against the
+  // provenance-backed region and separately checks real ink bounds against
+  // page, column, and neighboring content. Reapplying the generic fixed-box
+  // ink-overhang test here can reject the same validated substitute by a
+  // fractional point. Use the identical painted-advance capacity rule for
+  // native source records; all glyph and height failures remain fail-closed.
+  const trailingWhitespace = /\p{White_Space}+$/u;
+  let maximumPaintedAdvance = 0;
+  for (const line of layout.lines) {
+    let lastVisibleRun = -1;
+    for (let index = line.runs.length - 1; index >= 0; index -= 1) {
+      if (line.runs[index].text.replace(trailingWhitespace, '').length > 0) {
+        lastVisibleRun = index;
+        break;
+      }
+    }
+    let advance = 0;
+    for (let index = 0; index <= lastVisibleRun; index += 1) {
+      const run = line.runs[index];
+      if (index < lastVisibleRun || !trailingWhitespace.test(run.text)) {
+        advance += Number(run.shaped?.advance) || 0;
+      } else {
+        const visibleText = run.text.replace(trailingWhitespace, '');
+        if (visibleText) advance += (await shapeTextRun({ ...run, text: visibleText })).advance;
+      }
+    }
+    maximumPaintedAdvance = Math.max(maximumPaintedAdvance, advance);
+  }
+  const rejectionReasons = layout.rejectionReasons.filter(
+    (reason) => reason !== 'Text overflows fixed region width',
+  );
+  if (document.region.width > 0
+      && maximumPaintedAdvance > document.region.width + 1e-6) {
+    rejectionReasons.push('Text overflows fixed region width');
+  }
+  return {
+    ...layout,
+    width: maximumPaintedAdvance,
+    overflow: rejectionReasons.length > 0,
+    rejectionReasons: [...new Set(rejectionReasons)],
+  };
 }
 
 export const packagedFontCatalog = Object.freeze({

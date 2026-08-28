@@ -61,14 +61,17 @@ const OUTLOOK_TEMP_PATH = /[\\/]INetCache[\\/]Content\.Outlook[\\/]|Microsoft\.O
 
 /**
  * Click-away may persist automatically only when the document already owns a
- * normal user-visible file target. Untitled/render-temporary, Outlook-locked,
- * and known PDF/A documents keep their committed in-memory edit and require
- * the explicit Save As flow instead of opening a surprise picker or replacing
- * a protected original.
+ * normal user-visible file target. A document using an application-owned
+ * render-temporary file is still eligible when `saveTargetPath` points back to
+ * its normal original. Untitled, Outlook-locked, and known PDF/A documents keep
+ * their committed in-memory edit and require the explicit Save As flow instead
+ * of opening a surprise picker or replacing a protected original.
  */
 export function canAutoSaveCommittedTextEdit(documentState) {
-  if (!documentState?.id || !documentState.filePath) return false;
-  if (documentState.isUntitled === true || documentState._renderTemp === true) return false;
+  if (!documentState?.id || documentState.isUntitled === true) return false;
+  const targetPath = documentState.saveTargetPath || documentState.filePath;
+  if (!targetPath) return false;
+  if (documentState._renderTemp === true && !documentState.saveTargetPath) return false;
   if (documentState.pdfaCompliance) return false;
-  return !OUTLOOK_TEMP_PATH.test(String(documentState.filePath));
+  return !OUTLOOK_TEMP_PATH.test(String(targetPath));
 }

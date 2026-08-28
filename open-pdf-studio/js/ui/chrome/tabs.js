@@ -500,7 +500,11 @@ export function markDocumentModifiedForDocument(doc) {
  * Mark the active document as saved (not modified)
  */
 export function markDocumentSaved() {
-  const doc = getActiveDocument();
+  return markDocumentSavedForDocument(getActiveDocument());
+}
+
+/** Mark the immutable saved owner clean even if another tab became visible. */
+export function markDocumentSavedForDocument(doc) {
   if (doc) {
     // A failed or non-macOS save leaves OCR dirty; validated macOS persistence
     // clears it only after native atomic replacement succeeds.
@@ -508,7 +512,9 @@ export function markDocumentSaved() {
     doc.savedUndoStackLength = (doc.undoStack || []).length;
     updateTabBar();
     updateWindowTitle();
+    return true;
   }
+  return false;
 }
 
 /**

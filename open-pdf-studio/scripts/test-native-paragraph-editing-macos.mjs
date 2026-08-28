@@ -29,6 +29,10 @@ const widthEvidencePdfPath = path.join(artifactRoot, 'reports', 'native-width-co
 const realPdfSource = process.env.OPEN_PDF_STUDIO_NATIVE_REAL_PDF
   ? path.resolve(process.env.OPEN_PDF_STUDIO_NATIVE_REAL_PDF)
   : null;
+const realAutoSaveTimeoutMs = Math.max(
+  5_000,
+  Number(process.env.OPEN_PDF_STUDIO_NATIVE_AUTO_SAVE_TIMEOUT_MS) || 90_000,
+);
 const realEvidencePdfPath = path.join(artifactRoot, 'reports', 'native-real-pdf-page-3-save.pdf');
 const realPageScreenshotPath = path.join(artifactRoot, 'reports', 'native-real-pdf-page-3.png');
 const realClickAwayScreenshotPath = path.join(
@@ -682,6 +686,12 @@ try {
         && value.pageTextEditHost?.attached && value.pageTextEditHost?.page === '3'
         && value.pageTextEditHost?.parentId === 'canvas-container'
     ), 30_000);
+    const realZoom = await callTool('app_set_zoom', { scale: 1.35 });
+    assert.equal(realZoom.ok, true, realZoom.error);
+    const realViewBeforeClickAway = await waitUntil('real PDF pre-save zoom', async () => {
+      const viewport = await callTool('app_get_viewport_state');
+      return Math.abs(Number(viewport.viewport?.zoom) - 1.35) <= 0.001 ? viewport : null;
+    }, 30_000);
     const realReplacement = [
       'EUV (extreme ultraviolet lithography; advanced chip-printing technology',
       'used for leading-edge semiconductors)/High-NA (high numerical',
@@ -689,16 +699,50 @@ try {
       'smaller chip features) lithography (the chip-making process that prints',
       'extremely small circuit patterns onto waferx)',
     ].join('\n');
-    await callTool('app_key', { key: 'a', meta: true });
-    const realTyped = await callTool('app_type', { text: realReplacement });
+    const realSelectAll = await callTool('app_key', { key: 'a', meta: true });
+    // A multiline clipboard replacement is a normal production editor action
+    // and exercises the canonical paste handler in one revision, avoiding
+    // synthetic per-character DOM scheduling from becoming part of the save
+    // assertion itself.
+    const realTyped = await callTool('app_type', { text: realReplacement, asPaste: true });
     assert.equal(realTyped.ok, true, realTyped.error);
+    try {
+      const typedEditor = await waitUi('.pdf-text-editor', (value) => (
+        value.found
+          && value.valueLength === realReplacement.length
+          && value.value === realReplacement.slice(0, 300)
+      ), 30_000);
+      assert.equal(realTyped.resultingText, realReplacement.replaceAll('\n', ''),
+        'multiline replacement did not replace the complete selected paragraph');
+      assert.equal(typedEditor.valueLength, realReplacement.length,
+        'canonical multiline replacement length changed after exact layout');
+    } catch (error) {
+      const [viewport, consoleLog] = await Promise.all([
+        callTool('app_get_viewport_state').catch(() => null),
+        callTool('app_get_recent_console').catch(() => null),
+      ]);
+      throw new Error(`multiline replacement did not remain in the editor: ${JSON.stringify({
+        realSelectAll, realTyped, viewport, consoleLog,
+      })}`, { cause: error });
+    }
     const realBeforeSaveSha256 = await sha256(realWorkingPdf);
     // Reproduce the user interaction exactly: the first physical pointer
     // gesture after typing must synchronously claim the editor session, wait
     // for any still-pending exact layout, and leave the committed replacement
     // visible without an Apply button or a second click.
     const realClickAway = await pointerClick('.status-page-input');
-    await waitUi('.pdf-text-editor', (value) => !value.found, 60_000);
+    try {
+      await waitUi('.pdf-text-editor', (value) => !value.found, 60_000);
+    } catch (error) {
+      const [viewport, status, consoleLog] = await Promise.all([
+        callTool('app_get_viewport_state').catch(() => null),
+        ui('#native-text-edit-status').catch(() => null),
+        callTool('app_get_recent_console').catch(() => null),
+      ]);
+      throw new Error(`click-away did not close the validated editor: ${JSON.stringify({
+        realClickAway, viewport, status, consoleLog,
+      })}`, { cause: error });
+    }
     const realUndoAfterClickAway = await waitUi(
       '.quick-access-btn[data-action="undo"]',
       (value) => value.found && value.visible && value.disabled === false,
@@ -710,9 +754,62 @@ try {
       realClickAwayScreenshotPath,
       Buffer.from(realClickAwayScreenshot.png_base64, 'base64'),
     );
-    await waitUntil('click-away auto-save writes real PDF page 3', async () => (
-      await sha256(realWorkingPdf) !== realBeforeSaveSha256 ? true : null
-    ), 90_000);
+    let clickAwayLoadingObserved = false;
+    let latestAutoSaveProbe = null;
+    let realViewAfterClickAway;
+    try {
+      realViewAfterClickAway = await waitUntil(
+        'click-away auto-save writes real PDF page 3 without resetting the view',
+        async () => {
+          const [fileSha256, loading, viewport] = await Promise.all([
+            sha256(realWorkingPdf),
+            ui('.loading-overlay'),
+            callTool('app_get_viewport_state'),
+          ]);
+          if (loading.visible) clickAwayLoadingObserved = true;
+          latestAutoSaveProbe = {
+            fileChanged: fileSha256 !== realBeforeSaveSha256,
+            loading,
+            viewport,
+          };
+          return latestAutoSaveProbe.fileChanged
+            && viewport.textEditAutoSave?.state === 'saved'
+            ? viewport : null;
+        },
+        realAutoSaveTimeoutMs,
+      );
+    } catch (error) {
+      const [tabs, consoleLog] = await Promise.all([
+        callTool('app_list_tabs').catch(() => null),
+        callTool('app_get_recent_console').catch(() => null),
+      ]);
+      throw new Error(`click-away commit did not finish silent disk persistence: ${JSON.stringify({
+        latestAutoSaveProbe, tabs, consoleLog,
+      })}`, { cause: error });
+    }
+    await delay(500);
+    const realSettledViewAfterClickAway = await callTool('app_get_viewport_state');
+    assert.equal(clickAwayLoadingObserved, false,
+      'click-away text persistence displayed the global loading overlay');
+    assert.equal(realSettledViewAfterClickAway.doc?.currentPage,
+      realViewBeforeClickAway.doc?.currentPage, 'click-away save changed the current page');
+    assert.equal(realSettledViewAfterClickAway.doc?.viewMode,
+      realViewBeforeClickAway.doc?.viewMode, 'click-away save changed the view mode');
+    assert.equal(realSettledViewAfterClickAway.doc?.lifecycleGeneration,
+      realViewBeforeClickAway.doc?.lifecycleGeneration,
+      'click-away save replaced the live PDF document lifecycle');
+    for (const field of ['zoom', 'offsetX', 'offsetY']) {
+      assert.ok(Math.abs(
+        Number(realSettledViewAfterClickAway.viewport?.[field])
+          - Number(realViewBeforeClickAway.viewport?.[field]),
+      ) <= 0.01, `click-away save changed viewport ${field}`);
+    }
+    for (const field of ['scrollLeft', 'scrollTop']) {
+      assert.ok(Math.abs(
+        Number(realSettledViewAfterClickAway.container?.[field])
+          - Number(realViewBeforeClickAway.container?.[field]),
+      ) <= 0.5, `click-away save changed container ${field}`);
+    }
 
     await closeActiveTab();
     await openPdf(realWorkingPdf);
@@ -760,6 +857,10 @@ try {
       relativeAfterScroll: realRelativeAfterScroll,
       clickAwayCommit: true,
       clickAwayAutoSaved: true,
+      clickAwayLoadingObserved,
+      viewBeforeClickAway: realViewBeforeClickAway,
+      viewAfterClickAway: realViewAfterClickAway,
+      settledViewAfterClickAway: realSettledViewAfterClickAway,
       clickAwayTarget: realClickAway.target || null,
       clickAwayCreatedUndoUnit: realUndoAfterClickAway.disabled === false,
       clickAwayScreenshot: path.relative(path.dirname(reportPath), realClickAwayScreenshotPath),

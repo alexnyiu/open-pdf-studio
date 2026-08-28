@@ -97,6 +97,12 @@ test('click-away auto-save is limited to normal file-backed PDF owners', () => {
   assert.equal(canAutoSaveCommittedTextEdit({ ...fileBacked, filePath: '' }), false);
   assert.equal(canAutoSaveCommittedTextEdit({ ...fileBacked, isUntitled: true }), false);
   assert.equal(canAutoSaveCommittedTextEdit({ ...fileBacked, _renderTemp: true }), false);
+  assert.equal(canAutoSaveCommittedTextEdit({
+    ...fileBacked,
+    filePath: '/private/tmp/open-pdf-studio-render.pdf',
+    saveTargetPath: '/Users/example/Documents/report.pdf',
+    _renderTemp: true,
+  }), true, 'an owned render temp can auto-save to its normal original target');
   assert.equal(canAutoSaveCommittedTextEdit({ ...fileBacked, pdfaCompliance: 'PDF/A-2b' }), false);
   assert.equal(canAutoSaveCommittedTextEdit({
     ...fileBacked,
