@@ -1551,7 +1551,7 @@ function ownedTextEditAtClientPoint(clientX, clientY, pageNum, layer) {
   return record ? { record, canvasEl } : null;
 }
 
-function startTextLayerEditAtClientPointWhenReady({
+export function startTextLayerEditAtClientPointWhenReady({
   pageNum,
   clientX,
   clientY,

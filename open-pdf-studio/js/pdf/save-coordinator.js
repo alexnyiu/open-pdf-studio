@@ -4,6 +4,8 @@ import {
 } from '../core/document-revision-state.runtime.js';
 
 const DEFAULT_EDITOR_DEADLINE_MS = 15_000;
+const DEFAULT_AUTOMATIC_RETRY_MS = 50;
+const DEFAULT_AUTOMATIC_MAX_COALESCE_MS = 800;
 const lifecycleCoordinators = new Set();
 
 export function cancelCoordinatedDocumentSaves(documentId, documentGeneration, reason) {
@@ -60,6 +62,9 @@ export function createSaveCoordinator({
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   editorDeadlineMs = DEFAULT_EDITOR_DEADLINE_MS,
+  automaticRetryMs = DEFAULT_AUTOMATIC_RETRY_MS,
+  automaticMaxCoalesceMs = DEFAULT_AUTOMATIC_MAX_COALESCE_MS,
+  shouldDeferAutomatic = () => null,
   onDiagnostic = () => {},
   registerForLifecycleCancellation = false,
 } = {}) {
@@ -68,6 +73,9 @@ export function createSaveCoordinator({
   }
   if (typeof waitForEditor !== 'function') {
     throw new TypeError('An editor completion promise is required');
+  }
+  if (typeof shouldDeferAutomatic !== 'function') {
+    throw new TypeError('An automatic-save admission function is required');
   }
 
   const records = new Map();
@@ -153,26 +161,62 @@ export function createSaveCoordinator({
     }
   };
 
-  const scheduleRun = (record, delayMs = 0) => {
+  const automaticDueAt = (request) => Math.min(
+    Number(request.readyAt) || 0,
+    Number(request.mustRunByAt) || Number.POSITIVE_INFINITY,
+  );
+
+  const scheduleRun = (record, delayMs = null) => {
     if (record.active || !record.pending) return;
     if (record.timer) clearTimer(record.timer);
-    if (delayMs > 0) {
+    const currentTime = now();
+    const effectiveDelay = delayMs == null
+      ? record.pending.kind === 'auto'
+        ? Math.max(0, automaticDueAt(record.pending) - currentTime)
+        : 0
+      : Math.max(0, Number(delayMs) || 0);
+    if (effectiveDelay > 0) {
+      const dueAt = currentTime + effectiveDelay;
       record.timer = setTimer(() => {
         record.timer = null;
-        void runNext(record);
-      }, delayMs);
+        void runNext(record, dueAt);
+      }, effectiveDelay);
       return;
     }
     void runNext(record);
   };
 
-  const runNext = async (record) => {
+  const runNext = async (record, timerDueAt = null) => {
     if (record.active || !record.pending) return;
     if (record.timer) {
       clearTimer(record.timer);
       record.timer = null;
     }
     const request = record.pending;
+    const currentTime = Math.max(now(), Number(timerDueAt) || 0);
+    if (request.kind === 'auto') {
+      const anotherSaveActive = [...records.values()].some((candidate) => candidate.active);
+      const externalDeferral = anotherSaveActive
+        ? { reason: 'save-in-progress', retryAfterMs: automaticRetryMs }
+        : shouldDeferAutomatic(immutableRequestSnapshot(request));
+      if (externalDeferral) {
+        const reason = typeof externalDeferral === 'string'
+          ? externalDeferral
+          : externalDeferral.reason || 'automatic-save-deferred';
+        const retryAfterMs = Math.max(
+          1,
+          Number(externalDeferral.retryAfterMs) || Number(automaticRetryMs) || 1,
+        );
+        emit('automatic-save-deferred', request, { reason, retryAfterMs });
+        scheduleRun(record, retryAfterMs);
+        return;
+      }
+      const dueAt = automaticDueAt(request);
+      if (currentTime < dueAt) {
+        scheduleRun(record, dueAt - currentTime);
+        return;
+      }
+    }
     record.pending = null;
     record.active = request;
     const ownerAtStart = resolveDocumentById(request.documentId);
@@ -189,6 +233,7 @@ export function createSaveCoordinator({
       saveError: null,
       synchronizationError: null,
     });
+    let serializationStartedAt = null;
     try {
       emit('waiting-for-edit-commit', request);
       const editorReady = await withEditorDeadline(request);
@@ -224,9 +269,14 @@ export function createSaveCoordinator({
           return resolveDocumentById(request.documentId);
         },
       });
+      serializationStartedAt = now();
       emit('serializing', request);
       const result = await request.execute(context);
       const saved = result === true || result?.saved === true;
+      const durationMs = Math.max(0, now() - serializationStartedAt);
+      const candidateBytes = Number.isSafeInteger(result?.candidateBytes)
+        ? result.candidateBytes : null;
+      emit('completed', request, { saved, durationMs, candidateBytes });
       const needsFollowUp = result?.followUpNeeded === true || !context.ownsPublication();
       if (saved && needsFollowUp && record.pending) {
         emit('superseded', request, { stage: 'after-replacement' });
@@ -250,6 +300,9 @@ export function createSaveCoordinator({
         emit('failed', request, {
           code: error?.code || null,
           error: error instanceof Error ? error.message : String(error),
+          durationMs: serializationStartedAt == null
+            ? null : Math.max(0, now() - serializationStartedAt),
+          candidateBytes: null,
         });
         rejectWaiters(request, error);
       }
@@ -280,6 +333,8 @@ export function createSaveCoordinator({
       const record = recordFor(id);
       record.cancelledGeneration = null;
       const waiter = deferred();
+      const requestTime = now();
+      const normalizedDelayMs = Math.max(0, Number(delayMs) || 0);
 
       const canJoinActive = record.active
         && record.active.documentGeneration === generation
@@ -296,6 +351,15 @@ export function createSaveCoordinator({
         record.pending.documentGeneration = generation;
         record.pending.execute = execute;
         record.pending.kind = kind === 'manual' ? 'manual' : record.pending.kind;
+        if (kind === 'manual') {
+          record.pending.readyAt = requestTime;
+          record.pending.mustRunByAt = requestTime;
+        } else if (record.pending.kind === 'auto') {
+          record.pending.readyAt = Math.min(
+            requestTime + normalizedDelayMs,
+            record.pending.mustRunByAt,
+          );
+        }
         if (saveAsPath) record.pending.saveAsPath = saveAsPath;
         record.pending.waiters.push(waiter);
         emit('save-requested', record.pending, { coalesced: true, kind });
@@ -310,12 +374,17 @@ export function createSaveCoordinator({
           saveAsPath,
           execute,
           waiters: [waiter],
+          firstRequestedAt: requestTime,
+          readyAt: requestTime + normalizedDelayMs,
+          mustRunByAt: kind === 'auto'
+            ? requestTime + Math.max(0, Number(automaticMaxCoalesceMs) || 0)
+            : requestTime,
         };
         emit('save-requested', record.pending, { coalesced: false, kind });
       }
 
       if (kind === 'manual') scheduleRun(record, 0);
-      else if (!record.active) scheduleRun(record, Math.max(0, Number(delayMs) || 0));
+      else if (!record.active) scheduleRun(record);
       return waiter.promise;
     },
 

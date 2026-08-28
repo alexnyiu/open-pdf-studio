@@ -80,6 +80,167 @@ test('two automatic requests before serialization coalesce to the latest revisio
   assert.deepEqual(calls, [2]);
 });
 
+test('a continuous editing session cannot leave automatic persistence pending forever', async () => {
+  const document = owner();
+  const timers = [];
+  let clock = 0;
+  const calls = [];
+  const coordinator = createSaveCoordinator({
+    resolveDocumentById: () => document,
+    now: () => clock,
+    automaticMaxCoalesceMs: 250,
+    setTimer(callback, delay) {
+      const token = { callback, delay, cancelled: false };
+      timers.push(token);
+      return token;
+    },
+    clearTimer(token) {
+      token.cancelled = true;
+    },
+  });
+  const execute = async (context) => {
+    calls.push(context.requestedRevision);
+    return true;
+  };
+  const saves = [coordinator.request({
+    documentId: document.id,
+    documentGeneration: 1,
+    requestedRevision: 1,
+    kind: 'auto',
+    delayMs: 100,
+    execute,
+  })];
+  clock = 80;
+  document.revisionState.contentRevision = 2;
+  saves.push(coordinator.request({
+    documentId: document.id,
+    documentGeneration: 1,
+    requestedRevision: 2,
+    kind: 'auto',
+    delayMs: 100,
+    execute,
+  }));
+  clock = 160;
+  document.revisionState.contentRevision = 3;
+  saves.push(coordinator.request({
+    documentId: document.id,
+    documentGeneration: 1,
+    requestedRevision: 3,
+    kind: 'auto',
+    delayMs: 100,
+    execute,
+  }));
+  const latestTimer = timers.findLast((timer) => !timer.cancelled);
+  assert.equal(latestTimer.delay, 90, 'the original 250 ms deadline caps the latest debounce');
+  latestTimer.callback();
+  assert.deepEqual(await Promise.all(saves), [true, true, true]);
+  assert.deepEqual(calls, [3]);
+});
+
+test('automatic serialization waits while another document save is running', async () => {
+  const documents = new Map([
+    ['doc-a', owner('doc-a')],
+    ['doc-b', owner('doc-b')],
+  ]);
+  const firstSerialization = deferred();
+  let automaticCalls = 0;
+  const coordinator = createSaveCoordinator({
+    resolveDocumentById: (id) => documents.get(id),
+    automaticRetryMs: 5,
+  });
+  const manual = coordinator.request({
+    documentId: 'doc-a',
+    documentGeneration: 1,
+    requestedRevision: 1,
+    kind: 'manual',
+    execute: async () => {
+      await firstSerialization.promise;
+      return true;
+    },
+  });
+  await waitUntil(() => coordinator.debugSnapshot('doc-a')?.active != null);
+  const automatic = coordinator.request({
+    documentId: 'doc-b',
+    documentGeneration: 1,
+    requestedRevision: 1,
+    kind: 'auto',
+    execute: async () => {
+      automaticCalls += 1;
+      return true;
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(automaticCalls, 0);
+  firstSerialization.resolve();
+  assert.equal(await manual, true);
+  assert.equal(await automatic, true);
+  assert.equal(automaticCalls, 1);
+});
+
+test('a live text session defers heavy serialization but wakes after the session settles', async () => {
+  const document = owner();
+  const timers = [];
+  let liveSession = true;
+  let calls = 0;
+  const coordinator = createSaveCoordinator({
+    resolveDocumentById: () => document,
+    automaticRetryMs: 25,
+    shouldDeferAutomatic: () => liveSession
+      ? { reason: 'live-text-session', retryAfterMs: 25 } : null,
+    setTimer(callback, delay) {
+      const token = { callback, delay, cancelled: false };
+      timers.push(token);
+      return token;
+    },
+    clearTimer(token) {
+      token.cancelled = true;
+    },
+  });
+  const save = coordinator.request({
+    documentId: document.id,
+    documentGeneration: 1,
+    requestedRevision: 1,
+    kind: 'auto',
+    delayMs: 10,
+    execute: async () => {
+      calls += 1;
+      return true;
+    },
+  });
+  timers.findLast((timer) => !timer.cancelled).callback();
+  assert.equal(calls, 0);
+  assert.equal(coordinator.debugSnapshot(document.id)?.pending?.requestedRevision, 1);
+  liveSession = false;
+  timers.findLast((timer) => !timer.cancelled).callback();
+  assert.equal(await save, true);
+  assert.equal(calls, 1);
+  assert.equal(coordinator.debugSnapshot(document.id), null);
+});
+
+test('completion diagnostics record serialization duration and candidate size', async () => {
+  const document = owner();
+  const diagnostics = [];
+  let clock = 10;
+  const coordinator = createSaveCoordinator({
+    resolveDocumentById: () => document,
+    now: () => clock,
+    onDiagnostic: (event) => diagnostics.push(event),
+  });
+  const save = coordinator.request({
+    documentId: document.id,
+    documentGeneration: 1,
+    requestedRevision: 1,
+    execute: async () => {
+      clock = 47;
+      return { saved: true, candidateBytes: 4096 };
+    },
+  });
+  assert.equal(await save, true);
+  const completed = diagnostics.find((event) => event.event === 'completed');
+  assert.equal(completed.durationMs, 37);
+  assert.equal(completed.candidateBytes, 4096);
+});
+
 test('manual Save flushes a pending automatic request at the latest revision', async () => {
   const document = owner();
   let calls = 0;

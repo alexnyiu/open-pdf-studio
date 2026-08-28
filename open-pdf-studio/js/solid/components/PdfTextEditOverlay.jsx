@@ -64,10 +64,15 @@ import {
   consumeOutsidePointerDownForTextEdit,
   shouldApplyTextEditForOutsideFocus,
   shouldRestoreTextEditorFocusAfterHostTransition,
-  shouldSuppressOutsideApplyFollowup,
   textEditTargetIsWithinFocusBoundary,
   textEditTargetStartsLifecycleTransition,
 } from '../../text/text-edit-focus-boundary.js';
+import {
+  captureTextEditClickAwayIntent,
+  guardTextEditClickAwayGesture,
+  replayTextEditClickAwayIntent,
+} from '../../text/text-edit-click-away-intent.js';
+import { showMessage } from '../../bridge.js';
 
 export default function PdfTextEditOverlay() {
   const { t: tHardening, language: hardeningLanguage } = useTranslation('hardening');
@@ -90,7 +95,8 @@ export default function PdfTextEditOverlay() {
   let pendingInputContext = null;
   let selectionFrameId = 0;
   let outsideApplyPromise = null;
-  let outsidePointerGesture = null;
+  let outsideClickAwayIntent = null;
+  let outsideGestureGuard = null;
   let restoreFocusAfterHostTransition = false;
   let cachedLineRevision = -1;
   const lineGraphemeOffsetCache = new Map();
@@ -830,7 +836,10 @@ export default function PdfTextEditOverlay() {
     });
   };
 
-  const applyTextEditFromOutside = () => {
+  const applyTextEditFromOutside = (
+    capturedIntent = outsideClickAwayIntent,
+    capturedGuard = outsideGestureGuard,
+  ) => {
     if (outsideApplyPromise || !active()) return outsideApplyPromise;
     // Flush the visible control synchronously at the commit boundary. WebKit
     // can finish composition/autocorrection as focus is moving, after the last
@@ -847,11 +856,49 @@ export default function PdfTextEditOverlay() {
         (richEditorRef || textareaRef)?.focus?.({ preventScroll: true });
       }
     });
+    const settleCapturedGesture = () => capturedGuard?.settled || Promise.resolve(true);
     outsideApplyPromise = applyActiveTextEditing('click-away')
-      .then((result) => {
+      .then(async (result) => {
+        // Keep ownership of the initiating pointer through its compatibility
+        // click even when the successful Apply already unmounted this portal.
+        await settleCapturedGesture();
+        if (result === true && capturedIntent) {
+          try {
+            const stateModule = await import('../../core/state.js');
+            await replayTextEditClickAwayIntent(capturedIntent, {
+              commitSucceeded: true,
+              ownerIsCurrent: (intent) => {
+                const owner = stateModule.getDocumentById(intent.documentId);
+                return Boolean(owner
+                  && stateModule.getActiveDocument() === owner
+                  && (Number(owner.lifecycleGeneration) || 0) === intent.documentGeneration);
+              },
+              beginTextEdit: async (intent) => {
+                const { startTextLayerEditAtClientPointWhenReady } = await import(
+                  '../../tools/text-edit-tool.js'
+                );
+                return startTextLayerEditAtClientPointWhenReady({
+                  pageNum: intent.pageNum,
+                  clientX: intent.clientX,
+                  clientY: intent.clientY,
+                  preferredEditId: intent.preferredEditId,
+                  preferredMarkerIds: intent.preferredMarkerIds,
+                  preferredOcrLineId: intent.preferredOcrLineId,
+                });
+              },
+              indicateUnsafe: () => showMessage(
+                'Your text edit was applied. Click the destructive action again to confirm it.',
+              ),
+            });
+          } catch (error) {
+            console.warn('[text-edit] Click-away target replay failed:', error);
+          }
+        }
         // A successful commit is the authoritative persistence boundary. Do
         // not depend on an earlier dirty-state snapshot: composition and
-        // editor-family adapters may finalize their draft during commit.
+        // editor-family adapters may finalize their draft during commit. Queue
+        // persistence after replay so a second text region can establish its
+        // live session before the coordinator considers heavy serialization.
         if (result === true) {
           void import('../../pdf/saver.js')
             .then(({ scheduleCommittedTextEditSave }) => scheduleCommittedTextEditSave(
@@ -869,7 +916,8 @@ export default function PdfTextEditOverlay() {
         }
         return result;
       })
-      .catch((error) => {
+      .catch(async (error) => {
+        await settleCapturedGesture();
         setEditorStatus(tHardening('textEditor.status.applyRejected', {
           reason: error instanceof Error ? error.message : String(error),
         }), 'invalid');
@@ -877,6 +925,9 @@ export default function PdfTextEditOverlay() {
         return false;
       })
       .finally(() => {
+        capturedGuard?.dispose?.();
+        if (outsideClickAwayIntent === capturedIntent) outsideClickAwayIntent = null;
+        if (outsideGestureGuard === capturedGuard) outsideGestureGuard = null;
         outsideApplyPromise = null;
       });
     return outsideApplyPromise;
@@ -885,33 +936,20 @@ export default function PdfTextEditOverlay() {
   const handleOutsidePointerDown = (event) => {
     if (!active()) return;
     const target = event.target;
-    const sessionId = getActiveTextEditSession()?.sessionId;
-    if (!sessionId) return;
+    const session = getActiveTextEditSession();
+    if (!session?.sessionId) return;
     if (textEditTargetIsWithinFocusBoundary(target, portalRef)
         || textEditTargetStartsLifecycleTransition(target)) return;
+    // The intended target and client coordinates must be immutable before the
+    // pointerdown is consumed and before Apply can replace its DOM subtree.
+    const intent = captureTextEditClickAwayIntent({ event, session });
     if (consumeOutsidePointerDownForTextEdit(event, portalRef)) {
       // Consume the first outside gesture so its target cannot deactivate or
       // supersede the owner session while exact validation is still finishing.
-      outsidePointerGesture = { sessionId, pointerId: event.pointerId };
-      void applyTextEditFromOutside();
+      outsideClickAwayIntent = intent;
+      outsideGestureGuard = guardTextEditClickAwayGesture(intent, document);
+      void applyTextEditFromOutside(intent, outsideGestureGuard);
     }
-  };
-
-  const suppressOutsideApplyFollowup = (event) => {
-    const activeSessionId = getActiveTextEditSession()?.sessionId || null;
-    if (!shouldSuppressOutsideApplyFollowup({
-      target: event.target,
-      portal: portalRef,
-      button: event.button,
-      eventType: event.type,
-      detail: event.detail,
-      applyPending: Boolean(outsideApplyPromise),
-      consumedSessionId: outsidePointerGesture?.sessionId || null,
-      activeSessionId,
-    })) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (event.type === 'click') outsidePointerGesture = null;
   };
 
   const handleOutsideFocusIn = (event) => {
@@ -1407,8 +1445,6 @@ export default function PdfTextEditOverlay() {
     }
     document.addEventListener('scroll', markPlacementDirty, true);
     document.addEventListener('pointerdown', handleOutsidePointerDown, true);
-    document.addEventListener('mousedown', suppressOutsideApplyFollowup, true);
-    document.addEventListener('click', suppressOutsideApplyFollowup, true);
     document.addEventListener('focusin', handleOutsideFocusIn, true);
     window.addEventListener('resize', markPlacementDirty);
     window.addEventListener('opds:viewport-revision', handleViewportRevision);
@@ -1422,8 +1458,6 @@ export default function PdfTextEditOverlay() {
       }
       document.removeEventListener('scroll', markPlacementDirty, true);
       document.removeEventListener('pointerdown', handleOutsidePointerDown, true);
-      document.removeEventListener('mousedown', suppressOutsideApplyFollowup, true);
-      document.removeEventListener('click', suppressOutsideApplyFollowup, true);
       document.removeEventListener('focusin', handleOutsideFocusIn, true);
       window.removeEventListener('resize', markPlacementDirty);
       window.removeEventListener('opds:viewport-revision', handleViewportRevision);

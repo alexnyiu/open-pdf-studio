@@ -50,8 +50,9 @@ import { richTextToPlainText } from '../text/rich-text.js';
 import { applyDocumentMetadataToPdf, assertDocumentMetadataRoundTrip } from './document-metadata.js';
 import {
   commitTextEditingForDocument,
+  getActiveTextEditSession,
 } from '../text/text-edit-session.js';
-import { notePdfForegroundActivity } from './foreground-activity.js';
+import { isPdfForegroundIdle, notePdfForegroundActivity } from './foreground-activity.js';
 import { createSaveCoordinator, SaveRequestSupersededError } from './save-coordinator.js';
 import {
   documentRevisionReadinessSatisfied,
@@ -222,7 +223,9 @@ function stableFreeTextModifiedTimestamp(annotation = {}) {
   return candidate ? new Date(candidate.time).toISOString() : '1970-01-01T00:00:00.000Z';
 }
 
-const TEXT_EDIT_AUTO_SAVE_DELAY_MS = 75;
+const TEXT_EDIT_AUTO_SAVE_DELAY_MS = 120;
+const TEXT_EDIT_AUTO_SAVE_RETRY_MS = 50;
+const TEXT_EDIT_AUTO_SAVE_MAX_COALESCE_MS = 800;
 const saveDiagnosticHistory = [];
 
 function publishTextEditAutoSaveDebug(documentId, stateName, details = {}) {
@@ -238,6 +241,18 @@ function publishTextEditAutoSaveDebug(documentId, stateName, details = {}) {
 const saveCoordinator = createSaveCoordinator({
   resolveDocumentById: getDocumentById,
   registerForLifecycleCancellation: true,
+  automaticRetryMs: TEXT_EDIT_AUTO_SAVE_RETRY_MS,
+  automaticMaxCoalesceMs: TEXT_EDIT_AUTO_SAVE_MAX_COALESCE_MS,
+  shouldDeferAutomatic: ({ documentId }) => {
+    const activeSession = getActiveTextEditSession();
+    if (String(activeSession?.ownerDocumentId || '') === String(documentId || '')) {
+      return { reason: 'live-text-session', retryAfterMs: TEXT_EDIT_AUTO_SAVE_RETRY_MS };
+    }
+    if (!isPdfForegroundIdle()) {
+      return { reason: 'foreground-render-activity', retryAfterMs: TEXT_EDIT_AUTO_SAVE_RETRY_MS };
+    }
+    return null;
+  },
   waitForEditor: ({ documentId, kind }) => commitTextEditingForDocument(
     documentId,
     kind === 'auto' ? 'automatic-save' : 'save',
@@ -349,7 +364,7 @@ async function synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext) 
       diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
     });
     markDocumentSavedForDocument(owner);
-    return { saved: true };
+    return { saved: true, candidateBytes: null };
   }
   const outputPath = revisionState.lastPersistedPath || owner.filePath;
   let savedBytes = getCachedPdfBytes(outputPath);
@@ -366,7 +381,7 @@ async function synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext) 
     preparedPdfJsDocument: candidate,
     diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
   });
-  return { saved: true };
+  return { saved: true, candidateBytes: savedBytes.byteLength };
 }
 
 /**
@@ -3250,7 +3265,11 @@ async function performSavePDF(saveAsPath = null, {
     // interrupt atomic replacement, but it must suppress stale proxy/state
     // publication. The coordinator carries this request into the follow-up.
     if (coordinatorContext && !coordinatorContext.ownsPublication()) {
-      return { saved: true, followUpNeeded: true };
+      return {
+        saved: true,
+        followUpNeeded: true,
+        candidateBytes: savedBytes.byteLength,
+      };
     }
     activeDoc = persistedOwner;
 
@@ -3296,7 +3315,7 @@ async function performSavePDF(saveAsPath = null, {
       diagnostic: (event, details) => coordinatorContext?.diagnostic(event, details),
     });
 
-    return { saved: true };
+    return { saved: true, candidateBytes: savedBytes.byteLength };
   } catch (error) {
     if (error instanceof SaveRequestSupersededError) throw error;
     console.error('Error saving PDF:', error);
@@ -3311,7 +3330,7 @@ async function performSavePDF(saveAsPath = null, {
         error: error instanceof Error ? error.message : String(error),
       });
       showMessage(`The PDF was saved, but the in-app document refresh failed: ${error?.message || String(error)}. Reopen the file to refresh the view.`);
-      return { saved: true };
+      return { saved: true, candidateBytes: savedBytes?.byteLength ?? null };
     }
     if (activeDoc) {
       markDocumentSaveState(activeDoc, 'failed', {
