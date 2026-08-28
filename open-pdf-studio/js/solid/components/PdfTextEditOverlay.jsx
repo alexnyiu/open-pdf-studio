@@ -832,8 +832,18 @@ export default function PdfTextEditOverlay() {
 
   const applyTextEditFromOutside = () => {
     if (outsideApplyPromise || !active()) return outsideApplyPromise;
-    const sessionId = getActiveTextEditSession()?.sessionId;
+    // Flush the visible control synchronously at the commit boundary. WebKit
+    // can finish composition/autocorrection as focus is moving, after the last
+    // ordinary input callback but before the outside pointer is handled.
+    if (richEditorRef && richTextDocument()) syncRichDocument();
+    else if (textareaRef) setText(textareaRef.value);
+    const session = getActiveTextEditSession();
+    const sessionId = session?.sessionId;
     if (!sessionId) return null;
+    const ownerDocumentId = session.ownerDocumentId;
+    const ownerDocumentGeneration = session.ownerDocumentGeneration;
+    let dirty = true;
+    try { dirty = session.isDirty?.() === true; } catch { /* persist fail-safe */ }
     const refocusCurrentSession = () => queueMicrotask(() => {
       if (active() && getActiveTextEditSession()?.sessionId === sessionId) {
         (richEditorRef || textareaRef)?.focus?.({ preventScroll: true });
@@ -841,6 +851,16 @@ export default function PdfTextEditOverlay() {
     });
     outsideApplyPromise = applyActiveTextEditing('click-away')
       .then((result) => {
+        if (result === true && dirty) {
+          void import('../../pdf/saver.js')
+            .then(({ scheduleCommittedTextEditSave }) => scheduleCommittedTextEditSave(
+              ownerDocumentId,
+              ownerDocumentGeneration,
+            ))
+            .catch((error) => {
+              console.warn('[text-edit] Click-away auto-save failed:', error);
+            });
+        }
         if (result === false
             && active()
             && getActiveTextEditSession()?.sessionId === sessionId) {
@@ -890,8 +910,7 @@ export default function PdfTextEditOverlay() {
     })) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    if (event.type === 'click'
-        && outsidePointerGesture?.sessionId === activeSessionId) outsidePointerGesture = null;
+    if (event.type === 'click') outsidePointerGesture = null;
   };
 
   const handleOutsideFocusIn = (event) => {

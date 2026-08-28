@@ -148,6 +148,9 @@ export function shouldSuppressOutsideApplyFollowup({
   // consumed pointer gesture from an earlier Apply or editor session.
   const samePointerGesture = Number(detail) > 0
     && Boolean(consumedSessionId)
-    && consumedSessionId === activeSessionId;
+    // A fast successful commit clears the active session between pointerdown
+    // and its compatibility click. That click still belongs to the consumed
+    // gesture and must not open another editor or overwrite the fresh view.
+    && (activeSessionId === null || consumedSessionId === activeSessionId);
   return applyPending === true || samePointerGesture;
 }

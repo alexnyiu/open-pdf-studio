@@ -1,4 +1,4 @@
-import { state, getPageRotation, getActiveDocument } from '../core/state.js';
+import { state, getPageRotation, getActiveDocument, getDocumentById } from '../core/state.js';
 import fontkit from '@pdf-lib/fontkit';
 import { showLoading, hideLoading } from '../ui/chrome/dialogs.js';
 import { hexToColorArray } from '../utils/colors.js';
@@ -8,7 +8,9 @@ import { markDocumentSaved, updateWindowTitle } from '../ui/chrome/tabs.js';
 import { isTauri, invoke, readBinaryFile, writeBinaryFile, saveFileDialog, unlockFile, lockFile } from '../core/platform.js';
 import { getCachedPdfBytes, hidePdfABar, installValidatedSavedPdfDocument } from './loader.js';
 import {
+  canAutoSaveCommittedTextEdit,
   canSkipUnmodifiedSamePathSave,
+  documentHasPendingPersistence,
   documentLifecycleOwnerMatches,
   textEditCommitAllowsSave,
 } from './save-state.js';
@@ -41,7 +43,10 @@ import { evaluatePdfModificationSavePolicy } from './modification-save-policy.js
 import { loadPackagedFaceBytes, shapeRichTextDocument } from '../text/font-catalog.js';
 import { richTextToPlainText } from '../text/rich-text.js';
 import { applyDocumentMetadataToPdf, assertDocumentMetadataRoundTrip } from './document-metadata.js';
-import { commitTextEditingForDocument } from '../text/text-edit-session.js';
+import {
+  commitTextEditingForDocument,
+  getActiveTextEditSession,
+} from '../text/text-edit-session.js';
 import { notePdfForegroundActivity } from './foreground-activity.js';
 
 // Sub-modules
@@ -197,9 +202,118 @@ function stableFreeTextModifiedTimestamp(annotation = {}) {
   return candidate ? new Date(candidate.time).toISOString() : '1970-01-01T00:00:00.000Z';
 }
 
+const TEXT_EDIT_AUTO_SAVE_DELAY_MS = 250;
+const pendingTextEditAutoSaves = new Map();
+
+async function settleTextEditAutoSaveBeforeManualSave(documentId) {
+  const job = pendingTextEditAutoSaves.get(String(documentId || ''));
+  if (!job) return;
+  if (!job.saving) {
+    if (job.timer) clearTimeout(job.timer);
+    pendingTextEditAutoSaves.delete(String(documentId));
+    job.resolve(false);
+    return;
+  }
+  await job.promise;
+}
+
+/**
+ * Queue one latest-only disk save after a successful click-away commit.
+ * Repeated edits debounce before serialization; a new live editor postpones
+ * reload-producing persistence until that editor has also closed.
+ */
+export function scheduleCommittedTextEditSave(
+  documentId,
+  ownerDocumentGeneration,
+  { delayMs = TEXT_EDIT_AUTO_SAVE_DELAY_MS } = {},
+) {
+  const id = String(documentId || '');
+  const generation = Number(ownerDocumentGeneration) || 0;
+  if (!id) return Promise.resolve(false);
+  const safeDelay = Math.max(0, Number(delayMs) || 0);
+  const existing = pendingTextEditAutoSaves.get(id);
+  if (existing && existing.generation === generation) {
+    existing.resaveRequested = true;
+    if (!existing.saving) {
+      if (existing.timer) clearTimeout(existing.timer);
+      existing.timer = setTimeout(existing.run, safeDelay);
+    }
+    return existing.promise;
+  }
+  if (existing) {
+    if (existing.timer) clearTimeout(existing.timer);
+    existing.resolve(false);
+    pendingTextEditAutoSaves.delete(id);
+  }
+
+  let resolveJob;
+  const job = {
+    generation,
+    promise: new Promise((resolve) => { resolveJob = resolve; }),
+    resolve: (value) => resolveJob(value),
+    timer: null,
+    saving: false,
+    resaveRequested: false,
+    run: null,
+  };
+  const finish = (value) => {
+    if (pendingTextEditAutoSaves.get(id) === job) pendingTextEditAutoSaves.delete(id);
+    job.resolve(value === true);
+  };
+  job.run = async () => {
+    job.timer = null;
+    const owner = getDocumentById(id);
+    if (!owner || (Number(owner.lifecycleGeneration) || 0) !== generation) {
+      finish(false);
+      return;
+    }
+    const liveSession = getActiveTextEditSession();
+    if (liveSession?.ownerDocumentId === id) {
+      job.timer = setTimeout(job.run, safeDelay);
+      return;
+    }
+    if (!canAutoSaveCommittedTextEdit(owner)) {
+      finish(false);
+      return;
+    }
+    job.saving = true;
+    job.resaveRequested = false;
+    const saved = await savePDF(null, {
+      allowSaveAsPrompt: false,
+      automaticTextEditSave: true,
+      expectedDocumentId: id,
+      expectedDocumentGeneration: generation,
+    });
+    job.saving = false;
+    const current = getDocumentById(id);
+    if (job.resaveRequested || (saved && documentHasPendingPersistence(current))) {
+      job.timer = setTimeout(job.run, safeDelay);
+      return;
+    }
+    finish(saved);
+  };
+  pendingTextEditAutoSaves.set(id, job);
+  job.timer = setTimeout(job.run, safeDelay);
+  return job.promise;
+}
+
 // Save PDF with annotations
-export async function savePDF(saveAsPath = null) {
+export async function savePDF(saveAsPath = null, {
+  allowSaveAsPrompt = true,
+  automaticTextEditSave = false,
+  expectedDocumentId = null,
+  expectedDocumentGeneration = null,
+} = {}) {
   let activeDoc = getActiveDocument();
+  if (!automaticTextEditSave && activeDoc?.id) {
+    await settleTextEditAutoSaveBeforeManualSave(activeDoc.id);
+    activeDoc = getActiveDocument();
+  }
+  if (expectedDocumentId && (
+    activeDoc?.id !== expectedDocumentId
+    || (Number(activeDoc?.lifecycleGeneration) || 0)
+      !== (Number(expectedDocumentGeneration) || 0)
+  )) return false;
   try {
     if (!(await textEditCommitAllowsSave(activeDoc, 'save', commitTextEditingForDocument))) {
       console.warn('[saver] Active text edit rejected the Save commit barrier');
@@ -222,6 +336,11 @@ export async function savePDF(saveAsPath = null) {
   // wrapper. Continue with the freshly resolved owner so modified state and
   // committed text records cannot be mistaken for an unchanged document.
   if (activeDoc) activeDoc = currentOwner;
+  if (expectedDocumentId && (
+    activeDoc?.id !== expectedDocumentId
+    || (Number(activeDoc?.lifecycleGeneration) || 0)
+      !== (Number(expectedDocumentGeneration) || 0)
+  )) return false;
   const currentPath = activeDoc?.filePath;
   const outputPath = saveAsPath || activeDoc?.saveTargetPath || currentPath;
   let preparedPdfJsDocument = null;
@@ -235,7 +354,7 @@ export async function savePDF(saveAsPath = null) {
   // `isUntitled` flag — otherwise "Save" would silently overwrite the temp
   // file and the user would never be asked where to keep their document.
   if ((!currentPath || activeDoc?.isUntitled) && !saveAsPath) {
-    return await savePDFAs();
+    return allowSaveAsPrompt ? await savePDFAs() : false;
   }
 
   // Files opened from an email attachment live in Outlook's secure temp
@@ -245,7 +364,7 @@ export async function savePDF(saveAsPath = null) {
   // as untitled documents.
   const OUTLOOK_TEMP = /[\\/]INetCache[\\/]Content\.Outlook[\\/]|Microsoft\.OutlookForWindows/i;
   if (!saveAsPath && OUTLOOK_TEMP.test(currentPath)) {
-    return await savePDFAs();
+    return allowSaveAsPrompt ? await savePDFAs() : false;
   }
 
   if (canSkipUnmodifiedSamePathSave({
@@ -284,8 +403,9 @@ export async function savePDF(saveAsPath = null) {
       saveAsPath,
     });
     if (savePolicy.forceSaveAs) {
-      showMessage(savePolicy.warning);
       hideLoading();
+      if (!allowSaveAsPrompt) return false;
+      showMessage(savePolicy.warning);
       return await savePDFAs();
     }
     if (savePolicy.rejectOriginalPath) {
@@ -2988,6 +3108,8 @@ export async function savePDFAs() {
     showMessage(i18next.t('noPdfLoaded'));
     return false;
   }
+  await settleTextEditAutoSaveBeforeManualSave(activeDoc.id);
+  activeDoc = getActiveDocument();
   try {
     if (!(await textEditCommitAllowsSave(activeDoc, 'save-as', commitTextEditingForDocument))) {
       console.warn('[saver] Active text edit rejected the Save As commit barrier');

@@ -31,6 +31,11 @@ const realPdfSource = process.env.OPEN_PDF_STUDIO_NATIVE_REAL_PDF
   : null;
 const realEvidencePdfPath = path.join(artifactRoot, 'reports', 'native-real-pdf-page-3-save.pdf');
 const realPageScreenshotPath = path.join(artifactRoot, 'reports', 'native-real-pdf-page-3.png');
+const realClickAwayScreenshotPath = path.join(
+  artifactRoot,
+  'reports',
+  'native-real-pdf-page-3-click-away.png',
+);
 const fixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-paragraph-table.pdf');
 const colorFixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-side-by-side-color.pdf');
 const widthFixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-helvetica-width-compensation.pdf');
@@ -687,16 +692,25 @@ try {
     await callTool('app_key', { key: 'a', meta: true });
     const realTyped = await callTool('app_type', { text: realReplacement });
     assert.equal(realTyped.ok, true, realTyped.error);
-    await waitUntil('real PDF edited exact validation', async () => {
-      const viewport = await callTool('app_get_viewport_state');
-      const layout = viewport.editorMetrics?.layoutState;
-      return layout?.pending === false && layout.valid === true
-        && layout.requestedFingerprint === layout.validatedFingerprint ? layout : null;
-    }, 30_000);
     const realBeforeSaveSha256 = await sha256(realWorkingPdf);
-    await click('.quick-access-btn[data-action="save"]');
+    // Reproduce the user interaction exactly: the first physical pointer
+    // gesture after typing must synchronously claim the editor session, wait
+    // for any still-pending exact layout, and leave the committed replacement
+    // visible without an Apply button or a second click.
+    const realClickAway = await pointerClick('.status-page-input');
     await waitUi('.pdf-text-editor', (value) => !value.found, 60_000);
-    await waitUntil('first Save click writes real PDF page 3', async () => (
+    const realUndoAfterClickAway = await waitUi(
+      '.quick-access-btn[data-action="undo"]',
+      (value) => value.found && value.visible && value.disabled === false,
+      30_000,
+    );
+    const realClickAwayScreenshot = await callTool('app_screenshot_view', { width: 1600 });
+    assert.equal(realClickAwayScreenshot.ok, true, realClickAwayScreenshot.error);
+    await writeFile(
+      realClickAwayScreenshotPath,
+      Buffer.from(realClickAwayScreenshot.png_base64, 'base64'),
+    );
+    await waitUntil('click-away auto-save writes real PDF page 3', async () => (
       await sha256(realWorkingPdf) !== realBeforeSaveSha256 ? true : null
     ), 90_000);
 
@@ -744,6 +758,11 @@ try {
       effectiveContentWidth: realWidthLayout.result.effectiveContentWidth,
       relativeBeforeScroll: realRelativeBeforeScroll,
       relativeAfterScroll: realRelativeAfterScroll,
+      clickAwayCommit: true,
+      clickAwayAutoSaved: true,
+      clickAwayTarget: realClickAway.target || null,
+      clickAwayCreatedUndoUnit: realUndoAfterClickAway.disabled === false,
+      clickAwayScreenshot: path.relative(path.dirname(reportPath), realClickAwayScreenshotPath),
       firstSaveSha256: firstRealSaveSha256,
       repeatedSaveSha256: repeatedRealSaveSha256,
       repeatSaveByteIdentity: true,
@@ -753,6 +772,7 @@ try {
     evidenceArtifacts.push(
       path.relative(path.dirname(reportPath), realEvidencePdfPath),
       path.relative(path.dirname(reportPath), realPageScreenshotPath),
+      path.relative(path.dirname(reportPath), realClickAwayScreenshotPath),
     );
   }
 

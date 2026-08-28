@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  canAutoSaveCommittedTextEdit,
   canSkipUnmodifiedSamePathSave,
   documentHasPendingPersistence,
   documentLifecycleOwnerMatches,
@@ -81,4 +82,24 @@ test('save ownership survives a reactive proxy change but rejects stale lifecycl
   assert.equal(documentLifecycleOwnerMatches(owner, { id: 'doc-b', lifecycleGeneration: 7 }), false);
   assert.equal(documentLifecycleOwnerMatches(owner, { id: 'doc-a', lifecycleGeneration: 8 }), false);
   assert.equal(documentLifecycleOwnerMatches(owner, null), false);
+});
+
+test('click-away auto-save is limited to normal file-backed PDF owners', () => {
+  const fileBacked = {
+    id: 'doc-a',
+    filePath: '/Users/example/Documents/report.pdf',
+    lifecycleGeneration: 4,
+    isUntitled: false,
+    _renderTemp: false,
+    pdfaCompliance: null,
+  };
+  assert.equal(canAutoSaveCommittedTextEdit(fileBacked), true);
+  assert.equal(canAutoSaveCommittedTextEdit({ ...fileBacked, filePath: '' }), false);
+  assert.equal(canAutoSaveCommittedTextEdit({ ...fileBacked, isUntitled: true }), false);
+  assert.equal(canAutoSaveCommittedTextEdit({ ...fileBacked, _renderTemp: true }), false);
+  assert.equal(canAutoSaveCommittedTextEdit({ ...fileBacked, pdfaCompliance: 'PDF/A-2b' }), false);
+  assert.equal(canAutoSaveCommittedTextEdit({
+    ...fileBacked,
+    filePath: 'C:\\Users\\Example\\INetCache\\Content.Outlook\\ABC\\report.pdf',
+  }), false);
 });

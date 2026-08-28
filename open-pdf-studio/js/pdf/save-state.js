@@ -56,3 +56,19 @@ export function documentLifecycleOwnerMatches(ownerDocument, currentDocument) {
     && (Number(currentDocument.lifecycleGeneration) || 0)
       === (Number(ownerDocument.lifecycleGeneration) || 0);
 }
+
+const OUTLOOK_TEMP_PATH = /[\\/]INetCache[\\/]Content\.Outlook[\\/]|Microsoft\.OutlookForWindows/i;
+
+/**
+ * Click-away may persist automatically only when the document already owns a
+ * normal user-visible file target. Untitled/render-temporary, Outlook-locked,
+ * and known PDF/A documents keep their committed in-memory edit and require
+ * the explicit Save As flow instead of opening a surprise picker or replacing
+ * a protected original.
+ */
+export function canAutoSaveCommittedTextEdit(documentState) {
+  if (!documentState?.id || !documentState.filePath) return false;
+  if (documentState.isUntitled === true || documentState._renderTemp === true) return false;
+  if (documentState.pdfaCompliance) return false;
+  return !OUTLOOK_TEMP_PATH.test(String(documentState.filePath));
+}

@@ -191,6 +191,13 @@ test('follow-up suppression is limited to the pending Apply or matching pointer 
     eventType: 'click',
     detail: 1,
     consumedSessionId: 'session-a',
+    activeSessionId: null,
+  }), true, 'the consumed click stays suppressed after its successful commit closes the session');
+  assert.equal(shouldSuppressOutsideApplyFollowup({
+    target: outside,
+    eventType: 'click',
+    detail: 1,
+    consumedSessionId: 'session-a',
     activeSessionId: 'session-b',
   }), false, 'a later editor session must not inherit the consumed gesture');
   assert.equal(shouldSuppressOutsideApplyFollowup({
