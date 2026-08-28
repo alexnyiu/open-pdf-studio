@@ -26,6 +26,36 @@ test('unchanged same-path Save is a byte-preserving no-op', () => {
   }), true);
 });
 
+test('F-01 disk-clean same-path Save cannot skip a stale live PDF revision', () => {
+  const documentState = {
+    ...cleanDocument(),
+    revisionState: {
+      contentRevision: 1,
+      serializedRevision: 1,
+      persistedRevision: 1,
+      livePdfRevision: 0,
+      visibleRenderRevision: 0,
+      visibleSemanticRevision: 0,
+      pageContentRevisions: { 1: 1 },
+      pageRenderReadyRevisions: { 1: 0 },
+      pageSemanticReadyRevisions: { 1: 0 },
+      saveState: 'persisted',
+      activeSaveRequestId: null,
+      lastPersistedPath: '/tmp/document.pdf',
+      lastSaveError: null,
+      lastSynchronizationError: null,
+    },
+  };
+
+  assert.equal(documentHasPendingPersistence(documentState), false,
+    'the disk-dirty projection is intentionally clean after persistence');
+  assert.equal(canSkipUnmodifiedSamePathSave({
+    documentState,
+    currentPath: '/tmp/document.pdf',
+    outputPath: '/tmp/document.pdf',
+  }), false, 'Save must service synchronization debt instead of returning a false no-op');
+});
+
 test('explicit Save As and pending targets always serialize', () => {
   assert.equal(canSkipUnmodifiedSamePathSave({
     documentState: cleanDocument(),
