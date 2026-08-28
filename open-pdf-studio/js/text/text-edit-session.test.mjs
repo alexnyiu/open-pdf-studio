@@ -33,12 +33,24 @@ test('registration captures immutable owner, generation, page, and editor kind',
   const { registry } = fixture();
   const session = registry.register({
     ownerDocumentId: 'doc-a', ownerDocumentGeneration: 3, pageNum: 4,
-    kind: 'ocr-reflow', commit() {}, cancel() {},
+    kind: 'ocr-reflow',
+    targetIdentity: {
+      documentId: 'doc-a', pageNum: 4, markerIds: 'marker-b marker-a marker-b',
+    },
+    commit() {}, cancel() {},
   });
   assert.equal(session.ownerDocumentId, 'doc-a');
   assert.equal(session.ownerDocumentGeneration, 3);
   assert.equal(session.pageNum, 4);
   assert.equal(session.kind, 'ocr-reflow');
+  assert.deepEqual(session.targetIdentity, {
+    type: 'native-provenance',
+    documentId: 'doc-a',
+    pageNum: 4,
+    markerIds: ['marker-a', 'marker-b'],
+  });
+  assert.equal(Object.isFrozen(session.targetIdentity), true);
+  assert.equal(Object.isFrozen(session.targetIdentity.markerIds), true);
   assert.equal(Object.isFrozen(session), true);
 });
 

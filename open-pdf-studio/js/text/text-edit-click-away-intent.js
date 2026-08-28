@@ -1,3 +1,8 @@
+import {
+  createTextEditTargetIdentity,
+  sameTextEditTarget,
+} from './text-edit-target-identity.js';
+
 const SAFE_ACTION_SELECTOR = [
   'button',
   '[role="button"]',
@@ -82,10 +87,24 @@ export function captureTextEditClickAwayIntent({ event, session } = {}) {
   if (!target || !session?.sessionId) return null;
   const textLayer = closestAcrossNamespaces(target, '.textLayer');
   const textSpan = textLayer ? closestAcrossNamespaces(target, 'span') : null;
+  const preferredEditId = textSpan?.dataset?.editId || '';
+  const preferredMarkerIds = textSpan?.dataset?.nativeTextMarkerIds || '';
+  const preferredOcrLineId = textSpan?.dataset?.ocrLineId || '';
+  const editableTextSpan = textSpan && (
+    preferredEditId || preferredMarkerIds || preferredOcrLineId
+  ) ? textSpan : null;
   const actionTarget = textLayer ? null : closestAcrossNamespaces(target, SAFE_ACTION_SELECTOR);
   const focusTarget = actionTarget || (textLayer
     ? null : closestAcrossNamespaces(target, FOCUS_TARGET_SELECTOR));
-  const kind = textLayer ? 'text-edit' : actionTarget ? 'action' : focusTarget ? 'focus' : 'none';
+  const kind = editableTextSpan
+    ? 'text-edit' : actionTarget ? 'action' : focusTarget ? 'focus' : 'none';
+  const pageNum = pageNumberForTarget(target, textLayer);
+  const targetIdentity = editableTextSpan ? createTextEditTargetIdentity({
+    documentId: session.ownerDocumentId,
+    pageNum,
+    recordId: preferredEditId,
+    markerIds: preferredMarkerIds,
+  }) : null;
   return {
     sessionId: session.sessionId,
     documentId: String(session.ownerDocumentId || ''),
@@ -93,10 +112,12 @@ export function captureTextEditClickAwayIntent({ event, session } = {}) {
     pointerId: Number.isFinite(event.pointerId) ? event.pointerId : null,
     clientX: Number(event.clientX) || 0,
     clientY: Number(event.clientY) || 0,
-    pageNum: pageNumberForTarget(target, textLayer),
-    preferredEditId: textSpan?.dataset?.editId || '',
-    preferredMarkerIds: textSpan?.dataset?.nativeTextMarkerIds || '',
-    preferredOcrLineId: textSpan?.dataset?.ocrLineId || '',
+    pageNum,
+    preferredEditId,
+    preferredMarkerIds,
+    preferredOcrLineId,
+    sourceTargetIdentity: session.targetIdentity || null,
+    targetIdentity,
     kind,
     target,
     textLayer,
@@ -197,6 +218,10 @@ export async function replayTextEditClickAwayIntent(intent, {
   }
   if (intent.kind === 'text-edit') {
     if (!Number.isInteger(intent.pageNum)) return 'invalid-target';
+    if (sameTextEditTarget(intent.sourceTargetIdentity, intent.targetIdentity)) {
+      intent.replayed = true;
+      return 'same-text-target-suppressed';
+    }
     intent.replayed = true;
     await beginTextEdit(intent);
     return 'text-edit-replayed';

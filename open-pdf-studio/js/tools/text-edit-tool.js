@@ -100,6 +100,7 @@ import {
   completeTextEditSession,
   registerTextEditSession,
 } from '../text/text-edit-session.js';
+import { createTextEditTargetIdentity } from '../text/text-edit-target-identity.js';
 import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-transition.js';
 import {
   awaitPageEditReady,
@@ -204,11 +205,22 @@ function registerActiveEditorSession(editor, ownerDocument, kind = editor?.kind)
     record: editor._recordRef,
   });
   editor.dirtyBaseline = dirtyBaseline;
+  const ownedRecordId = editor._sourceRecordRef?.id ?? editor._recordRef?.id ?? '';
+  const nativeMarkerIds = editor.sourceProvenance
+    ?.map((source) => source?.markerId)
+    .filter(Boolean) || [];
+  const targetIdentity = createTextEditTargetIdentity({
+    documentId: ownerDocument.id,
+    pageNum: editor.pageNum,
+    recordId: ownedRecordId,
+    markerIds: nativeMarkerIds,
+  });
   const session = registerTextEditSession({
     ownerDocumentId: ownerDocument.id,
     ownerDocumentGeneration: ownerDocument.lifecycleGeneration,
     pageNum: editor.pageNum,
     kind,
+    targetIdentity,
     isDirty: () => activeEditor === editor && textEditDraftIsDirty(dirtyBaseline, {
       text: getEditorText(),
       // Registration precedes mounting by one synchronous call stack. During

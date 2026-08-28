@@ -1,3 +1,5 @@
+import { createTextEditTargetIdentity } from './text-edit-target-identity.js';
+
 /** Pure registry used by the application wrapper and owner/lifecycle tests. */
 export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.now } = {}) {
   if (typeof resolveDocumentById !== 'function') {
@@ -109,6 +111,7 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
       ownerDocumentGeneration,
       pageNum,
       kind,
+      targetIdentity = null,
       isDirty = () => false,
       commit,
       cancel,
@@ -125,6 +128,7 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
         ownerDocumentGeneration: Number(ownerDocumentGeneration) || 0,
         pageNum,
         kind: kind || 'unknown',
+        targetIdentity: targetIdentity ? createTextEditTargetIdentity(targetIdentity) : null,
         isDirty,
         commit,
         cancel,

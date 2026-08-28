@@ -8,6 +8,7 @@ import {
   markTextEditClickAwayIntentDelivered,
   replayTextEditClickAwayIntent,
 } from './text-edit-click-away-intent.js';
+import { createTextEditTargetIdentity } from './text-edit-target-identity.js';
 
 function element({ selectors = [], parent = null, dataset = {}, text = '' } = {}) {
   return {
@@ -42,11 +43,12 @@ function element({ selectors = [], parent = null, dataset = {}, text = '' } = {}
   };
 }
 
-function session() {
+function session(overrides = {}) {
   return {
     sessionId: 'session-a',
     ownerDocumentId: 'doc-a',
     ownerDocumentGeneration: 7,
+    ...overrides,
   };
 }
 
@@ -92,12 +94,106 @@ test('another text region commits and opens at the captured point after readines
   assert.equal(calls[0].preferredEditId, 'edit-2');
 });
 
+test('blank text-layer space closes without capturing a text replay target', async () => {
+  const layer = element({ selectors: ['.textLayer'], dataset: { page: '4' } });
+  const intent = captureTextEditClickAwayIntent({ event: pointerEvent(layer), session: session() });
+  let beginCalls = 0;
+  const result = await replayTextEditClickAwayIntent(intent, {
+    commitSucceeded: true,
+    beginTextEdit: async () => { beginCalls += 1; },
+  });
+  assert.equal(intent.kind, 'none');
+  assert.equal(intent.targetIdentity, null);
+  assert.equal(result, 'invalid-target');
+  assert.equal(beginCalls, 0);
+});
+
+test('same owned paragraph replay is suppressed across different rendered lines', async () => {
+  const layer = element({ selectors: ['.textLayer'], dataset: { page: '4' } });
+  const secondLine = element({ selectors: ['span'], parent: layer, dataset: { editId: 'edit-1' } });
+  const sourceTargetIdentity = createTextEditTargetIdentity({
+    documentId: 'doc-a', pageNum: 4, recordId: 'edit-1',
+  });
+  const intent = captureTextEditClickAwayIntent({
+    event: pointerEvent(secondLine),
+    session: session({ targetIdentity: sourceTargetIdentity }),
+  });
+  let beginCalls = 0;
+  assert.equal(await replayTextEditClickAwayIntent(intent, {
+    commitSucceeded: true,
+    beginTextEdit: async () => { beginCalls += 1; },
+  }), 'same-text-target-suppressed');
+  assert.equal(beginCalls, 0);
+});
+
+test('same native paragraph replay is suppressed when the clicked marker belongs to its provenance', async () => {
+  const layer = element({ selectors: ['.textLayer'], dataset: { page: '4' } });
+  const laterLine = element({
+    selectors: ['span'], parent: layer, dataset: { nativeTextMarkerIds: 'marker-c' },
+  });
+  const sourceTargetIdentity = createTextEditTargetIdentity({
+    documentId: 'doc-a', pageNum: 4, markerIds: ['marker-a', 'marker-b', 'marker-c'],
+  });
+  const intent = captureTextEditClickAwayIntent({
+    event: pointerEvent(laterLine),
+    session: session({ targetIdentity: sourceTargetIdentity }),
+  });
+  let beginCalls = 0;
+  assert.equal(await replayTextEditClickAwayIntent(intent, {
+    commitSucceeded: true,
+    beginTextEdit: async () => { beginCalls += 1; },
+  }), 'same-text-target-suppressed');
+  assert.equal(beginCalls, 0);
+});
+
+test('a different native paragraph still opens in the committing gesture', async () => {
+  const layer = element({ selectors: ['.textLayer'], dataset: { page: '4' } });
+  const otherParagraph = element({
+    selectors: ['span'], parent: layer, dataset: { nativeTextMarkerIds: 'marker-z' },
+  });
+  const sourceTargetIdentity = createTextEditTargetIdentity({
+    documentId: 'doc-a', pageNum: 4, markerIds: 'marker-a marker-b marker-c',
+  });
+  const intent = captureTextEditClickAwayIntent({
+    event: pointerEvent(otherParagraph),
+    session: session({ targetIdentity: sourceTargetIdentity }),
+  });
+  let beginCalls = 0;
+  assert.equal(await replayTextEditClickAwayIntent(intent, {
+    commitSucceeded: true,
+    beginTextEdit: async () => { beginCalls += 1; },
+  }), 'text-edit-replayed');
+  assert.equal(beginCalls, 1);
+});
+
 test('a failed commit never activates the captured target', async () => {
   const button = element({ selectors: ['button'] });
   const intent = captureTextEditClickAwayIntent({ event: pointerEvent(button), session: session() });
   assert.equal(await replayTextEditClickAwayIntent(intent, { commitSucceeded: false }), 'commit-failed');
   assert.equal(button.focusCalls || 0, 0);
   assert.equal(button.clickCalls || 0, 0);
+});
+
+test('a failed commit retains the original session and never replays a text target', async () => {
+  const layer = element({ selectors: ['.textLayer'], dataset: { page: '4' } });
+  const otherParagraph = element({
+    selectors: ['span'], parent: layer, dataset: { nativeTextMarkerIds: 'marker-z' },
+  });
+  const intent = captureTextEditClickAwayIntent({
+    event: pointerEvent(otherParagraph),
+    session: session({
+      targetIdentity: createTextEditTargetIdentity({
+        documentId: 'doc-a', pageNum: 4, markerIds: 'marker-a marker-b',
+      }),
+    }),
+  });
+  let beginCalls = 0;
+  assert.equal(await replayTextEditClickAwayIntent(intent, {
+    commitSucceeded: false,
+    beginTextEdit: async () => { beginCalls += 1; },
+  }), 'commit-failed');
+  assert.equal(beginCalls, 0);
+  assert.equal(intent.replayed, false);
 });
 
 test('destructive actions are not replayed and visibly require a second click', async () => {

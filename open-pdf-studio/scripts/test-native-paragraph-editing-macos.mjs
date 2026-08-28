@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
 import { access, copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PDFDocument } from 'pdf-lib';
@@ -16,8 +18,9 @@ assert.equal(process.platform, 'darwin', 'native paragraph packaged acceptance i
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoDir = path.resolve(projectDir, '..');
 const appBundle = path.resolve(process.env.OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE || path.join(
-  repoDir, 'target', 'release', 'bundle', 'macos', 'Open PDF Studio.app',
+  repoDir, 'target', 'aarch64-apple-darwin', 'release', 'bundle', 'macos', 'Open PDF Studio.app',
 ));
+const appExecutable = path.join(appBundle, 'Contents', 'MacOS', 'open-pdf-studio');
 const artifactRoot = path.resolve(
   process.env.OPEN_PDF_STUDIO_TEST_ARTIFACT_DIR
     || path.join(projectDir, 'test-artifacts', 'packaged-editor'),
@@ -44,6 +47,8 @@ const fixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-parag
 const colorFixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-side-by-side-color.pdf');
 const widthFixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-helvetica-width-compensation.pdf');
 const runDir = await mkdtemp(path.join(tmpdir(), 'opds-native-paragraph-'));
+const execFileAsync = promisify(execFile);
+const realTextEditHelper = path.join(runDir, 'macos-real-text-edit');
 const workingPdf = path.join(runDir, 'native-paragraph-working.pdf');
 const colorWorkingPdf = path.join(runDir, 'native-side-by-side-working.pdf');
 const widthWorkingPdf = path.join(runDir, 'native-width-compensation-working.pdf');
@@ -59,6 +64,8 @@ let requestId = 0;
 let application;
 let applicationPid;
 let exited = false;
+let stdoutLog;
+let stderrLog;
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -184,6 +191,35 @@ async function pointerClick(selector) {
   return result;
 }
 
+async function blankPagePointerClick() {
+  const textLayer = await waitUi('.textLayer', (value) => (
+    value.found && value.visible && value.rect?.width > 50 && value.rect?.height > 50
+  ), 30_000);
+  const viewport = await callTool('app_get_viewport_state');
+  const x = viewport.canvas.cssLeft + viewport.canvas.cssWidth - 24;
+  const y = Math.min(
+    viewport.canvas.cssTop + viewport.canvas.cssHeight - 24,
+    viewport.container.top + viewport.container.height - 24,
+  );
+  const clickResult = await callTool('app_mouse_click', { x, y });
+  assert.equal(clickResult.ok, true, clickResult.error);
+  assert.equal(['canvas', 'div'].includes(clickResult.target?.tag), true,
+    `blank-page click hit an unexpected target: ${JSON.stringify({ clickResult, textLayer, viewport })}`);
+  return { clickResult, textLayer, viewport };
+}
+
+async function realTextEditorInteraction(mode, ...arguments_) {
+  const { stdout } = await execFileAsync(realTextEditHelper, [
+    String(applicationPid), mode, ...arguments_.map(String),
+  ], { maxBuffer: 1024 * 1024 });
+  const result = JSON.parse(stdout);
+  assert.equal(result.authorization?.accessibilityTrusted, true,
+    'trusted editor interaction requires macOS Accessibility permission');
+  assert.equal(result.authorization?.postEventTrusted, true,
+    'trusted editor interaction requires macOS Input Monitoring permission');
+  return result;
+}
+
 async function openPdf(pdfPath) {
   const result = await callTool('app_open_pdf', { path: pdfPath });
   assert.equal(result.ok, true, result.error);
@@ -235,10 +271,7 @@ async function replaceAndCommit(text) {
   await callTool('app_key', { key: 'a', meta: true });
   const typed = await callTool('app_type', { text });
   assert.equal(typed.ok, true, typed.error);
-  // app_click_element focuses form controls before dispatching click, matching
-  // the focus hand-off produced by a real pointer. app_mouse_click intentionally
-  // dispatches raw pointer/mouse events and does not synthesize browser focus.
-  const outsideClick = await click('.status-page-input');
+  const outsideClick = await blankPagePointerClick();
   try {
     await waitUi('.pdf-text-editor', (value) => !value.found, 30_000);
   } catch (error) {
@@ -295,6 +328,7 @@ const report = {
     scrollAttachment: 'PENDING',
     substitutionWidthCompensation: 'PENDING',
     firstSaveClickCommit: 'PENDING',
+    interiorCaretClickAway: 'PENDING',
   },
   saveEvidence: null,
   artifacts: [],
@@ -307,20 +341,41 @@ await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
 try {
   const preparation = [
-    access(appBundle), access(fixture), access(colorFixture), access(widthFixture),
+    access(appBundle), access(appExecutable), access(fixture), access(colorFixture), access(widthFixture),
     copyFile(fixture, workingPdf), copyFile(colorFixture, colorWorkingPdf),
     copyFile(widthFixture, widthWorkingPdf),
   ];
   if (realPdfSource) preparation.push(access(realPdfSource), copyFile(realPdfSource, realWorkingPdf));
   await Promise.all(preparation);
+  await execFileAsync('/usr/bin/swiftc', [
+    path.join(projectDir, 'scripts', 'macos-real-text-edit.swift'),
+    '-o', realTextEditHelper,
+  ], {
+    env: {
+      ...process.env,
+      CLANG_MODULE_CACHE_PATH: path.join(runDir, 'swift-module-cache'),
+      SWIFT_MODULECACHE_PATH: path.join(runDir, 'swift-module-cache'),
+    },
+    maxBuffer: 1024 * 1024,
+  });
   const port = await availablePort();
   endpoint = `http://127.0.0.1:${port}/mcp`;
-  application = spawn('/usr/bin/open', [
-    '-n', '-W', '--stdout', stdoutPath, '--stderr', stderrPath,
-    '--env', 'OPS_ENABLE_MCP=1', '--env', 'OPDS_DETACHED=1',
-    '--env', `OPS_TEST_SESSION_PATH=${sessionPath}`,
-    appBundle, '--args', '--mcp-server', '--mcp-port', String(port),
-  ], { cwd: projectDir, env: process.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  stdoutLog = createWriteStream(stdoutPath, { flags: 'w' });
+  stderrLog = createWriteStream(stderrPath, { flags: 'w' });
+  application = spawn(appExecutable, ['--mcp-server', '--mcp-port', String(port)], {
+    cwd: projectDir,
+    env: {
+      ...process.env,
+      OPS_ENABLE_MCP: '1',
+      OPDS_DETACHED: '1',
+      OPS_TEST_SESSION_PATH: sessionPath,
+    },
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  applicationPid = application.pid;
+  application.stdout.pipe(stdoutLog);
+  application.stderr.pipe(stderrLog);
   application.once('exit', () => { exited = true; });
   const initialized = await waitUntil('packaged app MCP', async () => {
     if (exited) throw new Error('packaged app exited');
@@ -389,21 +444,100 @@ try {
       && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
   ), 30_000);
   const firstReplacement = 'Packaged first line\nPackaged second line';
+  const fixtureSha256 = await sha256(workingPdf);
   await replaceAndCommit(firstReplacement);
+  let latestInitialAutoSaveProbe = null;
+  try {
+    await waitUntil('initial owned paragraph auto-save', async () => {
+      const [currentSha256, viewport] = await Promise.all([
+        sha256(workingPdf),
+        callTool('app_get_viewport_state'),
+      ]);
+      latestInitialAutoSaveProbe = {
+        fileChanged: currentSha256 !== fixtureSha256,
+        viewport,
+      };
+      return latestInitialAutoSaveProbe.fileChanged
+        && viewport.documentSaveState?.saveState === 'saved'
+        && viewport.documentSaveState.persistedRevision
+          === viewport.documentSaveState.contentRevision ? viewport : null;
+    }, 60_000);
+  } catch (error) {
+    const consoleLog = await callTool('app_get_recent_console').catch(() => null);
+    throw new Error(`initial owned paragraph auto-save did not settle: ${JSON.stringify({
+      latestInitialAutoSaveProbe,
+      consoleLog,
+    })}`, { cause: error });
+  }
 
   const ownedSelector = '.textLayer span[data-owned-text-edit-hit="true"]';
-  const unsavedReedit = await openEditor(ownedSelector, 'Packaged first line');
+  const interiorEditor = await openEditor(ownedSelector, 'Packaged first line');
+  const beforeInteriorSha256 = await sha256(workingPdf);
+  const physicalInsert = await realTextEditorInteraction(
+    'insert',
+    interiorEditor.rect.x + Math.min(interiorEditor.rect.width / 2, 120),
+    interiorEditor.rect.y + Math.min(interiorEditor.rect.height / 4, 12),
+    4,
+    'MID',
+  );
+  const middleText = 'PackMIDaged first line';
+  try {
+    await waitUi('.pdf-text-editor', (value) => (
+      value.found && value.visible && value.focused
+        && String(value.value ?? value.text ?? '').includes(middleText)
+        && String(value.value ?? value.text ?? '').includes('Packaged second line')
+    ), 30_000);
+  } catch (error) {
+    const [editorState, viewport, consoleLog] = await Promise.all([
+      ui('.pdf-text-editor').catch(() => null),
+      callTool('app_get_viewport_state').catch(() => null),
+      callTool('app_get_recent_console').catch(() => null),
+    ]);
+    throw new Error(`trusted interior insertion was not retained: ${JSON.stringify({
+      physicalInsert, editorState, viewport, consoleLog,
+    })}`, { cause: error });
+  }
+  const blankPageClick = await blankPagePointerClick();
+  await waitUi('.pdf-text-editor', (value) => !value.found, 60_000);
+  const interiorAutoSaveView = await waitUntil('interior insertion click-away auto-save', async () => {
+    const [currentSha256, viewport] = await Promise.all([
+      sha256(workingPdf),
+      callTool('app_get_viewport_state'),
+    ]);
+    return currentSha256 !== beforeInteriorSha256
+      && viewport.documentSaveState?.saveState === 'saved'
+      && viewport.documentSaveState.persistedRevision
+        === viewport.documentSaveState.contentRevision
+      && viewport.editorSession === null ? viewport : null;
+  }, 60_000);
+  const interiorManifest = await ownedManifestIdentity(workingPdf);
+  assert.equal(interiorManifest.editCount, 1);
+  assert.deepEqual(interiorManifest.revisions, [2]);
+  assert.match(await pdfJsText(workingPdf), /PackMIDaged first line/u);
+  report.checks.interiorCaretClickAway = 'PASS';
+  report.interiorCaretEvidence = {
+    insertionOffset: 4,
+    insertionText: 'MID',
+    expectedMiddleText: middleText,
+    physicalInsert,
+    blankPageClick: blankPageClick.clickResult,
+    editorClosed: interiorAutoSaveView.editorSession === null,
+    bytesChanged: true,
+    ownedManifest: interiorManifest,
+  };
+
+  const unsavedReedit = await openEditor(ownedSelector, middleText);
   assert.equal(String(unsavedReedit.value ?? unsavedReedit.text).includes('Packaged second line'), true);
   await callTool('app_key', { key: 'Escape' });
   await save();
-  const savedReedit = await openEditor(ownedSelector, 'Packaged first line');
+  const savedReedit = await openEditor(ownedSelector, middleText);
   assert.equal(String(savedReedit.value ?? savedReedit.text).includes('Packaged second line'), true);
   await callTool('app_key', { key: 'Escape' });
 
   await closeActiveTab();
   await openPdf(workingPdf);
   await setEditTool();
-  await openEditor(ownedSelector, 'Packaged first line');
+  await openEditor(ownedSelector, middleText);
   const secondReplacement = 'Reopened first line\nReopened second line';
   await replaceAndCommit(secondReplacement);
   assert.equal(await save(saveAsPdf), saveAsPdf);
@@ -441,7 +575,7 @@ try {
   const manifest = await readOwnedTextEditManifest(pdfDocument);
   assert.equal(manifest.pages.length, 1);
   assert.equal(manifest.pages[0].edits.length, 1);
-  assert.equal(manifest.pages[0].edits[0].revision, 2);
+  assert.equal(manifest.pages[0].edits[0].revision, 3);
   assert.equal(manifest.pages[0].edits[0].ownedLayerId,
     `OpenPDFStudioTextEdit-${manifest.pages[0].edits[0].id}`);
   const extracted = await pdfJsText(saveAsPdf);
@@ -773,7 +907,9 @@ try {
             viewport,
           };
           return latestAutoSaveProbe.fileChanged
-            && viewport.textEditAutoSave?.state === 'saved'
+            && viewport.documentSaveState?.saveState === 'saved'
+            && viewport.documentSaveState.persistedRevision
+              === viewport.documentSaveState.contentRevision
             ? viewport : null;
         },
         realAutoSaveTimeoutMs,
@@ -895,7 +1031,11 @@ try {
   throw error;
 } finally {
   if (application && !exited) {
-    try { process.kill(applicationPid || -application.pid, 'SIGTERM'); } catch {}
+    try { process.kill(-application.pid, 'SIGTERM'); } catch {
+      try { process.kill(applicationPid || application.pid, 'SIGTERM'); } catch {}
+    }
     await delay(500);
   }
+  stdoutLog?.end();
+  stderrLog?.end();
 }

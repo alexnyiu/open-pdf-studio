@@ -112,8 +112,10 @@ try {
     addSpan('(mixed)', 392, 300, 55);
     const right = addSpan('Right cell', 560, 300, 75);
     right.dataset.testRight = 'true';
-    addSpan('Second paragraph line', 300, 280, 170);
-    addSpan('Next row', 300, 245, 70);
+    const sameParagraphLine = addSpan('Second paragraph line', 300, 280, 170);
+    sameParagraphLine.dataset.testSameParagraphLine = 'true';
+    const nextParagraph = addSpan('Next row', 300, 245, 70);
+    nextParagraph.dataset.testNextParagraph = 'true';
 
     state.documents = [{
       id: 'native-paragraph-test-document', lifecycleGeneration: 0,
@@ -433,6 +435,197 @@ try {
   assert.ok(firstCommit.region.width > beforeResize.width,
     'committed native record must retain the resized width');
 
+  // Reopen the owned multiline record, insert in the middle of a word, and
+  // commit by clicking blank page space. The click-away must end the session
+  // without replaying the page-wide text layer as another edit request.
+  await publishSyntheticPageReadiness(page);
+  await page.locator('[data-owned-text-edit-hit]').first().click({ force: true });
+  await editor.waitFor({ state: 'visible' });
+  await editor.evaluate((node) => {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    let textNode = walker.nextNode();
+    while (textNode && !textNode.textContent.includes('Edited')) textNode = walker.nextNode();
+    if (!textNode) throw new Error('middle-insertion source word was not rendered');
+    const offset = textNode.textContent.indexOf('Edited') + 3;
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.setStart(textNode, offset);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await page.keyboard.type('MIDDLE');
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const beforeClickAway = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    const session = (await import('/js/text/text-edit-session.js')).getActiveTextEditSession();
+    return {
+      revision: state.documents[0].textEdits[0].revision,
+      undoCount: state.documents[0].undoStack.length,
+      sessionId: session?.sessionId || null,
+      targetIdentity: session?.targetIdentity || null,
+    };
+  });
+  assert.equal(beforeClickAway.targetIdentity?.type, 'owned-record');
+  assert.equal(beforeClickAway.targetIdentity?.recordId, firstCommit.id);
+  const blankLayerBox = await page.locator('[data-native-paragraph-test-host] .textLayer').boundingBox();
+  await page.mouse.click(blankLayerBox.x + blankLayerBox.width - 10,
+    blankLayerBox.y + blankLayerBox.height - 10);
+  await editor.waitFor({ state: 'detached' });
+  await page.waitForFunction(async () => (
+    (await import('/js/text/text-edit-session.js')).getActiveTextEditSession() === null
+  ));
+  const middleCommit = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    const { richTextToPlainText } = await import('/js/text/rich-text.js');
+    const record = state.documents[0].textEdits[0];
+    return {
+      count: state.documents[0].textEdits.length,
+      revision: record.revision,
+      undoCount: state.documents[0].undoStack.length,
+      text: richTextToPlainText(record.richText),
+      activeSession: (await import('/js/text/text-edit-session.js')).getActiveTextEditSession(),
+    };
+  });
+  assert.equal(middleCommit.count, 1);
+  assert.equal(middleCommit.revision, beforeClickAway.revision + 1);
+  assert.equal(middleCommit.undoCount, beforeClickAway.undoCount + 1);
+  assert.match(middleCommit.text, /EdiMIDDLEted first line/u);
+  assert.equal(middleCommit.activeSession, null);
+
+  // A pointer captured on another rendered line of that same owned record
+  // commits the current draft but must not create a replacement session.
+  await publishSyntheticPageReadiness(page);
+  await page.locator('[data-owned-text-edit-hit]').first().click({ force: true });
+  await editor.waitFor({ state: 'visible' });
+  await editor.press('End');
+  await page.keyboard.type(' SAME');
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const beforeSameRecordClick = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    return {
+      revision: state.documents[0].textEdits[0].revision,
+      undoCount: state.documents[0].undoStack.length,
+    };
+  });
+  await page.locator('[data-owned-text-edit-hit]').last().evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    const init = {
+      bubbles: true, cancelable: true, pointerId: 41,
+      clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+    };
+    node.dispatchEvent(new PointerEvent('pointerdown', init));
+    node.dispatchEvent(new PointerEvent('pointerup', init));
+  });
+  await editor.waitFor({ state: 'detached' });
+  await page.waitForFunction(async () => (
+    (await import('/js/text/text-edit-session.js')).getActiveTextEditSession() === null
+  ));
+  const sameRecordClick = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    const { richTextToPlainText } = await import('/js/text/rich-text.js');
+    return {
+      count: state.documents[0].textEdits.length,
+      id: state.documents[0].textEdits[0].id,
+      revision: state.documents[0].textEdits[0].revision,
+      undoCount: state.documents[0].undoStack.length,
+      text: richTextToPlainText(state.documents[0].textEdits[0].richText),
+    };
+  });
+  assert.equal(sameRecordClick.count, 1);
+  assert.equal(sameRecordClick.id, firstCommit.id);
+  assert.equal(sameRecordClick.revision, beforeSameRecordClick.revision + 1);
+  assert.equal(sameRecordClick.undoCount, beforeSameRecordClick.undoCount + 1);
+  assert.match(sameRecordClick.text, /EdiMIDDLEted first line/u);
+  assert.match(sameRecordClick.text, /SAME/u);
+
+  // A different paragraph remains a one-gesture handoff: commit the owned
+  // paragraph, then replay exactly once into the distinct native target.
+  await publishSyntheticPageReadiness(page);
+  await page.locator('[data-owned-text-edit-hit]').first().click({ force: true });
+  await editor.waitFor({ state: 'visible' });
+  await editor.press('Home');
+  await editor.press('Delete');
+  await page.keyboard.type('X');
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  const sourceSessionId = await page.evaluate(async () => (
+    (await import('/js/text/text-edit-session.js')).getActiveTextEditSession()?.sessionId
+  ));
+  const beforeDifferentParagraphClick = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    return {
+      revision: state.documents[0].textEdits[0].revision,
+      undoCount: state.documents[0].undoStack.length,
+    };
+  });
+  await page.locator('[data-test-next-paragraph="true"]').evaluate((node) => {
+    const rect = node.getBoundingClientRect();
+    const init = {
+      bubbles: true, cancelable: true, pointerId: 42,
+      clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+    };
+    node.dispatchEvent(new PointerEvent('pointerdown', init));
+    node.dispatchEvent(new PointerEvent('pointerup', init));
+  });
+  // The synthetic fixture has no renderer to republish page readiness after
+  // the owned commit invalidates its text layer. Model that production render
+  // completion so the queued, distinct target can activate.
+  await page.waitForTimeout(50);
+  await publishSyntheticPageReadiness(page);
+  try {
+    await page.waitForFunction(() => (
+      document.querySelector('.pdf-text-editor')?.textContent.includes('Next row') === true
+    ));
+  } catch (error) {
+    const replayState = await page.evaluate(async () => {
+      const { state } = await import('/js/core/state.ts');
+      const session = (await import('/js/text/text-edit-session.js')).getActiveTextEditSession();
+      return {
+        editorText: document.querySelector('.pdf-text-editor')?.textContent || null,
+        activeSession: session,
+        recordCount: state.documents[0].textEdits.length,
+        recordRevision: state.documents[0].textEdits[0]?.revision,
+        nextParagraphConnected: document.querySelector('[data-test-next-paragraph="true"]')
+          ?.isConnected === true,
+        nextParagraphVisibility: document.querySelector('[data-test-next-paragraph="true"]')
+          ?.style.visibility || null,
+      };
+    });
+    throw new Error(`different-paragraph replay did not open: ${JSON.stringify({ replayState, pageErrors })}`, {
+      cause: error,
+    });
+  }
+  const differentParagraphState = await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    return {
+      activeSession: (await import('/js/text/text-edit-session.js')).getActiveTextEditSession(),
+      revision: state.documents[0].textEdits[0].revision,
+      undoCount: state.documents[0].undoStack.length,
+    };
+  });
+  const differentParagraphSession = differentParagraphState.activeSession;
+  assert.notEqual(differentParagraphSession?.sessionId, sourceSessionId);
+  assert.equal(differentParagraphSession?.targetIdentity?.type, 'native-provenance');
+  assert.equal(differentParagraphState.revision, beforeDifferentParagraphClick.revision + 1);
+  assert.equal(differentParagraphState.undoCount, beforeDifferentParagraphClick.undoCount + 1);
+  await editor.waitFor({ state: 'visible' });
+  await page.waitForFunction(async () => {
+    const bridge = await import('/js/bridge.ts');
+    return bridge.getPdfEditorLayoutState()?.pending === false;
+  });
+  assert.match(await editor.innerText(), /Next row/u);
+  await editor.press('Escape');
+  await editor.waitFor({ state: 'detached' });
+
   const hitTargetState = await page.locator('[data-owned-text-edit-hit]').first().evaluate((node) => ({
     rect: node.getBoundingClientRect().toJSON(),
     pointerEvents: getComputedStyle(node).pointerEvents,
@@ -480,7 +673,8 @@ try {
   assert.equal(secondCommit.id, firstCommit.id);
   assert.equal(secondCommit.ownedLayerId, firstCommit.ownedLayerId);
   assert.equal(secondCommit.provenance, firstCommit.provenance);
-  assert.equal(secondCommit.revision, 2, JSON.stringify({ firstCommit, secondCommit }));
+  assert.equal(secondCommit.revision, 5,
+    JSON.stringify({ firstCommit, middleCommit, sameRecordClick, secondCommit }));
   assert.equal(secondCommit.text, 'Re-edited first line\nRe-edited second line');
   assert.equal(secondCommit.lineCount, 2);
 
@@ -535,7 +729,7 @@ try {
   });
   assert.equal(mergedState.count, 1);
   assert.equal(mergedState.id, firstCommit.id);
-  assert.equal(mergedState.revision, 3);
+  assert.equal(mergedState.revision, 6);
   assert.equal(mergedState.text, 'Combined paragraph one\nCombined paragraph two');
   assert.ok(mergedState.provenanceCount > JSON.parse(firstCommit.provenance).length);
 
