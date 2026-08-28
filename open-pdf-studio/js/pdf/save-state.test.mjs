@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
   canAutoSaveCommittedTextEdit,
@@ -24,6 +25,52 @@ test('unchanged same-path Save is a byte-preserving no-op', () => {
     currentPath: '/tmp/document.pdf',
     outputPath: '/tmp/document.pdf',
   }), true);
+});
+
+test('a coordinator-owned post-editor check may resolve a coherent Save as a no-op', () => {
+  const documentState = {
+    ...cleanDocument(),
+    revisionState: {
+      contentRevision: 3,
+      serializedRevision: 3,
+      persistedRevision: 3,
+      livePdfRevision: 3,
+      visibleRenderRevision: 3,
+      visibleSemanticRevision: 3,
+      visibleRequiredPages: [1],
+      pageContentRevisions: { 1: 3 },
+      pageRenderReadyRevisions: { 1: 3 },
+      pageSemanticReadyRevisions: { 1: 3 },
+      saveState: 'saving',
+      activeSaveRequestId: 'save-1',
+      lastPersistedPath: '/tmp/document.pdf',
+      lastSaveError: null,
+      lastSynchronizationError: null,
+    },
+  };
+  const args = {
+    documentState,
+    currentPath: '/tmp/document.pdf',
+    outputPath: '/tmp/document.pdf',
+  };
+  assert.equal(canSkipUnmodifiedSamePathSave(args), false,
+    'an arbitrary caller cannot bypass an active save transaction');
+  assert.equal(canSkipUnmodifiedSamePathSave({ ...args, coordinatorOwnsCheck: true }), true,
+    'the owning coordinator may preserve bytes after its editor barrier');
+  documentState.revisionState.contentRevision = 4;
+  assert.equal(canSkipUnmodifiedSamePathSave({ ...args, coordinatorOwnsCheck: true }), false,
+    'post-barrier content debt still requires serialization');
+});
+
+test('production Save enters the coordinator before evaluating the same-path no-op', async () => {
+  const source = await readFile(new URL('./saver.js', import.meta.url), 'utf8');
+  const publicSave = source.slice(
+    source.indexOf('export async function savePDF'),
+    source.indexOf('\nasync function performSavePDF'),
+  );
+  assert.match(publicSave, /saveCoordinator\.request/u);
+  assert.doesNotMatch(publicSave, /canSkipUnmodifiedSamePathSave/u,
+    'the editor barrier must run before the document can be declared unchanged');
 });
 
 test('F-01 disk-clean same-path Save cannot skip a stale live PDF revision', () => {

@@ -44,6 +44,7 @@ export const GATE_EVIDENCE_CONTRACTS = Object.freeze({
 });
 
 export const PACKAGED_EDITOR_REQUIRED_SUITES = Object.freeze([
+  'test:save-render-coherence:macos',
   'test:native-text-editing:macos',
   'test:annotation-text-editing:macos',
   'test:ocr-workflow:macos',

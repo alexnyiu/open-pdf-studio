@@ -10,6 +10,7 @@ import {
   failPageEditReadiness,
   markPageEditLayerReady,
   pageEditReadinessSatisfied,
+  pageEditReadinessSnapshot,
 } from './page-edit-readiness.js';
 
 class EventTargetWindow extends EventTarget {
@@ -111,6 +112,8 @@ test('a failed current layer cannot be overwritten by later layer completions', 
     markPageEditLayerReady(documentState, 1, layer, token);
   }
   assert.equal(pageEditReadinessSatisfied(documentState, 1), false);
+  assert.equal(pageEditReadinessSnapshot(documentState, 1).ready, false,
+    'diagnostics must not report ready while the fail-closed barrier retains an error');
 });
 
 test('a waiter started after a current failure rejects immediately', async () => {

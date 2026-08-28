@@ -695,7 +695,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
     console.error('Error loading PDF:', error);
     doc._loadRejected = true;
     doc._loadErrorCode = error?.code ?? 'PDF_LOAD_FAILED';
-    doc._loadErrorMessage = error?.message ?? String(error);
+    doc._loadErrorMessage = error?.message || String(error) || 'Unknown PDF load failure';
     const failedPdfDocument = doc.pdfDoc;
     try { await failedPdfDocument?.destroy?.(); } catch {}
     replaceDocumentPdfProxy(doc, null, 'document-load-failed');

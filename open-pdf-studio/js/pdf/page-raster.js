@@ -19,6 +19,11 @@ const finitePositive = (value, fallback = 1) => {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 };
 
+const nonNegativeRevision = (value) => {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+};
+
 const normalizedRotation = (rotation) => {
   const value = Number(rotation) || 0;
   return ((value % 360) + 360) % 360;
@@ -131,6 +136,11 @@ export function chooseBestRaster(candidates, request) {
 }
 
 export function createRenderedSurfaceState({
+  documentId,
+  contentRevision,
+  livePdfRevision,
+  pageRevision,
+  pageNum,
   targetRasterScale,
   actualRasterScale,
   cssScale,
@@ -142,6 +152,11 @@ export function createRenderedSurfaceState({
   publishedAt = globalThis.performance?.now?.() ?? Date.now(),
 } = {}) {
   return Object.freeze({
+    documentId: String(documentId || ''),
+    contentRevision: nonNegativeRevision(contentRevision),
+    livePdfRevision: nonNegativeRevision(livePdfRevision),
+    pageRevision: nonNegativeRevision(pageRevision),
+    pageNum: Math.max(0, Number(pageNum) || 0),
     targetRasterScale: finitePositive(targetRasterScale),
     actualRasterScale: finitePositive(actualRasterScale),
     cssScale: finitePositive(cssScale),

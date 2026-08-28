@@ -10,6 +10,7 @@ import {
   portableArtifactPath,
   validateEditorCoverageManifest,
 } from './ocr-release-hardening-policy.mjs';
+import { verifySaveRenderCoherenceReport } from './verify-save-render-coherence-report.mjs';
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoDir = path.resolve(projectDir, '..');
@@ -146,7 +147,38 @@ async function acceptanceArtifacts(outputDir, suiteResults) {
       artifacts.push(relativePath);
     }
   } catch { /* validator reports missing or malformed native evidence */ }
+  const coherenceReport = path.join('reports', 'save-render-coherence.json');
+  try {
+    const value = JSON.parse(await readFile(path.join(outputDir, coherenceReport), 'utf8'));
+    artifacts.push(coherenceReport);
+    for (const artifact of Array.isArray(value?.artifacts) ? value.artifacts : []) {
+      if (!portableArtifactPath(artifact)) continue;
+      const relativePath = path.join('reports', artifact);
+      await access(path.join(outputDir, relativePath));
+      artifacts.push(relativePath);
+    }
+  } catch { /* validator reports missing or malformed coherence evidence */ }
   return [...new Set(artifacts)];
+}
+
+async function validateCoherenceEvidence(outputDir, expectedHead) {
+  const relativePath = path.join('reports', 'save-render-coherence.json');
+  try {
+    const result = await verifySaveRenderCoherenceReport(path.join(outputDir, relativePath), {
+      expectedCommit: expectedHead,
+    });
+    return {
+      path: relativePath,
+      status: result.pass ? 'PASS' : 'FAIL',
+      issues: result.issues,
+    };
+  } catch (error) {
+    return {
+      path: relativePath,
+      status: 'FAIL',
+      issues: [`save/render coherence evidence could not be read: ${error.message || error}`],
+    };
+  }
 }
 
 async function validateNativeEvidence(outputDir, expectedHead) {
@@ -295,6 +327,11 @@ export async function runEditorAcceptance(options) {
     OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE: options.appBundle,
     OPEN_PDF_STUDIO_PACKAGED_APP: appBinary,
     OPEN_PDF_STUDIO_TEST_ARTIFACT_DIR: outputDir,
+    OPEN_PDF_STUDIO_SAVE_RENDER_COHERENCE_REPORT: path.join(
+      outputDir,
+      'reports',
+      'save-render-coherence.json',
+    ),
   };
   const report = {
     contract: 'open-pdf-studio.editor-packaged-acceptance',
@@ -339,6 +376,17 @@ export async function runEditorAcceptance(options) {
     if (nativeEvidence.status !== 'PASS' && nativeSuite.code === 0) {
       nativeSuite.commandCode = nativeSuite.code;
       nativeSuite.code = 1;
+    }
+  }
+  const coherenceEvidence = await validateCoherenceEvidence(outputDir, report.head);
+  const coherenceSuite = report.suites.find(
+    ({ name }) => name === 'test:save-render-coherence:macos',
+  );
+  if (coherenceSuite) {
+    coherenceSuite.evidence = coherenceEvidence;
+    if (coherenceEvidence.status !== 'PASS' && coherenceSuite.code === 0) {
+      coherenceSuite.commandCode = coherenceSuite.code;
+      coherenceSuite.code = 1;
     }
   }
   const annotationEvidence = await validateAnnotationEvidence(outputDir, report.head);

@@ -32,7 +32,21 @@ export function canSkipUnmodifiedSamePathSave({
   currentPath,
   outputPath,
   saveAsPath = null,
+  coordinatorOwnsCheck = false,
 }) {
+  const revision = documentState ? initializeDocumentRevisionState(documentState) : null;
+  const hasSynchronizationDebt = coordinatorOwnsCheck
+    ? Boolean(revision && (
+      revision.persistedRevision > revision.livePdfRevision
+      || revision.saveState === 'saved-refresh-failed'
+      || revision.saveState === 'synchronizing'
+      || revision.saveState === 'persisted'
+      || (revision.visibleRequiredPages.length > 0 && (
+        revision.visibleRenderRevision < revision.livePdfRevision
+        || revision.visibleSemanticRevision < revision.livePdfRevision
+      ))
+    ))
+    : documentState ? documentNeedsSynchronization(documentState) : false;
   return Boolean(
     documentState
     && currentPath
@@ -41,7 +55,7 @@ export function canSkipUnmodifiedSamePathSave({
     && !documentState.saveTargetPath
     && documentState.isUntitled !== true
     && !documentHasPendingPersistence(documentState)
-    && !documentNeedsSynchronization(documentState),
+    && !hasSynchronizationDebt,
   );
 }
 

@@ -93,7 +93,8 @@ function detailFor(entry) {
     pdfDocument: undefined,
     layers: Object.freeze({ ...entry.layers }),
     failure: entry.failure,
-    ready: PAGE_EDIT_READY_LAYERS.every((layer) => entry.layers[layer] === true),
+    ready: !entry.failure
+      && PAGE_EDIT_READY_LAYERS.every((layer) => entry.layers[layer] === true),
   });
 }
 

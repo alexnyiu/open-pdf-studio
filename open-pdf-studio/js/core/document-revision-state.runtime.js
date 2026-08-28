@@ -61,6 +61,16 @@ function initializeDocumentRevisionState(documentState) {
   if (!documentState) throw new TypeError("Document state is required");
   const initial = createInitialDocumentRevisionState();
   const existing = documentState.revisionState;
+  // Every live document is created with the complete revision contract. Keep
+  // reads of that already-canonical state side-effect free: status/debug
+  // accessors run inside Solid computations, where rewriting the same proxy
+  // fields can recursively invalidate the computation during a tab switch.
+  if (existing && typeof existing === "object"
+      && Object.keys(initial).every((key) => Object.prototype.hasOwnProperty.call(existing, key))
+      && documentState.pageRenderRevisions === existing.pageContentRevisions) {
+    assertDocumentRevisionState(documentState);
+    return existing;
+  }
   if (!existing || typeof existing !== "object") {
     const legacyPages = normalizedRevisionMap(documentState.pageRenderRevisions);
     initial.pageContentRevisions = legacyPages;

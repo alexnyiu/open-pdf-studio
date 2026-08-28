@@ -486,18 +486,12 @@ export async function savePDF(saveAsPath = null, options = {}) {
   if (!owner?.id) return false;
   const currentPath = owner.filePath;
   const outputPath = saveAsPath || owner.saveTargetPath || currentPath;
-  if (canSkipUnmodifiedSamePathSave({
-    documentState: owner,
-    currentPath,
-    outputPath,
-    saveAsPath,
-  })) return true;
   if (!automaticTextEditSave && !saveAsPath && (!owner.filePath || owner.isUntitled)) {
     return allowSaveAsPrompt ? savePDFAs() : false;
   }
   const generation = Number(expectedDocumentGeneration ?? owner.lifecycleGeneration) || 0;
   const requestedRevision = initializeDocumentRevisionState(owner).contentRevision;
-  const synchronizationOnly = !documentHasPendingPersistence(owner)
+  const synchronizationOnlyAtRequest = !documentHasPendingPersistence(owner)
     && documentNeedsSynchronization(owner);
   try {
     return await saveCoordinator.request({
@@ -507,15 +501,20 @@ export async function savePDF(saveAsPath = null, options = {}) {
       kind: automaticTextEditSave ? 'auto' : 'manual',
       saveAsPath,
       delayMs: automaticTextEditSave ? delayMs : 0,
-      execute: (coordinatorContext) => synchronizationOnly
-        ? synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext)
-        : performSavePDF(saveAsPath, {
-          allowSaveAsPrompt,
-          automaticTextEditSave,
-          expectedDocumentId: owner.id,
-          expectedDocumentGeneration: generation,
-          coordinatorContext,
-        }),
+      execute: (coordinatorContext) => {
+        const currentOwner = getDocumentById(owner.id);
+        const synchronizationOnly = synchronizationOnlyAtRequest
+          && !documentHasPendingPersistence(currentOwner);
+        return synchronizationOnly
+          ? synchronizePersistedOwnerWithoutWrite(currentOwner, coordinatorContext)
+          : performSavePDF(saveAsPath, {
+            allowSaveAsPrompt,
+            automaticTextEditSave,
+            expectedDocumentId: owner.id,
+            expectedDocumentGeneration: generation,
+            coordinatorContext,
+          });
+      },
     });
   } catch (error) {
     console.warn('[saver] Coordinated save failed:', error);
@@ -614,7 +613,13 @@ async function performSavePDF(saveAsPath = null, {
     currentPath,
     outputPath,
     saveAsPath,
+    coordinatorOwnsCheck: coordinatorContext?.ownsDocument() === true,
   })) {
+    markDocumentSaveState(activeDoc, 'saved', {
+      requestId: null,
+      saveError: null,
+      synchronizationError: null,
+    });
     return true;
   }
 

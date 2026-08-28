@@ -327,6 +327,7 @@ test('release-hardening scripts and machine evidence are wired without committin
     'node scripts/test-annotation-text-editing-macos.mjs',
   );
   assert.equal(PACKAGED_EDITOR_REQUIRED_SUITES.includes('test:annotation-text-editing:macos'), true);
+  assert.equal(PACKAGED_EDITOR_REQUIRED_SUITES.includes('test:save-render-coherence:macos'), true);
   assert.equal(PACKAGED_EDITOR_REQUIRED_SUITES.includes('test:ocr-workflow:macos'), true);
   assert.equal(PACKAGED_EDITOR_REQUIRED_SUITES.includes('test:ocr-ui:macos'), false);
   const packagedAggregate = await readFile(
@@ -338,6 +339,7 @@ test('release-hardening scripts and machine evidence are wired without committin
   assert.match(packagedAggregate, /browserAcceptance\.status === 'PASS'/);
   assert.match(packagedAggregate, /validateEditorCoverageManifest/);
   assert.match(packagedAggregate, /validateAnnotationEvidence\(outputDir, report\.head\)/);
+  assert.match(packagedAggregate, /validateCoherenceEvidence\(outputDir, report\.head\)/);
   assert.match(packagedAggregate, /annotation evidence HEAD does not match the aggregate/);
   const coverageProducer = await readFile(
     path.join(projectDir, 'scripts', 'test-editor-coverage-macos.mjs'),

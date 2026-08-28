@@ -386,6 +386,7 @@ async function _renderPageImpl(pageNum, { requireEditReady = false } = {}) {
   const _canUseTauri = isTauri();
   const _hasFilePath = !!doc.filePath;
   let _skipBitmapRender = false;
+  let _rasterPublicationPending = false;
 
   // ─── VECTOR VIEWPORT MODE ──────────────────────────────────────────────
   // Extract draw commands once, then hand off to pdf-viewport.js render loop.
@@ -603,10 +604,19 @@ async function _renderPageImpl(pageNum, { requireEditReady = false } = {}) {
           }
           markLayer('raster');
         } else {
+          _rasterPublicationPending = true;
           void Promise.resolve(rasterPromise).then(() => {
-            if (_isStaleDoc(doc, publicationToken) || !renderViewportNow()) return;
+            _rasterPublicationPending = false;
+            if (_isStaleDoc(doc, publicationToken)) return;
+            if (!renderViewportNow()) {
+              failReadiness(new Error('The raster viewport did not publish current pixels'));
+              return;
+            }
             markLayer('raster');
-          }).catch((error) => failReadiness(error));
+          }).catch((error) => {
+            _rasterPublicationPending = false;
+            failReadiness(error);
+          });
         }
         // Tile will be ensured on the first zoom change via the _anchorAt hook
         // (Step 4); for the initial fit we let _render() display whatever
@@ -781,7 +791,7 @@ async function _renderPageImpl(pageNum, { requireEditReady = false } = {}) {
     const viewportModule = await import('./pdf-viewport.js');
     if (!_isStaleDoc(doc, publicationToken) && viewportModule.renderViewportNow()) {
       markLayer('raster');
-    } else if (!_isStaleDoc(doc, publicationToken)) {
+    } else if (!_isStaleDoc(doc, publicationToken) && !_rasterPublicationPending) {
       failReadiness(new Error('The vector viewport did not publish current pixels'));
     }
   }
@@ -934,6 +944,12 @@ function _recordRenderedSurface(doc, pageNum, source, detail) {
   }
   const stateForSurface = createRenderedSurfaceState({
     ...detail,
+    documentId: String(doc.id),
+    contentRevision: Number(doc.revisionState?.contentRevision) || 0,
+    livePdfRevision: Number(doc.revisionState?.livePdfRevision) || 0,
+    pageRevision: Number(doc.revisionState?.pageContentRevisions?.[pageNum]
+      ?? doc.pageRenderRevisions?.[pageNum]) || 0,
+    pageNum,
     source,
     ownerGeneration: Number(doc.lifecycleGeneration) || 0,
     publicationRevision: ++_surfacePublicationRevision,

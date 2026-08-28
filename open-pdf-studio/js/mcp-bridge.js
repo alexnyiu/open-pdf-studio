@@ -43,7 +43,7 @@ try { window.__consoleRing = CONSOLE_RING; } catch { /* noop */ }
 // Patterns the render pipeline uses: [render], [tile], [wheel-zoom],
 // [PERF], [pre-render], STALE markers. Adjust if more subsystems need
 // capture later.
-const CONSOLE_CAPTURE_RE = /\[render\]|\[tile\]|\[wheel-zoom\]|\[PERF\]|\[pre-render\]|\[thumb\]|\[bitmap-orch\]|\[tile-orch\]|\[prog\]|\[prog-guard\]|\[pbc\]|\[bo\]|\[ocr-cache\]|STALE|JANK/;
+const CONSOLE_CAPTURE_RE = /\[render\]|\[tile\]|\[wheel-zoom\]|\[PERF\]|\[pre-render\]|\[thumb\]|\[bitmap-orch\]|\[tile-orch\]|\[prog\]|\[prog-guard\]|\[pbc\]|\[bo\]|\[ocr-cache\]|\[mcp-bridge\]|Error loading PDF|Failed to lock file|File system access|STALE|JANK/;
 
 function _captureConsole(level, args) {
   try {
@@ -70,10 +70,30 @@ async function respond(requestId, result) {
   const invoke = tauriInvoke();
   if (!invoke) return;
   try {
-    await invoke('app_response', { requestId, result });
+    await invoke('app_response', { requestId, result: jsonSafeBridgeValue(result) });
   } catch (e) {
     console.warn('[mcp-bridge] app_response failed:', e);
   }
+}
+
+function jsonSafeBridgeValue(value, ancestors = new Set()) {
+  if (value == null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
+  if (typeof value === 'bigint') return value.toString();
+  if (typeof value !== 'object') return undefined;
+  if (ancestors.has(value)) return undefined;
+  ancestors.add(value);
+  let snapshot;
+  if (Array.isArray(value)) {
+    snapshot = value.map((entry) => jsonSafeBridgeValue(entry, ancestors));
+  } else {
+    snapshot = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const safe = jsonSafeBridgeValue(entry, ancestors);
+      if (safe !== undefined) snapshot[key] = safe;
+    }
+  }
+  ancestors.delete(value);
+  return snapshot;
 }
 
 /** Resolve once the active document has its PDF.js doc loaded (or `timeoutMs`
@@ -152,14 +172,25 @@ async function handleOpenPdf(params) {
     const { index } = tabsMod.createTab(path, false);
     tabIndex = index;
   }
-  tabsMod.switchToTab(tabIndex);
+  try {
+    tabsMod.switchToTab(tabIndex);
+  } catch (error) {
+    return {
+      ok: false,
+      stage: 'switch-to-tab',
+      error: error?.stack || error?.message || String(error) || 'Unknown tab-switch failure',
+    };
+  }
   const doc = stateMod.state.documents[tabIndex];
-  if (!doc.pdfDoc) {
+  if (!doc.pdfDoc && !doc._isLoading) {
     try {
       await loaderMod.loadPDF(path, tabIndex);
     } catch (e) {
       return { ok: false, error: `loadPDF: ${e?.message ?? e}` };
     }
+  }
+  if (!doc.pdfDoc && doc._isLoading) {
+    await waitForActiveLoad(doc, 30000);
   }
   if (!doc.pdfDoc) {
     return {
@@ -956,6 +987,9 @@ async function handleGetViewportState() {
   let performanceMetrics = null;
   let nativeRenderResources = null;
   let documentSaveState = null;
+  let documentLoadState = null;
+  let pageEditReadiness = null;
+  let renderPublicationDiagnostics = null;
   try {
     const stateMod = await import('/js/core/state.ts');
     renderEngine = stateMod.state?.renderEngine ?? null;
@@ -987,7 +1021,17 @@ async function handleGetViewportState() {
     annotationCount = (doc?.annotations || []).length;
     selectedCount = (doc?.selectedAnnotations || []).length;
     pageCount = doc?.pdfDoc?.numPages ?? null;
-    preloadStatus = doc?.preloadStatus ? { ...doc.preloadStatus } : null;
+    preloadStatus = doc?.preloadStatus ? {
+      state: doc.preloadStatus.state ?? null,
+      completed: Number(doc.preloadStatus.completed) || 0,
+      total: Number(doc.preloadStatus.total) || 0,
+      retainedBytes: Number(doc.preloadStatus.retainedBytes) || 0,
+      limitReason: doc.preloadStatus.limitReason ?? null,
+      documentId: doc.preloadStatus.documentId ?? null,
+      lifecycleGeneration: Number(doc.preloadStatus.lifecycleGeneration) || 0,
+      contentRevision: Number(doc.preloadStatus.contentRevision) || 0,
+      livePdfRevision: Number(doc.preloadStatus.livePdfRevision) || 0,
+    } : null;
     performanceProfile = doc?.performanceProfile ? {
       pageCount: doc.performanceProfile.pageCount,
       fileBytes: doc.performanceProfile.fileBytes,
@@ -1005,6 +1049,16 @@ async function handleGetViewportState() {
     if (doc) {
       const revisionModule = await import('/js/core/document-revision-state.runtime.js');
       documentSaveState = revisionModule.documentRevisionDebugSnapshot(doc);
+      if (Number.isInteger(activePageNum) && activePageNum > 0) {
+        const readinessModule = await import('/js/pdf/page-edit-readiness.js');
+        pageEditReadiness = readinessModule.pageEditReadinessSnapshot(doc, activePageNum);
+      }
+      documentLoadState = {
+        loading: doc._isLoading === true,
+        rejected: doc._loadRejected === true,
+        errorCode: doc._loadErrorCode || null,
+        errorMessage: doc._loadErrorMessage || null,
+      };
     }
   } catch {
     // Module may not be loaded yet; leave fields null.
@@ -1072,15 +1126,16 @@ async function handleGetViewportState() {
   } catch { /* OCR workflow service may not be initialized yet */ }
 
   try {
-    const [rendererModule, metricsModule] = await Promise.all([
+    const [rendererModule, metricsModule, publicationModule] = await Promise.all([
       import('/js/pdf/renderer.js'),
       import('/js/pdf/performance-metrics.js'),
+      import('/js/pdf/render-publication-token.js'),
     ]);
     renderResources = rendererModule.getContinuousRenderResourceStats();
     renderedSurfaceStates = rendererModule.getRenderedSurfaceStates();
     performanceMetrics = metricsModule.performanceMetricsSnapshot();
+    renderPublicationDiagnostics = publicationModule.renderPublicationDiagnosticsSnapshot();
   } catch { /* renderer performance state may not be initialized yet */ }
-
   try {
     nativeRenderResources = await tauriInvoke()?.('get_render_resource_stats') ?? null;
   } catch { /* native pixmap cache may not be initialized yet */ }
@@ -1101,6 +1156,9 @@ async function handleGetViewportState() {
       ? { ...window.__textEditAutoSaveDebug }
       : null,
     documentSaveState,
+    documentLoadState,
+    pageEditReadiness,
+    renderPublicationDiagnostics,
     ocrWorkflowMetrics,
     performanceProfile,
     pageGeometry,

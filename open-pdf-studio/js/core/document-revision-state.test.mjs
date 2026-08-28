@@ -61,6 +61,27 @@ test('initial document revision state is coherent and aliases page content ident
   });
 });
 
+test('reading an already-canonical revision state performs no reactive writes', () => {
+  let writes = 0;
+  const revisionState = new Proxy(createInitialDocumentRevisionState(), {
+    set(target, property, value) {
+      writes += 1;
+      return Reflect.set(target, property, value);
+    },
+  });
+  const documentState = {
+    id: 'doc-reactive-read',
+    lifecycleGeneration: 0,
+    revisionState,
+    pageRenderRevisions: revisionState.pageContentRevisions,
+  };
+
+  assert.equal(initializeDocumentRevisionState(documentState), revisionState);
+  assert.equal(documentHasRevisionPersistenceDebt(documentState), false);
+  assert.equal(documentRevisionDebugSnapshot(documentState).saveState, 'idle');
+  assert.equal(writes, 0);
+});
+
 test('one committed mutation advances content and only affected page identity', () => {
   const doc = createDocument();
   doc.pageEditReadiness = { 1: { ready: true }, 2: { ready: true } };
