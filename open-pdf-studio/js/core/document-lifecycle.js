@@ -1,5 +1,6 @@
 import { cancelTextEditingForDocument } from '../text/text-edit-session.js';
 import { cancelApplicationOcrDocumentSync } from '../ocr/application-controller.js';
+import { cancelCoordinatedDocumentSaves } from '../pdf/save-coordinator.js';
 import {
   advanceDocumentLifecycleState,
   replaceDocumentPdfProxyState,
@@ -8,6 +9,9 @@ import {
 function cancelTransientDocumentWork(documentId, reason) {
   cancelTextEditingForDocument(documentId, reason);
   cancelApplicationOcrDocumentSync(documentId, reason);
+  if (reason !== 'validated-save-install') {
+    cancelCoordinatedDocumentSaves(documentId, null, reason);
+  }
 }
 
 /** Advance runtime ownership before replacing or detaching a document proxy. */

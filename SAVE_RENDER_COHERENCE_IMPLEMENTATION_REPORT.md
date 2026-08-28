@@ -19,7 +19,7 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 ## Architecture implemented
 
 - revision state: Implemented in Phase 1; explicit content, serialized, persisted, live-PDF, visible-render, visible-semantic, and page readiness identities now fail closed on impossible transitions
-- save coordinator: Pending
+- save coordinator: Implemented in Phase 2; one revision-owned queue per document coordinates automatic and manual requests through bounded editor completion, persistence-boundary ownership, follow-up scheduling, and lifecycle cancellation
 - proxy synchronization: Pending
 - publication tokens: Pending
 - edit readiness: Pending
@@ -30,24 +30,24 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 
 | Finding | Status | Commit | Files | Tests/evidence |
 |---|---|---|---|---|
-| F-01 | Resolved in Phase 1 | Pending Phase 1 commit | `open-pdf-studio/js/pdf/save-state.js`, `open-pdf-studio/js/core/document-revision-state.runtime.js` | Deterministic regression now passes; same-path no-op rejects synchronization debt |
+| F-01 | Resolved in Phase 1 | `6dc046f9` | `open-pdf-studio/js/pdf/save-state.js`, `open-pdf-studio/js/core/document-revision-state.runtime.js` | Deterministic regression now passes; same-path no-op rejects synchronization debt |
 | F-02 | Pending | Pending | Pending | Pending |
 | F-03 | Pending | Pending | Pending | Pending |
 | F-04 | Pending | Pending | Pending | Pending |
-| F-05 | Foundation complete in Phase 1 | Pending Phase 1 commit | document revision state and persistent mutation routing | Content identity advances once per committed mutation |
+| F-05 | Foundation complete in Phase 1 | `6dc046f9` | document revision state and persistent mutation routing | Content identity advances once per committed mutation |
 | F-06 | Pending | Pending | Pending | Pending |
-| F-07 | Foundation complete in Phase 1 | Pending Phase 1 commit | `open-pdf-studio/js/core/undo-manager.js` | Undo/redo receives monotonic content identity |
+| F-07 | Resolved in Phase 2 | Pending Phase 2 commit | `open-pdf-studio/js/pdf/save-coordinator.js`, `open-pdf-studio/js/core/undo-manager.js` | Newer revisions force an owned follow-up; old serialization cannot replace or mark clean |
 | F-08 | Pending | Pending | Pending | Pending |
 | F-09 | Pending | Pending | Pending | Pending |
 | F-10 | Pending | Pending | Pending | Pending |
-| F-11 | Foundation complete in Phase 1 | Pending Phase 1 commit | page content revision compatibility alias | Page-scoped mutation identity is explicit |
-| F-12 | Foundation complete in Phase 1 | Pending Phase 1 commit | structural revision invalidation | Structural changes invalidate page readiness and geometry identity |
+| F-11 | Foundation complete in Phase 1 | `6dc046f9` | page content revision compatibility alias | Page-scoped mutation identity is explicit |
+| F-12 | Foundation complete in Phase 1 | `6dc046f9` | structural revision invalidation | Structural changes invalidate page readiness and geometry identity |
 | F-13 | Pending | Pending | Pending | Pending |
 | F-14 | Pending | Pending | Pending | Pending |
 | F-15 | Pending | Pending | Pending | Pending |
 | F-16 | Pending | Pending | Pending | Pending |
-| F-17 | Pending | Pending | Pending | Pending |
-| F-18 | Pending | Pending | Pending | Pending |
+| F-17 | Resolved in Phase 2 | Pending Phase 2 commit | save coordinator persistence/publication boundaries | Superseded and closed-document requests cannot publish stale state |
+| F-18 | Resolved in Phase 2 | Pending Phase 2 commit | save coordinator editor promise and deadline | Save waits on the session commit promise and fails visibly at a bounded deadline |
 | F-19 | Pending | Pending | Pending | Pending |
 | F-20 | Reproduced | Pending | CI run 33148195868 | Static verification fails 19 OCR tests because untracked generated PNG fixtures are absent in a clean checkout |
 | F-21 | Pending | Pending | Pending | Pending |
@@ -93,6 +93,24 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 - `pageRenderRevisions` remains a compatibility alias of `pageContentRevisions`; there are not two independent counters.
 - Persistence debt and live-proxy synchronization debt are separate, and disk-clean state cannot suppress required synchronization.
 - Persistent mutation entry points route through the revision helper or the typed undo-command boundary; OCR/scanned inner state retains the existing `modified` compatibility marker while its owning command advances revision identity exactly once.
+
+### Phase 2 save coordinator
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | PASS |
+| `node --test js/pdf/save-coordinator.test.mjs js/pdf/save-state.test.mjs js/text/text-edit-session.test.mjs js/core/document-lifecycle.test.mjs` | PASS: 33/33 |
+| `npm run test:editor-lifecycle:unit` | PASS: 123/123 |
+| `npm run test:unit` | PASS: 225/225 |
+| `npm run build` | PASS |
+| `git diff --check` | PASS |
+
+- Automatic requests debounce and coalesce to the newest content revision; manual Save flushes or joins the same document queue.
+- Each queue transaction carries immutable document ID, lifecycle generation, request ID, requested revision, kind, and Save As path.
+- The final ownership assertion is adjacent to native atomic replacement or non-macOS writing, and publication is rechecked after replacement.
+- A request cancelled during the point-of-no-return operation permits the native replacement to finish but cannot install a proxy or publish clean state.
+- Editor completion is promise-driven through the existing session registry, with a 15-second failure boundary rather than polling.
+- Structured diagnostics are bounded to the latest 200 document/request/revision events.
 
 ## Packaged acceptance
 
