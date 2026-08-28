@@ -9,22 +9,61 @@
 // is still authoritative for cold misses (first navigation before batch
 // completes); this is a perf overlay on top.
 //
-// Cache keys are (filePath, pageIndex) — 0-indexed page numbers matching
-// the Rust side. Values: 'vector' | 'tile'.
+// Cache keys include document/lifecycle/content/page revision and the
+// 0-indexed Rust page index. Values are 'vector' | 'tile'.
 
-const _cache = new Map(); // key = `${filePath}::${pageIndex}`, value = 'vector' | 'tile'
+const _cache = new Map();
+const _owners = new Map();
 
-function _key(filePath, pageIndex) {
-  return `${filePath}::${pageIndex}`;
+function _identity(filePath, pageIndex, publicationToken = null) {
+  const owner = _owners.get(filePath);
+  const pageNum = Number(pageIndex) + 1;
+  return {
+    documentId: publicationToken?.documentId || owner?.documentId || filePath,
+    lifecycleGeneration: Number(publicationToken?.lifecycleGeneration
+      ?? owner?.lifecycleGeneration) || 0,
+    contentRevision: Number(publicationToken?.contentRevision
+      ?? owner?.contentRevisionReader?.()) || 0,
+    pageRevision: Number(publicationToken?.pageRevision
+      ?? owner?.pageRevisionReader?.(pageNum)) || 0,
+  };
 }
 
-export function getCachedPageType(filePath, pageIndex) {
-  return _cache.get(_key(filePath, pageIndex)) ?? null;
+function _key(filePath, pageIndex, publicationToken = null) {
+  const identity = _identity(filePath, pageIndex, publicationToken);
+  return [
+    filePath,
+    `d${identity.documentId}`,
+    `g${identity.lifecycleGeneration}`,
+    `c${identity.contentRevision}`,
+    `p${pageIndex}`,
+    `v${identity.pageRevision}`,
+  ].join('::');
 }
 
-export function cachePageType(filePath, pageIndex, type) {
+export function registerPageTypeCacheOwner(
+  filePath,
+  documentId,
+  lifecycleGeneration = 0,
+  contentRevisionReader = null,
+  pageRevisionReader = null,
+) {
+  if (!filePath || !documentId) return;
+  _owners.set(filePath, {
+    documentId,
+    lifecycleGeneration: Math.max(0, Number(lifecycleGeneration) || 0),
+    contentRevisionReader: typeof contentRevisionReader === 'function' ? contentRevisionReader : null,
+    pageRevisionReader: typeof pageRevisionReader === 'function' ? pageRevisionReader : null,
+  });
+}
+
+export function getCachedPageType(filePath, pageIndex, publicationToken = null) {
+  return _cache.get(_key(filePath, pageIndex, publicationToken)) ?? null;
+}
+
+export function cachePageType(filePath, pageIndex, type, publicationToken = null) {
   if (type === 'vector' || type === 'tile') {
-    _cache.set(_key(filePath, pageIndex), type);
+    _cache.set(_key(filePath, pageIndex, publicationToken), type);
   }
 }
 
@@ -34,10 +73,10 @@ export function cachePageType(filePath, pageIndex, type) {
  * @param {string[]} results — array of 'vector' | 'tile' strings, ordered
  *   by page index (0..N-1).
  */
-export function cacheBatchResults(filePath, results) {
+export function cacheBatchResults(filePath, results, publicationToken = null) {
   for (let i = 0; i < results.length; i++) {
     const t = results[i];
-    if (t === 'vector' || t === 'tile') _cache.set(_key(filePath, i), t);
+    if (t === 'vector' || t === 'tile') _cache.set(_key(filePath, i, publicationToken), t);
   }
 }
 
@@ -47,11 +86,13 @@ export function evictFile(filePath) {
   for (const k of _cache.keys()) {
     if (k.startsWith(prefix)) _cache.delete(k);
   }
+  _owners.delete(filePath);
 }
 
 /** Drop every entry (call on app shutdown or memory pressure). */
 export function evictAll() {
   _cache.clear();
+  _owners.clear();
 }
 
 /** Diagnostic: how many entries are cached right now. */

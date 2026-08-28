@@ -5,9 +5,32 @@ import { configureRenderResourceBudget } from './render-resource-budget.js';
 
 const profilePromises = new WeakMap();
 
-function ownerMatches(documentState, generation, pdfDocument) {
+function contentRevision(documentState) {
+  return Number(documentState?.revisionState?.contentRevision) || 0;
+}
+
+function ownerMatches(documentState, generation, pdfDocument, expectedContentRevision) {
   return documentState?.pdfDoc === pdfDocument
-    && (Number(documentState.lifecycleGeneration) || 0) === generation;
+    && (Number(documentState.lifecycleGeneration) || 0) === generation
+    && contentRevision(documentState) === Number(expectedContentRevision || 0);
+}
+
+function geometryRevisionMatches(documentState) {
+  const identity = documentState?.pageGeometryRevision;
+  return Boolean(identity
+    && identity.documentId === String(documentState.id)
+    && identity.pdfDocument === documentState.pdfDoc
+    && identity.lifecycleGeneration === (Number(documentState.lifecycleGeneration) || 0)
+    && identity.contentRevision === contentRevision(documentState));
+}
+
+function stampGeometryRevision(documentState) {
+  documentState.pageGeometryRevision = Object.freeze({
+    documentId: String(documentState.id),
+    pdfDocument: documentState.pdfDoc,
+    lifecycleGeneration: Number(documentState.lifecycleGeneration) || 0,
+    contentRevision: contentRevision(documentState),
+  });
 }
 
 async function systemMemoryBytes() {
@@ -51,18 +74,23 @@ async function pageDimensions(documentState) {
   };
 }
 
-async function refinePageDimensionsIncrementally(documentState, generation, pdfDocument) {
+async function refinePageDimensionsIncrementally(
+  documentState,
+  generation,
+  pdfDocument,
+  expectedContentRevision,
+) {
   const dimensions = documentState.pageGeometryBaseDimensions?.slice();
   if (!dimensions || dimensions.length !== pdfDocument.numPages) return;
   for (let pageNum = 1; pageNum <= pdfDocument.numPages; pageNum += 1) {
-    if (!ownerMatches(documentState, generation, pdfDocument)) return;
+    if (!ownerMatches(documentState, generation, pdfDocument, expectedContentRevision)) return;
     try {
       const page = await pdfDocument.getPage(pageNum);
       const viewport = page.getViewport({ scale: 1 });
       dimensions[pageNum - 1] = [viewport.width, viewport.height];
     } catch { /* keep the provisional dimensions for an unreadable page */ }
     if (pageNum % 8 === 0 || pageNum === pdfDocument.numPages) {
-      if (!ownerMatches(documentState, generation, pdfDocument)) return;
+      if (!ownerMatches(documentState, generation, pdfDocument, expectedContentRevision)) return;
       documentState.pageGeometryBaseDimensions = dimensions.slice();
       rebuildDocumentPageGeometryIndex(documentState);
       if (typeof window !== 'undefined') {
@@ -87,19 +115,42 @@ export function seedDocumentPerformanceProfile(documentState, fileBytes = 0) {
 
 export async function registerDocumentRenderCacheOwners(documentState) {
   if (!documentState?.filePath || !documentState.id) return;
-  const [bitmaps, vectors, tiles] = await Promise.all([
+  const [bitmaps, vectors, tiles, pageTypes] = await Promise.all([
     import('./page-bitmap-cache.js'),
     import('./vector-renderer.js'),
     import('./tile-cache.js'),
+    import('./page-type-cache.js'),
   ]);
+  const readContentRevision = () => contentRevision(documentState);
+  const readPageRevision = (pageNum) => Number(documentState.pageRenderRevisions?.[pageNum]) || 0;
   bitmaps.registerPageBitmapCacheOwner(
     documentState.filePath,
     documentState.id,
     documentState.lifecycleGeneration,
-    (pageNum) => Number(documentState.pageRenderRevisions?.[pageNum]) || 0,
+    readPageRevision,
+    readContentRevision,
   );
-  vectors.registerVectorCacheOwner(documentState.filePath, documentState.id);
-  tiles.registerTileCacheOwner(documentState.filePath, documentState.id);
+  vectors.registerVectorCacheOwner(
+    documentState.filePath,
+    documentState.id,
+    documentState.lifecycleGeneration,
+    readContentRevision,
+    readPageRevision,
+  );
+  tiles.registerTileCacheOwner(
+    documentState.filePath,
+    documentState.id,
+    documentState.lifecycleGeneration,
+    readContentRevision,
+    readPageRevision,
+  );
+  pageTypes.registerPageTypeCacheOwner(
+    documentState.filePath,
+    documentState.id,
+    documentState.lifecycleGeneration,
+    readContentRevision,
+    readPageRevision,
+  );
 }
 
 export function initializeDocumentPerformance(documentState, { fileBytes = 0 } = {}) {
@@ -108,9 +159,10 @@ export function initializeDocumentPerformance(documentState, { fileBytes = 0 } =
   seedDocumentPerformanceProfile(documentState, fileBytes);
   const generation = Number(documentState.lifecycleGeneration) || 0;
   const pdfDocument = documentState.pdfDoc;
+  const expectedContentRevision = contentRevision(documentState);
   const promise = Promise.all([systemMemoryBytes(), pageDimensions(documentState)])
     .then(async ([physicalMemoryBytes, geometryResult]) => {
-      if (!ownerMatches(documentState, generation, pdfDocument)) return null;
+      if (!ownerMatches(documentState, generation, pdfDocument, expectedContentRevision)) return null;
       const dimensions = geometryResult.dimensions;
       documentState.pageGeometryBaseDimensions = dimensions.map((dimension) => [
         Number(dimension?.widthPt ?? dimension?.[0]) || 612,
@@ -118,6 +170,7 @@ export function initializeDocumentPerformance(documentState, { fileBytes = 0 } =
       ]);
       const entries = pageGeometryEntries(dimensions, documentState.pageRotations);
       documentState.pageGeometryIndex = new PageGeometryIndex(entries);
+      stampGeometryRevision(documentState);
       documentState.pageDims = Object.fromEntries(entries.map((entry) => [entry.pageNum, {
         widthPt: entry.widthPt,
         heightPt: entry.heightPt,
@@ -140,7 +193,7 @@ export function initializeDocumentPerformance(documentState, { fileBytes = 0 } =
           console.warn('[performance] Native render budget could not be configured:', error?.message || error);
         }
       }
-      if (ownerMatches(documentState, generation, pdfDocument)) {
+      if (ownerMatches(documentState, generation, pdfDocument, expectedContentRevision)) {
         window.dispatchEvent(new CustomEvent('opds:performance-profile-ready', {
           detail: {
             documentId: documentState.id,
@@ -149,7 +202,12 @@ export function initializeDocumentPerformance(documentState, { fileBytes = 0 } =
           },
         }));
         if (!geometryResult.complete) {
-          void refinePageDimensionsIncrementally(documentState, generation, pdfDocument);
+          void refinePageDimensionsIncrementally(
+            documentState,
+            generation,
+            pdfDocument,
+            expectedContentRevision,
+          );
         }
         return documentState.performanceProfile;
       }
@@ -163,7 +221,10 @@ export function initializeDocumentPerformance(documentState, { fileBytes = 0 } =
 }
 
 export async function ensureDocumentPageGeometryIndex(documentState) {
-  if (documentState?.pageGeometryIndex) return documentState.pageGeometryIndex;
+  if (documentState?.pageGeometryIndex && geometryRevisionMatches(documentState)) {
+    return documentState.pageGeometryIndex;
+  }
+  clearDocumentPerformance(documentState);
   await initializeDocumentPerformance(documentState, { fileBytes: documentState?.sourceByteLength });
   return documentState?.pageGeometryIndex || null;
 }
@@ -178,6 +239,7 @@ export function rebuildDocumentPageGeometryIndex(documentState) {
       return [stored?.widthPt || 612, stored?.heightPt || 792];
     });
   documentState.pageGeometryIndex = new PageGeometryIndex(pageGeometryEntries(dimensions, documentState.pageRotations));
+  stampGeometryRevision(documentState);
   return documentState.pageGeometryIndex;
 }
 
@@ -187,4 +249,5 @@ export function clearDocumentPerformance(documentState) {
   documentState.performanceProfile = null;
   documentState.pageGeometryIndex = null;
   documentState.pageGeometryBaseDimensions = null;
+  documentState.pageGeometryRevision = null;
 }

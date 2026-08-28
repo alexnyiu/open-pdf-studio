@@ -248,6 +248,12 @@ export interface DocumentState {
   performanceProfile: PdfPerformanceProfile | null;
   pageGeometryIndex: PageGeometryIndex | null;
   pageGeometryBaseDimensions: Array<[number, number]> | null;
+  pageGeometryRevision?: {
+    documentId: string;
+    pdfDocument: any;
+    lifecycleGeneration: number;
+    contentRevision: number;
+  } | null;
   /** Compatibility alias of revisionState.pageContentRevisions. */
   pageRenderRevisions: Record<number, number>;
   currentPage: number;

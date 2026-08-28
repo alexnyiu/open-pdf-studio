@@ -8,8 +8,8 @@
  * bitmap as the page background. The vector layer is then drawn on top so
  * text and lines stay vector-crisp.
  *
- * The cache is keyed by (filePath, pageNum, rotation, zoomBucket). Zoom
- * buckets are powers of 2 (1, 2, 4, 8, 16) of zoom*dpr — buckets bound
+ * The cache is keyed by document/lifecycle/content/page revision, path,
+ * rotation, density, and quality. Density buckets bound
  * memory growth and limit re-renders to actually-different scales.
  */
 
@@ -46,6 +46,7 @@ const _pending = new Map(); // key -> Promise
 const _pendingOwners = new Map();
 const _fileOwners = new Map();
 const _fileOwnerGenerations = new Map();
+const _fileContentRevisionReaders = new Map();
 const _filePageRevisionReaders = new Map();
 const _fileGenerations = new Map();
 let _globalGeneration = 0;
@@ -57,10 +58,14 @@ export function registerPageBitmapCacheOwner(
   documentId,
   lifecycleGeneration = 0,
   pageRevisionReader = null,
+  contentRevisionReader = null,
 ) {
   if (!filePath || !documentId) return;
   _fileOwners.set(filePath, documentId);
   _fileOwnerGenerations.set(filePath, Math.max(0, Number(lifecycleGeneration) || 0));
+  if (typeof contentRevisionReader === 'function') {
+    _fileContentRevisionReaders.set(filePath, contentRevisionReader);
+  }
   if (typeof pageRevisionReader === 'function') {
     _filePageRevisionReaders.set(filePath, pageRevisionReader);
   }
@@ -85,6 +90,10 @@ function _rasterRequest(filePath, pageNum, rotation, targetRasterScale, context 
   const lifecycleGeneration = Number.isFinite(Number(context.lifecycleGeneration))
     ? Number(context.lifecycleGeneration)
     : (_fileOwnerGenerations.get(filePath) || 0);
+  const contentRevisionReader = _fileContentRevisionReaders.get(filePath);
+  const contentRevision = Number.isFinite(Number(context.contentRevision))
+    ? Number(context.contentRevision)
+    : (Number(contentRevisionReader?.()) || 0);
   const revisionReader = _filePageRevisionReaders.get(filePath);
   const pageRevision = Number.isFinite(Number(context.pageRevision))
     ? Number(context.pageRevision)
@@ -95,6 +104,7 @@ function _rasterRequest(filePath, pageNum, rotation, targetRasterScale, context 
   const key = createPageRasterKey({
     documentId,
     lifecycleGeneration,
+    contentRevision,
     pageRevision,
     filePath,
     pageNum,
@@ -627,6 +637,7 @@ export function clearBitmapsForFile(filePath) {
   }
   _fileOwners.delete(filePath);
   _fileOwnerGenerations.delete(filePath);
+  _fileContentRevisionReaders.delete(filePath);
   _filePageRevisionReaders.delete(filePath);
   _recordDecodedBitmapMemory();
 }

@@ -67,6 +67,7 @@ function rasterOwnerContext(quality, targetRasterScale) {
     return {
         documentId: viewport.documentId || documentState?.id || viewport.filePath,
         lifecycleGeneration: Number(viewport.documentLifecycleGeneration) || 0,
+        contentRevision: Number(documentState?.revisionState?.contentRevision) || 0,
         pageRevision: Number(documentState?.pageRenderRevisions?.[viewport.pageNum]) || 0,
         cssScale: viewport.zoom,
         devicePixelRatio: window.devicePixelRatio || 1,

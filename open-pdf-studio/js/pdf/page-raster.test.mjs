@@ -17,6 +17,7 @@ import {
 const key = (overrides = {}) => createPageRasterKey({
   documentId: 'document-a',
   lifecycleGeneration: 3,
+  contentRevision: 5,
   pageRevision: 2,
   filePath: '/fixture.pdf',
   pageNum: 7,
@@ -31,6 +32,7 @@ test('raster identity includes owner, content revision, density, and quality', (
   const original = serializePageRasterKey(key());
   for (const changed of [
     { lifecycleGeneration: 4 },
+    { contentRevision: 6 },
     { pageRevision: 3 },
     { pageNum: 8 },
     { rotation: 180 },

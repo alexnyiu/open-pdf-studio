@@ -32,6 +32,7 @@ function createDocument() {
     pageDims: {},
     pageGeometryIndex: {},
     pageGeometryBaseDimensions: [],
+    pageGeometryRevision: {},
     revisionState,
   };
 }
@@ -108,6 +109,7 @@ test('structural mutation invalidates every page readiness and geometry identity
   assert.deepEqual(doc.revisionState.pageSemanticReadyRevisions, {});
   assert.equal(doc.pageGeometryIndex, null);
   assert.equal(doc.pageGeometryBaseDimensions, null);
+  assert.equal(doc.pageGeometryRevision, null);
 });
 
 test('edit readiness requires one current live, raster, and semantic revision', () => {

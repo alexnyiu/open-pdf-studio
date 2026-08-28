@@ -53,6 +53,7 @@ export function requestedRasterScale(cssScale, devicePixelRatio = 1) {
 export function createPageRasterKey({
   documentId,
   lifecycleGeneration = 0,
+  contentRevision = 0,
   pageRevision = 0,
   filePath = '',
   pageNum,
@@ -71,6 +72,7 @@ export function createPageRasterKey({
   return Object.freeze({
     documentId: String(documentId),
     lifecycleGeneration: Math.max(0, Number(lifecycleGeneration) || 0),
+    contentRevision: Math.max(0, Number(contentRevision) || 0),
     pageRevision: Math.max(0, Number(pageRevision) || 0),
     filePath: String(filePath || ''),
     pageNum: page,
@@ -85,6 +87,7 @@ export function serializePageRasterKey(key) {
   return [
     key.documentId,
     key.lifecycleGeneration,
+    key.contentRevision,
     key.pageRevision,
     key.filePath,
     key.pageNum,
@@ -98,6 +101,7 @@ export function serializePageRasterKey(key) {
 function sameContent(left, right) {
   return left?.documentId === right?.documentId
     && left?.lifecycleGeneration === right?.lifecycleGeneration
+    && left?.contentRevision === right?.contentRevision
     && left?.pageRevision === right?.pageRevision
     && left?.filePath === right?.filePath
     && left?.pageNum === right?.pageNum

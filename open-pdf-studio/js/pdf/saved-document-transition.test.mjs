@@ -5,6 +5,7 @@ import {
   SavedDocumentSynchronizationError,
   captureSavedDocumentViewState,
   hasRecoverableSavedDocumentSynchronization,
+  invalidateSavedDocumentDerivedState,
   restoreSavedDocumentViewState,
   retrySavedDocumentSynchronization,
   synchronizeSavedDocument,
@@ -139,6 +140,83 @@ test('automatic save invalidates old semantics and rebuilds changed metadata bef
     'restart-whole-preload',
     'page-edit-ready',
   ]);
+  assert.deepEqual(document.revisionState.pendingChangedPages, []);
+  assert.equal(document.revisionState.pendingStructuralChange, false);
+});
+
+test('central saved-document invalidation invokes every visual, semantic, and engine invalidator', async () => {
+  const document = persistedDocument();
+  document.revisionState.livePdfRevision = 1;
+  const calls = [];
+  const record = (name) => (...args) => { calls.push([name, ...args]); };
+  const dependencies = {
+    clearReadiness: record('readiness'),
+    cancelWholePreload: record('whole-preload'),
+    cancelThumbnails: record('thumbnail-work'),
+    invalidateSemantic: async (...args) => record('semantic')(...args),
+    clearBitmap: record('bitmap'),
+    clearTiles: record('tiles'),
+    clearVectors: record('vectors'),
+    clearPageTypes: record('page-types'),
+    invalidateNative: async (...args) => record('native')(...args),
+    clearLowResolution: record('low-resolution'),
+    clearThumbnails: record('thumbnails'),
+    clearLayers: record('layers'),
+    clearPerformance: record('performance'),
+    initializePerformance: async (...args) => record('initialize-performance')(...args),
+    rebuildGeometry: record('rebuild-geometry'),
+    registerCacheOwners: async (...args) => record('cache-owners')(...args),
+  };
+
+  await invalidateSavedDocumentDerivedState({
+    documentState: document,
+    requestedRevision: 1,
+    changedPages: null,
+    filePath: '/new.pdf',
+    previousFilePath: '/old.pdf',
+    dependencies,
+  });
+
+  const names = calls.map(([name]) => name);
+  for (const expected of [
+    'readiness', 'whole-preload', 'thumbnail-work', 'semantic',
+    'bitmap', 'tiles', 'vectors', 'page-types', 'native',
+    'low-resolution', 'thumbnails', 'layers', 'performance', 'initialize-performance',
+  ]) assert.ok(names.includes(expected), `${expected} was not invoked`);
+  assert.equal(names.filter((name) => name === 'bitmap').length, 2);
+  assert.equal(names.includes('rebuild-geometry'), false);
+  assert.equal(names.includes('cache-owners'), false);
+});
+
+test('non-structural saved-document invalidation restamps geometry and cache owners', async () => {
+  const document = persistedDocument();
+  document.revisionState.livePdfRevision = 1;
+  const calls = [];
+  const noop = () => {};
+  await invalidateSavedDocumentDerivedState({
+    documentState: document,
+    requestedRevision: 1,
+    changedPages: [2],
+    dependencies: {
+      clearReadiness: noop,
+      cancelWholePreload: noop,
+      cancelThumbnails: noop,
+      invalidateSemantic: async () => {},
+      clearBitmap: noop,
+      clearTiles: noop,
+      clearVectors: noop,
+      clearPageTypes: noop,
+      invalidateNative: async () => {},
+      clearLowResolution: noop,
+      clearThumbnails: noop,
+      clearLayers: noop,
+      clearPerformance: () => calls.push('clear-performance'),
+      initializePerformance: async () => calls.push('initialize-performance'),
+      rebuildGeometry: () => calls.push('rebuild-geometry'),
+      registerCacheOwners: async () => calls.push('cache-owners'),
+    },
+  });
+  assert.deepEqual(calls, ['rebuild-geometry', 'cache-owners']);
 });
 
 test('a disk-clean but unsynchronized document performs Phase B without persistence', async () => {

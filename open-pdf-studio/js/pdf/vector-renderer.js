@@ -37,23 +37,55 @@ import {
   renderPublicationTokenIsCurrent,
 } from './render-publication-token.js';
 
-// Cache: Map<"filePath:pageNum:rotation", { bytes: Uint8Array, w, h, x0, y0 }>
-// Rotation is part of the key so a page rotated 90° coexists with the same
-// page un-rotated, without invalidating either when the user toggles back.
+// Command and decoded-image keys include document/lifecycle/content/page
+// revision plus rotation so old saved bytes cannot satisfy a newer proxy.
 const _cache = new Map();
 const _fileOwners = new Map();
 
-function _key(filePath, pageNum, rotation) {
-  return filePath + ':' + pageNum + ':' + ((rotation || 0) % 360);
+function revisionIdentity(filePath, pageNum, publicationToken = null) {
+  const owner = _fileOwners.get(filePath);
+  return {
+    documentId: publicationToken?.documentId || owner?.documentId || filePath,
+    lifecycleGeneration: Number(publicationToken?.lifecycleGeneration
+      ?? owner?.lifecycleGeneration) || 0,
+    contentRevision: Number(publicationToken?.contentRevision
+      ?? owner?.contentRevisionReader?.()) || 0,
+    pageRevision: Number(publicationToken?.pageRevision
+      ?? owner?.pageRevisionReader?.(pageNum)) || 0,
+  };
+}
+
+function _key(filePath, pageNum, rotation, publicationToken = null) {
+  const identity = revisionIdentity(filePath, pageNum, publicationToken);
+  return [
+    filePath,
+    `d${identity.documentId}`,
+    `g${identity.lifecycleGeneration}`,
+    `c${identity.contentRevision}`,
+    `p${pageNum}`,
+    `v${identity.pageRevision}`,
+    `r${((rotation || 0) % 360)}`,
+  ].join('|');
 }
 
 const _commandResourceKey = (key) => `vector-command:${key}`;
 const _imageKey = (commandKey, position) => `${commandKey}@${position}`;
 const _imageResourceKey = (key) => `vector-image:${key}`;
 
-export function registerVectorCacheOwner(filePath, documentId) {
+export function registerVectorCacheOwner(
+  filePath,
+  documentId,
+  lifecycleGeneration = 0,
+  contentRevisionReader = null,
+  pageRevisionReader = null,
+) {
   if (!filePath || !documentId) return;
-  _fileOwners.set(filePath, documentId);
+  _fileOwners.set(filePath, {
+    documentId,
+    lifecycleGeneration: Math.max(0, Number(lifecycleGeneration) || 0),
+    contentRevisionReader: typeof contentRevisionReader === 'function' ? contentRevisionReader : null,
+    pageRevisionReader: typeof pageRevisionReader === 'function' ? pageRevisionReader : null,
+  });
   for (const [key, entry] of _cache) {
     if (entry.filePath === filePath) registerCommandResource(key, entry);
   }
@@ -64,7 +96,7 @@ export function registerVectorCacheOwner(filePath, documentId) {
 
 function resourceProtected(filePath, pageNum) {
   if (typeof window === 'undefined') return false;
-  const ownerIsActive = isActiveRenderDocument(_fileOwners.get(filePath) || filePath);
+  const ownerIsActive = isActiveRenderDocument(_fileOwners.get(filePath)?.documentId || filePath);
   return (window.__pdfViewport?.filePath === filePath && window.__pdfViewport?.pageNum === pageNum)
     || (ownerIsActive && typeof document !== 'undefined'
       && Boolean(document.querySelector?.(`#continuous-container .page-wrapper[data-page="${pageNum}"]`)));
@@ -86,7 +118,7 @@ function registerCommandResource(key, entry) {
   registerRenderResource({
     key: _commandResourceKey(key),
     category: 'javascript',
-    documentId: _fileOwners.get(entry.filePath) || entry.filePath,
+    documentId: _fileOwners.get(entry.filePath)?.documentId || entry.filePath,
     bytes: entry.bytes.byteLength,
     protected: () => resourceProtected(entry.filePath, entry.pageNum),
     release: () => releaseVectorEntry(key),
@@ -97,7 +129,7 @@ function registerImageResource(key, entry) {
   registerRenderResource({
     key: _imageResourceKey(key),
     category: 'javascript',
-    documentId: _fileOwners.get(entry.filePath) || entry.filePath,
+    documentId: _fileOwners.get(entry.filePath)?.documentId || entry.filePath,
     bytes: entry.width * entry.height * 4,
     protected: () => resourceProtected(entry.filePath, entry.pageNum),
     release: () => {
@@ -120,9 +152,8 @@ export function clearVectorCache() {
 
 export function clearVectorCacheForFile(filePath) {
   if (!filePath) return;
-  const prefix = `${filePath}:`;
-  for (const key of [..._cache.keys()]) {
-    if (key.startsWith(prefix)) releaseVectorEntry(key);
+  for (const [key, entry] of [..._cache.entries()]) {
+    if (entry.filePath === filePath) releaseVectorEntry(key);
   }
   _fileOwners.delete(filePath);
 }
@@ -130,9 +161,8 @@ export function clearVectorCacheForFile(filePath) {
 /// Drop ALL cached entries for a specific (filePath, pageNum), regardless
 /// of rotation. Use this when the page content changes (e.g. after save).
 export function invalidatePageCache(filePath, pageNum) {
-  const prefix = filePath + ':' + pageNum + ':';
-  for (const k of [..._cache.keys()]) {
-    if (k.startsWith(prefix)) releaseVectorEntry(k);
+  for (const [key, entry] of [..._cache.entries()]) {
+    if (entry.filePath === filePath && entry.pageNum === Number(pageNum)) releaseVectorEntry(key);
   }
 }
 
@@ -150,9 +180,18 @@ export function cacheCommands(filePath, pageNum, rawBytes, rotation, publication
   const y0 = dv.getFloat32(4, true);
   const w = dv.getFloat32(8, true);
   const h = dv.getFloat32(12, true);
-  const key = _key(filePath, pageNum, rotation);
+  const key = _key(filePath, pageNum, rotation, publication?.token);
   if (_cache.has(key)) releaseVectorEntry(key);
-  const entry = { bytes, x0, y0, w, h, filePath, pageNum };
+  const entry = {
+    bytes,
+    x0,
+    y0,
+    w,
+    h,
+    filePath,
+    pageNum: Number(pageNum),
+    ...revisionIdentity(filePath, pageNum, publication?.token),
+  };
   _cache.set(key, entry);
   registerCommandResource(key, entry);
   return true;
@@ -192,7 +231,7 @@ let _imagePreparing = false;
 /// Pre-decode all images in the command buffer before rendering.
 /// Returns a promise that resolves when all images are ready.
 export async function prepareImages(filePath, pageNum, rotation, publication = null) {
-  const commandKey = _key(filePath, pageNum, rotation);
+  const commandKey = _key(filePath, pageNum, rotation, publication?.token);
   const entry = _cache.get(commandKey);
   if (!entry) return;
   touchRenderResource(_commandResourceKey(commandKey));

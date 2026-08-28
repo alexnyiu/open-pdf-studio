@@ -169,6 +169,18 @@ test('shared registry reuses a denser final surface across view scale requests',
   clearAllBitmaps();
 });
 
+test('a denser raster from an old global revision cannot satisfy a new save revision', () => {
+  let contentRevision = 4;
+  registerPageBitmapCacheOwner('/same-raster.pdf', 'doc-raster', 2, () => 1, () => contentRevision);
+  const old = { close() {} };
+  setCachedBitmapEntry('/same-raster.pdf', 3, 0, 4, old, 400, 400, 4,
+    context({ contentRevision: 4, targetRasterScale: 4, actualRasterScale: 4 }));
+  contentRevision = 5;
+  assert.equal(getCachedBitmap('/same-raster.pdf', 3, 0, 2,
+    context({ contentRevision: 5 })), null);
+  clearAllBitmaps();
+});
+
 test('preview surface cannot satisfy a settled final request', () => {
   registerPageBitmapCacheOwner('/preview.pdf', 'doc-raster', 2, () => 1);
   setCachedBitmapEntry('/preview.pdf', 1, 0, 4, { close() {} }, 400, 400, 4,

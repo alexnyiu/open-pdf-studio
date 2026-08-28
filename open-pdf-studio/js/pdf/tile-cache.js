@@ -1,5 +1,6 @@
 // LRU cache for region-tile ImageBitmaps used at high zoom.
-// Keys: `${filePath}|p${pageNum}|z${zoomBucket}|r${rotation}|reg${regionBucket}`
+// Keys include document/lifecycle/content/page revision plus scale, rotation,
+// and region, so a tile from an earlier save cannot satisfy the same path.
 // regionBucket = "x,y" in PDF points snapped to 25%-viewport buffer grid.
 // Entries participate in the shared byte-aware render budget. Visible tiles
 // are protected; old scale buckets and inactive-document tiles are evicted
@@ -33,12 +34,48 @@ function recordTileMemory() {
   );
 }
 
-export function registerTileCacheOwner(filePath, documentId) {
-  if (filePath && documentId) FILE_OWNERS.set(filePath, documentId);
+export function registerTileCacheOwner(
+  filePath,
+  documentId,
+  lifecycleGeneration = 0,
+  contentRevisionReader = null,
+  pageRevisionReader = null,
+) {
+  if (!filePath || !documentId) return;
+  FILE_OWNERS.set(filePath, {
+    documentId,
+    lifecycleGeneration: Math.max(0, Number(lifecycleGeneration) || 0),
+    contentRevisionReader: typeof contentRevisionReader === 'function' ? contentRevisionReader : null,
+    pageRevisionReader: typeof pageRevisionReader === 'function' ? pageRevisionReader : null,
+  });
 }
 
-function makeKey(filePath, pageNum, zoomBucket, rotation, regionBucket) {
-  return `${filePath}|p${pageNum}|z${Math.round(zoomBucket * 10000)}|r${rotation || 0}|reg${regionBucket}`;
+function revisionIdentity(filePath, pageNum, publicationToken = null) {
+  const owner = FILE_OWNERS.get(filePath);
+  return {
+    documentId: publicationToken?.documentId || owner?.documentId || filePath,
+    lifecycleGeneration: Number(publicationToken?.lifecycleGeneration
+      ?? owner?.lifecycleGeneration) || 0,
+    contentRevision: Number(publicationToken?.contentRevision
+      ?? owner?.contentRevisionReader?.()) || 0,
+    pageRevision: Number(publicationToken?.pageRevision
+      ?? owner?.pageRevisionReader?.(pageNum)) || 0,
+  };
+}
+
+function makeKey(filePath, pageNum, zoomBucket, rotation, regionBucket, publicationToken = null) {
+  const identity = revisionIdentity(filePath, pageNum, publicationToken);
+  return [
+    filePath,
+    `d${identity.documentId}`,
+    `g${identity.lifecycleGeneration}`,
+    `c${identity.contentRevision}`,
+    `p${pageNum}`,
+    `v${identity.pageRevision}`,
+    `z${Math.round(zoomBucket * 10000)}`,
+    `r${rotation || 0}`,
+    `reg${regionBucket}`,
+  ].join('|');
 }
 
 const resourceKey = (key) => `page-tile:${key}`;
@@ -51,7 +88,7 @@ function releaseEntry(key, entry, { unregister = true } = {}) {
 }
 
 function registerEntry(key, entry, filePath, pageNum) {
-  const documentId = FILE_OWNERS.get(filePath) || filePath;
+  const documentId = FILE_OWNERS.get(filePath)?.documentId || filePath;
   registerRenderResource({
     key: resourceKey(key),
     category: 'javascript',
@@ -85,12 +122,17 @@ export function tileCacheGet(filePath, pageNum, zoomBucket, rotation, regionBuck
 }
 
 export function tileCacheFindCovering(filePath, pageNum, rotation, request) {
-  const pagePrefix = `${filePath}|p${pageNum}|`;
-  const rotationPart = `|r${rotation || 0}|`;
+  const expectedIdentity = revisionIdentity(filePath, pageNum);
   const candidates = [];
 
   for (const [key, entry] of CACHE) {
-    if (key.startsWith(pagePrefix) && key.includes(rotationPart)) {
+    if (entry.filePath === filePath
+        && entry.pageNum === Number(pageNum)
+        && entry.rotation === (Number(rotation) || 0)
+        && entry.documentId === expectedIdentity.documentId
+        && entry.lifecycleGeneration === expectedIdentity.lifecycleGeneration
+        && entry.contentRevision === expectedIdentity.contentRevision
+        && entry.pageRevision === expectedIdentity.pageRevision) {
       candidates.push({ key, entry, regionMeta: entry.regionMeta });
     }
   }
@@ -115,7 +157,8 @@ export async function tileCacheSet(
   regionMeta,
   publication = null,
 ) {
-  const key = makeKey(filePath, pageNum, zoomBucket, rotation, regionBucket);
+  const identity = revisionIdentity(filePath, pageNum, publication?.token);
+  const key = makeKey(filePath, pageNum, zoomBucket, rotation, regionBucket, publication?.token);
   try {
     const bitmap = await createImageBitmap(imageData);
     if (publication?.token
@@ -126,7 +169,16 @@ export async function tileCacheSet(
     }
     const replaced = CACHE.get(key);
     if (replaced) releaseEntry(key, replaced);
-    const entry = { bitmap, w: imageData.width, h: imageData.height, regionMeta };
+    const entry = {
+      bitmap,
+      w: imageData.width,
+      h: imageData.height,
+      regionMeta,
+      filePath,
+      pageNum: Number(pageNum),
+      rotation: Number(rotation) || 0,
+      ...identity,
+    };
     CACHE.set(key, entry);
     registerEntry(key, entry, filePath, pageNum);
     recordTileMemory();
@@ -146,12 +198,12 @@ export async function tileCacheSet(
 }
 
 export function tileCacheClearForFile(filePath) {
-  for (const k of Array.from(CACHE.keys())) {
-    if (k.startsWith(filePath + '|')) {
-      const e = CACHE.get(k);
+  for (const [k, e] of Array.from(CACHE.entries())) {
+    if (e.filePath === filePath) {
       releaseEntry(k, e);
     }
   }
+  FILE_OWNERS.delete(filePath);
 }
 
 export function tileCacheClearAll() {

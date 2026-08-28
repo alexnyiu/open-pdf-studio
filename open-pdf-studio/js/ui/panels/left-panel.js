@@ -39,6 +39,7 @@ import {
   renderPublicationTokenIsCurrent,
   trackPdfJsRenderTask,
 } from '../../pdf/render-publication-token.js';
+import { updateThumbnailDocumentOwner } from './thumbnail-document-owner.js';
 
 // Thumbnail scale (relative to actual page size). The thumbnail panel
 // displays at ~152 px wide; rendering close to that 1:1 saves PDFium
@@ -52,7 +53,17 @@ const thumbnailCache = new Map();
 const thumbnailPromises = new Map();
 const thumbnailRenderTasks = new Map();
 const preloadOnlyPages = new Map();
-const thumbnailResourceKey = (docId, pageNum) => `thumbnail:${docId}:${pageNum}`;
+const thumbnailResourceKey = (docId, pageNum, token = null) => [
+  'thumbnail',
+  docId,
+  `g${Number(token?.lifecycleGeneration) || 0}`,
+  `c${Number(token?.contentRevision) || 0}`,
+  `p${pageNum}`,
+  `v${Number(token?.pageRevision) || 0}`,
+].join(':');
+const thumbnailEntryResourceKey = (docId, pageNum, entry = null) => (
+  entry?.resourceKey || thumbnailResourceKey(docId, pageNum, entry?.publicationToken)
+);
 
 function recordThumbnailMemory() {
   recordPerformancePeak(
@@ -63,8 +74,9 @@ function recordThumbnailMemory() {
 }
 
 function registerThumbnailResource(doc, pageNum, entry, cache) {
+  entry.resourceKey = thumbnailResourceKey(doc.id, pageNum, entry.publicationToken);
   registerRenderResource({
-    key: thumbnailResourceKey(doc.id, pageNum),
+    key: entry.resourceKey,
     category: 'metadata',
     documentId: doc.id,
     bytes: entry.bytes,
@@ -324,19 +336,12 @@ export async function generateThumbnails() {
   }
 
   // Initialize or update document state
-  if (!documentState.has(docId)) {
-    documentState.set(docId, {
-      pdfDoc,
-      // Keep a reference to the owning document so background thumbnail
-      // renders resolve paths/annotations against THIS document, not whatever
-      // happens to be active (see renderThumbnailToDataURL).
-      doc: activeDoc,
-      numPages,
-      nextPage: 1,
-      startPage: 1,
-      wrapped: false
-    });
-  }
+  const priorDocumentState = documentState.get(docId);
+  documentState.set(docId, updateThumbnailDocumentOwner(
+    priorDocumentState,
+    activeDoc,
+    pdfDoc,
+  ));
 
   // Initialize cache for this document if needed
   if (!thumbnailCache.has(docId)) {
@@ -940,13 +945,13 @@ export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false }
   const cached = cache.get(pageNum);
   if (cached?.publicationToken
       && renderPublicationTokenIsCurrent(cached.publicationToken, doc)) {
-    touchRenderResource(thumbnailResourceKey(doc.id, pageNum));
+    touchRenderResource(thumbnailEntryResourceKey(doc.id, pageNum, cached));
     return cached;
   }
   if (cached) {
     revokeThumbnailEntry(cached);
     cache.delete(pageNum);
-    unregisterRenderResource(thumbnailResourceKey(doc.id, pageNum));
+    unregisterRenderResource(thumbnailEntryResourceKey(doc.id, pageNum, cached));
   }
   const key = [
     doc.id,
@@ -983,7 +988,7 @@ export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false }
     const previous = cache.get(pageNum);
     if (previous) {
       revokeThumbnailEntry(previous);
-      unregisterRenderResource(thumbnailResourceKey(doc.id, pageNum));
+      unregisterRenderResource(thumbnailEntryResourceKey(doc.id, pageNum, previous));
     }
     cache.set(pageNum, entry);
     recordThumbnailMemory();
@@ -1009,16 +1014,17 @@ export function getCachedThumbnailEntry(doc, pageNum) {
     releaseThumbnailPage(doc, pageNum);
     return null;
   }
-  touchRenderResource(thumbnailResourceKey(doc.id, pageNum));
+  touchRenderResource(thumbnailEntryResourceKey(doc.id, pageNum, entry));
   return entry;
 }
 
 export function releaseThumbnailPage(doc, pageNum) {
   const cache = doc && thumbnailCache.get(doc.id);
   if (!cache) return;
-  revokeThumbnailEntry(cache.get(pageNum));
+  const entry = cache.get(pageNum);
+  revokeThumbnailEntry(entry);
   cache.delete(pageNum);
-  unregisterRenderResource(thumbnailResourceKey(doc.id, pageNum));
+  unregisterRenderResource(thumbnailEntryResourceKey(doc.id, pageNum, entry));
   preloadOnlyPages.get(doc.id)?.delete(pageNum);
   if (getActiveDocument()?.id === doc.id) removeThumbnailImage(pageNum);
 }
@@ -1058,9 +1064,10 @@ export function releasePreloadOnlyThumbnails(doc, keepPages = []) {
   const keep = new Set(keepPages);
   for (const pageNum of [...preloadPages]) {
     if (keep.has(pageNum)) continue;
-    revokeThumbnailEntry(cache.get(pageNum));
+    const entry = cache.get(pageNum);
+    revokeThumbnailEntry(entry);
     cache.delete(pageNum);
-    unregisterRenderResource(thumbnailResourceKey(doc.id, pageNum));
+    unregisterRenderResource(thumbnailEntryResourceKey(doc.id, pageNum, entry));
     preloadPages.delete(pageNum);
     if (getActiveDocument()?.id === doc.id) removeThumbnailImage(pageNum);
   }
@@ -1104,9 +1111,10 @@ export function invalidateThumbnail(pageNum) {
   if (!activeDoc) return;
   const docCache = thumbnailCache.get(activeDoc.id);
   if (docCache) {
-    revokeThumbnailEntry(docCache.get(pageNum));
+    const entry = docCache.get(pageNum);
+    revokeThumbnailEntry(entry);
     docCache.delete(pageNum);
-    unregisterRenderResource(thumbnailResourceKey(activeDoc.id, pageNum));
+    unregisterRenderResource(thumbnailEntryResourceKey(activeDoc.id, pageNum, entry));
   }
   // Bump generation: any in-flight render for this page will discard its
   // result on completion (see pageGenMatches in process*Thumbnail).
@@ -1129,9 +1137,10 @@ export function invalidateThumbnails(pageNums) {
   for (const pageNum of pageNums) {
     if (!Number.isInteger(pageNum) || pageNum < 1) continue;
     if (docCache) {
-      revokeThumbnailEntry(docCache.get(pageNum));
+      const entry = docCache.get(pageNum);
+      revokeThumbnailEntry(entry);
       docCache.delete(pageNum);
-      unregisterRenderResource(thumbnailResourceKey(activeDoc.id, pageNum));
+      unregisterRenderResource(thumbnailEntryResourceKey(activeDoc.id, pageNum, entry));
     }
     bumpPageGen(activeDoc.id, pageNum);
     removeThumbnailImage(pageNum);
@@ -1146,7 +1155,7 @@ export function clearThumbnailCache(docId) {
   if (docId) {
     for (const [pageNum, entry] of thumbnailCache.get(docId)?.entries() || []) {
       revokeThumbnailEntry(entry);
-      unregisterRenderResource(thumbnailResourceKey(docId, pageNum));
+      unregisterRenderResource(thumbnailEntryResourceKey(docId, pageNum, entry));
     }
     thumbnailCache.delete(docId);
     documentState.delete(docId);

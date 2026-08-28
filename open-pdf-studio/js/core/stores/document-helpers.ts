@@ -22,6 +22,7 @@ export function createDocument(filePath: string | null = null): DocumentState {
     performanceProfile: null,
     pageGeometryIndex: null,
     pageGeometryBaseDimensions: null,
+    pageGeometryRevision: null,
     pageRenderRevisions: revisionState.pageContentRevisions,
     currentPage: 1,
     scale: 1.5,

@@ -9,6 +9,7 @@ import {
 import {
   registerTileCacheOwner,
   tileCacheClearAll,
+  tileCacheGet,
   tileCacheSet,
   tileCacheSnapshotForTests,
 } from './tile-cache.js';
@@ -79,5 +80,34 @@ test('a tile decoded for an old page revision is closed instead of inserted', as
   resolveDecode();
   assert.equal(await insertion, null);
   assert.equal(tileCacheSnapshotForTests().entries, 0);
+  assert.equal(closeCount, 1);
+});
+
+test('a prewarmed tile from the same path cannot serve a newer saved revision', async () => {
+  let contentRevision = 1;
+  let pageRevision = 1;
+  let closeCount = 0;
+  globalThis.createImageBitmap = async (imageData) => ({
+    width: imageData.width,
+    height: imageData.height,
+    close: () => { closeCount += 1; },
+  });
+  configureRenderResourceBudget({
+    globalBytes: 1_000_000,
+    javascriptBytes: 1_000_000,
+    nativePixmapBytes: 1_000_000,
+    metadataBytes: 1_000_000,
+    activeDocumentShare: 0.8,
+  }, 'tile-owner');
+  registerTileCacheOwner('/same-path.pdf', 'tile-owner', 3,
+    () => contentRevision, () => pageRevision);
+  const region = { renderScale: 2 };
+  await tileCacheSet('/same-path.pdf', 1, 2, 0, '0,0', { width: 10, height: 10 }, region);
+  assert.ok(tileCacheGet('/same-path.pdf', 1, 2, 0, '0,0'));
+  contentRevision = 2;
+  pageRevision = 2;
+  assert.equal(tileCacheGet('/same-path.pdf', 1, 2, 0, '0,0'), null);
+  assert.equal(closeCount, 0);
+  tileCacheClearAll();
   assert.equal(closeCount, 1);
 });

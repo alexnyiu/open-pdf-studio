@@ -80,6 +80,7 @@ import {
   tileCacheGet,
   tileCacheSet,
 } from './tile-cache.js';
+import { createLowResolutionPreviewKey } from './low-resolution-preview-key.js';
 
 function scheduleBackgroundMetadata(centerPage, direction) {
   const doc = getActiveDocument();
@@ -99,13 +100,34 @@ export function getCanvasDPR() { return window.devicePixelRatio || 1; }
 // Compatibility facade over the one shared byte-aware page bitmap cache.
 // Continuous and single-page views therefore cannot retain duplicate decoded
 // surfaces for the same (file, page, scale, rotation).
+function _bitmapCompatibilityContext(filePath, pageNum, scale) {
+  const documentState = state.documents?.find?.((doc) => doc.filePath === filePath);
+  if (!documentState?.id) return null;
+  return {
+    documentId: documentState.id,
+    lifecycleGeneration: Number(documentState.lifecycleGeneration) || 0,
+    contentRevision: Number(documentState.revisionState?.contentRevision) || 0,
+    pageRevision: Number(documentState.pageRenderRevisions?.[pageNum]) || 0,
+    cssScale: scale,
+    devicePixelRatio: 1,
+    quality: RasterQuality.FINAL,
+    targetRasterScale: scale,
+    actualRasterScale: scale,
+  };
+}
+
 export function _bitmapJSCacheGet(key) {
   const [filePath, pageText, scaleText, rotationText] = key.split('|');
+  const pageNum = Number(pageText) || 0;
+  const scale = (Number(scaleText) || 0) / 10_000;
+  const context = _bitmapCompatibilityContext(filePath, pageNum, scale);
+  if (!context) return null;
   return getCachedBitmap(
     filePath,
-    Number(pageText) || 0,
+    pageNum,
     Number(rotationText) || 0,
-    (Number(scaleText) || 0) / 10_000,
+    scale,
+    context,
   );
 }
 export async function _bitmapJSCacheSet(key, imageData, isCurrent = () => true) {
@@ -118,6 +140,11 @@ export async function _bitmapJSCacheSet(key, imageData, isCurrent = () => true) 
     const [filePath, pageText, scaleText, rotationText] = key.split('|');
     const pageNum = Number(pageText) || 0;
     const scale = (Number(scaleText) || 0) / 10_000;
+    const context = _bitmapCompatibilityContext(filePath, pageNum, scale);
+    if (!context) {
+      try { bitmap.close?.(); } catch {}
+      return false;
+    }
     setCachedBitmapEntry(
       filePath,
       pageNum,
@@ -127,6 +154,7 @@ export async function _bitmapJSCacheSet(key, imageData, isCurrent = () => true) 
       imageData.width,
       imageData.height,
       scale,
+      context,
     );
     return true;
   } catch (e) {
@@ -374,7 +402,7 @@ async function _renderPageImpl(pageNum) {
         } else {
           pageType = await invoke('analyze_page_type', { path: doc.filePath, pageIndex: pageNum - 1 });
           if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
-          ptcMod.cachePageType(doc.filePath, pageNum - 1, pageType);
+          ptcMod.cachePageType(doc.filePath, pageNum - 1, pageType, publicationToken);
           console.log(`[PERF] renderPage(${pageNum}) analyze_page_type=${pageType}: ${(performance.now() - _rp0).toFixed(0)}ms`);
         }
         // BELEID (2026-07-06): PDFium is de basis-engine voor álle weergaven.
@@ -1111,7 +1139,7 @@ const _lowResResourceKey = (key) => `low-res:${key}`;
 // (old-orientation) preview canvas — that stale preview flashed in the OLD
 // orientation on the continuous-view rebuild after rotating (issue #262).
 function _lowResKey(pageNum, doc = getActiveDocument()) {
-  return `${doc?.filePath || 'blank'}|${pageNum}|${Number(doc?.pageRotations?.[pageNum]) || 0}`;
+  return createLowResolutionPreviewKey(doc, pageNum);
 }
 
 function _storeLowResPreview(cacheKey, entry, doc, pageNum) {
@@ -1196,7 +1224,13 @@ async function renderLowResPreview(doc, pdfDoc, pageNum, targetWidth, targetHeig
     canvas.height = 0;
     return null;
   }
-  _storeLowResPreview(cacheKey, { canvas, scale: LOW_RES_SCALE }, doc, pageNum);
+  _storeLowResPreview(cacheKey, {
+    canvas,
+    scale: LOW_RES_SCALE,
+    documentId: doc.id,
+    pageNum,
+    publicationToken,
+  }, doc, pageNum);
   return canvas;
 }
 
@@ -1235,6 +1269,21 @@ export function clearLowResCache() {
     unregisterRenderResource(_lowResResourceKey(key));
   }
   _lowResCache.clear();
+}
+
+export function clearLowResCacheForDocument(doc, pageNums = null) {
+  if (!doc?.id) return;
+  const pages = pageNums === null ? null : new Set((pageNums || []).map(Number));
+  _lowResPreloadGeneration += 1;
+  for (const [key, entry] of [..._lowResCache.entries()]) {
+    if (entry?.documentId !== doc.id || (pages && !pages.has(Number(entry.pageNum)))) continue;
+    if (entry.canvas) {
+      entry.canvas.width = 0;
+      entry.canvas.height = 0;
+    }
+    _lowResCache.delete(key);
+    unregisterRenderResource(_lowResResourceKey(key));
+  }
 }
 
 function _continuousOwnerKey(doc) {
@@ -1286,6 +1335,7 @@ function _continuousRasterContext(doc, pageNum, cssScale, devicePixelRatio, qual
   return {
     documentId: doc.id,
     lifecycleGeneration: Number(doc.lifecycleGeneration) || 0,
+    contentRevision: Number(doc.revisionState?.contentRevision) || 0,
     pageRevision: Number(doc.pageRenderRevisions?.[pageNum]) || 0,
     cssScale,
     devicePixelRatio,
@@ -1601,6 +1651,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
       const rasterKey = serializePageRasterKey(createPageRasterKey({
         documentId: doc.id,
         lifecycleGeneration: Number(doc.lifecycleGeneration) || 0,
+        contentRevision: Number(doc.revisionState?.contentRevision) || 0,
         pageRevision: Number(doc.pageRenderRevisions?.[pageNum]) || 0,
         filePath: doc.filePath,
         pageNum,
@@ -2895,7 +2946,7 @@ async function _prefetchOnePage(doc, pageNum, centerPage) {
       requestId: publicationToken.requestId,
     });
     if (!isCurrent()) return;
-    ptcMod.cachePageType(doc.filePath, pageNum - 1, pageType);
+    ptcMod.cachePageType(doc.filePath, pageNum - 1, pageType, publicationToken);
   }
   if (pageType !== 'vector') return; // raster pages aren't command-cached
   if (!isCurrent()) return;

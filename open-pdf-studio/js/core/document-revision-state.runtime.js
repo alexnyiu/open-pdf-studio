@@ -191,6 +191,7 @@ function noteDocumentMutation(documentState, {
     state.pageSemanticReadyRevisions = {};
     documentState.pageGeometryIndex = null;
     documentState.pageGeometryBaseDimensions = null;
+    documentState.pageGeometryRevision = null;
   } else if (changedPages.length === 0) {
     state.pendingChangedPages = null;
   } else if (state.pendingChangedPages !== null) {

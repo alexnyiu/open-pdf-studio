@@ -1,5 +1,6 @@
 import {
   initializeDocumentRevisionState,
+  clearPageReadiness,
   markDocumentSaveState,
   markLivePdfRevision,
   markPageRenderReady,
@@ -69,6 +70,115 @@ export async function invalidateSavedDocumentSemanticState({
   return true;
 }
 
+async function loadSavedDocumentDerivedInvalidators() {
+  const [
+    renderer,
+    tiles,
+    vectors,
+    pageTypes,
+    thumbnails,
+    performance,
+    wholePreload,
+    textLayers,
+    linkLayers,
+    formLayers,
+    platform,
+    stateModule,
+  ] = await Promise.all([
+    import('./renderer.js'),
+    import('./tile-cache.js'),
+    import('./vector-renderer.js'),
+    import('./page-type-cache.js'),
+    import('../ui/panels/left-panel.js'),
+    import('./document-performance.js'),
+    import('./whole-pdf-preload.js'),
+    import('../text/text-layer.js'),
+    import('./link-layer.js'),
+    import('./form-layer.js'),
+    import('../core/platform.js'),
+    import('../core/state.js'),
+  ]);
+  return {
+    clearReadiness: (documentState, pages) => clearPageReadiness(documentState, pages),
+    cancelWholePreload: (documentState) => wholePreload.cancelWholePdfPreload(documentState),
+    invalidateSemantic: invalidateSavedDocumentSemanticState,
+    clearBitmap: (filePath) => renderer.clearBitmapJSCacheForFile(filePath),
+    clearLowResolution: (documentState, pages) => (
+      renderer.clearLowResCacheForDocument(documentState, pages)
+    ),
+    clearTiles: (filePath) => tiles.tileCacheClearForFile(filePath),
+    clearVectors: (filePath) => vectors.clearVectorCacheForFile(filePath),
+    clearPageTypes: (filePath) => pageTypes.evictFile(filePath),
+    cancelThumbnails: (documentState) => thumbnails.cancelDocumentThumbnailWork(documentState),
+    clearThumbnails: (documentId) => thumbnails.clearThumbnailCache(documentId),
+    clearLayers: (documentState) => {
+      if (stateModule.getActiveDocument() !== documentState) return;
+      textLayers.clearSinglePageTextLayer();
+      textLayers.clearTextLayers();
+      linkLayers.clearSinglePageLinkLayer();
+      linkLayers.clearLinkLayers();
+      formLayers.clearSinglePageFormLayer();
+      formLayers.clearFormLayers();
+    },
+    invalidateNative: async (filePath) => {
+      if (filePath && platform.isTauri()) {
+        await platform.invoke('invalidate_pdf_cache', { path: filePath });
+      }
+    },
+    clearPerformance: (documentState) => performance.clearDocumentPerformance(documentState),
+    rebuildGeometry: (documentState) => performance.rebuildDocumentPageGeometryIndex(documentState),
+    initializePerformance: (documentState) => performance.initializeDocumentPerformance(documentState, {
+      fileBytes: documentState.sourceByteLength,
+    }),
+    registerCacheOwners: (documentState) => performance.registerDocumentRenderCacheOwners(documentState),
+  };
+}
+
+export async function invalidateSavedDocumentDerivedState({
+  documentState,
+  requestedRevision,
+  changedPages = null,
+  filePath = documentState?.filePath,
+  previousFilePath = null,
+  dependencies = null,
+}) {
+  if (!documentState?.id || !documentState.pdfDoc) {
+    throw new TypeError('A live saved document is required for derived-state invalidation');
+  }
+  const revisions = initializeDocumentRevisionState(documentState);
+  if (revisions.livePdfRevision !== Number(requestedRevision)) {
+    throw new RangeError('Derived-state invalidation must target the installed live PDF revision');
+  }
+  const invalidators = dependencies || await loadSavedDocumentDerivedInvalidators();
+  const pages = changedPages === null ? null : positivePages(changedPages);
+  const structuralOrUncertain = pages === null || revisions.pendingStructuralChange === true;
+  const cachePaths = [...new Set([previousFilePath, filePath, documentState.filePath].filter(Boolean))];
+
+  invalidators.clearReadiness(documentState, pages);
+  invalidators.cancelWholePreload(documentState);
+  invalidators.cancelThumbnails(documentState);
+  await invalidators.invalidateSemantic({ documentState, requestedRevision, changedPages: pages });
+  for (const cachePath of cachePaths) {
+    invalidators.clearBitmap(cachePath);
+    invalidators.clearTiles(cachePath);
+    invalidators.clearVectors(cachePath);
+    invalidators.clearPageTypes(cachePath);
+    await invalidators.invalidateNative(cachePath);
+  }
+  invalidators.clearLowResolution(documentState, pages);
+  invalidators.clearThumbnails(documentState.id);
+  invalidators.clearLayers(documentState);
+
+  if (structuralOrUncertain) {
+    invalidators.clearPerformance(documentState);
+    await invalidators.initializePerformance(documentState);
+  } else {
+    invalidators.rebuildGeometry(documentState);
+    await invalidators.registerCacheOwners(documentState);
+  }
+  return true;
+}
+
 export async function rebuildSavedDocumentEditableMetadata({
   documentState,
   requestedRevision,
@@ -101,11 +211,22 @@ export async function rebuildSavedDocumentEditableMetadata({
 }
 
 export async function restartSavedDocumentSemanticPreload({ documentState }) {
-  const [{ getDocumentById }, preload] = await Promise.all([
+  const [{ getDocumentById, getActiveDocument }, preload, thumbnails] = await Promise.all([
     import('../core/state.js'),
     import('./whole-pdf-preload.js'),
+    import('../ui/panels/left-panel.js'),
   ]);
   if (getDocumentById(documentState?.id) !== documentState) return false;
+  if (getActiveDocument() === documentState) {
+    const visiblePages = positivePages([
+      documentState.currentPage,
+      ...thumbnails.visibleThumbnailPages(),
+    ]).filter((page) => page <= Number(documentState.pdfDoc?.numPages));
+    for (const pageNum of visiblePages) {
+      await thumbnails.preloadThumbnailPage(documentState, pageNum);
+    }
+    await thumbnails.generateThumbnails();
+  }
   void Promise.resolve(preload.restartWholePdfPreload(documentState)).catch((error) => {
     console.warn('[preload] Saved-revision restart failed:', error?.message || error);
   });
@@ -266,7 +387,13 @@ async function runSynchronization(record, { retry = false } = {}) {
       markLivePdfRevision(documentState, requestedRevision);
     }
     if (!record.semanticInvalidated) {
-      await invalidateSemanticState({ documentState, requestedRevision, changedPages });
+      await invalidateSemanticState({
+        documentState,
+        requestedRevision,
+        changedPages,
+        filePath,
+        previousFilePath: record.previousFilePath,
+      });
       record.semanticInvalidated = true;
     }
     const requiredPages = Array.isArray(installResult?.requiredPages)
@@ -310,6 +437,13 @@ async function runSynchronization(record, { retry = false } = {}) {
       viewState,
     });
     if (ready !== true) throw new Error('The saved document did not reach edit readiness');
+    const synchronizedRevisions = initializeDocumentRevisionState(documentState);
+    if (synchronizedRevisions.contentRevision === Number(requestedRevision)
+        && synchronizedRevisions.persistedRevision === Number(requestedRevision)
+        && synchronizedRevisions.livePdfRevision === Number(requestedRevision)) {
+      synchronizedRevisions.pendingChangedPages = [];
+      synchronizedRevisions.pendingStructuralChange = false;
+    }
     markDocumentSaveState(documentState, 'saved', {
       requestId: null,
       synchronizationError: null,
@@ -363,7 +497,7 @@ export async function synchronizeSavedDocument(input) {
         ? null
         : positivePages(initializeDocumentRevisionState(documentState).pendingChangedPages)),
     invalidateSemanticState: input.invalidateSemanticState
-      || invalidateSavedDocumentSemanticState,
+      || invalidateSavedDocumentDerivedState,
     rebuildEditableMetadata: input.rebuildEditableMetadata
       || rebuildSavedDocumentEditableMetadata,
     restartSemanticPreload: input.restartSemanticPreload
