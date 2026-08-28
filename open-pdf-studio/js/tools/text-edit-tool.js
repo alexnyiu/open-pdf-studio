@@ -100,6 +100,7 @@ import {
   completeTextEditSession,
   registerTextEditSession,
 } from '../text/text-edit-session.js';
+import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-transition.js';
 
 let activeEditor = null;
 let hoverListeners = [];
@@ -522,7 +523,10 @@ function selectionItemForRecord(record, pageNum, layer, viewRect = null) {
 async function openCombinedTextBoxEditor() {
   if (selectedTextItems.size < 2 || activeEditor) return;
   if (rejectInvalidOwnedTextState()) return;
-  const ownerDocument = getActiveDocument();
+  let ownerDocument = getActiveDocument();
+  if (!ownerDocument) return;
+  if (!(await waitForSavedDocumentSynchronization(ownerDocument.id))) return;
+  ownerDocument = getDocumentById(ownerDocument.id);
   if (!ownerDocument) return;
   const items = [...selectedTextItems.values()];
   const unsupported = [...new Set(items.flatMap((item) => item.unsupportedFonts || []))];
@@ -1889,10 +1893,13 @@ async function sourceRasterForScannedLine(doc, result) {
 }
 
 async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
-  cancelActiveTextEditing('superseded');
-  const doc = getActiveDocument();
+  let doc = getActiveDocument();
   const lineId = span.dataset.ocrLineId;
   if (!doc || !lineId) return;
+  if (!(await waitForSavedDocumentSynchronization(doc.id))) return;
+  doc = getDocumentById(doc.id);
+  if (!doc) return;
+  cancelActiveTextEditing('superseded');
   const ownerGeneration = Number(doc.lifecycleGeneration) || 0;
   let selection = appliedScannedSelection(
     doc,
@@ -2342,9 +2349,12 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
 
 async function startPdfTextEditing(span, pageNum) {
   if (rejectInvalidOwnedTextState()) return;
-  cancelActiveTextEditing('superseded');
-  const ownerDocument = getActiveDocument();
+  let ownerDocument = getActiveDocument();
   if (!ownerDocument) return;
+  if (!(await waitForSavedDocumentSynchronization(ownerDocument.id))) return;
+  ownerDocument = getDocumentById(ownerDocument.id);
+  if (!ownerDocument) return;
+  cancelActiveTextEditing('superseded');
   const ownerGeneration = Number(ownerDocument.lifecycleGeneration) || 0;
 
   const textLayer = span.closest('.textLayer');

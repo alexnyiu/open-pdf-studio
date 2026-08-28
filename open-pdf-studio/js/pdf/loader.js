@@ -136,7 +136,7 @@ export async function reloadDocumentFromBytes(doc, bytes) {
  */
 export async function installValidatedSavedPdfDocument(doc, filePath, bytes, preparedPdfJsDocument) {
   if (!doc || !preparedPdfJsDocument) throw new TypeError('Validated saved PDF state is required');
-  const isActiveDocument = state.documents[state.activeDocumentIndex] === doc;
+  const isActiveDocument = String(state.documents[state.activeDocumentIndex]?.id || '') === String(doc.id);
   const previousPdfJsDocument = doc.pdfDoc;
   doc._sharedPdfLibDoc = null;
   doc._sharedPdfLibDocPromise = null;
@@ -148,19 +148,21 @@ export async function installValidatedSavedPdfDocument(doc, filePath, bytes, pre
     invalidateTextCache(doc.id);
   } catch (_) {}
   try { await previousPdfJsDocument?.destroy?.(); } catch (_) {}
-
-  if (isActiveDocument) {
-    try {
-      const renderer = await import('./renderer.js');
-      if (doc.viewMode === 'continuous' || doc.viewMode === 'book') {
-        await renderer.renderContinuous(true);
-      } else {
-        await renderer.renderPage(doc.currentPage || 1);
-      }
-    } catch (error) {
-      console.warn('[safe-save] Saved PDF state installed; visible-page refresh will retry on navigation:', error);
-    }
-  }
+  const page = Math.min(
+    Math.max(1, Number(doc.currentPage) || 1),
+    Math.max(1, Number(preparedPdfJsDocument.numPages) || 1),
+  );
+  const requiredPages = !isActiveDocument
+    ? []
+    : doc.facingSpread && page > 1
+      ? [page % 2 === 0 ? page : page - 1, page % 2 === 0 ? page + 1 : page]
+        .filter((candidate) => candidate <= preparedPdfJsDocument.numPages)
+      : [page];
+  return {
+    isActiveDocument,
+    lifecycleGeneration: Number(doc.lifecycleGeneration) || 0,
+    requiredPages,
+  };
 }
 
 export function clearCachedPdfBytes(filePath) {

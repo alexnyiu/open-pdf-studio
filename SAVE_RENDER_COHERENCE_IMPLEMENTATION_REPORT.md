@@ -20,7 +20,7 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 
 - revision state: Implemented in Phase 1; explicit content, serialized, persisted, live-PDF, visible-render, visible-semantic, and page readiness identities now fail closed on impossible transitions
 - save coordinator: Implemented in Phase 2; one revision-owned queue per document coordinates automatic and manual requests through bounded editor completion, persistence-boundary ownership, follow-up scheduling, and lifecycle cancellation
-- proxy synchronization: Pending
+- proxy synchronization: Implemented in Phase 3; automatic and manual persistence share one saved-document transition, with live revision advancement, view restoration, edit activation holding, and Phase-B-only recovery
 - publication tokens: Pending
 - edit readiness: Pending
 - cache invalidation: Pending
@@ -32,22 +32,22 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 |---|---|---|---|---|
 | F-01 | Resolved in Phase 1 | `6dc046f9` | `open-pdf-studio/js/pdf/save-state.js`, `open-pdf-studio/js/core/document-revision-state.runtime.js` | Deterministic regression now passes; same-path no-op rejects synchronization debt |
 | F-02 | Pending | Pending | Pending | Pending |
-| F-03 | Pending | Pending | Pending | Pending |
+| F-03 | Resolved in Phase 3 | Pending Phase 3 commit | `open-pdf-studio/js/pdf/saved-document-transition.js`, `open-pdf-studio/js/pdf/loader.js` | Every persisted revision enters mandatory proxy synchronization |
 | F-04 | Pending | Pending | Pending | Pending |
 | F-05 | Foundation complete in Phase 1 | `6dc046f9` | document revision state and persistent mutation routing | Content identity advances once per committed mutation |
 | F-06 | Pending | Pending | Pending | Pending |
-| F-07 | Resolved in Phase 2 | Pending Phase 2 commit | `open-pdf-studio/js/pdf/save-coordinator.js`, `open-pdf-studio/js/core/undo-manager.js` | Newer revisions force an owned follow-up; old serialization cannot replace or mark clean |
-| F-08 | Pending | Pending | Pending | Pending |
-| F-09 | Pending | Pending | Pending | Pending |
+| F-07 | Resolved in Phase 2 | `eca8b23e` | `open-pdf-studio/js/pdf/save-coordinator.js`, `open-pdf-studio/js/core/undo-manager.js` | Newer revisions force an owned follow-up; old serialization cannot replace or mark clean |
+| F-08 | Resolved in Phase 3 | Pending Phase 3 commit | saved-document transition edit hold | A requested next edit starts only after the new proxy generation is ready |
+| F-09 | Resolved in Phase 3 | Pending Phase 3 commit | immutable owner lookup and transition tests | Active-tab wrapper changes do not suppress the correct document refresh |
 | F-10 | Pending | Pending | Pending | Pending |
 | F-11 | Foundation complete in Phase 1 | `6dc046f9` | page content revision compatibility alias | Page-scoped mutation identity is explicit |
 | F-12 | Foundation complete in Phase 1 | `6dc046f9` | structural revision invalidation | Structural changes invalidate page readiness and geometry identity |
 | F-13 | Pending | Pending | Pending | Pending |
 | F-14 | Pending | Pending | Pending | Pending |
 | F-15 | Pending | Pending | Pending | Pending |
-| F-16 | Pending | Pending | Pending | Pending |
-| F-17 | Resolved in Phase 2 | Pending Phase 2 commit | save coordinator persistence/publication boundaries | Superseded and closed-document requests cannot publish stale state |
-| F-18 | Resolved in Phase 2 | Pending Phase 2 commit | save coordinator editor promise and deadline | Save waits on the session commit promise and fails visibly at a bounded deadline |
+| F-16 | Foundation complete in Phase 3 | Pending Phase 3 commit | saved-document transition readiness ownership | `livePdfRevision` advances only after candidate proxy install; final Saved waits for readiness |
+| F-17 | Resolved in Phase 2 | `eca8b23e` | save coordinator persistence/publication boundaries | Superseded and closed-document requests cannot publish stale state |
+| F-18 | Resolved in Phase 2 | `eca8b23e` | save coordinator editor promise and deadline | Save waits on the session commit promise and fails visibly at a bounded deadline |
 | F-19 | Pending | Pending | Pending | Pending |
 | F-20 | Reproduced | Pending | CI run 33148195868 | Static verification fails 19 OCR tests because untracked generated PNG fixtures are absent in a clean checkout |
 | F-21 | Pending | Pending | Pending | Pending |
@@ -111,6 +111,24 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 - A request cancelled during the point-of-no-return operation permits the native replacement to finish but cannot install a proxy or publish clean state.
 - Editor completion is promise-driven through the existing session registry, with a 15-second failure boundary rather than polling.
 - Structured diagnostics are bounded to the latest 200 document/request/revision events.
+
+### Phase 3 saved-document transition
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | PASS |
+| `node --test js/pdf/saved-document-transition.test.mjs js/pdf/save-coordinator.test.mjs js/pdf/save-state.test.mjs js/core/document-revision-state.test.mjs js/text/text-edit-session.test.mjs` | PASS: 47/47 |
+| `npm run test:editor-lifecycle:unit` | PASS: 123/123 |
+| `npm run test:unit` | PASS: 225/225 |
+| `npm run build` | PASS |
+| `git diff --check` | PASS |
+
+- The former automatic cache-only branch is removed. Automatic and manual Save both install the already validated PDF.js candidate.
+- Proxy replacement is owner-ID based, captures page/PDF-space scroll anchor plus view/tool/selection/search state, and restores without reviving a transient editor.
+- `livePdfRevision` advances only after proxy installation; page render and semantic readiness then gate final `Saved` state.
+- Textbox, native-source, and scanned-text entry points wait for the document-scoped transition and register against the post-save lifecycle generation.
+- A disk-clean but unsynchronized document runs Phase B from retained/cached validated bytes without serializing or replacing the destination again.
+- Refresh failure retains persisted revision, bytes, candidate/reload path, and exposes Phase-B-only retry; successful retry does not rewrite the file.
 
 ## Packaged acceptance
 

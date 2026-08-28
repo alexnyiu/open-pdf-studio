@@ -305,7 +305,13 @@ function documentNeedsSynchronization(documentState) {
 function documentIsEditReady(documentState, page) {
   const state = initializeDocumentRevisionState(documentState);
   const pageNum = pageNumber(page);
-  if (state.contentRevision !== state.persistedRevision || state.persistedRevision !== state.livePdfRevision || state.saveState === "failed" || state.saveState === "saved-refresh-failed" || state.saveState === "saving" || state.saveState === "persisted" || state.saveState === "synchronizing") return false;
+  if (state.saveState === "failed" || state.saveState === "saved-refresh-failed" || state.saveState === "saving" || state.saveState === "persisted" || state.saveState === "synchronizing") return false;
+  return documentRevisionReadinessSatisfied(documentState, pageNum);
+}
+function documentRevisionReadinessSatisfied(documentState, page) {
+  const state = initializeDocumentRevisionState(documentState);
+  const pageNum = pageNumber(page);
+  if (state.contentRevision !== state.persistedRevision || state.persistedRevision !== state.livePdfRevision) return false;
   return Object.prototype.hasOwnProperty.call(state.pageRenderReadyRevisions, pageNum) && Object.prototype.hasOwnProperty.call(state.pageSemanticReadyRevisions, pageNum) && state.pageRenderReadyRevisions[pageNum] === state.livePdfRevision && state.pageSemanticReadyRevisions[pageNum] === state.livePdfRevision;
 }
 function documentRevisionDebugSnapshot(documentState) {
@@ -334,6 +340,7 @@ export {
   createInitialDocumentRevisionState,
   documentHasRevisionPersistenceDebt,
   documentIsEditReady,
+  documentRevisionReadinessSatisfied,
   documentNeedsSynchronization,
   documentRevisionDebugSnapshot,
   initializeDocumentRevisionState,

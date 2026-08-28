@@ -15,6 +15,7 @@ import {
 import {
   canAutoSaveCommittedTextEdit,
   canSkipUnmodifiedSamePathSave,
+  documentHasPendingPersistence,
   documentLifecycleOwnerMatches,
   textEditCommitAllowsSave,
 } from './save-state.js';
@@ -53,11 +54,20 @@ import {
 import { notePdfForegroundActivity } from './foreground-activity.js';
 import { createSaveCoordinator, SaveRequestSupersededError } from './save-coordinator.js';
 import {
+  documentRevisionReadinessSatisfied,
+  documentNeedsSynchronization,
   initializeDocumentRevisionState,
   markDocumentSaveState,
   markRevisionPersisted,
   markRevisionSerialized,
 } from '../core/document-revision-state.runtime.js';
+import {
+  captureSavedDocumentViewState,
+  hasRecoverableSavedDocumentSynchronization,
+  restoreSavedDocumentViewState,
+  retrySavedDocumentSynchronization,
+  synchronizeSavedDocument,
+} from './saved-document-transition.js';
 
 // Sub-modules
 import { hexToRgb, buildBorderStyle, computeAnnotFlags, mapFontToPdfName,
@@ -252,6 +262,96 @@ export function getDocumentSaveCoordinatorSnapshot(documentId) {
   return saveCoordinator.debugSnapshot(documentId);
 }
 
+function productionSavedTransitionCallbacks(outputPath, savedBytes) {
+  return {
+    captureViewState: (owner) => captureSavedDocumentViewState(owner, {
+      appState: state,
+      scrollContainer: document.getElementById('pdf-container'),
+    }),
+    installProxy: async ({ documentState: owner, preparedPdfJsDocument: candidate }) => {
+      const { clearEditableMetadataPreload } = await import('./editable-metadata-preload.js');
+      clearEditableMetadataPreload(owner);
+      return installValidatedSavedPdfDocument(owner, outputPath, savedBytes, candidate);
+    },
+    invalidateRevision: async () => {},
+    rebuildRequiredPages: async ({ documentState: owner, requiredPages }) => {
+      const visibleOwner = getActiveDocument();
+      if (String(visibleOwner?.id || '') !== String(owner.id)) {
+        return { renderReadyPages: [], semanticReadyPages: [] };
+      }
+      const renderer = await import('./renderer.js');
+      if (owner.viewMode === 'continuous' || owner.viewMode === 'book') {
+        const rendered = await renderer.renderContinuous(true);
+        const completed = (rendered?.requiredPages || requiredPages)
+          .filter((page) => requiredPages.includes(page));
+        return { renderReadyPages: completed, semanticReadyPages: completed };
+      }
+      const page = requiredPages[0] || owner.currentPage || 1;
+      await renderer.renderPage(page);
+      return { renderReadyPages: [page], semanticReadyPages: [page] };
+    },
+    restoreViewState: async (owner, snapshot) => {
+      restoreSavedDocumentViewState(owner, snapshot, {
+        appState: state,
+        scrollContainer: document.getElementById('pdf-container'),
+      });
+    },
+    waitForEditReadiness: async ({ documentState: owner, requiredPages }) => (
+      requiredPages.every((page) => documentRevisionReadinessSatisfied(owner, page))
+    ),
+  };
+}
+
+async function synchronizePersistedOwner({
+  owner,
+  requestedRevision,
+  requestId,
+  outputPath,
+  savedBytes,
+  preparedPdfJsDocument,
+  diagnostic,
+}) {
+  const result = await synchronizeSavedDocument({
+    documentState: owner,
+    requestedRevision,
+    requestId,
+    filePath: outputPath,
+    bytes: savedBytes,
+    preparedPdfJsDocument,
+    diagnostic,
+    ...productionSavedTransitionCallbacks(outputPath, savedBytes),
+  });
+  markDocumentSavedForDocument(owner);
+  return result;
+}
+
+async function synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext) {
+  const revisionState = initializeDocumentRevisionState(owner);
+  if (hasRecoverableSavedDocumentSynchronization(owner.id)) {
+    await retrySavedDocumentSynchronization(owner.id, {
+      requestId: coordinatorContext.requestId,
+      diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
+    });
+    markDocumentSavedForDocument(owner);
+    return { saved: true };
+  }
+  const outputPath = revisionState.lastPersistedPath || owner.filePath;
+  let savedBytes = getCachedPdfBytes(outputPath);
+  if (!savedBytes && outputPath) savedBytes = await readBinaryFile(outputPath);
+  if (!savedBytes?.length) throw new Error('Saved bytes are unavailable for editor synchronization');
+  const candidate = await preparePdfJsSaveCandidate(savedBytes, owner.pdfDoc?.numPages || 1);
+  await synchronizePersistedOwner({
+    owner,
+    requestedRevision: revisionState.persistedRevision,
+    requestId: coordinatorContext.requestId,
+    outputPath,
+    savedBytes,
+    preparedPdfJsDocument: candidate,
+    diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
+  });
+  return { saved: true };
+}
+
 /**
  * Queue one latest-only disk save after a successful click-away commit.
  * Repeated edits debounce before serialization; a new live editor postpones
@@ -320,6 +420,8 @@ export async function savePDF(saveAsPath = null, options = {}) {
   }
   const generation = Number(expectedDocumentGeneration ?? owner.lifecycleGeneration) || 0;
   const requestedRevision = initializeDocumentRevisionState(owner).contentRevision;
+  const synchronizationOnly = !documentHasPendingPersistence(owner)
+    && documentNeedsSynchronization(owner);
   try {
     return await saveCoordinator.request({
       documentId: owner.id,
@@ -328,13 +430,15 @@ export async function savePDF(saveAsPath = null, options = {}) {
       kind: automaticTextEditSave ? 'auto' : 'manual',
       saveAsPath,
       delayMs: automaticTextEditSave ? delayMs : 0,
-      execute: (coordinatorContext) => performSavePDF(saveAsPath, {
-        allowSaveAsPrompt,
-        automaticTextEditSave,
-        expectedDocumentId: owner.id,
-        expectedDocumentGeneration: generation,
-        coordinatorContext,
-      }),
+      execute: (coordinatorContext) => synchronizationOnly
+        ? synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext)
+        : performSavePDF(saveAsPath, {
+          allowSaveAsPrompt,
+          automaticTextEditSave,
+          expectedDocumentId: owner.id,
+          expectedDocumentGeneration: generation,
+          coordinatorContext,
+        }),
     });
   } catch (error) {
     console.warn('[saver] Coordinated save failed:', error);
@@ -3151,33 +3255,28 @@ async function performSavePDF(saveAsPath = null, {
       markOwnedScannedTextEditsPersisted(activeDoc, scannedTextEditPersistence.inspection);
       activeDoc.scannedTextEditRemovalPending = false;
     }
-    if (activeDoc) {
-      if (automaticTextEditSave) {
-        // Click-away persistence has already been fully shaped, validated, and
-        // atomically written. Keep the live PDF proxy and render surfaces in
-        // place: replacing them would advance lifecycle ownership, reset or
-        // rebuild the viewport, and race a user who immediately starts another
-        // edit. Subsequent saves start from these validated cached bytes.
-        // Phase 3 replaces this cache-only compatibility path with the same
-        // validated-proxy transition used by manual Save.
-      } else {
-        const { clearEditableMetadataPreload } = await import('./editable-metadata-preload.js');
-        clearEditableMetadataPreload(activeDoc);
-        await installValidatedSavedPdfDocument(activeDoc, outputPath, savedBytes, preparedPdfJsDocument);
-        preparedPdfJsDocument = null;
-      }
-      if (textEditManifestCandidate) {
-        activeDoc.textEditManifest = textEditManifestCandidate;
-        activeDoc.textEdits = textEditManifestCandidate.pages.flatMap((page) => page.edits);
-      }
-      activeDoc.nativeTextEditReport = nativeTextEditReportCandidate;
+    if (activeDoc && textEditManifestCandidate) {
+      activeDoc.textEditManifest = textEditManifestCandidate;
+      activeDoc.textEdits = textEditManifestCandidate.pages.flatMap((page) => page.edits);
     }
+    if (activeDoc) activeDoc.nativeTextEditReport = nativeTextEditReportCandidate;
     if (convertsPdfA && activeDoc) {
       activeDoc.pdfaCompliance = null;
       hidePdfABar();
     }
-    markDocumentSavedForDocument(activeDoc);
-    coordinatorContext?.diagnostic('saved');
+    const transitionCandidate = preparedPdfJsDocument;
+    // The saved-document transition owns this candidate through success or
+    // recoverable refresh failure. The saver must not destroy it in `finally`.
+    preparedPdfJsDocument = null;
+    await synchronizePersistedOwner({
+      owner: activeDoc,
+      requestedRevision,
+      requestId: coordinatorContext?.requestId || null,
+      outputPath,
+      savedBytes,
+      preparedPdfJsDocument: transitionCandidate,
+      diagnostic: (event, details) => coordinatorContext?.diagnostic(event, details),
+    });
 
     return { saved: true };
   } catch (error) {

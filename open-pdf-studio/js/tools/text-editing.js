@@ -50,6 +50,7 @@ import {
   textEditGeometryChanged,
 } from '../text/text-edit-dirty-state.js';
 import { runOwnerScopedTextCommit } from '../text/text-edit-commit.js';
+import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-transition.js';
 
 async function waitForExactAnnotationLayout(operation) {
   const deadline = performance.now() + 5_000;
@@ -93,8 +94,11 @@ export async function startTextEditing(annotation, { isNew = false } = {}) {
   if (!['textbox', 'callout'].includes(annotation.type)) return;
   if (annotation.locked || annotation.readOnly) return;
 
-  const ownerDocument = getActiveDocument();
+  let ownerDocument = getActiveDocument();
   if (!ownerDocument) return;
+  if (!(await waitForSavedDocumentSynchronization(ownerDocument.id))) return false;
+  ownerDocument = getDocumentById(ownerDocument.id);
+  if (!ownerDocument) return false;
   const ownerGeneration = ownerDocument.lifecycleGeneration;
   const sourceAnnotation = annotation;
 

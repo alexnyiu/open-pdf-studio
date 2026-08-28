@@ -2519,6 +2519,8 @@ export async function renderContinuous(forceRebuild = false) {
   const continuousContainer = document.getElementById('continuous-container');
   const scrollContainer = document.getElementById('pdf-container');
   if (!continuousContainer || !scrollContainer) return;
+  const requiredRenderPromises = [];
+  const requiredPages = [];
 
   try {
     const viewportModule = await import('./pdf-viewport.js');
@@ -2583,7 +2585,8 @@ export async function renderContinuous(forceRebuild = false) {
       wrapper.style.gridColumn = rightSide ? '2' : '1';
       wrapper.style.justifySelf = rightSide ? 'start' : 'end';
       continuousContainer.appendChild(wrapper);
-      void renderContinuousPage(pageNum, 1000);
+      requiredPages.push(pageNum);
+      requiredRenderPromises.push(renderContinuousPage(pageNum, 1000, 'foreground'));
     }
   } else {
     const index = await ensureDocumentPageGeometryIndex(doc);
@@ -2629,6 +2632,8 @@ export async function renderContinuous(forceRebuild = false) {
     }
     _updateContinuousVirtualWindow({ interactionSettled: true });
     requestAnimationFrame(() => _updateContinuousVirtualWindow({ interactionSettled: true }));
+    requiredPages.push(doc.currentPage);
+    requiredRenderPromises.push(renderContinuousPage(doc.currentPage, 2_000, 'foreground'));
   }
 
   updateAllStatus();
@@ -2636,6 +2641,8 @@ export async function renderContinuous(forceRebuild = false) {
   if (pdfDoc.numPages > 1 && !doc.facingSpread) {
     scheduleNearbyLowResPreviews(pdfDoc, doc.currentPage, 1);
   }
+  await Promise.all(requiredRenderPromises);
+  return { requiredPages };
 }
 
 // Setup pointer events for continuous mode pages
