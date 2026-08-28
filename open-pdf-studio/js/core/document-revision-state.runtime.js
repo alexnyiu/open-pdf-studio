@@ -177,8 +177,14 @@ function noteDocumentMutation(documentState, {
   const nextRevision = state.contentRevision + 1;
   state.contentRevision = nextRevision;
   state.lastMutationReason = String(reason);
-  state.saveState = "pending";
-  state.lastSaveError = null;
+  // A durable failure remains visible while the user continues working. The
+  // next save attempt clears it at the explicit `saving` transition; an
+  // unrelated mutation must not turn a failed automatic save into a generic
+  // pending state and erase its exact diagnostic.
+  if (state.saveState !== "failed" && state.saveState !== "saved-refresh-failed") {
+    state.saveState = "pending";
+    state.lastSaveError = null;
+  }
   for (const page of changedPages) {
     state.pageContentRevisions[page] = nextRevision;
     delete state.pageRenderReadyRevisions[page];
@@ -304,6 +310,9 @@ function markDocumentSaveState(documentState, saveState, {
   if (saveError !== void 0) state.lastSaveError = saveError == null ? null : String(saveError);
   if (synchronizationError !== void 0) {
     state.lastSynchronizationError = synchronizationError == null ? null : String(synchronizationError);
+  }
+  if (saveState === "saving" || saveState === "saved") {
+    documentState.saveRefreshRetryFailed = false;
   }
   return state.saveState;
 }

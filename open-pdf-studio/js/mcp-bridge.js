@@ -955,6 +955,7 @@ async function handleGetViewportState() {
   let renderedSurfaceStates = [];
   let performanceMetrics = null;
   let nativeRenderResources = null;
+  let documentSaveState = null;
   try {
     const stateMod = await import('/js/core/state.ts');
     renderEngine = stateMod.state?.renderEngine ?? null;
@@ -1001,6 +1002,10 @@ async function handleGetViewportState() {
       rows: doc.pageGeometryIndex.rows?.(doc.bookSpread ? 'book' : 'continuous')?.length || 0,
       totalHeight: doc.pageGeometryIndex.totalHeight?.(doc.scale, doc.bookSpread ? 'book' : 'continuous') || 0,
     } : null;
+    if (doc) {
+      const revisionModule = await import('/js/core/document-revision-state.runtime.js');
+      documentSaveState = revisionModule.documentRevisionDebugSnapshot(doc);
+    }
   } catch {
     // Module may not be loaded yet; leave fields null.
   }
@@ -1095,6 +1100,7 @@ async function handleGetViewportState() {
     textEditAutoSave: window.__textEditAutoSaveDebug
       ? { ...window.__textEditAutoSaveDebug }
       : null,
+    documentSaveState,
     ocrWorkflowMetrics,
     performanceProfile,
     pageGeometry,

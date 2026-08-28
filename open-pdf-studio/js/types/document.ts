@@ -238,6 +238,10 @@ export interface DocumentState {
   lifecycleGeneration: number;
   /** Persistence, live-proxy, render, and semantic ownership state. */
   revisionState: DocumentRevisionState;
+  /** UI acknowledgement is scoped to one exact failure identity. */
+  acknowledgedSaveStatus?: string | null;
+  /** Reopen is offered only after a refresh-only retry cannot recover. */
+  saveRefreshRetryFailed?: boolean;
   filePath: string | null;
   fileName: string;
   pdfDoc: any; // pdfjs-dist PDFDocumentProxy

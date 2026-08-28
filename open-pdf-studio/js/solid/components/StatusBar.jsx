@@ -1,6 +1,10 @@
 import { Show, createEffect, createSignal } from 'solid-js';
 import { state, getActiveDocument } from '../../core/state.js';
 import { useTranslation, localizeNumber } from '../../i18n/useTranslation.js';
+import {
+  documentRevisionDebugSnapshot,
+} from '../../core/document-revision-state.runtime.js';
+import { documentSaveStatusModel } from '../../ui/chrome/document-save-status.js';
 
 // All page navigation goes through goToPage() so the side effects
 // (active thumbnail update, hide properties, fire events) happen in one
@@ -159,6 +163,23 @@ export default function StatusBar() {
     return t('annotationsCount', { count: pageCount, total: annotations.length });
   };
   const preloadStatus = () => state.documents[state.activeDocumentIndex]?.preloadStatus;
+  const saveStatus = () => documentSaveStatusModel(
+    state.documents[state.activeDocumentIndex],
+  );
+  createEffect(() => {
+    const documentState = state.documents[state.activeDocumentIndex];
+    const snapshot = documentState ? documentRevisionDebugSnapshot(documentState) : null;
+    if (typeof window !== 'undefined') window.__documentSaveDebug = snapshot;
+  });
+  const runSaveRecoveryAction = async (action) => {
+    const documentId = saveStatus().documentId;
+    if (!documentId) return;
+    const recovery = await import('../../ui/chrome/document-save-recovery.js');
+    if (action === 'retry-save') await recovery.retrySaveForDocument(documentId);
+    else if (action === 'retry-refresh') await recovery.retryRefreshForDocument(documentId);
+    else if (action === 'reopen') await recovery.reopenSavedDocument(documentId);
+    else if (action === 'acknowledge') recovery.acknowledgeSaveStatus(documentId);
+  };
   const preloadText = () => {
     const preload = preloadStatus();
     if (!preload) return '';
@@ -281,6 +302,43 @@ export default function StatusBar() {
       </Show>
 
       <div class="status-bar-right">
+        <Show when={saveStatus().visible}>
+          <div
+            class={`document-save-status document-save-status-${saveStatus().severity}`}
+            data-document-id={saveStatus().documentId}
+            data-save-state={saveStatus().state}
+            aria-live="polite"
+          >
+            <Show when={saveStatus().progress}>
+              <span class="document-save-status-spinner" aria-hidden="true"></span>
+            </Show>
+            <span class="document-save-status-message">{saveStatus().message}</span>
+            <Show when={saveStatus().actions.includes('retry-save')}>
+              <button type="button" onClick={() => runSaveRecoveryAction('retry-save')}>
+                {t('saveRetry', { defaultValue: 'Retry save' })}
+              </button>
+            </Show>
+            <Show when={saveStatus().actions.includes('retry-refresh')}>
+              <button type="button" onClick={() => runSaveRecoveryAction('retry-refresh')}>
+                {t('refreshRetry', { defaultValue: 'Retry refresh' })}
+              </button>
+            </Show>
+            <Show when={saveStatus().actions.includes('reopen')}>
+              <button type="button" onClick={() => runSaveRecoveryAction('reopen')}>
+                {t('reopenDocument', { defaultValue: 'Reopen' })}
+              </button>
+            </Show>
+            <Show when={saveStatus().actions.includes('acknowledge')}>
+              <button
+                type="button"
+                class="document-save-status-dismiss"
+                aria-label={t('dismissSaveStatus', { defaultValue: 'Dismiss save status' })}
+                title={t('dismissSaveStatus', { defaultValue: 'Dismiss save status' })}
+                onClick={() => runSaveRecoveryAction('acknowledge')}
+              >×</button>
+            </Show>
+          </div>
+        </Show>
         <Show when={['running', 'paused', 'limited'].includes(preloadStatus()?.state)}>
           <div class="status-item" title={preloadText()}>{preloadText()}</div>
         </Show>

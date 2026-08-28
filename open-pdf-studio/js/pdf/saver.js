@@ -54,6 +54,7 @@ import {
 } from '../text/text-edit-session.js';
 import { isPdfForegroundIdle, notePdfForegroundActivity } from './foreground-activity.js';
 import { createSaveCoordinator, SaveRequestSupersededError } from './save-coordinator.js';
+import { throwIfSaveFaultInjected } from './save-fault-injection.js';
 import {
   documentRevisionReadinessSatisfied,
   documentNeedsSynchronization,
@@ -277,6 +278,38 @@ export function getDocumentSaveCoordinatorSnapshot(documentId) {
   return saveCoordinator.debugSnapshot(documentId);
 }
 
+export function retryDocumentSave(documentId, documentGeneration) {
+  const owner = getDocumentById(String(documentId || ''));
+  if (!owner || (Number(owner.lifecycleGeneration) || 0) !== (Number(documentGeneration) || 0)) {
+    return Promise.resolve(false);
+  }
+  return savePDF(null, {
+    allowSaveAsPrompt: false,
+    expectedDocumentId: owner.id,
+    expectedDocumentGeneration: owner.lifecycleGeneration,
+  });
+}
+
+export async function retryDocumentRefresh(documentId, documentGeneration) {
+  const owner = getDocumentById(String(documentId || ''));
+  if (!owner || (Number(owner.lifecycleGeneration) || 0) !== (Number(documentGeneration) || 0)) {
+    return false;
+  }
+  const revision = initializeDocumentRevisionState(owner);
+  if (revision.contentRevision !== revision.persistedRevision
+      || revision.saveState !== 'saved-refresh-failed') return false;
+  return saveCoordinator.request({
+    documentId: owner.id,
+    documentGeneration: owner.lifecycleGeneration,
+    requestedRevision: revision.persistedRevision,
+    kind: 'manual',
+    execute: (coordinatorContext) => synchronizePersistedOwnerWithoutWrite(
+      getDocumentById(owner.id),
+      coordinatorContext,
+    ),
+  });
+}
+
 function productionSavedTransitionCallbacks(outputPath, savedBytes) {
   return {
     captureViewState: (owner) => captureSavedDocumentViewState(owner, {
@@ -358,30 +391,42 @@ async function synchronizePersistedOwner({
 
 async function synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext) {
   const revisionState = initializeDocumentRevisionState(owner);
-  if (hasRecoverableSavedDocumentSynchronization(owner.id)) {
-    await retrySavedDocumentSynchronization(owner.id, {
+  let candidateBytes = null;
+  try {
+    if (hasRecoverableSavedDocumentSynchronization(owner.id)) {
+      await retrySavedDocumentSynchronization(owner.id, {
+        requestId: coordinatorContext.requestId,
+        diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
+      });
+      markDocumentSavedForDocument(owner);
+      return { saved: true, candidateBytes };
+    }
+    const outputPath = revisionState.lastPersistedPath || owner.filePath;
+    let savedBytes = getCachedPdfBytes(outputPath);
+    if (!savedBytes && outputPath) savedBytes = await readBinaryFile(outputPath);
+    if (!savedBytes?.length) throw new Error('Saved bytes are unavailable for editor synchronization');
+    candidateBytes = savedBytes.byteLength;
+    const candidate = await preparePdfJsSaveCandidate(savedBytes, owner.pdfDoc?.numPages || 1);
+    await synchronizePersistedOwner({
+      owner,
+      requestedRevision: revisionState.persistedRevision,
       requestId: coordinatorContext.requestId,
+      outputPath,
+      previousFilePath: owner.filePath,
+      savedBytes,
+      preparedPdfJsDocument: candidate,
       diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
     });
-    markDocumentSavedForDocument(owner);
-    return { saved: true, candidateBytes: null };
+    return { saved: true, candidateBytes };
+  } catch (error) {
+    const exactError = error instanceof Error ? error.message : String(error);
+    markDocumentSaveState(owner, 'saved-refresh-failed', {
+      requestId: null,
+      synchronizationError: exactError,
+    });
+    coordinatorContext.diagnostic('saved-refresh-failed', { retry: true, error: exactError });
+    return { saved: false, candidateBytes };
   }
-  const outputPath = revisionState.lastPersistedPath || owner.filePath;
-  let savedBytes = getCachedPdfBytes(outputPath);
-  if (!savedBytes && outputPath) savedBytes = await readBinaryFile(outputPath);
-  if (!savedBytes?.length) throw new Error('Saved bytes are unavailable for editor synchronization');
-  const candidate = await preparePdfJsSaveCandidate(savedBytes, owner.pdfDoc?.numPages || 1);
-  await synchronizePersistedOwner({
-    owner,
-    requestedRevision: revisionState.persistedRevision,
-    requestId: coordinatorContext.requestId,
-    outputPath,
-    previousFilePath: owner.filePath,
-    savedBytes,
-    preparedPdfJsDocument: candidate,
-    diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
-  });
-  return { saved: true, candidateBytes: savedBytes.byteLength };
 }
 
 /**
@@ -577,6 +622,7 @@ async function performSavePDF(saveAsPath = null, {
   notePdfForegroundActivity('save', 250);
   try {
     if (showSaveProgress) showLoading('Saving PDF...');
+    throwIfSaveFaultInjected('serialization');
 
     // Get original PDF bytes (from cache or disk, with memory key fallback for untitled docs)
     let existingPdfBytes = getCachedPdfBytes(currentPath);
@@ -3185,6 +3231,7 @@ async function performSavePDF(saveAsPath = null, {
     // PDFium, extraction, ownership, idempotence, removal, and exact-pixel
     // gates all pass. Other platforms retain their existing save behavior and
     // do not gain a production OCR claim in this phase.
+    throwIfSaveFaultInjected('persistence');
     await unlockFile(outputPath);
     try {
       if (isMacosTauri()) {

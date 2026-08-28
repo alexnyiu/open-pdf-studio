@@ -7,6 +7,7 @@ import {
   markPageSemanticReady,
   setVisibleRequiredPages,
 } from '../core/document-revision-state.runtime.js';
+import { throwIfSaveFaultInjected } from './save-fault-injection.js';
 import { clearPageEditReadiness } from './page-edit-readiness.js';
 
 const activeSynchronizations = new Map();
@@ -393,6 +394,7 @@ async function runSynchronization(record, { retry = false } = {}) {
   try {
     let installResult = record.installResult;
     if (!record.proxyInstalled) {
+      throwIfSaveFaultInjected('proxy-install');
       installResult = await installProxy({
         documentState,
         filePath,
@@ -453,6 +455,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       changedPages,
     });
     await restoreViewState(documentState, viewState);
+    throwIfSaveFaultInjected('render-readiness');
     const ready = await waitForEditReadiness({
       documentState,
       requestedRevision,

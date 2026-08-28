@@ -26,7 +26,7 @@ The baseline split persistence, live-proxy replacement, render publication, sema
 - semantic invalidation: Implemented in Phase 5; live-proxy installation clears editable metadata, native provenance, search text, and preload completion state before required-page metadata is rebuilt and edit readiness is published
 - edit readiness: Implemented in Phase 7; Saved and editor activation await revisioned raster, annotation, text, link, form, and editable-metadata readiness for every required visible page, with lifecycle cancellation and queued point replay
 - cache invalidation: Implemented in Phase 6; one saved-document invalidator clears both old and new Save As paths and all raster, tile, preview, thumbnail, vector, page-type, geometry, semantic, DOM-layer, preload, and native generations before registering the new owner
-- UI recovery: Pending
+- UI recovery: Implemented in Phase 9; selected-document save state drives a persistent non-modal status with retry-save, refresh-only retry, acknowledged failure, and last-resort persisted-document reopen actions plus an MCP/debug revision snapshot
 
 ## Finding disposition
 
@@ -39,7 +39,7 @@ The baseline split persistence, live-proxy replacement, render publication, sema
 | F-05 | Resolved in Phase 5 | `b18ce88e` | saved semantic transition, revision-owned editable metadata/native provenance/search caches | Content identity advances once and stale semantic entries cannot survive a live-proxy transition |
 | F-06 | Resolved in Phase 6 | `e3044e89` | central derived-state invalidation and revision-owned raster/tile/preview/thumbnail/vector/page-type keys | Same-path caches distinguish lifecycle, content, and page revisions and are cleared through one transition hook |
 | F-07 | Resolved in Phase 2 | `eca8b23e` | `open-pdf-studio/js/pdf/save-coordinator.js`, `open-pdf-studio/js/core/undo-manager.js` | Newer revisions force an owned follow-up; old serialization cannot replace or mark clean |
-| F-08 | Resolved in Phase 3 | `c593ec19` | saved-document transition edit hold | A requested next edit starts only after the new proxy generation is ready |
+| F-08 | Resolved in Phases 3 and 9 | `c593ec19`, Phase 9 commit | saved-document transition edit hold and document-scoped recovery UI | A requested next edit starts only after the new proxy generation is ready; partial persistence/refresh success remains visible and recoverable without another write |
 | F-09 | Resolved in Phases 3 and 7 | `c593ec19`, `fbbf3d96` | immutable owner lookup, inactive install, and revisioned queued edit replay | Active-tab changes cannot publish into shared canvases; an inactive owner installs without drawing and renders under the same contract when selected |
 | F-10 | Resolved in Phase 4 | `b3934494` | PDF.js task registry and native request IDs | PDF.js tasks are actively cancelled on revision change; uncancellable native completions are rejected before publication |
 | F-11 | Resolved in Phase 5 | `b18ce88e` | explicit document/revision metadata preload and changed-page-first rebuild | Required-page native metadata is rebuilt before semantic/edit readiness; uncertain provenance changes clear the whole source cache |
@@ -47,10 +47,10 @@ The baseline split persistence, live-proxy replacement, render publication, sema
 | F-13 | Resolved in Phases 4 and 6 | `e3044e89` | revision-owned tile, preview, thumbnail, vector, and bitmap caches | Async insertions reject stale owners and synchronous lookup keys cannot cross a saved revision |
 | F-14 | Resolved in Phase 6 | `e3044e89` | revision-owned compatibility bitmap, page-type, vector image, and thumbnail resource keys | No production content cache is owned by path and page alone |
 | F-15 | Resolved in Phases 4–6 | `e3044e89` | whole-document/editable-metadata token validation and central preload cancellation/restart | Old preloads cannot insert metadata or mark a new revision complete; visible thumbnails restart first from the new proxy |
-| F-16 | Resolved in Phases 3, 7, and 8 | `c593ec19`, `fbbf3d96`, Phase 8 commit | saved-document transition, page-edit readiness ownership, and foreground-aware automatic scheduling | `livePdfRevision` advances only after candidate proxy install; final Saved and new edit sessions wait for exact current raster and semantics; automatic serialization yields to critical rendering |
-| F-17 | Resolved in Phases 2 and 8 | `eca8b23e`, Phase 8 commit | save coordinator persistence/publication boundaries and bounded automatic admission | Superseded and closed-document requests cannot publish stale state; repeated automatic requests are latest-wins and cannot defer past their coalescing deadline |
-| F-18 | Resolved in Phase 2 | `eca8b23e` | save coordinator editor promise and deadline | Save waits on the session commit promise and fails visibly at a bounded deadline |
-| F-19 | Resolved in Phase 8 | Phase 8 commit | `open-pdf-studio/js/text/text-edit-click-away-intent.js`, `open-pdf-studio/js/solid/components/PdfTextEditOverlay.jsx` | Captured safe toolbar/text-region intent replays once after successful Apply; failed, stale, destructive, and browser-delivered actions do not replay |
+| F-16 | Resolved in Phases 3, 7, and 8 | `c593ec19`, `fbbf3d96`, `672fea0c` | saved-document transition, page-edit readiness ownership, and foreground-aware automatic scheduling | `livePdfRevision` advances only after candidate proxy install; final Saved and new edit sessions wait for exact current raster and semantics; automatic serialization yields to critical rendering |
+| F-17 | Resolved in Phases 2 and 8 | `eca8b23e`, `672fea0c` | save coordinator persistence/publication boundaries and bounded automatic admission | Superseded and closed-document requests cannot publish stale state; repeated automatic requests are latest-wins and cannot defer past their coalescing deadline |
+| F-18 | Resolved in Phases 2 and 9 | `eca8b23e`, Phase 9 commit | save coordinator editor promise/deadline and durable selected-document failure state | Save waits on the session commit promise and fails visibly at a bounded deadline; exact failure remains diagnostic while the concise UI persists until acknowledgement or recovery |
+| F-19 | Resolved in Phase 8 | `672fea0c` | `open-pdf-studio/js/text/text-edit-click-away-intent.js`, `open-pdf-studio/js/solid/components/PdfTextEditOverlay.jsx` | Captured safe toolbar/text-region intent replays once after successful Apply; failed, stale, destructive, and browser-delivered actions do not replay |
 | F-20 | Reproduced | Pending | CI run 33148195868 | Static verification fails 19 OCR tests because untracked generated PNG fixtures are absent in a clean checkout |
 | F-21 | Pending | Pending | Pending | Pending |
 | F-22 | Reproduced | Pending | `open-pdf-studio/scripts/test-save-continue-editing-macos.mjs` | Explicitly red packaged scenario outline |
@@ -223,6 +223,26 @@ The baseline split persistence, live-proxy replacement, render publication, sema
 - Successful Apply replays a valid focus/button/menu action once or sends another text-region point through the revisioned readiness queue. Failed/stale actions do not replay; destructive actions visibly require a second click; a browser-delivered action suppresses replay.
 - Deterministic tests cover quick-edit latest-wins coalescing, maximum-window persistence, active-save/live-session deferral, duration/size evidence, exactly-once toolbar activation, readiness-routed text replay, failed commit, destructive action, compatibility-click consumption, and no double replay.
 
+### Phase 9 durable save status, recovery, and diagnostics
+
+| Command | Result |
+|---|---|
+| `node --test js/core/document-revision-state.test.mjs js/pdf/save-fault-injection.test.mjs js/pdf/save-coordinator.test.mjs js/pdf/saved-document-transition.test.mjs js/ui/chrome/document-save-status.test.mjs` | PASS: 47/47 |
+| `npm run test:editor-lifecycle:unit` | PASS: 193/193 |
+| `npm run test:unit` | PASS: 227/227 |
+| `npm run test:large-pdf-performance:unit` | PASS: 55/55 |
+| `npm run typecheck` | PASS |
+| `npm run build` | PASS |
+| `git diff --check` | PASS |
+
+- The status bar derives its non-modal save chip from the selected document's authoritative `revisionState`; switching tabs cannot display another owner's progress or failure.
+- `pending`, `saving`, `persisted`, `synchronizing`, `saved`, `failed`, and `saved-refresh-failed` have distinct concise states. Failure identities remain visible across later edits until acknowledged or recovered, while exact errors stay in document diagnostics.
+- Retry save resolves the owner's current content revision at click time. Retry refresh calls only `synchronizePersistedOwnerWithoutWrite`; deterministic source and transition tests prove it cannot enter `performSavePDF` or replace the destination again.
+- A failed refresh-only retry reveals Reopen. Reopen is allowed only when content equals the persisted revision, reloads that path through the production loader, resets the live revision/readiness owner, and cannot discard newer persistence debt.
+- The structured MCP/`window.__documentSaveDebug` snapshot contains document ID, content/serialized/persisted/live/visible revisions, save state, active request ID, and exact save/synchronization errors. `window.__textEditAutoSaveDebug` remains unchanged for compatibility.
+- Test-only deterministic fault injection is wired at serialization, persistence, proxy-install, and render-readiness boundaries. It has no production UI entry point.
+- Required state/UI tests cover automatic failure with retained debt, persisted-but-refresh-failed partial success, no-write refresh retry, latest-revision save retry, independent tab status, exact debug transitions, and last-resort reopen gating.
+
 ## Packaged acceptance
 
 - app artifact: Pending
@@ -242,5 +262,5 @@ Pending Phase 10 measurements.
 
 ## Remaining risks
 
-- UI recovery, packaged acceptance, performance qualification, and CI enforcement remain for Phases 9–12.
+- Packaged acceptance, performance qualification, and CI enforcement remain for Phases 10–12.
 - The source audit named by the supplied plan, `open-pdf-studio-ocr-release-hardening-bug-audit.md`, was not present in the workspace, Downloads, or Documents search scope.

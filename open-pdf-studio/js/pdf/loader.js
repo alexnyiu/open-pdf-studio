@@ -14,7 +14,12 @@ import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
 import { replaceDocumentPdfProxy } from '../core/document-lifecycle.js';
 import { restoreDocumentScrollPosition } from './document-scroll-position.js';
-import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
+import {
+  clearPageReadiness,
+  initializeDocumentRevisionState,
+  markDocumentSaveState,
+  noteDocumentMutation,
+} from '../core/document-revision-state.runtime.js';
 
 // Sub-module imports
 import { extractAnnotationColors } from './loader/color-extraction.js';
@@ -284,7 +289,9 @@ export function isPdfAReadOnly() {
 
 // Load PDF from file path into a specific document by index.
 // Optional preloadedData (Uint8Array) bypasses FS plugin read.
-export async function loadPDF(filePath, docIndex, preloadedData = null) {
+export async function loadPDF(filePath, docIndex, preloadedData = null, {
+  recoveryRevision = null,
+} = {}) {
   const doc = state.documents[docIndex];
   if (!doc) return;
 
@@ -450,7 +457,35 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
       isEvalSupported: false,
       verbosity: 0,
     }).promise;
-    replaceDocumentPdfProxy(doc, openedPdfDocument, 'document-load');
+    const previousPdfDocument = replaceDocumentPdfProxy(doc, openedPdfDocument, 'document-load');
+    if (recoveryRevision !== null) {
+      const restoredRevision = Number(recoveryRevision);
+      const revisionState = initializeDocumentRevisionState(doc);
+      if (!Number.isSafeInteger(restoredRevision) || restoredRevision < 0
+          || restoredRevision !== revisionState.persistedRevision
+          || restoredRevision !== revisionState.contentRevision) {
+        throw new Error('Persisted recovery revision no longer matches the document');
+      }
+      revisionState.serializedRevision = restoredRevision;
+      revisionState.livePdfRevision = restoredRevision;
+      revisionState.visibleRenderRevision = 0;
+      revisionState.visibleSemanticRevision = 0;
+      revisionState.visibleRequiredPages = [];
+      revisionState.pendingChangedPages = [];
+      revisionState.pendingStructuralChange = false;
+      clearPageReadiness(doc);
+      markDocumentSaveState(doc, 'saved', {
+        requestId: null,
+        saveError: null,
+        synchronizationError: null,
+      });
+      doc.modified = false;
+    }
+    if (previousPdfDocument && previousPdfDocument !== openedPdfDocument) {
+      try { await previousPdfDocument.destroy?.(); } catch (error) {
+        console.warn('[loader] Previous PDF.js proxy cleanup after reopen failed:', error);
+      }
+    }
     if (isClosed()) return;
     assertPdfDocumentResourceLimits(doc.pdfDoc);
     const {
@@ -664,6 +699,12 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     const failedPdfDocument = doc.pdfDoc;
     try { await failedPdfDocument?.destroy?.(); } catch {}
     replaceDocumentPdfProxy(doc, null, 'document-load-failed');
+    if (recoveryRevision !== null) {
+      markDocumentSaveState(doc, 'saved-refresh-failed', {
+        requestId: null,
+        synchronizationError: `Reopen failed: ${error?.message || String(error)}`,
+      });
+    }
     originalBytesCache.delete(filePath);
     if (fileLocked && filePath) {
       try { await unlockFile(filePath); } catch {}
@@ -676,6 +717,25 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     doc._isLoading = false;
     if (isActive()) hideLoading();
   }
+}
+
+export async function reopenPersistedDocument(documentId, documentGeneration) {
+  const id = String(documentId || '');
+  const docIndex = state.documents.findIndex((documentState) => String(documentState.id) === id);
+  const doc = state.documents[docIndex];
+  if (!doc || (Number(doc.lifecycleGeneration) || 0) !== (Number(documentGeneration) || 0)) {
+    return false;
+  }
+  const revisionState = initializeDocumentRevisionState(doc);
+  if (!doc.filePath || revisionState.contentRevision !== revisionState.persistedRevision
+      || revisionState.saveState !== 'saved-refresh-failed') return false;
+  const { clearSavedDocumentSynchronization } = await import('./saved-document-transition.js');
+  clearSavedDocumentSynchronization(doc.id);
+  await loadPDF(doc.filePath, docIndex, null, {
+    recoveryRevision: revisionState.persistedRevision,
+  });
+  return doc._loadRejected !== true
+    && initializeDocumentRevisionState(doc).saveState === 'saved';
 }
 
 // Open file dialog and load PDF

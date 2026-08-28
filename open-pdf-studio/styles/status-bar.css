@@ -63,6 +63,63 @@
   font-weight: 500;
 }
 
+.document-save-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--theme-status-separator);
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.document-save-status-success {
+  color: #dcfce7;
+}
+
+.document-save-status-pending,
+.document-save-status-warning {
+  color: #fef3c7;
+}
+
+.document-save-status-error {
+  color: #fee2e2;
+}
+
+.document-save-status button {
+  height: 17px;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.document-save-status button:hover {
+  background: var(--theme-status-nav-hover);
+}
+
+.document-save-status .document-save-status-dismiss {
+  width: 17px;
+  padding: 0;
+}
+
+.document-save-status-spinner {
+  width: 9px;
+  height: 9px;
+  border: 1px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: document-save-status-spin 0.8s linear infinite;
+}
+
+@keyframes document-save-status-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Status bar navigation controls */
 .status-nav-btn {
   background: transparent;
