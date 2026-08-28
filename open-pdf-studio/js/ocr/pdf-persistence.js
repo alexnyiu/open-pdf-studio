@@ -1,6 +1,5 @@
 // @ts-check
 
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { getOwnedOcrTextItems } from './document-state.js';
 import {
   inspectOwnedInvisibleOcrLayer,
@@ -17,6 +16,9 @@ export const OCR_VISIBLE_PIXEL_TOLERANCE = Object.freeze({
 });
 
 let approvedFontPromise = null;
+const pdfJsRuntimePromise = typeof window === 'undefined'
+  ? import('pdfjs-dist/legacy/build/pdf.mjs')
+  : import('pdfjs-dist/build/pdf.mjs');
 
 export class OcrPdfCandidateValidationError extends Error {
   /** @param {string} code @param {string} message @param {unknown} [cause] */
@@ -172,6 +174,12 @@ export async function loadApprovedOcrPdfFont() {
 /** @param {Uint8Array} pdfBytes @returns {Promise<any>} */
 async function openPdfJs(pdfBytes) {
   try {
+    const pdfjsLib = await pdfJsRuntimePromise;
+    if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = (/** @type {any} */ (import.meta)).env?.DEV
+        ? '/node_modules/pdfjs-dist/build/pdf.worker.mjs'
+        : new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
+    }
     return await pdfjsLib.getDocument({
       data: pdfBytes.slice(),
       cMapUrl: '/pdfjs/web/cmaps/',
