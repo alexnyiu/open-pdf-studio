@@ -3,7 +3,7 @@
 ## Baseline and final commits
 
 - Baseline: `d105926ed7760fa274308dc83f9a6609b49c9bfd` (`Improve text-edit auto-save persistence and diagnostics`)
-- Final implementation candidate: `7a778d4262efe1350fc9590085cabe879ae47529`
+- Final implementation candidate: `c36afc8a74baef91b83c9f92c47fa397f428f107`
 - Closure report: the documentation-only commit containing this file
 - Branch: `ocr-release-hardening`
 - Local qualification host: macOS Darwin 25.6.0 arm64; Node v25.6.1; npm 11.9.0; rustc/cargo 1.97.1; Tauri CLI 2.10.0
@@ -47,7 +47,7 @@ The repair carries immutable document/lifecycle/proxy/content/page/request ident
 | F-17 | Fixed | `eca8b23e`, `672fea0c` | `save-coordinator.js`, text-edit session registry | Event-driven editor completion, bounded failure, automatic latest-wins/admission tests |
 | F-18 | Fixed | `92734427` | `StatusBar.jsx`, `document-save-status.js`, recovery/fault injection | Automatic failure stays visible/retryable; exact diagnostic retained by owner |
 | F-19 | Fixed | `672fea0c` | `text-edit-click-away-intent.js`, `PdfTextEditOverlay.jsx` | Exactly-once toolbar/text replay; failed, stale, destructive, and browser-delivered actions do not replay |
-| F-20 | macOS fixed; other platforms deferred | `5c377ea9`, `2d4c193c`, `7a778d42` | `.github/workflows/ci.yml`, OCR corpus test, OCR PDF candidate validator | Node/runtime and macOS corpus proof corrected; macOS is the active qualification target, while Linux/Windows remain outside the current scope |
+| F-20 | macOS fixed; other platforms deferred | `5c377ea9`, `2d4c193c`, `7a778d42`, `c36afc8a` | `.github/workflows/ci.yml`, OCR corpus test, OCR PDF candidate validator | Node validation uses compatible legacy PDF.js while the packaged WebView retains the configured browser build; macOS is qualified, while Linux/Windows remain outside the current scope |
 | F-21 | Blocked | `5c377ea9` | `BRANCH_PROTECTION_REQUIRED.md` | Exact upstream `main` check/review/update/force-push/deletion settings recorded; implementing account lacks rule administration |
 | F-22 | Fixed | `a5422b1e`, `601affb3`, `5c377ea9` | save/continue script, verifier, aggregate packaged runner, CI | Packaged A1/A22 edits A/B/C, independent extraction/reopen, revision equality, 0 stale publications |
 | F-23 | Fixed | N/A | Upstream tracking history | Parent `OpenAEC-Foundation/open-pdf-studio#345`; linked workstreams `#346`–`#350` contain scope, acceptance, commits, and evidence |
@@ -81,7 +81,7 @@ From `open-pdf-studio/`:
 | `npm run test:editor-lifecycle:unit` | PASS, 206/206 |
 | `npm run test:large-pdf-performance:unit` | PASS, 57/57 |
 | `npm run test:quality` | PASS, 69/69 |
-| `npm run build` | PASS, 1,298 modules |
+| `npm run build` | PASS, 1,299 modules |
 | `node --test scripts/ocr-quality-benchmark.test.mjs` | PASS, 8/8; exact reproduction on macOS and byte/hash self-consistency everywhere |
 | `NPM_CONFIG_CACHE=... npx --yes node@24.19.0 --test js/ocr/pdf-persistence.test.mjs` | PASS, 5/5 under the exact hosted Node runtime |
 
@@ -95,13 +95,15 @@ From repository root:
 
 ### Packaged macOS gates
 
-Packaged app source candidate `5c377ea9`; final-candidate macOS rerun against `7a778d42` is pending:
+Packaged app source candidate `c36afc8a`:
 
 `/Users/alexander/Personal Projects/open-pdf-studio/target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app`
 
 | Command | Outcome |
 |---|---|
-| `npm run package:ocr-release-hardening:arm64` | PASS; ad-hoc hardened-runtime bundle, strict signature verification and PDFium probe pass; notarization skipped because credentials were unavailable |
+| `npm run prepare:native-runtime` | PASS; PDFium 7834 ready |
+| `npm run tauri build -- --target aarch64-apple-darwin --bundles app` | App bundle produced; updater-archive signing then stopped because `TAURI_SIGNING_PRIVATE_KEY` is unavailable |
+| `npm run package:ocr-release-hardening:arm64` | PASS; updater artifact disabled, ad-hoc hardened-runtime bundle created, strict signature verification and PDFium probe pass; notarization skipped because credentials were unavailable |
 | `npm run test:editor-coverage:macos` | PASS, 384 matrix + 72 lifecycle cases |
 | `npm run test:annotation-text-editing:macos` | PASS; insertion, textbox, callout, click-away, Escape, save/reopen, repeat-save, genuine re-edit |
 | `npm run test:native-text-editing:macos` | PASS |
@@ -113,7 +115,7 @@ Packaged app source candidate `5c377ea9`; final-candidate macOS rerun against `7
 ## Packaged acceptance
 
 - app artifact: `/Users/alexander/Personal Projects/open-pdf-studio/target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app`
-- executable: `Contents/MacOS/open-pdf-studio`, 71,994,896 bytes, SHA-256 `7cc836dd571ac3e7711dd9bd1f9e5bf63ef285cd7186d9123a571344c50a6aa6`
+- executable: `Contents/MacOS/open-pdf-studio`, 72,109,808 bytes, SHA-256 `7c71dd9ade5c3a2032167ad8b13795ac56c34c1640e9ef9383db3fc32524acd6`
 - aggregate report: `open-pdf-studio/test-artifacts/packaged-editor/acceptance.json`, PASS
 - coherence report: `open-pdf-studio/test-artifacts/save-render-coherence/report.json`, PASS
 - scenarios: A1 and A22 execute through the packaged production UI; A2–A21 have packaged or deterministic evidence; no synthetic state seeding or test-only app entry point
@@ -124,7 +126,7 @@ Packaged app source candidate `5c377ea9`; final-candidate macOS rerun against `7
 
 ## Performance comparison
 
-The prior qualified packaged snapshot is `14019611`; the coherence candidate measurement is `5c377ea9`. The baseline defect did not have a valid save/synchronize workflow, so no misleading before latency is invented for that broken path. Coordinator tests directly assert bounded serialization duration/candidate-size diagnostics; packaged readiness and large-document behavior are covered by the tables below.
+The prior qualified packaged snapshot is `14019611`; the final coherence candidate measurement is `c36afc8a`. The baseline defect did not have a valid save/synchronize workflow, so no misleading before latency is invented for that broken path. Coordinator tests directly assert bounded serialization duration/candidate-size diagnostics; packaged readiness and large-document behavior are covered by the tables below.
 
 | Metric | Prior qualified | Candidate | Guardrail/result |
 |---|---:|---:|---|
@@ -133,12 +135,12 @@ The prior qualified packaged snapshot is `14019611`; the coherence candidate mea
 | maximum ordinary typing task | 3 ms | 4 ms | PASS, < 50 ms |
 | active exact-layout tasks | 1 | 1 | PASS, bounded |
 | idle placement reads/writes | 0 / 0 | 0 / 0 | PASS |
-| history entries / approximate bytes | 2 / 24,184 | 2 / 24,184 | PASS |
+| history entries / approximate bytes | 2 / 24,184 | 2 / 24,210 | PASS |
 | OCR UI publication maximum | 8.0645 Hz | 8.0645 Hz | PASS, <= 10 Hz |
-| OCR bookkeeping CPU | 0.00374% | 0.00539% | PASS |
+| OCR bookkeeping CPU | 0.00374% | 0.00286% | PASS |
 | OCR progress / late cancel publication | monotonic / none | monotonic / none | PASS |
 
-The 100-page production run recorded parent RSS baseline 319,504,384 bytes, peak parent 337,838,080, peak child 207,847,424, settled parent 236,617,728, and settled delta 0 against a 33,554,432-byte allowance. Required page metadata reached 100/100, owned OCR streams were exactly one per page, all 100 child processes were reaped, and no stale/generation token error occurred.
+The final 100-page production run recorded parent RSS baseline 319,176,704 bytes, peak parent 337,739,776, peak child 209,960,960, settled parent 241,352,704, and settled delta 0 against a 33,554,432-byte allowance. Required page metadata reached 100/100, owned OCR streams were exactly one per page, all 100 child processes were reaped, and no stale/generation token error occurred. Its separate cancellation run completed 55 pages, cancelled 45, reaped every child, and published no late result.
 
 ## CI and protection evidence
 
@@ -153,7 +155,7 @@ The 100-page production run recorded parent RSS baseline 319,504,384 bytes, peak
 
 ## Final source audit
 
-The five required `rg` searches were rerun against `7a778d42` and every match was reviewed rather than mechanically removed.
+The five required `rg` searches were rerun against `c36afc8a` and every match was reviewed rather than mechanically removed.
 
 - path/page matches: page raster, bitmap, tile, thumbnail, preview, vector, geometry, and page-type owners also include immutable document ID, lifecycle, content revision, and page revision. The old compatibility facade registers with the formal raster owner and is cleared centrally; no content lookup is path-and-page only.
 - active-document wrapper equality: remaining comparisons only protect publication into the active shared DOM/canvas or fail closed. Mutation, persistence, synchronization, and cache authority use document ID, lifecycle generation, direct PDF.js proxy, and revisions; owner resolution remains valid when a reactive wrapper changes.
@@ -176,13 +178,13 @@ The five required `rg` searches were rerun against `7a778d42` and every match wa
 | All listed caches are revision-owned or centrally invalidated | PASS |
 | Save/refresh failure is visible and recoverable without unsafe editing | PASS |
 | Exact packaged edit/save/edit-again/no-reopen scenario passes | PASS |
-| Final local macOS static, desktop-package, coherence, performance, and release-hardening gates execute and pass | PENDING FINAL MACOS VALIDATION |
+| Final local macOS static, desktop-package, coherence, performance, and release-hardening gates execute and pass | PASS |
 | Linux and Windows hosted desktop/package gates execute and pass | UNVERIFIED — deferred by macOS-only scope |
 | Authoritative upstream `main` protection is configured and live-verified | UNVERIFIED — external administrator required |
 | Tracking history contains reproduction, ownership, acceptance, commits, and evidence | PASS |
-| Final clean-checkout reproduction at the closure commit | PENDING FINAL VALIDATION |
+| Final clean-candidate reproduction; closure commit changes documentation only | PASS |
 
-Release decision: **NO-GO** for a cross-platform/upstream merge until deferred Linux/Windows workflow closure and the documented F-21 administrator action are completed. macOS qualification remains pending only on the final clean-candidate rerun below; this decision does not misclassify deferred platforms or the external protection gap as macOS runtime defects.
+Release decision: **MACOS IMPLEMENTATION GO**. The final packaged arm64 app and every Mac-specific static, unit, save/render-coherence, editor, OCR, performance, and source-audit gate pass at `c36afc8a`. This decision does not qualify deferred Linux/Windows targets, Developer ID/notarized distribution, or upstream repository administration.
 
 ## Remaining risks
 
