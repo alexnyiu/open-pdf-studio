@@ -84,23 +84,37 @@ test('quality corpus is deterministic, small, licensed, and complete', async () 
     readFile(path.join(projectDir, 'public', 'pdfjs', 'web', 'standard_fonts', 'LICENSE_LIBERATION')),
   ]);
 
-  const temporary = await mkdtemp(path.join(os.tmpdir(), 'ocr-quality-fixtures-'));
-  try {
-    const generated = await createOcrQualityFixtures(temporary);
-    assert.deepEqual(generated, committed);
-    let totalBytes = 0;
-    for (const item of committed.fixtures.filter((entry) => entry.input.kind === 'rgba-page-raster')) {
-      const [expectedBytes, generatedBytes] = await Promise.all([
-        readFile(path.join(corpusDir, item.input.file)),
-        readFile(path.join(temporary, item.input.file)),
-      ]);
-      assert.equal(digest(generatedBytes), item.input.sha256);
-      assert.deepEqual(generatedBytes, expectedBytes);
-      totalBytes += generatedBytes.byteLength;
+  const rasterFixtures = committed.fixtures
+    .filter((entry) => entry.input.kind === 'rgba-page-raster');
+  let totalBytes = 0;
+  for (const item of rasterFixtures) {
+    const committedBytes = await readFile(path.join(corpusDir, item.input.file));
+    assert.equal(committedBytes.byteLength, item.input.bytes);
+    assert.equal(digest(committedBytes), item.input.sha256);
+    totalBytes += committedBytes.byteLength;
+  }
+  assert.ok(totalBytes < 1024 * 1024);
+
+  // The corpus contract is macOS-scoped. librsvg/Pango rasterization is not
+  // byte-identical across operating systems even with embedded font bytes, so
+  // cross-platform CI validates the committed corpus while the declared target
+  // platform additionally proves exact generator reproducibility.
+  if (process.platform === 'darwin') {
+    const temporary = await mkdtemp(path.join(os.tmpdir(), 'ocr-quality-fixtures-'));
+    try {
+      const generated = await createOcrQualityFixtures(temporary);
+      assert.deepEqual(generated, committed);
+      for (const item of rasterFixtures) {
+        const [expectedBytes, generatedBytes] = await Promise.all([
+          readFile(path.join(corpusDir, item.input.file)),
+          readFile(path.join(temporary, item.input.file)),
+        ]);
+        assert.equal(digest(generatedBytes), item.input.sha256);
+        assert.deepEqual(generatedBytes, expectedBytes);
+      }
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
     }
-    assert.ok(totalBytes < 1024 * 1024);
-  } finally {
-    await rm(temporary, { recursive: true, force: true });
   }
 });
 
