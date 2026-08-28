@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Double-click or press Enter to edit.",
     "timezoneHint": "Dates are shown in {{timezone}} and saved as ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Approve font substitution",
-    "sourceFace": "Source font",
-    "sourceFaces": "Source fonts",
-    "unknown": "Unknown",
-    "packagedSubstitute": "Packaged substitute",
-    "notAvailable": "Not available",
-    "sampleText": "Sample",
-    "sampleFallback": "The quick brown fox jumps over the lazy dog.",
-    "scope": "Applies to",
-    "scopeAnnotation": "This annotation",
-    "scopeSelection": "The selected text boxes",
-    "scopeParagraph": "This PDF paragraph",
-    "scopeFindReplace": "This Find/Replace edit",
-    "remember": "Remember this approval for this open document",
-    "approve": "Use substitute",
-    "cancel": "Cancel"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Edit PDF text",

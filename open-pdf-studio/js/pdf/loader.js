@@ -13,6 +13,7 @@ import { extractFileName } from '../core/platform.js';
 import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
 import { replaceDocumentPdfProxy } from '../core/document-lifecycle.js';
+import { restoreDocumentScrollPosition } from './document-scroll-position.js';
 
 // Sub-module imports
 import { extractAnnotationColors } from './loader/color-extraction.js';
@@ -337,23 +338,19 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
       if (!_poolReady) console.log('[prog-guard] worker pool not ready → cold-open pre-render skipped');
     }
     if (filePath && isTauri() && !_skipPre && _poolReady) {
-      const { renderPdfPage: _renderPdfPage } = await import('./engine-router.js');
-      _renderPdfPage({
+      const { renderPdfPageBitmap: _renderPdfPageBitmap } = await import('./engine-router.js');
+      _renderPdfPageBitmap({
         path: filePath,
         pageIndex: 0,
         scale: 1.0,
         rotation: 0,
-      }).then(async (rgbaData) => {
-        if (!rgbaData || isClosed() || doc._loadRejected || doc.pdfDoc || !isActive()) return;
+      }).then(async (rendered) => {
+        if (!rendered || isClosed() || doc._loadRejected || doc.pdfDoc || !isActive()) {
+          try { rendered?.bitmap?.close?.(); } catch {}
+          return;
+        }
         try {
-          const bytes = rgbaData instanceof Uint8Array ? rgbaData : new Uint8Array(rgbaData);
-          if (bytes.length <= 8) return;
-          const view = new DataView(bytes.buffer, bytes.byteOffset, 8);
-          const w = view.getUint32(0, true);
-          const h = view.getUint32(4, true);
-          const rgba = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + 8, bytes.length - 8);
-          const imageData = new ImageData(rgba, w, h);
-          const bitmap = await createImageBitmap(imageData);
+          const { bitmap, width: w, height: h } = rendered;
           if (isClosed() || doc._loadRejected || doc.pdfDoc || !isActive()) { bitmap.close(); return; }
           const vp = await import('./pdf-viewport.js');
           vp.setPage(filePath, 1, w, h, 0, 0, 0);
@@ -398,7 +395,10 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
       // to a web worker, which detaches the original Uint8Array making it length 0)
       originalBytesCache.set(filePath, typedArray.slice());
     }
-    console.log(`[PERF] File read done: ${(performance.now() - _t0).toFixed(0)}ms, size: ${typedArray.length} bytes`);
+    // PDF.js transfers this buffer to its worker and may detach it. Capture
+    // source size before getDocument() so the adaptive profile never sees 0.
+    const sourceByteLength = typedArray.byteLength;
+    console.log(`[PERF] File read done: ${(performance.now() - _t0).toFixed(0)}ms, size: ${sourceByteLength} bytes`);
 
     // Restore only validated Open PDF Studio-owned scanned-text edit state.
     // Foreign or malformed PieceInfo never becomes editable application state.
@@ -436,6 +436,12 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     replaceDocumentPdfProxy(doc, openedPdfDocument, 'document-load');
     if (isClosed()) return;
     assertPdfDocumentResourceLimits(doc.pdfDoc);
+    const {
+      seedDocumentPerformanceProfile,
+      initializeDocumentPerformance,
+      registerDocumentRenderCacheOwners,
+    } = await import('./document-performance.js');
+    seedDocumentPerformanceProfile(doc, sourceByteLength);
     console.log(`[PERF] PDF.js getDocument done: ${(performance.now() - _t0).toFixed(0)}ms, pages: ${doc.pdfDoc.numPages}`);
 
     try {
@@ -464,6 +470,8 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
 
     doc.filePath = filePath;
     doc.fileName = filePath ? filePath.split(/[\\/]/).pop() : 'Untitled';
+    await registerDocumentRenderCacheOwners(doc);
+    void initializeDocumentPerformance(doc, { fileBytes: sourceByteLength });
 
     // Reset annotation state (per-document)
     doc.annotations = [];
@@ -477,8 +485,9 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     doc.selectedAnnotations = [];
     doc.currentPage = 1;
 
-    // Eagerly start pdf-lib loading in background (don't await - runs in parallel with first paint)
-    getSharedPdfLibDoc(doc);
+    // pdf-lib is intentionally lazy. Large files should reach first paint and
+    // interactive scrolling before a second full document representation is
+    // parsed and retained.
 
     // UI operations — only if this is the active document
     if (isActive()) {
@@ -498,6 +507,11 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
       console.log(`[PERF] setViewMode START: ${(performance.now() - _t0).toFixed(0)}ms`);
       await setViewMode(doc.viewMode);
       if (isClosed()) return;
+      // createTab() activates a document before its pdfDoc is ready, so the
+      // tab switcher cannot restore its scroll position at that point. Apply
+      // it after the first real render; otherwise this shared container keeps
+      // the previous document's zoomed scroll offset.
+      restoreDocumentScrollPosition(pdfContainer, doc);
       console.log(`[PERF] setViewMode DONE: ${(performance.now() - _t0).toFixed(0)}ms`);
       hideLoading();
 
@@ -527,7 +541,9 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
     // loading eagerly in the background).
     {
       if (!Array.isArray(doc.stylePresets)) doc.stylePresets = [];
-      getSharedPdfLibDoc(doc).then(async (pdfLibDoc) => {
+      import('./foreground-activity.js').then(({ waitForPdfForegroundIdle }) => (
+        waitForPdfForegroundIdle({ isCurrent: () => !isClosed() })
+      )).then((ready) => ready ? getSharedPdfLibDoc(doc) : null).then(async (pdfLibDoc) => {
         if (isClosed() || !pdfLibDoc) return;
         const { readStylePresetsFromCatalog } = await import('./saver/style-presets.js');
         if (isClosed()) return;
@@ -616,7 +632,8 @@ export async function loadPDF(filePath, docIndex, preloadedData = null) {
       }
     }).catch((e) => { console.error('[PERF-BG] loadExistingAnnotations error:', e); });
 
-    if (state.preferences.preloadEntirePdf) {
+    const { shouldPreloadEntireDocument } = await import('./preload-policy.js');
+    if (shouldPreloadEntireDocument(doc, state.preferences)) {
       void import('./whole-pdf-preload.js').then((module) => module.startWholePdfPreload(doc));
     }
 
@@ -972,19 +989,20 @@ export async function loadExistingAnnotations(doc) {
   const loadId = ++doc._annotationLoadId;
   const pdfDoc = doc.pdfDoc;
   const numPages = pdfDoc.numPages;
-  const BATCH_SIZE = 10;
+  const BATCH_SIZE = doc.performanceProfile?.largeDocument ? 2 : 10;
+  const { waitForPdfForegroundIdle } = await import('./foreground-activity.js');
   const _bg0 = performance.now();
   console.log(`[PERF-BG] loadExistingAnnotations START (${numPages} pages)`);
+  await new Promise((resolve) => setTimeout(resolve, 250));
 
   for (let batchStart = 1; batchStart <= numPages; batchStart += BATCH_SIZE) {
     if (loadId !== doc._annotationLoadId) return;
     if (!state.documents.includes(doc)) return;
 
-    // Yield to the browser between batches so the UI stays responsive
-    if (batchStart > 1) {
-      await new Promise(r => setTimeout(r, 0));
-      if (loadId !== doc._annotationLoadId || !state.documents.includes(doc)) return;
-    }
+    // Foreground interaction owns the parser/render backends. Resume this
+    // document-wide scan only after the shared 250 ms settle window.
+    const stillCurrent = () => loadId === doc._annotationLoadId && state.documents.includes(doc);
+    if (!await waitForPdfForegroundIdle({ isCurrent: stillCurrent })) return;
 
     const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, numPages);
 

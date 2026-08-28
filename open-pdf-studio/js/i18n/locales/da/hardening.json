@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Dobbeltklik, eller tryk på Enter for at redigere.",
     "timezoneHint": "Datoer vises i tidszonen {{timezone}} og gemmes i ISO 8601-format."
   },
-  "fontSubstitution": {
-    "title": "Godkend skrifterstatning",
-    "sourceFace": "Kildeskrifttype",
-    "sourceFaces": "Kildeskrifttyper",
-    "unknown": "Ukendt",
-    "packagedSubstitute": "Medfølgende erstatningsskrifttype",
-    "notAvailable": "Ikke tilgængelig",
-    "sampleText": "Eksempel",
-    "sampleFallback": "Den hurtige brune ræv hopper over den dovne hund.",
-    "scope": "Gælder for",
-    "scopeAnnotation": "Denne annotation",
-    "scopeSelection": "De valgte tekstfelter",
-    "scopeParagraph": "Dette PDF-afsnit",
-    "scopeFindReplace": "Denne Søg/erstat-redigering",
-    "remember": "Husk denne godkendelse for det åbne dokument",
-    "approve": "Brug erstatningsskrifttype",
-    "cancel": "Annuller"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Rediger PDF-tekst",

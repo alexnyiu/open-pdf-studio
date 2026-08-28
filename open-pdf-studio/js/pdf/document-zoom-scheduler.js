@@ -1,12 +1,31 @@
 import { getActiveDocument } from '../core/state.js';
-import { smoothWheelZoomFactor } from './zoom-gesture.js';
+import { zoomFactorForInput } from './zoom-gesture.js';
 import { viewport, zoomAtPoint } from './pdf-viewport.js';
-import { createZoomFrameState } from './zoom-frame-state.js';
+import {
+  createAnimationFrameScheduler,
+  createZoomFrameState,
+} from './zoom-frame-state.js';
+import {
+  incrementPerformanceCounter,
+  notePerformanceInteraction,
+  recordPerformanceSample,
+} from './performance-metrics.js';
 
-const zoomFrameState = createZoomFrameState({
-  requestFrame: (callback) => requestAnimationFrame(callback),
-  cancelFrame: (frame) => cancelAnimationFrame(frame),
-});
+const clock = () => globalThis.performance?.now?.() ?? Date.now();
+
+function recordZoomTransform(request, workStartedAt) {
+  const completedAt = clock();
+  recordPerformanceSample('zoomInputToTransformMs', completedAt - request.inputAt);
+  recordPerformanceSample(
+    'zoomCoalescedBatchAgeMs',
+    completedAt - (request.firstInputAt ?? request.inputAt),
+  );
+  recordPerformanceSample('zoomTransformWorkMs', completedAt - workStartedAt);
+  incrementPerformanceCounter('zoomTransforms');
+}
+
+const zoomAnimationFrames = createAnimationFrameScheduler({ fallbackMs: 40 });
+const zoomFrameState = createZoomFrameState(zoomAnimationFrames);
 
 function usesVectorViewport(documentState) {
   return Boolean(
@@ -88,31 +107,45 @@ function ownerIsCurrent(owner) {
  * Points are already expressed in the coordinate system needed by each view.
  */
 export function scheduleDocumentZoom({
-  delta,
+  delta = 0,
+  factor = null,
+  source = 'wheel',
   screenPoint = null,
   clientPoint = null,
+  anchor = null,
   anchorY = null,
 } = {}) {
   const documentState = getActiveDocument();
   const amount = Number(delta) || 0;
-  if (!documentState?.pdfDoc || !amount) return false;
+  const directFactor = Number(factor);
+  if (!documentState?.pdfDoc || (!amount && !(directFactor > 0))) return false;
 
+  const inputAt = clock();
+  notePerformanceInteraction('zoom', inputAt);
   const owner = captureOwner(documentState);
   const key = ownerKey(owner);
   return zoomFrameState.enqueue({
     key,
     owner,
     accumulatedDelta: amount,
+    accumulatedFactor: directFactor > 0 ? directFactor : 1,
+    source,
     screenPoint: screenPoint ? { x: screenPoint.x, y: screenPoint.y } : null,
     clientPoint: clientPoint ? { x: clientPoint.x, y: clientPoint.y } : null,
+    anchor,
     anchorY: anchorY == null ? null : Number(anchorY),
+    inputAt,
   }, async (request, operation) => {
     if (!operation.isCurrent() || !ownerIsCurrent(request.owner)) return;
+    const workStartedAt = clock();
 
-    const factor = smoothWheelZoomFactor(request.accumulatedDelta);
+    const factor = request.accumulatedDelta
+      ? zoomFactorForInput(request.accumulatedDelta, request.source)
+      : Math.max(0.72, Math.min(1.38, request.accumulatedFactor || 1));
     if (request.owner.kind === 'vector') {
       const point = request.screenPoint;
       if (point) zoomAtPoint(point.x, point.y, factor);
+      recordZoomTransform(request, workStartedAt);
       return;
     }
 
@@ -124,8 +157,9 @@ export function scheduleDocumentZoom({
         request.owner.lifecycleGeneration,
         request.owner.pageNum,
         factor,
-        request.anchorY,
+        request.anchor || request.clientPoint || request.anchorY,
       );
+      recordZoomTransform(request, workStartedAt);
       return;
     }
     const point = request.clientPoint;
@@ -136,6 +170,7 @@ export function scheduleDocumentZoom({
       factor,
       point,
     );
+    recordZoomTransform(request, workStartedAt);
   });
 }
 

@@ -268,6 +268,18 @@ test('editor lifecycle policy requires click-away commit for every editor family
   assert.equal(REQUIRED_EDITOR_LIFECYCLE_CASE_COUNT, 72);
 });
 
+test('every visible Save control is commit-aware while a text draft is active', async () => {
+  const [titleBar, appMenu] = await Promise.all([
+    readFile(path.join(projectDir, 'js', 'solid', 'components', 'TitleBar.jsx'), 'utf8'),
+    readFile(path.join(projectDir, 'js', 'solid', 'components', 'app-menu', 'AppMenu.jsx'), 'utf8'),
+  ]);
+  assert.match(titleBar, /data-action="save" data-text-edit-commit-action="true"/u);
+  assert.match(titleBar, /data-action="save-as" data-text-edit-commit-action="true"/u);
+  assert.match(appMenu, /data-text-edit-commit-action=\{props\.commitAction/u);
+  assert.match(appMenu, /label=\{t\('save'\)\}[^\n]+commitAction/u);
+  assert.match(appMenu, /label=\{t\('saveAs'\)\}[^\n]+commitAction/u);
+});
+
 test('branch-protection policy is documented as external repository state', async () => {
   const guide = await readFile(path.join(projectDir, 'docs', 'ocr', 'OCR_RELEASE_HARDENING_GATE.md'), 'utf8');
   for (const checkName of REQUIRED_CHECK_NAMES) assert.match(guide, new RegExp(checkName.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')));
@@ -361,8 +373,8 @@ test('release-hardening scripts and machine evidence are wired without committin
     "createAnnotationText('callout'",
     "callTool('app_mouse_click'",
     "callTool('app_mouse_drag'",
-    "clickVisible('.pdf-text-editor-apply')",
-    "clickVisible('.pdf-text-editor-cancel')",
+    "clickVisible('.status-page-input')",
+    "callTool('app_key', { key: 'Escape' })",
     "callTool('app_save_pdf'",
     "callTool('app_open_pdf'",
   ]) {
@@ -372,6 +384,9 @@ test('release-hardening scripts and machine evidence are wired without committin
       `packaged annotation acceptance must use ${productionAction}`,
     );
   }
+  assert.match(annotationTextAcceptance, /assert\.equal\(apply\.found, false/);
+  assert.match(annotationTextAcceptance, /assert\.equal\(cancel\.found, false/);
+  assert.match(annotationTextAcceptance, /assert\.equal\(substitutionDialog\.found, false/);
   assert.match(annotationTextAcceptance, /double: true/);
   assert.match(annotationTextAcceptance, /productionUiOnly: true/);
   assert.match(annotationTextAcceptance, /syntheticStateSeeding: false/);
@@ -422,7 +437,7 @@ test('release-hardening scripts and machine evidence are wired without committin
   for (const scriptName of [
     'test-native-paragraph-editing.mjs',
     'test-inline-document-metadata.mjs',
-    'test-modal-font-substitution.mjs',
+    'test-modal-hardening.mjs',
     'test-ocr-searchable-layer-macos.mjs',
     'test-ocr-recognition-dialog-macos.mjs',
     'test-ocr-progress-macos.mjs',

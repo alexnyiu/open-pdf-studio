@@ -35,3 +35,24 @@ export function canSkipUnmodifiedSamePathSave({
     && !documentHasPendingPersistence(documentState),
   );
 }
+
+/** The persistence path may begin only after this document's live draft commits. */
+export async function textEditCommitAllowsSave(documentState, reason, commitForDocument) {
+  if (!documentState?.id) return true;
+  if (typeof commitForDocument !== 'function') {
+    throw new TypeError('Saving requires a document-scoped text-edit commit barrier');
+  }
+  return (await commitForDocument(documentState.id, reason)) === true;
+}
+
+/**
+ * Reactive stores may return a different proxy identity after an async commit.
+ * A save stays bound to the immutable document ID and lifecycle generation,
+ * rather than the JavaScript wrapper object observed before the await.
+ */
+export function documentLifecycleOwnerMatches(ownerDocument, currentDocument) {
+  if (!ownerDocument || !currentDocument) return false;
+  return String(currentDocument.id) === String(ownerDocument.id)
+    && (Number(currentDocument.lifecycleGeneration) || 0)
+      === (Number(ownerDocument.lifecycleGeneration) || 0);
+}

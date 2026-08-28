@@ -1,4 +1,4 @@
-import { Show } from 'solid-js';
+import { Show, createEffect, createSignal } from 'solid-js';
 import { state, getActiveDocument } from '../../core/state.js';
 import { useTranslation, localizeNumber } from '../../i18n/useTranslation.js';
 
@@ -134,6 +134,19 @@ export default function StatusBar() {
     const doc = state.documents[state.activeDocumentIndex];
     return localizeNumber(Math.round((doc ? doc.scale : 1.5) * 100)) + '%';
   };
+  const [zoomDraft, setZoomDraft] = createSignal(zoomText());
+  const [zoomInputFocused, setZoomInputFocused] = createSignal(false);
+  createEffect(() => {
+    const canonical = zoomText();
+    // Rendering, validation, and editor placement update reactive document
+    // state frequently. Never overwrite a user's partially typed zoom value;
+    // resume the canonical display as soon as the control loses focus.
+    if (!zoomInputFocused()) setZoomDraft(canonical);
+  });
+  const handleZoomDraftBlur = (event) => {
+    handleZoomBlur(event);
+    setZoomInputFocused(false);
+  };
   const viewMode = () => state.documents[state.activeDocumentIndex]?.viewMode || 'single';
   const bookSpread = () => !!state.documents[state.activeDocumentIndex]?.bookSpread;
   const facingSpread = () => !!state.documents[state.activeDocumentIndex]?.facingSpread;
@@ -247,7 +260,16 @@ export default function StatusBar() {
               </svg>
             </button>
 
-            <input type="text" class="status-zoom-input" tabIndex={-1} value={zoomText()} onKeyDown={handleZoomInput} onBlur={handleZoomBlur} />
+            <input
+              type="text"
+              class="status-zoom-input"
+              tabIndex={-1}
+              value={zoomDraft()}
+              onFocus={() => setZoomInputFocused(true)}
+              onInput={(event) => setZoomDraft(event.currentTarget.value)}
+              onKeyDown={handleZoomInput}
+              onBlur={handleZoomDraftBlur}
+            />
 
             <button class="status-nav-btn" tabIndex={-1} title={t('zoomIn')} onClick={handleZoomIn}>
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">

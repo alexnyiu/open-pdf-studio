@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Klik dua kali atau tekan Enter untuk menyunting.",
     "timezoneHint": "Tanggal ditampilkan dalam zona waktu {{timezone}} dan disimpan dalam format ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Setujui penggantian font",
-    "sourceFace": "Font sumber",
-    "sourceFaces": "Font sumber",
-    "unknown": "Tidak diketahui",
-    "packagedSubstitute": "Font pengganti bawaan",
-    "notAvailable": "Tidak tersedia",
-    "sampleText": "Contoh",
-    "sampleFallback": "Rubah cokelat yang cepat melompati anjing malas.",
-    "scope": "Berlaku untuk",
-    "scopeAnnotation": "Anotasi ini",
-    "scopeSelection": "Kotak teks yang dipilih",
-    "scopeParagraph": "Paragraf PDF ini",
-    "scopeFindReplace": "Penyuntingan Cari/Ganti ini",
-    "remember": "Ingat persetujuan ini untuk dokumen yang sedang terbuka",
-    "approve": "Gunakan font pengganti",
-    "cancel": "Batal"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Sunting teks PDF",

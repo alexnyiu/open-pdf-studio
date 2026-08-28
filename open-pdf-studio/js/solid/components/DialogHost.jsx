@@ -48,7 +48,6 @@ import PrintProgressToast from './PrintProgressToast.jsx';
 import OcrProgressToast from './OcrProgressToast.jsx';
 import OcrRegionSplitDialog from './dialogs/OcrRegionSplitDialog.jsx';
 import OcrRegionMergeDialog from './dialogs/OcrRegionMergeDialog.jsx';
-import FontSubstitutionDialog from './dialogs/FontSubstitutionDialog.jsx';
 import UnsavedCloseDialog from './dialogs/UnsavedCloseDialog.jsx';
 import {
   StylePresetCreateDialog,
@@ -99,7 +98,6 @@ const DIALOG_MAP = {
   'recognize-text': RecognizeTextDialog,
   'split-ocr-region': OcrRegionSplitDialog,
   'merge-ocr-regions': OcrRegionMergeDialog,
-  'font-substitution': FontSubstitutionDialog,
   'style-preset-create': StylePresetCreateDialog,
   'style-preset-manage': StylePresetManageDialog,
 };

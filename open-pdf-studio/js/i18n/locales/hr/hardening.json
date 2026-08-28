@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Za uređivanje dvaput kliknite ili pritisnite Enter.",
     "timezoneHint": "Datumi se prikazuju u vremenskoj zoni {{timezone}} i spremaju u formatu ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Odobri zamjenu fonta",
-    "sourceFace": "Izvorni font",
-    "sourceFaces": "Izvorni fontovi",
-    "unknown": "Nepoznato",
-    "packagedSubstitute": "Priloženi zamjenski font",
-    "notAvailable": "Nije dostupno",
-    "sampleText": "Uzorak",
-    "sampleFallback": "Brza smeđa lisica preskače lijenog psa.",
-    "scope": "Primjenjuje se na",
-    "scopeAnnotation": "Ovu bilješku",
-    "scopeSelection": "Odabrane tekstne okvire",
-    "scopeParagraph": "Ovaj odlomak PDF-a",
-    "scopeFindReplace": "Ovu izmjenu Pronađi/Zamijeni",
-    "remember": "Zapamti ovo odobrenje za ovaj otvoreni dokument",
-    "approve": "Upotrijebi zamjenski font",
-    "cancel": "Odustani"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Uredi tekst PDF-a",

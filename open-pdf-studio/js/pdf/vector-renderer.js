@@ -26,25 +26,109 @@
  *    18  TextAt(f32 x, f32 y, f32 fontSize, u32 rgba, u8 len, UTF-8 bytes)
  */
 
+import {
+  registerRenderResource,
+  touchRenderResource,
+  unregisterRenderResource,
+  isActiveRenderDocument,
+} from './render-resource-budget.js';
+
 // Cache: Map<"filePath:pageNum:rotation", { bytes: Uint8Array, w, h, x0, y0 }>
 // Rotation is part of the key so a page rotated 90° coexists with the same
 // page un-rotated, without invalidating either when the user toggles back.
 const _cache = new Map();
+const _fileOwners = new Map();
 
 function _key(filePath, pageNum, rotation) {
   return filePath + ':' + pageNum + ':' + ((rotation || 0) % 360);
 }
 
+const _commandResourceKey = (key) => `vector-command:${key}`;
+const _imageKey = (commandKey, position) => `${commandKey}@${position}`;
+const _imageResourceKey = (key) => `vector-image:${key}`;
+
+export function registerVectorCacheOwner(filePath, documentId) {
+  if (!filePath || !documentId) return;
+  _fileOwners.set(filePath, documentId);
+  for (const [key, entry] of _cache) {
+    if (entry.filePath === filePath) registerCommandResource(key, entry);
+  }
+  for (const [key, entry] of _imageCache) {
+    if (entry.filePath === filePath) registerImageResource(key, entry);
+  }
+}
+
+function resourceProtected(filePath, pageNum) {
+  if (typeof window === 'undefined') return false;
+  const ownerIsActive = isActiveRenderDocument(_fileOwners.get(filePath) || filePath);
+  return (window.__pdfViewport?.filePath === filePath && window.__pdfViewport?.pageNum === pageNum)
+    || (ownerIsActive && typeof document !== 'undefined'
+      && Boolean(document.querySelector?.(`#continuous-container .page-wrapper[data-page="${pageNum}"]`)));
+}
+
+function releaseVectorEntry(key) {
+  _cache.delete(key);
+  unregisterRenderResource(_commandResourceKey(key));
+  const prefix = `${key}@`;
+  for (const [imageKey, entry] of _imageCache) {
+    if (!imageKey.startsWith(prefix)) continue;
+    try { entry.bitmap?.close?.(); } catch {}
+    _imageCache.delete(imageKey);
+    unregisterRenderResource(_imageResourceKey(imageKey));
+  }
+}
+
+function registerCommandResource(key, entry) {
+  registerRenderResource({
+    key: _commandResourceKey(key),
+    category: 'javascript',
+    documentId: _fileOwners.get(entry.filePath) || entry.filePath,
+    bytes: entry.bytes.byteLength,
+    protected: () => resourceProtected(entry.filePath, entry.pageNum),
+    release: () => releaseVectorEntry(key),
+  });
+}
+
+function registerImageResource(key, entry) {
+  registerRenderResource({
+    key: _imageResourceKey(key),
+    category: 'javascript',
+    documentId: _fileOwners.get(entry.filePath) || entry.filePath,
+    bytes: entry.width * entry.height * 4,
+    protected: () => resourceProtected(entry.filePath, entry.pageNum),
+    release: () => {
+      const current = _imageCache.get(key);
+      try { current?.bitmap?.close?.(); } catch {}
+      _imageCache.delete(key);
+    },
+  });
+}
+
 export function clearVectorCache() {
-  _cache.clear();
+  for (const key of [..._cache.keys()]) releaseVectorEntry(key);
+  for (const [key, entry] of _imageCache) {
+    try { entry.bitmap?.close?.(); } catch {}
+    unregisterRenderResource(_imageResourceKey(key));
+  }
+  _imageCache.clear();
+  _fileOwners.clear();
+}
+
+export function clearVectorCacheForFile(filePath) {
+  if (!filePath) return;
+  const prefix = `${filePath}:`;
+  for (const key of [..._cache.keys()]) {
+    if (key.startsWith(prefix)) releaseVectorEntry(key);
+  }
+  _fileOwners.delete(filePath);
 }
 
 /// Drop ALL cached entries for a specific (filePath, pageNum), regardless
 /// of rotation. Use this when the page content changes (e.g. after save).
 export function invalidatePageCache(filePath, pageNum) {
   const prefix = filePath + ':' + pageNum + ':';
-  for (const k of _cache.keys()) {
-    if (k.startsWith(prefix)) _cache.delete(k);
+  for (const k of [..._cache.keys()]) {
+    if (k.startsWith(prefix)) releaseVectorEntry(k);
   }
 }
 
@@ -57,16 +141,25 @@ export function cacheCommands(filePath, pageNum, rawBytes, rotation) {
   const y0 = dv.getFloat32(4, true);
   const w = dv.getFloat32(8, true);
   const h = dv.getFloat32(12, true);
-  _cache.set(_key(filePath, pageNum, rotation), { bytes, x0, y0, w, h });
+  const key = _key(filePath, pageNum, rotation);
+  if (_cache.has(key)) releaseVectorEntry(key);
+  const entry = { bytes, x0, y0, w, h, filePath, pageNum };
+  _cache.set(key, entry);
+  registerCommandResource(key, entry);
 }
 
 export function hasCachedCommands(filePath, pageNum, rotation) {
-  return _cache.has(_key(filePath, pageNum, rotation));
+  const key = _key(filePath, pageNum, rotation);
+  const found = _cache.has(key);
+  if (found) touchRenderResource(_commandResourceKey(key));
+  return found;
 }
 
 export function getCachedPageDimensions(filePath, pageNum, rotation) {
-  const entry = _cache.get(_key(filePath, pageNum, rotation));
+  const key = _key(filePath, pageNum, rotation);
+  const entry = _cache.get(key);
   if (!entry) return null;
+  touchRenderResource(_commandResourceKey(key));
   return { x0: entry.x0, y0: entry.y0, w: entry.w, h: entry.h };
 }
 
@@ -81,15 +174,18 @@ function _rgbaToCSS(rgba) {
 const LINE_CAP = ['butt', 'round', 'square'];
 const LINE_JOIN = ['miter', 'round', 'bevel'];
 
-// Image cache: key = byte offset in command buffer → ImageBitmap
+// Image cache key includes the command owner plus byte offset. A bare byte
+// offset collides across pages and documents.
 const _imageCache = new Map();
 let _imagePreparing = false;
 
 /// Pre-decode all images in the command buffer before rendering.
 /// Returns a promise that resolves when all images are ready.
 export async function prepareImages(filePath, pageNum, rotation) {
-  const entry = _cache.get(_key(filePath, pageNum, rotation));
+  const commandKey = _key(filePath, pageNum, rotation);
+  const entry = _cache.get(commandKey);
   if (!entry) return;
+  touchRenderResource(_commandResourceKey(commandKey));
 
   const { bytes } = entry;
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -138,9 +234,18 @@ export async function prepareImages(filePath, pageNum, rotation) {
         const imgStart = pos;
         pos += dataLen;
 
-        if (!_imageCache.has(imgPos)) {
+        const imageKey = _imageKey(commandKey, imgPos);
+        if (!_imageCache.has(imageKey)) {
           const imgBytes = bytes.slice(imgStart, imgStart + dataLen);
-          promises.push(_decodeImage(imgPos, w, h, imgBytes));
+          promises.push(_decodeImage(
+            imageKey,
+            w,
+            h,
+            imgBytes,
+            () => _cache.get(commandKey) === entry,
+            filePath,
+            pageNum,
+          ));
         }
         break;
       }
@@ -156,7 +261,25 @@ export async function prepareImages(filePath, pageNum, rotation) {
   }
 }
 
-async function _decodeImage(cacheKey, w, h, imgBytes) {
+function _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum) {
+  if (!isCurrent()) {
+    try { bitmap.close?.(); } catch {}
+    return;
+  }
+  const old = _imageCache.get(cacheKey);
+  try { old?.bitmap?.close?.(); } catch {}
+  const entry = {
+    bitmap,
+    width: bitmap.width || 0,
+    height: bitmap.height || 0,
+    filePath,
+    pageNum,
+  };
+  _imageCache.set(cacheKey, entry);
+  registerImageResource(cacheKey, entry);
+}
+
+async function _decodeImage(cacheKey, w, h, imgBytes, isCurrent, filePath, pageNum) {
   try {
     // Check for RGBA raw format (header: "RGBA" + u16 w + u16 h + pixels)
     if (imgBytes.length > 8 &&
@@ -166,7 +289,7 @@ async function _decodeImage(cacheKey, w, h, imgBytes) {
       const pixelData = imgBytes.slice(8);
       const imageData = new ImageData(new Uint8ClampedArray(pixelData), w, h);
       const bitmap = await createImageBitmap(imageData);
-      _imageCache.set(cacheKey, bitmap);
+      _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum);
       return;
     }
 
@@ -174,7 +297,7 @@ async function _decodeImage(cacheKey, w, h, imgBytes) {
     if (imgBytes[0] === 0xFF && imgBytes[1] === 0xD8) {
       const blob = new Blob([imgBytes], { type: 'image/jpeg' });
       const bitmap = await createImageBitmap(blob);
-      _imageCache.set(cacheKey, bitmap);
+      _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum);
       return;
     }
 
@@ -182,22 +305,24 @@ async function _decodeImage(cacheKey, w, h, imgBytes) {
     if (imgBytes[0] === 0x89 && imgBytes[1] === 0x50) {
       const blob = new Blob([imgBytes], { type: 'image/png' });
       const bitmap = await createImageBitmap(blob);
-      _imageCache.set(cacheKey, bitmap);
+      _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum);
       return;
     }
 
     // Unknown format — try as generic image blob
     const blob = new Blob([imgBytes]);
     const bitmap = await createImageBitmap(blob);
-    _imageCache.set(cacheKey, bitmap);
+    _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum);
   } catch (e) {
     console.warn(`[vector-renderer] Failed to decode image at offset ${cacheKey}:`, e);
   }
 }
 
 export function renderVectorPage(ctx, filePath, pageNum, transform, rotation) {
-  const entry = _cache.get(_key(filePath, pageNum, rotation));
+  const commandKey = _key(filePath, pageNum, rotation);
+  const entry = _cache.get(commandKey);
   if (!entry) return;
+  touchRenderResource(_commandResourceKey(commandKey));
   import('../solid/stores/engineStatusStore.js')
     .then((m) => m.reportActiveEngine('vector', filePath, pageNum))
     .catch(() => {});
@@ -350,8 +475,10 @@ export function renderVectorPage(ctx, filePath, pageNum, transform, rotation) {
         const dataLen = dv.getUint32(pos, true); pos += 4;
         pos += dataLen; // skip image data (already decoded in cache)
 
-        const bitmap = _imageCache.get(imgPos);
+        const imageCacheKey = _imageKey(commandKey, imgPos);
+        const bitmap = _imageCache.get(imageCacheKey)?.bitmap;
         if (bitmap) {
+          touchRenderResource(_imageResourceKey(imageCacheKey));
           // High-quality bilinear/bicubic interpolation for embedded raster images
           const prevSmoothing = ctx.imageSmoothingEnabled;
           const prevQuality = ctx.imageSmoothingQuality;

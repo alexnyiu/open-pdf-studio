@@ -274,9 +274,10 @@ export const DEFAULT_PREFERENCES: Preferences = {
   // multi-proces worker-pool: parallelle eerste render (sneller), geen
   // zwart scherm, hoofdthread blijft vrij. Uitzetbaar in Voorkeuren.
   progressiveRender: true,
-  // Preload low-resolution page resources serially while the active document
-  // is idle. Full-resolution page bitmaps remain on demand.
-  preloadEntirePdf: true,
+  // Adaptive foreground-first page warming. Small PDFs can be fully warmed
+  // while large PDFs keep only a directional window unless explicitly set to
+  // "entire" by the user.
+  pdfPreloadMode: 'adaptive',
 
   // Panels
   propertiesPanelVisible: true,

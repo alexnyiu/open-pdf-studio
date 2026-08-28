@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}। সম্পাদনা করতে ডাবল-ক্লিক করুন অথবা Enter চাপুন।",
     "timezoneHint": "তারিখগুলো {{timezone}} সময় অঞ্চলে দেখানো হয় এবং ISO 8601 ফরম্যাটে সংরক্ষণ করা হয়।"
   },
-  "fontSubstitution": {
-    "title": "ফন্ট প্রতিস্থাপনের অনুমোদন",
-    "sourceFace": "উৎস ফন্ট",
-    "sourceFaces": "উৎস ফন্টসমূহ",
-    "unknown": "অজানা",
-    "packagedSubstitute": "অ্যাপের সঙ্গে দেওয়া বিকল্প ফন্ট",
-    "notAvailable": "পাওয়া যাচ্ছে না",
-    "sampleText": "নমুনা",
-    "sampleFallback": "দ্রুত বাদামি শিয়ালটি অলস কুকুরের ওপর দিয়ে লাফ দেয়।",
-    "scope": "যেখানে প্রযোজ্য",
-    "scopeAnnotation": "এই টীকা",
-    "scopeSelection": "নির্বাচিত টেক্সট বক্সগুলো",
-    "scopeParagraph": "এই PDF অনুচ্ছেদ",
-    "scopeFindReplace": "এই খুঁজুন/প্রতিস্থাপন সম্পাদনা",
-    "remember": "এই খোলা নথির জন্য অনুমোদনটি মনে রাখুন",
-    "approve": "বিকল্প ফন্ট ব্যবহার করুন",
-    "cancel": "বাতিল"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "PDF পাঠ্য সম্পাদনা করুন",

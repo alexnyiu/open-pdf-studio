@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. برای ویرایش دوبار کلیک کنید یا Enter را فشار دهید.",
     "timezoneHint": "تاریخ‌ها در منطقه زمانی {{timezone}} نمایش داده می‌شوند و با قالب ISO 8601 ذخیره می‌شوند."
   },
-  "fontSubstitution": {
-    "title": "تأیید جایگزینی قلم",
-    "sourceFace": "قلم مبدأ",
-    "sourceFaces": "قلم‌های مبدأ",
-    "unknown": "نامشخص",
-    "packagedSubstitute": "قلم جایگزین همراه برنامه",
-    "notAvailable": "در دسترس نیست",
-    "sampleText": "نمونه",
-    "sampleFallback": "روباه قهوه‌ای چابک از روی سگ تنبل می‌پرد.",
-    "scope": "اعمال می‌شود به",
-    "scopeAnnotation": "این حاشیه‌نویسی",
-    "scopeSelection": "کادرهای متنی انتخاب‌شده",
-    "scopeParagraph": "این بند PDF",
-    "scopeFindReplace": "این ویرایش یافتن/جایگزینی",
-    "remember": "این تأیید را برای سند باز به خاطر بسپار",
-    "approve": "استفاده از قلم جایگزین",
-    "cancel": "لغو"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "ویرایش متن PDF",

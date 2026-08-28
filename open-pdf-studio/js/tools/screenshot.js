@@ -12,14 +12,14 @@ import { showProperties } from '../ui/panels/properties-panel.js';
 
 function mergeCanvases(pdfCanvasEl, annotationCanvasEl) {
   const merged = document.createElement('canvas');
-  merged.width = pdfCanvasEl.width;
-  merged.height = pdfCanvasEl.height;
+  merged.width = Number(pdfCanvasEl.naturalWidth) || Number(pdfCanvasEl.width) || 1;
+  merged.height = Number(pdfCanvasEl.naturalHeight) || Number(pdfCanvasEl.height) || 1;
   const ctx = merged.getContext('2d');
   // Fill with white first — canvas is transparent by default, which renders as black in PNG viewers
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, merged.width, merged.height);
-  ctx.drawImage(pdfCanvasEl, 0, 0);
-  ctx.drawImage(annotationCanvasEl, 0, 0);
+  ctx.drawImage(pdfCanvasEl, 0, 0, merged.width, merged.height);
+  ctx.drawImage(annotationCanvasEl, 0, 0, merged.width, merged.height);
   return merged;
 }
 
@@ -34,7 +34,8 @@ function getCurrentCanvases() {
     const doc = getActiveDocument();
     const wrapper = document.querySelector(`.page-wrapper[data-page="${doc ? doc.currentPage : 1}"]`);
     if (!wrapper) return null;
-    const pdfEl = wrapper.querySelector('.pdf-canvas');
+    const pdfEl = wrapper.querySelector('.pdf-page-raster')
+      || wrapper.querySelector('.pdf-canvas');
     const annEl = wrapper.querySelector('.annotation-canvas');
     if (!pdfEl || !annEl) return null;
     // Prefer the page's own canvas container (continuous mode uses

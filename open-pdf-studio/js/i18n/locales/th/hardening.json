@@ -4,24 +4,6 @@
     "editValueHint": "{{label}} ดับเบิลคลิกหรือกด Enter เพื่อแก้ไข",
     "timezoneHint": "วันที่จะแสดงตามเขตเวลา {{timezone}} และบันทึกเป็นรูปแบบ ISO 8601"
   },
-  "fontSubstitution": {
-    "title": "อนุมัติการใช้แบบอักษรทดแทน",
-    "sourceFace": "แบบอักษรต้นฉบับ",
-    "sourceFaces": "แบบอักษรต้นฉบับ",
-    "unknown": "ไม่ทราบ",
-    "packagedSubstitute": "แบบอักษรทดแทนที่รวมมา",
-    "notAvailable": "ไม่มี",
-    "sampleText": "ตัวอย่าง",
-    "sampleFallback": "สุนัขจิ้งจอกสีน้ำตาลที่ว่องไวกระโดดข้ามสุนัขขี้เกียจ",
-    "scope": "ใช้กับ",
-    "scopeAnnotation": "คำอธิบายประกอบนี้",
-    "scopeSelection": "กล่องข้อความที่เลือก",
-    "scopeParagraph": "ย่อหน้า PDF นี้",
-    "scopeFindReplace": "การแก้ไข ค้นหา/แทนที่ นี้",
-    "remember": "จดจำการอนุมัตินี้สำหรับเอกสารที่เปิดอยู่",
-    "approve": "ใช้แบบอักษรทดแทน",
-    "cancel": "ยกเลิก"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "แก้ไขข้อความ PDF",

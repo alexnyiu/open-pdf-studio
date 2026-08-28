@@ -115,7 +115,7 @@
 .ev-panel-header-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 0;
 }
 
 .ev-panel-reset {
@@ -413,6 +413,14 @@
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s;
+  margin-bottom: 4px;
+}
+
+.thumbnail-virtual-spacer {
+  flex: 0 0 auto;
+  width: 1px;
+  min-height: 0;
+  pointer-events: none;
 }
 
 .thumbnail-item:hover {
@@ -663,6 +671,30 @@
   display: flex !important;
 }
 
+/* Long-document shell: the geometry index owns the full scroll extent while
+   only a bounded set of heavyweight page surfaces is mounted. */
+.continuous-container.virtualized,
+.continuous-container.virtualized.active {
+  display: block !important;
+  position: relative;
+  flex: none;
+  gap: 0;
+  align-items: initial;
+  padding: 0;
+}
+
+.continuous-container.virtualized .page-wrapper {
+  position: absolute;
+  margin: 0;
+  contain: layout paint style;
+}
+
+.page-preview-image {
+  display: block;
+  background: white;
+  user-select: none;
+}
+
 /* Boekweergave (issue #201): 2-koloms spread als layout-variant van de
    continuous-weergave. display:grid wordt inline gezet door renderer.js
    (setViewMode/renderContinuous); hier alleen de grid-inrichting.
@@ -776,6 +808,23 @@ body.pdf-cursor-override #canvas-container * {
   background: white;
 }
 
+.continuous-container .pdf-page-raster {
+  display: block;
+  background: white;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Large continuous documents let the one-use PNG stream own the visible
+   pixels directly. This canvas remains as a context-free geometry surface so
+   existing page-coordinate, text-edit, and pointer code keeps one canonical
+   frame without allocating a second backing store or covering the image. */
+.continuous-container .pdf-canvas.pdf-canvas-geometry {
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
 .continuous-container .annotation-canvas {
   position: absolute;
   top: 0;
@@ -871,8 +920,8 @@ body.pdf-cursor-override #canvas-container * {
 }
 
 .rich-text-editor {
-  min-width: 80px;
-  min-height: 24px;
+  min-width: 0;
+  min-height: 0;
   cursor: text;
   caret-color: currentColor;
   white-space: pre;
@@ -964,37 +1013,6 @@ body.pdf-cursor-override #canvas-container * {
   outline-offset: 2px;
 }
 
-.pdf-text-editor-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  pointer-events: auto;
-  white-space: normal;
-}
-
-.pdf-text-editor-actions button {
-  min-width: 64px;
-  min-height: 28px;
-  padding: 4px 10px;
-  border: 1px solid var(--theme-border, #8a8a8a);
-  border-radius: 4px;
-  color: var(--theme-text, #1f1f1f);
-  background: var(--theme-surface, #ffffff);
-  cursor: pointer;
-}
-
-.pdf-text-editor-actions .pdf-text-editor-apply {
-  color: var(--theme-on-accent, #ffffff);
-  border-color: var(--theme-accent, #0078d7);
-  background: var(--theme-accent, #0078d7);
-}
-
-.pdf-text-editor-actions button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
 .pdf-text-editor-pathological-paste {
   contain: content;
   overscroll-behavior: contain;
@@ -1028,9 +1046,16 @@ body.pdf-cursor-override #canvas-container * {
 
 .pdf-text-editor-paste-actions button {
   min-width: max-content;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--theme-border, #8a8a8a);
+  border-radius: 4px;
+  color: var(--theme-text, #1f1f1f);
+  background: var(--theme-surface, #ffffff);
+  cursor: pointer;
 }
 
-.pdf-text-editor-actions button:focus-visible {
+.pdf-text-editor-paste-actions button:focus-visible {
   outline: 2px solid var(--theme-accent, #0078d7);
   outline-offset: 2px;
 }
@@ -1053,7 +1078,7 @@ body.pdf-cursor-override #canvas-container * {
 
 @media (forced-colors: active) {
   .pdf-text-editor,
-  .pdf-text-editor-actions button,
+  .pdf-text-editor-paste-actions button,
   .pdf-text-editor-paste-recovery,
   .pdf-text-editor-move-handle::before,
   .pdf-text-editor-resize-handle::before {

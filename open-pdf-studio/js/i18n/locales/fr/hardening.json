@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Double-cliquez ou appuyez sur Entrée pour modifier.",
     "timezoneHint": "Les dates sont affichées dans le fuseau horaire {{timezone}} et enregistrées au format ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Approuver le remplacement de police",
-    "sourceFace": "Police source",
-    "sourceFaces": "Polices source",
-    "unknown": "Inconnue",
-    "packagedSubstitute": "Police de remplacement intégrée",
-    "notAvailable": "Indisponible",
-    "sampleText": "Aperçu",
-    "sampleFallback": "Portez ce vieux whisky au juge blond qui fume.",
-    "scope": "S'applique à",
-    "scopeAnnotation": "Cette annotation",
-    "scopeSelection": "Les zones de texte sélectionnées",
-    "scopeParagraph": "Ce paragraphe PDF",
-    "scopeFindReplace": "Cette modification Rechercher/Remplacer",
-    "remember": "Mémoriser cette approbation pour le document ouvert",
-    "approve": "Utiliser la police de remplacement",
-    "cancel": "Annuler"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Modifier le texte du PDF",

@@ -12,6 +12,7 @@ pub mod mcp_server;
 pub mod ocr_cache;
 pub mod ocr_controller;
 pub mod pdfium_renderer;
+mod render_png_stream;
 pub mod render_to_png;
 pub mod startup_diagnostics;
 pub mod window_mgmt;
@@ -77,6 +78,173 @@ struct ThumbnailCache(Mutex<HashMap<(String, u32, u32, i32), String>>);
 /// effectively free (HashMap lookup) so per-page navigation has zero analyze
 /// cost after the first visit (or after `analyze_page_type_batch` warms it).
 struct PageTypeCache(Mutex<HashMap<(String, u32), String>>);
+
+/// Compressed content-stream sizes for every page in a document. The old
+/// `page_content_size` command parsed the entire PDF once for each newly
+/// visited page; a slow traversal therefore created O(page-count) parser
+/// churn in the GUI process. One compact vector per document makes every
+/// subsequent heavy-page probe a constant-time lookup.
+struct PageContentSizeCache(Mutex<HashMap<String, Vec<u64>>>);
+
+use render_png_stream::{RenderPngStreamEndpoint, RenderPngTransferDescriptor, RenderPngTransfers};
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemMemoryInfo {
+    physical_memory_bytes: u64,
+}
+
+#[cfg(unix)]
+fn physical_memory_bytes() -> Result<u64, String> {
+    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if pages <= 0 || page_size <= 0 {
+        return Err("physical memory is unavailable".to_string());
+    }
+    Ok((pages as u64).saturating_mul(page_size as u64))
+}
+
+#[cfg(target_os = "windows")]
+fn physical_memory_bytes() -> Result<u64, String> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    if unsafe { GlobalMemoryStatusEx(&mut status) } == 0 {
+        return Err("physical memory is unavailable".to_string());
+    }
+    Ok(status.ullTotalPhys)
+}
+
+#[cfg(not(any(unix, target_os = "windows")))]
+fn physical_memory_bytes() -> Result<u64, String> {
+    Err("physical memory is unavailable on this platform".to_string())
+}
+
+#[tauri::command]
+fn get_system_memory_info() -> Result<SystemMemoryInfo, String> {
+    Ok(SystemMemoryInfo {
+        physical_memory_bytes: physical_memory_bytes()?,
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderResourceStats {
+    native_pixmap_entries: usize,
+    native_pixmap_bytes: usize,
+    native_pixmap_peak_entries: usize,
+    native_pixmap_peak_bytes: usize,
+    native_pixmap_budget_bytes: usize,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IdleRenderMemoryRelease {
+    native_pixmap_entries: usize,
+    native_pixmap_bytes: usize,
+    native_pixmap_evicted_bytes: usize,
+    allocator_reclaimed_bytes: usize,
+}
+
+#[cfg(target_os = "macos")]
+fn release_allocator_memory() -> usize {
+    extern "C" {
+        fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: usize) -> usize;
+    }
+    // A null zone asks libmalloc to inspect every process zone. This only
+    // releases already-free allocator pages and cannot invalidate live data.
+    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn release_allocator_memory() -> usize {
+    0
+}
+
+#[tauri::command]
+fn configure_render_resource_budget(
+    native_pixmap_bytes: u64,
+    pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
+) -> Result<RenderResourceStats, String> {
+    let requested = usize::try_from(native_pixmap_bytes)
+        .map_err(|_| "native pixmap budget is too large".to_string())?
+        .clamp(32 * 1024 * 1024, 512 * 1024 * 1024);
+    pixmap_cache.ensure();
+    let mut guard = pixmap_cache.0.lock().map_err(|error| error.to_string())?;
+    let cache = guard
+        .as_mut()
+        .ok_or_else(|| "native pixmap cache unavailable".to_string())?;
+    cache.set_max_bytes(requested);
+    let (
+        native_pixmap_entries,
+        native_pixmap_bytes,
+        native_pixmap_peak_entries,
+        native_pixmap_peak_bytes,
+        native_pixmap_budget_bytes,
+    ) = cache.detailed_stats();
+    Ok(RenderResourceStats {
+        native_pixmap_entries,
+        native_pixmap_bytes,
+        native_pixmap_peak_entries,
+        native_pixmap_peak_bytes,
+        native_pixmap_budget_bytes,
+    })
+}
+
+#[tauri::command]
+fn get_render_resource_stats(
+    pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
+) -> Result<RenderResourceStats, String> {
+    pixmap_cache.ensure();
+    let guard = pixmap_cache.0.lock().map_err(|error| error.to_string())?;
+    let cache = guard
+        .as_ref()
+        .ok_or_else(|| "native pixmap cache unavailable".to_string())?;
+    let (
+        native_pixmap_entries,
+        native_pixmap_bytes,
+        native_pixmap_peak_entries,
+        native_pixmap_peak_bytes,
+        native_pixmap_budget_bytes,
+    ) = cache.detailed_stats();
+    Ok(RenderResourceStats {
+        native_pixmap_entries,
+        native_pixmap_bytes,
+        native_pixmap_peak_entries,
+        native_pixmap_peak_bytes,
+        native_pixmap_budget_bytes,
+    })
+}
+
+#[tauri::command]
+async fn release_idle_render_memory(
+    pixmap_cache: tauri::State<'_, pdfium_renderer::PixmapCacheState>,
+) -> Result<IdleRenderMemoryRelease, String> {
+    const IDLE_PIXMAP_WORKING_SET: usize = 32 * 1024 * 1024;
+    pixmap_cache.ensure();
+    let (native_pixmap_entries, native_pixmap_bytes, native_pixmap_evicted_bytes) = {
+        let mut guard = pixmap_cache.0.lock().map_err(|error| error.to_string())?;
+        let cache = guard
+            .as_mut()
+            .ok_or_else(|| "native pixmap cache unavailable".to_string())?;
+        let evicted = cache.trim_to_bytes(IDLE_PIXMAP_WORKING_SET);
+        let (entries, bytes) = cache.stats();
+        (entries, bytes, evicted)
+    };
+    // libmalloc pressure relief can take around a second after large WebKit
+    // raster churn. Running it in a synchronous Tauri command stalls the UI
+    // thread and suspends zoom/paint RAF callbacks, so perform it on the
+    // blocking pool after releasing the pixmap-cache mutex.
+    let allocator_reclaimed_bytes = tauri::async_runtime::spawn_blocking(release_allocator_memory)
+        .await
+        .map_err(|error| format!("allocator pressure relief task failed: {error}"))?;
+    Ok(IdleRenderMemoryRelease {
+        native_pixmap_entries,
+        native_pixmap_bytes,
+        native_pixmap_evicted_bytes,
+        allocator_reclaimed_bytes,
+    })
+}
 
 #[tauri::command]
 fn get_opened_file(state: tauri::State<OpenedFiles>) -> Vec<String> {
@@ -1680,8 +1848,8 @@ async fn render_pdf_page(
 
     // Cache fast path (unchanged)
     pixmap_cache.ensure();
-    if let Ok(guard) = pixmap_cache.0.lock() {
-        if let Some(cache) = guard.as_ref() {
+    if let Ok(mut guard) = pixmap_cache.0.lock() {
+        if let Some(cache) = guard.as_mut() {
             if let Some(cached) = cache.get(&cache_key) {
                 let mut data = Vec::with_capacity(8 + cached.rgba.len());
                 data.extend_from_slice(&cached.width.to_le_bytes());
@@ -1767,6 +1935,137 @@ async fn render_pdf_page(
     data.extend_from_slice(&height.to_le_bytes());
     data.extend_from_slice(&rgba_arc);
     Ok(tauri::ipc::Response::new(data))
+}
+
+/// Begin a lossless display transfer for full-page viewing. The PDFium worker
+/// writes its compact PNG into a temporary file and WebKit retrieves it in
+/// bounded chunks, avoiding both page-sized RGBA IPC and one large PNG IPC
+/// allocation in the macOS GUI process.
+#[tauri::command]
+async fn begin_render_pdf_page_png(
+    path: String,
+    page_index: u32,
+    scale: f32,
+    rotation: Option<i32>,
+    prefer_stream: Option<bool>,
+    webview: tauri::WebviewWindow,
+    bytes_cache: tauri::State<'_, PdfBytesCache>,
+    pdfium_cache: tauri::State<'_, pdfium_renderer::PdfiumDocCache>,
+    pool: tauri::State<'_, std::sync::Arc<tokio::sync::OnceCell<worker_pool::WorkerPool>>>,
+    transfers: tauri::State<'_, RenderPngTransfers>,
+    stream_endpoint: tauri::State<'_, RenderPngStreamEndpoint>,
+) -> Result<RenderPngTransferDescriptor, String> {
+    let extra_rot = rotation.unwrap_or(0);
+    let application_url = webview
+        .url()
+        .map_err(|error| format!("resolve application origin: {error}"))?;
+    // `url::Url::origin()` deliberately reports custom schemes as opaque
+    // (`null`). Tauri's packaged WebView nevertheless has the stable,
+    // security-relevant origin `tauri://localhost`, so derive that one
+    // explicitly and retain standards-based serialization for dev HTTP.
+    let application_origin =
+        if application_url.scheme() == "tauri" && application_url.host_str() == Some("localhost") {
+            "tauri://localhost".to_string()
+        } else {
+            application_url.origin().ascii_serialization()
+        };
+    let (token, transfer_path) = render_png_stream::create_transfer_target();
+    let mut rendered_dimensions = None;
+    if let Some(worker_pool) = pool.get() {
+        match worker_pool
+            .render_png_to_file(
+                &path,
+                page_index,
+                scale,
+                extra_rot,
+                transfer_path.clone(),
+                token.clone(),
+            )
+            .await
+        {
+            Ok((width, height, _, bytes)) => {
+                rendered_dimensions = Some((width, height, bytes));
+            }
+            Err(error) => eprintln!(
+                "[begin_render_pdf_page_png] pool render failed: {error} — falling back to in-proc"
+            ),
+        }
+    }
+
+    let (width, height, transfer_bytes) = if let Some(dimensions) = rendered_dimensions {
+        dimensions
+    } else {
+        let bytes = {
+            let mut cache = bytes_cache.0.lock().map_err(|error| error.to_string())?;
+            if let Some(cached) = cache.get(&path) {
+                cached.clone()
+            } else {
+                let read = std::fs::read(&path).map_err(|error| error.to_string())?;
+                cache.insert(path.clone(), read.clone());
+                read
+            }
+        };
+        let handle = pdfium_renderer::get_or_load_pdfium_doc_with_bytes(
+            &path,
+            std::sync::Arc::new(bytes),
+            &pdfium_cache,
+        )?;
+        let (width, height, rgba) =
+            pdfium_renderer::render_page_to_rgba(handle.document(), page_index, scale, extra_rot)?;
+        use image::ImageEncoder;
+        let file = std::fs::File::create(&transfer_path)
+            .map_err(|error| format!("create PNG transfer: {error}"))?;
+        image::codecs::png::PngEncoder::new(file)
+            .write_image(&rgba, width, height, image::ExtendedColorType::Rgba8)
+            .map_err(|error| format!("PNG encode: {error}"))?;
+        let transfer_bytes = std::fs::metadata(&transfer_path)
+            .map_err(|error| format!("stat PNG transfer: {error}"))?
+            .len();
+        (width, height, transfer_bytes)
+    };
+
+    transfers
+        .register(
+            token,
+            transfer_path.clone(),
+            path,
+            width,
+            height,
+            transfer_bytes,
+            application_origin,
+            *stream_endpoint,
+            prefer_stream.unwrap_or(true),
+        )
+        .inspect_err(|_| {
+            let _ = std::fs::remove_file(&transfer_path);
+        })
+}
+
+#[tauri::command]
+fn read_render_pdf_page_png_chunk(
+    token: String,
+    offset: u64,
+    transfers: tauri::State<'_, RenderPngTransfers>,
+) -> Result<tauri::ipc::Response, String> {
+    Ok(tauri::ipc::Response::new(
+        transfers.read_chunk(&token, offset)?,
+    ))
+}
+
+#[tauri::command]
+fn cancel_render_pdf_page_png_transfer(
+    token: String,
+    transfers: tauri::State<'_, RenderPngTransfers>,
+) -> Result<bool, String> {
+    Ok(transfers.cancel(&token))
+}
+
+#[tauri::command]
+fn cancel_render_pdf_page_png_transfers_for_path(
+    path: String,
+    transfers: tauri::State<'_, RenderPngTransfers>,
+) -> Result<usize, String> {
+    Ok(transfers.cancel_for_source(&path))
 }
 
 /// OCR-only PDFium raster lane. It uses an idle sidecar worker and
@@ -2089,47 +2388,114 @@ async fn render_tile_scene_region(
     Ok(tauri::ipc::Response::new(data))
 }
 
-/// Goedkope zwaarte-probe: som van de GECOMPRIMEERDE content-stream-lengtes van
-/// een pagina (raw stream-bytes, geen decompressie). Groot => zware vector-pagina.
-/// Gebruikt door het progressieve render-pad om alleen echt-zware pagina's tegel-
-/// voor-tegel te renderen.
-#[tauri::command]
-fn page_content_size(path: String, page_index: u32) -> Result<u64, String> {
+/// Compute the compressed content-stream size for every page with one parse.
+/// Stream bytes stay compressed; this is only a cheap routing signal.
+fn page_content_sizes(path: &str) -> Result<Vec<u64>, String> {
     use lopdf::{Document, Object};
-    let doc = Document::load(&path).map_err(|e| format!("load: {}", e))?;
-    let pages = doc.get_pages(); // BTreeMap<u32, ObjectId>, gesorteerd op paginanummer
-    let page_id = pages
-        .values()
-        .nth(page_index as usize)
-        .copied()
-        .ok_or_else(|| format!("page {} out of range", page_index))?;
-    let page = doc
-        .get_dictionary(page_id)
-        .map_err(|e| format!("page dict: {}", e))?;
-    let contents = match page.get(b"Contents") {
-        Ok(c) => c,
-        Err(_) => return Ok(0), // geen content-stream (bv. lege pagina) => niet zwaar
-    };
-    // Verzamel de stream-object-ids (Contents = Reference of Array van References).
-    let mut ids: Vec<lopdf::ObjectId> = Vec::new();
-    match contents {
-        Object::Reference(id) => ids.push(*id),
-        Object::Array(arr) => {
-            for o in arr {
-                if let Object::Reference(id) = o {
-                    ids.push(*id);
+    let doc = Document::load(path).map_err(|e| format!("load: {e}"))?;
+    let pages = doc.get_pages();
+    let mut sizes = Vec::with_capacity(pages.len());
+    for page_id in pages.values() {
+        let page = doc
+            .get_dictionary(*page_id)
+            .map_err(|e| format!("page dict: {e}"))?;
+        let Ok(contents) = page.get(b"Contents") else {
+            sizes.push(0);
+            continue;
+        };
+        let mut ids: Vec<lopdf::ObjectId> = Vec::new();
+        match contents {
+            Object::Reference(id) => ids.push(*id),
+            Object::Array(arr) => {
+                for object in arr {
+                    if let Object::Reference(id) = object {
+                        ids.push(*id);
+                    }
                 }
             }
+            _ => {}
         }
-        _ => {}
-    }
-    let mut total: u64 = 0;
-    for id in ids {
-        if let Ok(Object::Stream(s)) = doc.get_object(id) {
-            total += s.content.len() as u64;
+        let mut total = 0_u64;
+        for id in ids {
+            if let Ok(Object::Stream(stream)) = doc.get_object(id) {
+                total = total.saturating_add(stream.content.len() as u64);
+            }
         }
+        sizes.push(total);
     }
-    Ok(total)
+    Ok(sizes)
+}
+
+/// Cheap heavy-page probe backed by one document-wide parse. The compact
+/// result is invalidated with the other document caches after save/reload.
+#[tauri::command]
+fn page_content_size(
+    path: String,
+    page_index: u32,
+    cache: tauri::State<PageContentSizeCache>,
+) -> Result<u64, String> {
+    let mut entries = cache.0.lock().map_err(|e| e.to_string())?;
+    if !entries.contains_key(&path) {
+        entries.insert(path.clone(), page_content_sizes(&path)?);
+    }
+    entries
+        .get(&path)
+        .and_then(|sizes| sizes.get(page_index as usize))
+        .copied()
+        .ok_or_else(|| format!("page {page_index} out of range"))
+}
+
+#[cfg(test)]
+mod page_content_size_tests {
+    use super::page_content_sizes;
+    use lopdf::{dictionary, Dictionary, Document, Object, Stream};
+
+    #[test]
+    fn computes_every_page_from_one_document_parse() {
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let first_page_id = document.new_object_id();
+        let second_page_id = document.new_object_id();
+        let content = b"BT /F1 12 Tf 72 700 Td (cached) Tj ET".to_vec();
+        let stream_id = document.add_object(Stream::new(Dictionary::new(), content.clone()));
+        document.objects.insert(
+            first_page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Page", "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Contents" => stream_id,
+            }),
+        );
+        document.objects.insert(
+            second_page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Page", "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![first_page_id.into(), second_page_id.into()],
+                "Count" => 2,
+            }),
+        );
+        let catalog_id =
+            document.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        document.trailer.set("Root", catalog_id);
+
+        let path = std::env::temp_dir().join(format!(
+            "open-pdf-studio-page-content-size-{}-{}.pdf",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        document.save(&path).expect("save test PDF");
+        let sizes = page_content_sizes(path.to_str().expect("UTF-8 temp path"))
+            .expect("measure page content streams");
+        let _ = std::fs::remove_file(path);
+
+        assert_eq!(sizes, vec![content.len() as u64, 0]);
+    }
 }
 
 #[tauri::command]
@@ -2567,9 +2933,12 @@ fn invalidate_pdf_cache(
     handle_cache: tauri::State<DocHandleCache>,
     thumb_cache: tauri::State<ThumbnailCache>,
     page_type_cache: tauri::State<PageTypeCache>,
+    page_content_size_cache: tauri::State<PageContentSizeCache>,
     pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
     pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
+    transfers: tauri::State<RenderPngTransfers>,
 ) -> Result<bool, String> {
+    transfers.cancel_for_source(&path);
     bytes_cache
         .0
         .lock()
@@ -2585,6 +2954,9 @@ fn invalidate_pdf_cache(
     }
     if let Ok(mut pc) = page_type_cache.0.lock() {
         pc.retain(|(p, _), _| p != &path);
+    }
+    if let Ok(mut cache) = page_content_size_cache.0.lock() {
+        cache.remove(&path);
     }
     if let Ok(mut cache) = pdfium_cache.0.lock() {
         cache.remove(&path);
@@ -2607,9 +2979,12 @@ fn clear_pdf_cache(
     handle_cache: tauri::State<DocHandleCache>,
     thumb_cache: tauri::State<ThumbnailCache>,
     page_type_cache: tauri::State<PageTypeCache>,
+    page_content_size_cache: tauri::State<PageContentSizeCache>,
     pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
     pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
+    transfers: tauri::State<RenderPngTransfers>,
 ) -> Result<bool, String> {
+    transfers.cancel_all();
     bytes_cache
         .0
         .lock()
@@ -2625,6 +3000,9 @@ fn clear_pdf_cache(
     }
     if let Ok(mut ptc) = page_type_cache.0.lock() {
         ptc.clear();
+    }
+    if let Ok(mut cache) = page_content_size_cache.0.lock() {
+        cache.clear();
     }
     if let Ok(mut pc) = pdfium_cache.0.lock() {
         pc.clear();
@@ -2826,6 +3204,22 @@ pub fn run(opts: StartupOpts) {
         });
     }
 
+    // One private, lossless raster stream per application process. It binds
+    // synchronously to an ephemeral loopback port before the WebView starts,
+    // so render commands never race endpoint discovery. Tokens and origin
+    // checks are enforced per response by render_png_stream.
+    let render_png_transfers = RenderPngTransfers::default();
+    let (render_stream_listener, render_stream_endpoint) =
+        render_png_stream::bind_loopback().expect("failed to bind private render stream");
+    let render_stream_transfers = render_png_transfers.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) =
+            render_png_stream::serve(render_stream_listener, render_stream_transfers).await
+        {
+            eprintln!("[render-stream] {error}");
+        }
+    });
+
     let mut builder = tauri::Builder::default()
         .manage(OpenedFiles(Mutex::new(opened_files)))
         .manage(LockedFiles(Mutex::new(HashMap::new())))
@@ -2834,6 +3228,9 @@ pub fn run(opts: StartupOpts) {
         .manage(TileSceneCache(Mutex::new(Vec::new())))
         .manage(ThumbnailCache(Mutex::new(HashMap::new())))
         .manage(PageTypeCache(Mutex::new(HashMap::new())))
+        .manage(PageContentSizeCache(Mutex::new(HashMap::new())))
+        .manage(render_png_transfers)
+        .manage(render_stream_endpoint)
         .manage(macos_safe_save::MacosSafeSaveState::default())
         .manage(pdfium_renderer::PdfiumDocCache::default())
         .manage(pdfium_renderer::PixmapCacheState::default())
@@ -3100,12 +3497,20 @@ pub fn run(opts: StartupOpts) {
             list_pdf_files,
             save_preferences,
             load_preferences,
+            get_system_memory_info,
+            configure_render_resource_budget,
+            get_render_resource_stats,
+            release_idle_render_memory,
             play_alert_sound,
             list_plugins,
             install_plugin,
             uninstall_plugin,
             read_plugin_file,
             render_pdf_page,
+            begin_render_pdf_page_png,
+            read_render_pdf_page_png_chunk,
+            cancel_render_pdf_page_png_transfer,
+            cancel_render_pdf_page_png_transfers_for_path,
             rasterize_page_for_ocr,
             query_pdf_page_geometry,
             ocr_controller::run_ocr_page_job,
@@ -3177,6 +3582,7 @@ pub fn run(opts: StartupOpts) {
             ) {
                 let registry = app_handle.state::<ocr_controller::OcrJobRegistry>();
                 let _ = registry.cancel_all();
+                app_handle.state::<RenderPngTransfers>().cancel_all();
             }
         });
 }

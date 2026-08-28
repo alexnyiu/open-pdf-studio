@@ -81,7 +81,7 @@ export default function PreferencesDialog(props) {
 
   function handleSave() {
     const prevThinLines = state.preferences.thinLines;
-    const prevPreloadEntirePdf = state.preferences.preloadEntirePdf;
+    const previousPreloadMode = state.preferences.pdfPreloadMode;
     for (const key of Object.keys(DEFAULT_PREFERENCES)) {
       state.preferences[key] = prefs[key][0]();
     }
@@ -99,11 +99,11 @@ export default function PreferencesDialog(props) {
         import('../../../pdf/renderer.js').then(m => m.renderPage(getActiveDocument()?.currentPage || 1));
       }
     }
-    if (state.preferences.preloadEntirePdf !== prevPreloadEntirePdf) {
+    if (state.preferences.pdfPreloadMode !== previousPreloadMode) {
       import('../../../pdf/whole-pdf-preload.js').then((module) => {
         const doc = getActiveDocument();
-        if (state.preferences.preloadEntirePdf) module.startWholePdfPreload(doc);
-        else module.cancelWholePdfPreload(doc, { release: true, reason: 'preference-off' });
+        module.cancelWholePdfPreload(doc, { release: true, reason: 'preference-change' });
+        if (state.preferences.pdfPreloadMode !== 'off') module.startWholePdfPreload(doc);
       });
     }
     close();

@@ -33,17 +33,21 @@ const faceById = new Map(PACKAGED_FONT_FACES.map((face) => [face.id, face]));
 const bytesCache = new Map();
 const parsedCache = new Map();
 const shapedRunCache = new Map();
+const shapedRunPending = new Map();
 const SHAPED_RUN_CACHE_ENTRIES = 4096;
 const SHAPED_RUN_CACHE_BYTES = 16 * 1024 * 1024;
 let shapedRunCacheBytes = 0;
+let fontAssetGeneration = 0;
 let assetLoaderOverride = null;
 
 /** Test/runtime host hook for environments that cannot fetch packaged URLs. */
 export function setPackagedFontAssetLoader(loader) {
   assetLoaderOverride = typeof loader === 'function' ? loader : null;
+  fontAssetGeneration += 1;
   bytesCache.clear();
   parsedCache.clear();
   shapedRunCache.clear();
+  shapedRunPending.clear();
   shapedRunCacheBytes = 0;
 }
 
@@ -217,14 +221,26 @@ function shapedRunCacheKey(run) {
 function retainShapedRun(key, shaped) {
   const bytes = key.length * 2 + JSON.stringify(shaped).length * 2;
   if (bytes > SHAPED_RUN_CACHE_BYTES) return;
+  const previous = shapedRunCache.get(key);
+  if (previous) {
+    shapedRunCache.delete(key);
+    shapedRunCacheBytes = Math.max(0, shapedRunCacheBytes - previous.bytes);
+  }
   shapedRunCache.set(key, { shaped, bytes });
   shapedRunCacheBytes += bytes;
   while (shapedRunCache.size > SHAPED_RUN_CACHE_ENTRIES
       || shapedRunCacheBytes > SHAPED_RUN_CACHE_BYTES) {
-    const oldestKey = shapedRunCache.keys().next().value;
+    const oldestEntry = shapedRunCache.keys().next();
+    if (oldestEntry.done) {
+      // Defensive recovery for accounting corruption: eviction must always
+      // terminate even if a future cache mutation violates the invariant.
+      shapedRunCacheBytes = 0;
+      break;
+    }
+    const oldestKey = oldestEntry.value;
     const oldest = shapedRunCache.get(oldestKey);
     shapedRunCache.delete(oldestKey);
-    shapedRunCacheBytes -= oldest?.bytes || 0;
+    shapedRunCacheBytes = Math.max(0, shapedRunCacheBytes - (oldest?.bytes || 0));
   }
 }
 
@@ -237,9 +253,17 @@ export async function shapeTextRun(run) {
     shapedRunCache.set(key, cached);
     return cached.shaped;
   }
-  const shaped = await shapeTextRunUncached(run);
-  retainShapedRun(key, shaped);
-  return shaped;
+  const pending = shapedRunPending.get(key);
+  if (pending) return pending;
+  const generation = fontAssetGeneration;
+  const request = shapeTextRunUncached(run).then((shaped) => {
+    if (generation === fontAssetGeneration) retainShapedRun(key, shaped);
+    return shaped;
+  }).finally(() => {
+    if (shapedRunPending.get(key) === request) shapedRunPending.delete(key);
+  });
+  shapedRunPending.set(key, request);
+  return request;
 }
 
 export function shapedRunCacheMetrics() {
@@ -293,6 +317,15 @@ export async function shapeRichTextDocument(document, { antialiasMargin = 1 } = 
     overflow: rejectionReasons.length > 0,
     rejectionReasons: [...new Set(rejectionReasons)],
   };
+}
+
+/**
+ * Revalidate an owned text edit using the same canonical geometry that the
+ * exact-layout worker commits. PDF vector text does not need the raster-only
+ * antialias padding used by approximate preview bounds.
+ */
+export function shapeOwnedTextEditForPersistence(document) {
+  return shapeRichTextDocument(document, { antialiasMargin: 0 });
 }
 
 export const packagedFontCatalog = Object.freeze({

@@ -42,6 +42,10 @@ import { hiddenTypes as evHiddenTypes, halftoneTypes as evHalftoneTypes } from '
 import { dominantBackgroundColor, getPageRotationMatrix } from '../text/text-edit-appearance.js';
 import { rotatedRectAabb } from '../utils/math.js';
 import { overlayCanvasTransform, overlayVisibleBounds } from '../pdf/canvas-dpr.js';
+import {
+  continuousOverlayBackingPlan,
+  continuousOverlayBackingRequired,
+} from '../pdf/continuous-overlay-surface.js';
 
 // Re-export everything that external code needs
 export { drawPolygonShape, drawCloudShape, buildPolygonPath, buildCloudPath } from './rendering/shapes.js';
@@ -2859,8 +2863,6 @@ function drawRubberBand(ctx, effectiveScale) {
 }
 
 export function renderAnnotationsForPage(ctx, pageNum, width, height, overrideDpr) {
-  ctx.clearRect(0, 0, width, height);
-
   // Read scale and annotations from the active document directly
   const doc = state.documents[state.activeDocumentIndex];
   const scale = doc ? doc.scale : 1;
@@ -2868,12 +2870,40 @@ export function renderAnnotationsForPage(ctx, pageNum, width, height, overrideDp
 
   // Apply scale transformation for zooming (includes hi-DPI factor)
   const dpr = overrideDpr !== undefined ? overrideDpr : (window.devicePixelRatio || 1);
+  const canvas = ctx.canvas;
+  const plan = continuousOverlayBackingPlan({
+    logicalWidth: width,
+    logicalHeight: height,
+    devicePixelRatio: dpr,
+    required: continuousOverlayBackingRequired(doc, pageNum, state),
+  });
+  canvas.dataset.logicalWidth = String(plan.cssWidth);
+  canvas.dataset.logicalHeight = String(plan.cssHeight);
+  canvas.dataset.compactBacking = String(plan.compact);
+  canvas.style.width = `${Math.floor(plan.cssWidth)}px`;
+  canvas.style.height = `${Math.floor(plan.cssHeight)}px`;
+  const backingChanged = canvas.width !== plan.backingWidth || canvas.height !== plan.backingHeight;
+  if (backingChanged) {
+    canvas.width = plan.backingWidth;
+    canvas.height = plan.backingHeight;
+  }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (backingChanged && typeof canvas.dispatchEvent === 'function') {
+    canvas.dispatchEvent(new CustomEvent('opds:continuous-overlay-backing-change', {
+      bubbles: true,
+      detail: { pageNum: Number(pageNum), compact: plan.compact },
+    }));
+  }
+  if (plan.compact) return;
+
   const effectiveScale = scale * dpr;
+  const backingWidth = canvas.width;
+  const backingHeight = canvas.height;
   ctx.save();
   ctx.scale(effectiveScale, effectiveScale);
 
   // Draw watermarks behind content
-  renderWatermarksBehind(ctx, pageNum, width / effectiveScale, height / effectiveScale);
+  renderWatermarksBehind(ctx, pageNum, backingWidth / effectiveScale, backingHeight / effectiveScale);
 
   // Draw text edits (cover-and-replace)
   drawTextEdits(ctx, pageNum);
@@ -2884,7 +2914,7 @@ export function renderAnnotationsForPage(ctx, pageNum, width, height, overrideDp
   });
 
   // Draw watermarks in front of content
-  renderWatermarksInFront(ctx, pageNum, width / effectiveScale, height / effectiveScale);
+  renderWatermarksInFront(ctx, pageNum, backingWidth / effectiveScale, backingHeight / effectiveScale);
 
   // Blender-achtige 2D-cursor (Shift+rechtsklik). Werd alleen in het
   // enkelpagina-pad getekend; in de doorlopende weergave plaatste de klik hem
@@ -2938,7 +2968,11 @@ export function redrawContinuous() {
     const canvas = wrapper.querySelector('.annotation-canvas');
     if (canvas) {
       const ctx = canvas.getContext('2d');
-      renderAnnotationsForPage(ctx, pageNum, canvas.width, canvas.height);
+      const logicalWidth = Number(canvas.dataset.logicalWidth)
+        || Number.parseFloat(canvas.style.width) || canvas.clientWidth || 1;
+      const logicalHeight = Number(canvas.dataset.logicalHeight)
+        || Number.parseFloat(canvas.style.height) || canvas.clientHeight || 1;
+      renderAnnotationsForPage(ctx, pageNum, logicalWidth, logicalHeight);
     }
   });
 

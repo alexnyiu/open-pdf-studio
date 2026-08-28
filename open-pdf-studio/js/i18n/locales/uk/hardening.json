@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Щоб редагувати, двічі клацніть або натисніть Enter.",
     "timezoneHint": "Дати відображаються в часовому поясі {{timezone}} і зберігаються у форматі ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Схвалити заміну шрифту",
-    "sourceFace": "Вихідний шрифт",
-    "sourceFaces": "Вихідні шрифти",
-    "unknown": "Невідомий",
-    "packagedSubstitute": "Вбудований шрифт-замінник",
-    "notAvailable": "Недоступний",
-    "sampleText": "Зразок",
-    "sampleFallback": "Швидка бура лисиця перестрибує ледачого собаку.",
-    "scope": "Стосується",
-    "scopeAnnotation": "Ця анотація",
-    "scopeSelection": "Вибрані текстові поля",
-    "scopeParagraph": "Цей абзац PDF",
-    "scopeFindReplace": "Це редагування Пошуку/Заміни",
-    "remember": "Запам’ятати це схвалення для відкритого документа",
-    "approve": "Використати шрифт-замінник",
-    "cancel": "Скасувати"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Редагувати текст PDF",

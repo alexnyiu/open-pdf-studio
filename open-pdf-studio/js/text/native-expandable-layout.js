@@ -149,6 +149,35 @@ function normalizedColumnBounds(value) {
   return Number.isFinite(left) && Number.isFinite(right) && right > left ? { left, right } : null;
 }
 
+function crossesPageBounds(bounds, region, pageBounds) {
+  return Boolean(pageBounds && (
+    bounds.x < pageBounds.x - 1e-6
+    || bounds.y < pageBounds.y - 1e-6
+    || bounds.x + bounds.width > pageBounds.x + pageBounds.width + 1e-6
+    || bounds.y + bounds.height > pageBounds.y + pageBounds.height + 1e-6
+    || region.x < pageBounds.x - 1e-6
+    || region.y < pageBounds.y - 1e-6
+    || region.x + region.width > pageBounds.x + pageBounds.width + 1e-6
+    || region.y + region.height > pageBounds.y + pageBounds.height + 1e-6
+  ));
+}
+
+function crossesColumn(bounds, region, columnBounds) {
+  return Boolean(columnBounds && (
+    region.x < columnBounds.left - 1e-6
+    || region.x + region.width > columnBounds.right + 1e-6
+    || bounds.x < columnBounds.left - 1e-6
+    || bounds.x + bounds.width > columnBounds.right + 1e-6
+  ));
+}
+
+function overlappingBounds(lineInkBounds, existingBounds, editId) {
+  return (existingBounds || [])
+    .filter((entry) => entry && entry.id !== editId
+      && lineInkBounds.some((lineBounds) => intersects(lineBounds, entry)))
+    .map((entry) => entry.id || 'native-page-content');
+}
+
 function shapedBounds(
   document,
   layout,
@@ -219,6 +248,11 @@ function shapedBounds(
 export async function layoutExpandableNativeText(document, options = {}) {
   const width = Number(options.width ?? document.region.width);
   if (!(width > 0)) throw new Error('Expandable native text width must be positive');
+  const sourceWidth = Math.max(0.0001, Number(options.sourceWidth) || width);
+  const substitutionWidthAllowance = Math.max(
+    0,
+    Math.min(1, Number(options.substitutionWidthAllowance) || 0),
+  );
   const antialiasMargin = Math.max(0, Number(options.antialiasMargin ?? 1) || 0);
   const inkPadding = Math.max(0, Number(options.inkPadding) || 0);
   const requestedContentWidth = Number(options.contentWidth);
@@ -269,6 +303,11 @@ export async function layoutExpandableNativeText(document, options = {}) {
 
   if (options.manualLineBreaks) {
     for (const sourceLine of document.lines) {
+      // Manual native paragraphs already carry canonical PDF baselines. Exact
+      // validation must not regularize tiny source-line variations merely by
+      // opening the editor; paragraph-format operations update these values
+      // explicitly before requesting a new layout revision.
+      baseline = sourceLine.baseline;
       activeAlignment = sourceLine.alignment;
       activeAdvance = sourceLine.baselineAdvance;
       for (const sourceRun of sourceLine.runs) appendText(runs, sourceRun.text, sourceRun);
@@ -309,6 +348,17 @@ export async function layoutExpandableNativeText(document, options = {}) {
   if (runs.length || output.length === 0) pushLine('hard');
 
   const advanceHeight = output.reduce((sum, line) => sum + line.baselineAdvance, 0);
+  // A manual paragraph's final line does not consume another baseline
+  // advance. Its source rectangle is the first-to-last baseline span plus the
+  // authored line box. Counting every advance changed an untouched two-line
+  // 9/11 paragraph from 20 pt to 22 pt as soon as exact validation completed,
+  // which incorrectly made the session dirty. New explicit lines, larger run
+  // sizes, and paragraph spacing still increase this canonical content height.
+  const manualContentHeight = output.length > 0
+    ? Math.abs(output[0].baseline - output.at(-1).baseline)
+      + Math.max(...output.flatMap((line) => line.runs.map((run) => run.size)))
+    : 0;
+  const canonicalLineHeight = options.manualLineBreaks ? manualContentHeight : advanceHeight;
   let reflowed = createRichTextDocument(output, {
     ...document.region,
     width,
@@ -321,7 +371,7 @@ export async function layoutExpandableNativeText(document, options = {}) {
   await checkpoint(options, ++processedUnits, true);
   const requiredHeight = Math.max(
     minimumHeight,
-    advanceHeight + (hasExplicitContentWidth
+    canonicalLineHeight + (hasExplicitContentWidth
       ? canonicalVerticalInset * 2 : inkInsets.top + inkInsets.bottom),
     preliminary.height + (hasExplicitContentWidth
       ? canonicalVerticalInset * 2 : inkInsets.top + inkInsets.bottom),
@@ -333,56 +383,108 @@ export async function layoutExpandableNativeText(document, options = {}) {
     y: document.region.baselineDirection === 'increasing-y'
       ? document.region.y : anchorTop - requiredHeight,
   });
-  const layout = await shapeRichTextDocument(reflowed, {
-    antialiasMargin: canonicalAntialiasMargin,
-  });
-  await checkpoint(options, ++processedUnits, true);
-  const fullLineAdvances = layout.lines.map((line) => (
-    line.runs.reduce((sum, run) => sum + (run.shaped?.advance || 0), 0)
-  ));
-  const paintedLineAdvances = [];
-  if (hasExplicitContentWidth) {
-    for (const line of layout.lines) {
-      paintedLineAdvances.push(await paintedLineAdvance(line, options));
+  const pageBounds = normalizedPageBounds(options.pageBounds);
+  const columnBounds = normalizedColumnBounds(options.columnBounds);
+
+  const measure = async (candidate, candidateContentWidth) => {
+    const candidateLayout = await shapeRichTextDocument(candidate, {
+      antialiasMargin: canonicalAntialiasMargin,
+    });
+    await checkpoint(options, ++processedUnits, true);
+    const candidateFullAdvances = candidateLayout.lines.map((line) => (
+      line.runs.reduce((sum, run) => sum + (run.shaped?.advance || 0), 0)
+    ));
+    const candidatePaintedAdvances = [];
+    if (hasExplicitContentWidth) {
+      for (const line of candidateLayout.lines) {
+        candidatePaintedAdvances.push(await paintedLineAdvance(line, options));
+      }
+    } else {
+      candidatePaintedAdvances.push(...candidateFullAdvances);
     }
-  } else {
-    paintedLineAdvances.push(...fullLineAdvances);
+    const candidateInkGeometry = shapedBounds(
+      candidate,
+      candidateLayout,
+      candidateContentWidth,
+      canonicalContentInset,
+      candidatePaintedAdvances,
+      canonicalAntialiasMargin,
+    );
+    return {
+      layout: candidateLayout,
+      fullLineAdvances: candidateFullAdvances,
+      paintedLineAdvances: candidatePaintedAdvances,
+      maximumLineAdvance: Math.max(0, ...candidatePaintedAdvances),
+      inkGeometry: candidateInkGeometry,
+      overlapWarnings: overlappingBounds(
+        candidateInkGeometry.lineInkBounds,
+        options.existingBounds,
+        options.editId,
+      ),
+    };
+  };
+
+  let effectiveWidth = width;
+  let effectiveContentWidth = contentWidth;
+  let widthCompensation = 0;
+  let measured = await measure(reflowed, effectiveContentWidth);
+  const requestedCompensation = measured.maximumLineAdvance - effectiveContentWidth;
+
+  // A packaged substitute may differ fractionally from the source face. Only
+  // manual native paragraphs receive this bounded far-edge adjustment; an
+  // authored resize or general overflow never enters this policy path.
+  if (hasExplicitContentWidth
+      && options.manualLineBreaks === true
+      && substitutionWidthAllowance > 0
+      && width <= sourceWidth + 1e-6
+      && requestedCompensation > 1e-6
+      && requestedCompensation <= substitutionWidthAllowance + 1e-6) {
+    const candidateContentWidth = contentWidth + requestedCompensation;
+    const candidateWidth = width + requestedCompensation;
+    const candidate = createRichTextDocument(measured.layout.lines, {
+      ...reflowed.region,
+      width: candidateWidth,
+    });
+    const candidateMeasured = await measure(candidate, candidateContentWidth);
+    const priorOverlaps = new Set(measured.overlapWarnings);
+    const addsNeighborOverlap = candidateMeasured.overlapWarnings
+      .some((id) => !priorOverlaps.has(id));
+    const candidateCrossesPage = crossesPageBounds(
+      candidateMeasured.inkGeometry.bounds,
+      candidate.region,
+      pageBounds,
+    );
+    const candidateCrossesColumn = crossesColumn(
+      candidateMeasured.inkGeometry.bounds,
+      candidate.region,
+      columnBounds,
+    );
+    if (!candidateCrossesPage && !candidateCrossesColumn && !addsNeighborOverlap) {
+      // Carry the exact shapes validated at the compensated width into the
+      // committed document. This matters for right/center aligned paragraphs,
+      // whose positioned run geometry changes when the far edge moves.
+      reflowed = createRichTextDocument(candidateMeasured.layout.lines, candidate.region);
+      measured = candidateMeasured;
+      effectiveWidth = candidateWidth;
+      effectiveContentWidth = candidateContentWidth;
+      widthCompensation = requestedCompensation;
+    }
   }
-  const maximumLineAdvance = Math.max(0, ...paintedLineAdvances);
+
+  const {
+    layout,
+    fullLineAdvances,
+    paintedLineAdvances,
+    maximumLineAdvance,
+    inkGeometry,
+    overlapWarnings,
+  } = measured;
   const requiredWidth = maximumLineAdvance + (hasExplicitContentWidth
     ? canonicalContentInset * 2 : inkInsets.left + inkInsets.right);
-  const inkGeometry = shapedBounds(
-    reflowed,
-    layout,
-    contentWidth,
-    canonicalContentInset,
-    paintedLineAdvances,
-    canonicalAntialiasMargin,
-  );
   const bounds = inkGeometry.bounds;
   const regionRect = reflowed.region;
-  const pageBounds = normalizedPageBounds(options.pageBounds);
-  const crossesPageEdge = Boolean(pageBounds && (
-    bounds.x < pageBounds.x - 1e-6
-    || bounds.y < pageBounds.y - 1e-6
-    || bounds.x + bounds.width > pageBounds.x + pageBounds.width + 1e-6
-    || bounds.y + bounds.height > pageBounds.y + pageBounds.height + 1e-6
-    || regionRect.x < pageBounds.x - 1e-6
-    || regionRect.y < pageBounds.y - 1e-6
-    || regionRect.x + regionRect.width > pageBounds.x + pageBounds.width + 1e-6
-    || regionRect.y + regionRect.height > pageBounds.y + pageBounds.height + 1e-6
-  ));
-  const columnBounds = normalizedColumnBounds(options.columnBounds);
-  const crossesColumnBounds = Boolean(columnBounds && (
-    regionRect.x < columnBounds.left - 1e-6
-    || regionRect.x + regionRect.width > columnBounds.right + 1e-6
-    || bounds.x < columnBounds.left - 1e-6
-    || bounds.x + bounds.width > columnBounds.right + 1e-6
-  ));
-  const overlapWarnings = (options.existingBounds || [])
-    .filter((entry) => entry && entry.id !== options.editId
-      && inkGeometry.lineInkBounds.some((lineBounds) => intersects(lineBounds, entry)))
-    .map((entry) => entry.id || 'native-page-content');
+  const crossesPageEdge = crossesPageBounds(bounds, regionRect, pageBounds);
+  const crossesColumnBounds = crossesColumn(bounds, regionRect, columnBounds);
   // Expandable layout owns width and height validation. The generic shaper's
   // fixed-region checks include visual ink/AA bounds and therefore reject
   // otherwise valid authored advances; preserve only genuine shaping errors.
@@ -390,7 +492,7 @@ export async function layoutExpandableNativeText(document, options = {}) {
     reason !== 'Text overflows fixed region width'
       && reason !== 'Text overflows fixed region height'
   ));
-  if (maximumLineAdvance > contentWidth + 1e-6) {
+  if (maximumLineAdvance > effectiveContentWidth + 1e-6) {
     rejectionReasons.push(options.manualLineBreaks
       ? 'A line exceeds the text box width; press Enter to start a new line'
       : 'Text exceeds the available content width');
@@ -411,7 +513,12 @@ export async function layoutExpandableNativeText(document, options = {}) {
       top: canonicalVerticalInset,
       bottom: canonicalVerticalInset,
     } : { ...inkInsets },
-    contentWidth,
+    sourceWidth,
+    substitutionWidthAllowance,
+    widthCompensation,
+    effectiveContentWidth,
+    effectiveWidth,
+    contentWidth: effectiveContentWidth,
     fullLineAdvances,
     paintedLineAdvances,
     requiredWidth,

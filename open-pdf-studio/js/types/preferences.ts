@@ -211,7 +211,7 @@ export interface Preferences {
   thinLines: boolean;
   showScrollbars: boolean;
   progressiveRender: boolean;
-  preloadEntirePdf: boolean;
+  pdfPreloadMode: 'adaptive' | 'entire' | 'off';
 
   // Panels
   propertiesPanelVisible: boolean;

@@ -18,6 +18,8 @@ import {
   prefetchNativeOcrPageRaster,
   runNativeOcrPageForDocument,
 } from './native-controller.js';
+import { isPdfForegroundIdle } from '../pdf/foreground-activity.js';
+import { backgroundRenderAdmissionAllowed } from '../pdf/render-resource-budget.js';
 import { assertOcrPageGeometryV1 } from './contracts/page-geometry.v1.js';
 import { assertOcrResultV2 } from './contracts/v2.js';
 import {
@@ -588,7 +590,8 @@ export class OcrApplicationController {
 
   startPagePrefetch(job, pageNumber, recognitionOptions) {
     if (job.cancelRequested || job.prefetchedPage || !Number.isSafeInteger(pageNumber) ||
-        !job.sourceFingerprint || this.ownerIdentityFailure(job)) return;
+        !job.sourceFingerprint || this.ownerIdentityFailure(job)
+        || !isPdfForegroundIdle() || !backgroundRenderAdmissionAllowed()) return;
     job.prefetchMetrics.requested += 1;
     let requested;
     try {

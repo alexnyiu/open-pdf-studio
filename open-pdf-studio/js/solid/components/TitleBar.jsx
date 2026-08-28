@@ -78,7 +78,8 @@ export default function TitleBar() {
             </svg>
           </button>
 
-          <button class="quick-access-btn" title={`${tCommon('save')} (Ctrl+S)`} disabled={!hasPdf()}
+          <button class="quick-access-btn" data-action="save" data-text-edit-commit-action="true"
+            title={`${tCommon('save')} (Ctrl+S)`} disabled={!hasPdf()}
             onClick={() => import('../../pdf/saver.js').then(m => m.savePDF())}>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12.5 14.5h-9a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1h7.586a1 1 0 0 1 .707.293l1.414 1.414a1 1 0 0 1 .293.707V13.5a1 1 0 0 1-1 1z"/>
@@ -87,7 +88,8 @@ export default function TitleBar() {
             </svg>
           </button>
 
-          <button class="quick-access-btn" title={`${tCommon('saveAs')} (Ctrl+Shift+S)`} disabled={!hasPdf()}
+          <button class="quick-access-btn" data-action="save-as" data-text-edit-commit-action="true"
+            title={`${tCommon('saveAs')} (Ctrl+Shift+S)`} disabled={!hasPdf()}
             onClick={() => import('../../pdf/saver.js').then(m => m.savePDFAs())}>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12.5 14.5h-9a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1h7.586a1 1 0 0 1 .707.293l1.414 1.414a1 1 0 0 1 .293.707V13.5a1 1 0 0 1-1 1z"/>

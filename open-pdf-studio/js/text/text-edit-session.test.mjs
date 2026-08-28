@@ -198,6 +198,44 @@ test('rejected and thrown Apply attempts keep the same session retryable', async
   assert.equal(registry.active(), null);
 });
 
+test('concurrent click-away and document commits share one in-flight operation', async () => {
+  const { registry } = fixture();
+  let releaseCommit;
+  let commitCount = 0;
+  const gate = new Promise((resolve) => { releaseCommit = resolve; });
+  registry.register({
+    ownerDocumentId: 'doc-a', ownerDocumentGeneration: 3, pageNum: 1,
+    kind: 'native-source-text',
+    async commit(operation) {
+      commitCount += 1;
+      assert.equal(operation.reason, 'click-away');
+      await gate;
+      return true;
+    },
+    cancel() {},
+  });
+
+  const outside = registry.applyActive('click-away');
+  const save = registry.commitForDocument('doc-a', 'save');
+  assert.equal(outside, save);
+  assert.equal(commitCount, 1);
+  releaseCommit();
+  assert.equal(await save, true);
+  assert.equal(registry.active(), null);
+});
+
+test('document commit succeeds without a matching live draft and retains failures', async () => {
+  const { registry } = fixture();
+  assert.equal(await registry.commitForDocument('doc-a', 'save'), true);
+  const session = registry.register({
+    ownerDocumentId: 'doc-a', ownerDocumentGeneration: 3, pageNum: 1,
+    kind: 'owned-text', commit: () => false, cancel() {},
+  });
+  assert.equal(await registry.commitForDocument('doc-b', 'save'), true);
+  assert.equal(await registry.commitForDocument('doc-a', 'save'), false);
+  assert.equal(registry.active(), session);
+});
+
 test('owner-scoped commit rejection or throw restores owner history and content', () => {
   const ownerDocument = {
     id: 'doc-a',

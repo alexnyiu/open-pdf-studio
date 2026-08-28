@@ -18,6 +18,26 @@ use std::hash::{Hash, Hasher};
 /// Dead slots (depth == usize::MAX as sentinel) are skipped.
 pub const OVERFLOW_THRESHOLD: usize = 2;
 
+/// Select one stable foreground worker for the entire document. Whole-page
+/// navigation must not fan a long PDF out across every pool process: each
+/// additional worker would parse the same document and fault a separate
+/// shared-memory transport into the GUI. Region work retains page/tile
+/// affinity through `pick_worker` below.
+pub fn pick_document_worker(path: &str, depths: &[usize]) -> usize {
+    assert!(!depths.is_empty(), "depths cannot be empty");
+    let alive: Vec<usize> = depths
+        .iter()
+        .enumerate()
+        .filter(|(_, &depth)| depth != usize::MAX)
+        .map(|(index, _)| index)
+        .collect();
+    assert!(!alive.is_empty(), "no live workers");
+
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hash);
+    alive[(hash.finish() as usize) % alive.len()]
+}
+
 /// Low-priority work may start only on a live worker with no queued or active
 /// request. Unlike interactive routing, this deliberately ignores affinity:
 /// OCR must not wait in front of a page render the user can see.
@@ -78,6 +98,22 @@ mod tests {
             "got only {} distinct workers",
             picks.len()
         );
+    }
+
+    #[test]
+    fn whole_document_uses_one_foreground_worker() {
+        let depths = vec![0, 0, 0, 0];
+        let selected = pick_document_worker("large.pdf", &depths);
+        for _page in 0..500 {
+            assert_eq!(pick_document_worker("large.pdf", &depths), selected);
+        }
+    }
+
+    #[test]
+    fn document_affinity_skips_dead_workers() {
+        let depths = vec![usize::MAX, 0, usize::MAX, 0];
+        let selected = pick_document_worker("large.pdf", &depths);
+        assert!(selected == 1 || selected == 3);
     }
 
     #[test]

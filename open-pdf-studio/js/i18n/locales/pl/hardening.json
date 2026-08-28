@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Kliknij dwukrotnie lub naciśnij Enter, aby edytować.",
     "timezoneHint": "Daty są wyświetlane w strefie czasowej {{timezone}} i zapisywane w formacie ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Zatwierdź zastąpienie czcionki",
-    "sourceFace": "Czcionka źródłowa",
-    "sourceFaces": "Czcionki źródłowe",
-    "unknown": "Nieznana",
-    "packagedSubstitute": "Dołączona czcionka zastępcza",
-    "notAvailable": "Niedostępna",
-    "sampleText": "Przykład",
-    "sampleFallback": "Szybki brązowy lis przeskakuje nad leniwym psem.",
-    "scope": "Dotyczy",
-    "scopeAnnotation": "Tej adnotacji",
-    "scopeSelection": "Wybranych pól tekstowych",
-    "scopeParagraph": "Tego akapitu PDF",
-    "scopeFindReplace": "Tej zmiany Znajdź/Zamień",
-    "remember": "Zapamiętaj to zatwierdzenie dla otwartego dokumentu",
-    "approve": "Użyj czcionki zastępczej",
-    "cancel": "Anuluj"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Edytuj tekst PDF",

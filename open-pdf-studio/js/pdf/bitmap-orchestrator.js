@@ -15,7 +15,12 @@
 // overwrite a newer one (e.g. zoom-in while a previous render is pending).
 
 import { viewport } from './pdf-viewport.js';
-import { computeZoomBucket, ensureBitmap, getBestAvailableBitmap } from './page-bitmap-cache.js';
+import {
+    computeCappedWholePageScale,
+    computeZoomBucket,
+    ensureBitmap,
+    getBestAvailableBitmap,
+} from './page-bitmap-cache.js';
 import { tileCacheFindCovering, tileCacheGet, tileCacheSet } from './tile-cache.js';
 import { tileCoversViewport, visiblePdfRegion } from './tile-coverage.js';
 import { state } from '../core/state.js';
@@ -33,6 +38,7 @@ import {
     tileRenderScaleForZoom,
     tileSupportsZoom,
 } from './tile-render-policy.js';
+import { RasterQuality } from './page-raster.js';
 
 
 // PDFium / browser canvas axis limit. Above this, we cap the whole-page
@@ -47,6 +53,19 @@ const TILE_BUFFER_FRACTION = 0.25;
 
 let _bitmapGen = 0;
 const _tileRequests = createInflightKeyGate();
+
+function rasterOwnerContext(quality, targetRasterScale) {
+    const documentState = state.documents?.find?.((doc) => doc.id === viewport.documentId);
+    return {
+        documentId: viewport.documentId || documentState?.id || viewport.filePath,
+        lifecycleGeneration: Number(viewport.documentLifecycleGeneration) || 0,
+        pageRevision: Number(documentState?.pageRenderRevisions?.[viewport.pageNum]) || 0,
+        cssScale: viewport.zoom,
+        devicePixelRatio: window.devicePixelRatio || 1,
+        quality,
+        targetRasterScale,
+    };
+}
 
 export async function ensureBitmapForCurrentView() {
     if (!viewport.active || !viewport.filePath || viewport.pageType !== 'raster') {
@@ -83,7 +102,8 @@ export async function ensureBitmapForCurrentView() {
             viewport.filePath,
             viewport.pageNum,
             viewport.rotation,
-            computeZoomBucket(capScale),
+            computeCappedWholePageScale(capScale, capScale),
+            rasterOwnerContext(RasterQuality.PREVIEW, capScale),
         );
         if (fallback) {
             viewport.currentBitmap = fallback.bitmap;
@@ -93,24 +113,45 @@ export async function ensureBitmapForCurrentView() {
     }
 
     const myGen = ++_bitmapGen;
+    const ownerDocumentId = viewport.documentId;
+    const ownerGeneration = Number(viewport.documentLifecycleGeneration) || 0;
 
     // Cap so PDFium never has to render above the 4096 px axis limit.
-    const cappedBucket = computeZoomBucket(Math.min(targetScale, capScale));
-    // computeZoomBucket is monotonic, so the capped bucket is always <= the requested one
-    const useBucket = cappedBucket;
+    // Clamp after power-of-two quantization. Clamping the input first can turn
+    // a safe scale=5 into bucket=8, exceeding both the 4096 px axis contract
+    // and the worker's 64 MB shared-memory transport.
+    const useBucket = computeCappedWholePageScale(targetScale, capScale);
+    const quality = useBucket + 0.01 >= targetScale
+        ? RasterQuality.FINAL
+        : RasterQuality.PREVIEW;
+    const context = rasterOwnerContext(quality, useBucket);
 
     // Synchronous: show the best already-cached bitmap immediately. Handles
     // the "zoom-in while async render is in flight" case — we never blank
     // out the page while we wait for the higher bucket.
-    const fallback = getBestAvailableBitmap(viewport.filePath, viewport.pageNum, viewport.rotation, useBucket);
+    const fallback = getBestAvailableBitmap(
+        viewport.filePath,
+        viewport.pageNum,
+        viewport.rotation,
+        useBucket,
+        context,
+    );
     if (fallback) {
         viewport.currentBitmap = fallback.bitmap;
         viewport.dirty = true;
     }
 
     // Async: fetch the exact bucket. ensureBitmap dedups concurrent calls.
-    const entry = await ensureBitmap(viewport.filePath, viewport.pageNum, viewport.rotation, useBucket);
-    if (myGen !== _bitmapGen) return;  // stale (newer zoom/page came in)
+    const entry = await ensureBitmap(
+        viewport.filePath,
+        viewport.pageNum,
+        viewport.rotation,
+        useBucket,
+        context,
+    );
+    if (myGen !== _bitmapGen
+        || viewport.documentId !== ownerDocumentId
+        || (Number(viewport.documentLifecycleGeneration) || 0) !== ownerGeneration) return;
     if (entry && entry.bitmap) {
         viewport.currentBitmap = entry.bitmap;
         viewport.dirty = true;

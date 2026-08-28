@@ -195,6 +195,23 @@ const WORKER_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 const LOW_PRIORITY_IDLE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 const LOW_PRIORITY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
 
+#[cfg(unix)]
+fn release_copied_shm_pages(mmap: &memmap2::Mmap, bytes: usize) {
+    // The worker rewrites this transport for its next response. Once the
+    // current bytes have been copied, its resident pages are discardable.
+    let length = bytes.saturating_add(32).min(mmap.len());
+    // SAFETY: the response slice was copied to an owned Vec before this call,
+    // and request_lock prevents the worker from starting another exchange.
+    let result =
+        unsafe { mmap.unchecked_advise_range(memmap2::UncheckedAdvice::DontNeed, 0, length) };
+    if let Err(error) = result {
+        eprintln!("[pool] could not release copied SHM pages: {error}");
+    }
+}
+
+#[cfg(not(unix))]
+fn release_copied_shm_pages(_mmap: &memmap2::Mmap, _bytes: usize) {}
+
 #[derive(Clone, Copy, Debug)]
 pub struct OcrRasterLimits {
     pub max_width: u32,
@@ -273,6 +290,74 @@ pub struct OcrRasterResult {
     pub height: u32,
     pub rgba: Vec<u8>,
     pub page_geometry: PdfiumPageGeometry,
+}
+
+#[derive(Clone, Debug)]
+enum RasterTransfer {
+    Rgba,
+    PngFile {
+        path: std::path::PathBuf,
+        token: String,
+    },
+}
+
+enum RasterPayload {
+    Rgba(Vec<u8>),
+    PngFile {
+        path: std::path::PathBuf,
+        bytes: u64,
+    },
+}
+
+const PNG_TRANSFER_PREFIX: &str = "open-pdf-studio-render-";
+const PNG_TRANSFER_SUFFIX: &str = ".png";
+
+fn validate_png_transfer_target(output_path: &std::path::Path, token: &str) -> Result<()> {
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(anyhow!("invalid PNG transfer token"));
+    }
+    let expected =
+        std::env::temp_dir().join(format!("{PNG_TRANSFER_PREFIX}{token}{PNG_TRANSFER_SUFFIX}"));
+    if output_path != expected {
+        return Err(anyhow!(
+            "PNG transfer target is outside the bounded temp path"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_png_transfer_file(
+    output_path: &std::path::Path,
+    expected_bytes: u64,
+) -> Result<RasterPayload> {
+    use std::io::Read;
+
+    let metadata = std::fs::symlink_metadata(output_path)
+        .with_context(|| format!("stat PNG transfer file {}", output_path.display()))?;
+    if metadata.file_type().is_symlink()
+        || !metadata.file_type().is_file()
+        || metadata.len() != expected_bytes
+    {
+        return Err(anyhow!("worker returned an inconsistent PNG transfer file"));
+    }
+    let mut signature = [0_u8; 8];
+    std::fs::File::open(output_path)
+        .with_context(|| format!("open PNG transfer file {}", output_path.display()))?
+        .read_exact(&mut signature)
+        .with_context(|| format!("read PNG transfer signature {}", output_path.display()))?;
+    if &signature != b"\x89PNG\r\n\x1a\n" {
+        return Err(anyhow!("worker returned an invalid PNG transfer file"));
+    }
+    Ok(RasterPayload::PngFile {
+        path: output_path.to_path_buf(),
+        bytes: expected_bytes,
+    })
+}
+
+fn remove_partial_transfer(transfer: &RasterTransfer) {
+    if let RasterTransfer::PngFile { path, .. } = transfer {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Pad naar de pdfium-worker-sidecar naast de hoofdbinary. Platform-correct
@@ -390,24 +475,80 @@ impl WorkerPool {
         scale: f32,
         rotation: i32,
     ) -> Result<(u32, u32, Vec<u8>)> {
-        // First attempt. Pinned: al het werk voor dezelfde (path, page) —
-        // volledige render, thumbnail, tegels — blijft op één worker, ook
-        // onder druk. Uitwijken naar een koude worker zou die eerst de hele
-        // content-stream laten parsen (seconden + ~1 GB parse-state op zware
-        // CAD-bladen), terwijl de warme worker in ~0,4 s klaar is.
+        let (width, height, payload) = self
+            .render_transfer(path, page_index, scale, rotation, RasterTransfer::Rgba)
+            .await?;
+        match payload {
+            RasterPayload::Rgba(rgba) => Ok((width, height, rgba)),
+            RasterPayload::PngFile { .. } => Err(anyhow!("RGBA render returned a PNG file")),
+        }
+    }
+
+    /// Render a lossless full-page display payload straight into a temporary
+    /// transfer file. Neither the worker's RGBA surface nor the complete PNG
+    /// is copied into a GUI-process Vec; the Tauri command streams bounded
+    /// chunks to WebKit and then removes this file.
+    pub async fn render_png_to_file(
+        &self,
+        path: &str,
+        page_index: u32,
+        scale: f32,
+        rotation: i32,
+        output_path: std::path::PathBuf,
+        transfer_token: String,
+    ) -> Result<(u32, u32, std::path::PathBuf, u64)> {
+        validate_png_transfer_target(&output_path, &transfer_token)?;
+        let (width, height, payload) = self
+            .render_transfer(
+                path,
+                page_index,
+                scale,
+                rotation,
+                RasterTransfer::PngFile {
+                    path: output_path,
+                    token: transfer_token,
+                },
+            )
+            .await?;
+        match payload {
+            RasterPayload::PngFile { path, bytes } => Ok((width, height, path, bytes)),
+            RasterPayload::Rgba(_) => Err(anyhow!("PNG render returned an RGBA payload")),
+        }
+    }
+
+    async fn render_transfer(
+        &self,
+        path: &str,
+        page_index: u32,
+        scale: f32,
+        rotation: i32,
+        transfer: RasterTransfer,
+    ) -> Result<(u32, u32, RasterPayload)> {
+        // Whole-page foreground work is document-affine. Page-based affinity
+        // made long PDFs occupy every worker's parse cache and SHM transport
+        // as the user scrolled; one stable worker keeps the document hot while
+        // idle slots remain available to low-priority work.
         let depths = self.depths();
-        let slot = routing::pick_worker(path, page_index, &depths, true);
+        let slot = routing::pick_document_worker(path, &depths);
         let worker = self.workers[slot].clone();
         self.touch(&worker);
         worker.queue_depth.fetch_add(1, Ordering::Release);
         let result = self
-            .render_on_worker(worker.clone(), path, page_index, scale, rotation)
+            .render_on_worker(
+                worker.clone(),
+                path,
+                page_index,
+                scale,
+                rotation,
+                transfer.clone(),
+            )
             .await;
         worker.queue_depth.fetch_sub(1, Ordering::Release);
 
         if result.is_ok() {
             return result;
         }
+        remove_partial_transfer(&transfer);
 
         // First attempt failed → mark crash, retry on a DIFFERENT live slot
         let recover_task = recovery::handle_worker_crash(worker.clone(), worker_exe_path());
@@ -418,14 +559,24 @@ impl WorkerPool {
         if depths_retry.iter().all(|&d| d == usize::MAX) {
             return result; // no other workers — bubble up the error
         }
-        let slot2 = routing::pick_worker(path, page_index, &depths_retry, true);
+        let slot2 = routing::pick_document_worker(path, &depths_retry);
         let worker2 = self.workers[slot2].clone();
         self.touch(&worker2);
         worker2.queue_depth.fetch_add(1, Ordering::Release);
         let result2 = self
-            .render_on_worker(worker2.clone(), path, page_index, scale, rotation)
+            .render_on_worker(
+                worker2.clone(),
+                path,
+                page_index,
+                scale,
+                rotation,
+                transfer.clone(),
+            )
             .await;
         worker2.queue_depth.fetch_sub(1, Ordering::Release);
+        if result2.is_err() {
+            remove_partial_transfer(&transfer);
+        }
         result2
     }
 
@@ -452,13 +603,20 @@ impl WorkerPool {
                 scale,
                 rotation,
                 Some(limits),
+                RasterTransfer::Rgba,
             )
             .await;
         worker.queue_depth.fetch_sub(1, Ordering::Release);
         if result.is_err() {
             tokio::spawn(recovery::handle_worker_crash(worker, worker_exe_path()));
         }
-        let (width, height, rgba, page_geometry) = result?;
+        let (width, height, payload, page_geometry) = result?;
+        let rgba = match payload {
+            RasterPayload::Rgba(rgba) => rgba,
+            RasterPayload::PngFile { .. } => {
+                return Err(anyhow!("OCR render returned a PNG file"));
+            }
+        };
         Ok(OcrRasterResult {
             width,
             height,
@@ -627,11 +785,12 @@ impl WorkerPool {
         page_index: u32,
         scale: f32,
         rotation: i32,
-    ) -> Result<(u32, u32, Vec<u8>)> {
-        let (width, height, rgba, _) = self
-            .render_on_worker_with_limits(worker, path, page_index, scale, rotation, None)
+        transfer: RasterTransfer,
+    ) -> Result<(u32, u32, RasterPayload)> {
+        let (width, height, payload, _) = self
+            .render_on_worker_with_limits(worker, path, page_index, scale, rotation, None, transfer)
             .await?;
-        Ok((width, height, rgba))
+        Ok((width, height, payload))
     }
 
     async fn render_on_worker_with_limits(
@@ -642,7 +801,8 @@ impl WorkerPool {
         scale: f32,
         rotation: i32,
         ocr_limits: Option<OcrRasterLimits>,
-    ) -> Result<(u32, u32, Vec<u8>, Option<PdfiumPageGeometry>)> {
+        transfer: RasterTransfer,
+    ) -> Result<(u32, u32, RasterPayload, Option<PdfiumPageGeometry>)> {
         // Eén request tegelijk per worker: het draadprotocol heeft geen id-demux
         // en de SHM-regio wordt per response overschreven.
         let request_lock = worker.request_lock.clone();
@@ -672,6 +832,16 @@ impl WorkerPool {
                 "max_height": limits.max_height,
                 "max_pixels": limits.max_pixels,
                 "max_raster_bytes": limits.max_raster_bytes,
+            })
+        } else if let RasterTransfer::PngFile { token, .. } = &transfer {
+            json!({
+                "op": "render_png",
+                "id": id,
+                "path": path,
+                "page_index": page_index,
+                "scale": scale,
+                "rotation": rotation,
+                "transfer_token": token,
             })
         } else {
             json!({
@@ -736,8 +906,9 @@ impl WorkerPool {
         let w = resp["w"].as_u64().unwrap_or(0) as u32;
         let h = resp["h"].as_u64().unwrap_or(0) as u32;
         let shm_bytes = resp["shm_bytes"].as_u64().unwrap_or(0) as usize;
+        let file_bytes = resp["file_bytes"].as_u64().unwrap_or(0);
 
-        let expected_bytes = usize::try_from(w)
+        let expected_rgba_bytes = usize::try_from(w)
             .ok()
             .and_then(|width| {
                 usize::try_from(h)
@@ -751,7 +922,11 @@ impl WorkerPool {
                     worker.slot
                 )
             })?;
-        if w == 0 || h == 0 || shm_bytes != expected_bytes {
+        let payload_metadata_is_valid = match &transfer {
+            RasterTransfer::Rgba => shm_bytes == expected_rgba_bytes,
+            RasterTransfer::PngFile { .. } => shm_bytes == 0 && file_bytes > 0,
+        };
+        if w == 0 || h == 0 || !payload_metadata_is_valid {
             return Err(anyhow!(
                 "worker {} returned inconsistent raster metadata",
                 worker.slot
@@ -771,20 +946,27 @@ impl WorkerPool {
             }
         }
 
-        // Read RGBA from SHM
-        let shm_guard = worker.shm.lock().await;
-        let mmap = shm_guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("worker {} has no shm", worker.slot))?;
-        const HEADER: usize = 32;
-        if shm_bytes + HEADER > mmap.len() {
-            return Err(anyhow!(
-                "worker {} shm_bytes {} exceeds region",
-                worker.slot,
-                shm_bytes
-            ));
-        }
-        let rgba = mmap[HEADER..HEADER + shm_bytes].to_vec();
+        let payload = match &transfer {
+            RasterTransfer::Rgba => {
+                let shm_guard = worker.shm.lock().await;
+                let mmap = shm_guard
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("worker {} has no shm", worker.slot))?;
+                const HEADER: usize = 32;
+                if shm_bytes + HEADER > mmap.len() {
+                    return Err(anyhow!(
+                        "worker {} shm_bytes {} exceeds region",
+                        worker.slot,
+                        shm_bytes
+                    ));
+                }
+                let payload = RasterPayload::Rgba(mmap[HEADER..HEADER + shm_bytes].to_vec());
+                release_copied_shm_pages(mmap, shm_bytes);
+                Ok(payload)
+            }
+            RasterTransfer::PngFile { path, .. } => validate_png_transfer_file(path, file_bytes),
+        };
+        let payload = payload?;
 
         let page_geometry = if ocr_limits.is_some() {
             let geometry: PdfiumPageGeometry = serde_json::from_value(resp["pageGeometry"].clone())
@@ -795,7 +977,7 @@ impl WorkerPool {
             None
         };
 
-        Ok((w, h, rgba, page_geometry))
+        Ok((w, h, payload, page_geometry))
     }
 
     /// Render a page REGION (tile) via the pool. Small tiles fit the 64 MB SHM
@@ -969,6 +1151,7 @@ impl WorkerPool {
             ));
         }
         let rgba = mmap[HEADER..HEADER + shm_bytes].to_vec();
+        release_copied_shm_pages(mmap, shm_bytes);
 
         Ok((w, h, rgba))
     }

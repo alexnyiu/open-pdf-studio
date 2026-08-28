@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Nhấp đúp hoặc nhấn Enter để chỉnh sửa.",
     "timezoneHint": "Ngày được hiển thị theo múi giờ {{timezone}} và lưu ở định dạng ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Phê duyệt thay thế phông chữ",
-    "sourceFace": "Phông chữ nguồn",
-    "sourceFaces": "Các phông chữ nguồn",
-    "unknown": "Không xác định",
-    "packagedSubstitute": "Phông chữ thay thế đi kèm",
-    "notAvailable": "Không khả dụng",
-    "sampleText": "Mẫu",
-    "sampleFallback": "Con cáo nâu nhanh nhẹn nhảy qua con chó lười.",
-    "scope": "Áp dụng cho",
-    "scopeAnnotation": "Chú thích này",
-    "scopeSelection": "Các hộp văn bản đã chọn",
-    "scopeParagraph": "Đoạn PDF này",
-    "scopeFindReplace": "Lần chỉnh sửa Tìm/Thay thế này",
-    "remember": "Ghi nhớ phê duyệt này cho tài liệu đang mở",
-    "approve": "Dùng phông chữ thay thế",
-    "cancel": "Hủy"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Chỉnh sửa văn bản PDF",

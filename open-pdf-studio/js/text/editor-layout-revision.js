@@ -63,6 +63,9 @@ export function createEditorLayoutRevision(document, config = {}, identity = {})
     config: {
       width: finite(config.width),
       contentWidth: finite(config.contentWidth),
+      sourceWidth: finite(config.sourceWidth),
+      substitutionWidthAllowance: finite(config.substitutionWidthAllowance),
+      effectiveContentWidth: finite(config.effectiveContentWidth),
       contentInset: finite(config.contentInset),
       inkPadding: finite(config.inkPadding),
       minimumHeight: finite(config.minimumHeight),

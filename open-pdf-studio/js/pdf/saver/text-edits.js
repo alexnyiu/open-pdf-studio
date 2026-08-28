@@ -1,7 +1,10 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFArray, PDFName, PDFRawStream, PDFString, rgb } from 'pdf-lib';
 import { getActiveDocument } from '../../core/state.js';
-import { loadPackagedFaceBytes, shapeRichTextDocument } from '../../text/font-catalog.js';
+import {
+  loadPackagedFaceBytes,
+  shapeOwnedTextEditForPersistence,
+} from '../../text/font-catalog.js';
 import {
   cloneOwnedTextEditPersistenceState,
   isTextEditRecordV2,
@@ -49,7 +52,7 @@ async function prepareRecords(records) {
     if (record.original && !record.sourceProvenance) {
       throw new Error(`Native text edit ${record.id} cannot be saved because its source operators are not provenance-linked`);
     }
-    const layout = await shapeRichTextDocument(record.richText);
+    const layout = await shapeOwnedTextEditForPersistence(record.richText);
     if (layout.overflow) {
       throw new Error(`Text edit ${record.id} rejected: ${layout.rejectionReasons.join('; ')}`);
     }

@@ -25,13 +25,23 @@ const artifactRoot = path.resolve(
 const reportPath = path.join(artifactRoot, 'reports', 'native-text-editing.json');
 const evidencePdfPath = path.join(artifactRoot, 'reports', 'native-paragraph-save-as.pdf');
 const colorEvidencePdfPath = path.join(artifactRoot, 'reports', 'native-side-by-side-save-as.pdf');
+const widthEvidencePdfPath = path.join(artifactRoot, 'reports', 'native-width-compensation-save-as.pdf');
+const realPdfSource = process.env.OPEN_PDF_STUDIO_NATIVE_REAL_PDF
+  ? path.resolve(process.env.OPEN_PDF_STUDIO_NATIVE_REAL_PDF)
+  : null;
+const realEvidencePdfPath = path.join(artifactRoot, 'reports', 'native-real-pdf-page-3-save.pdf');
+const realPageScreenshotPath = path.join(artifactRoot, 'reports', 'native-real-pdf-page-3.png');
 const fixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-paragraph-table.pdf');
 const colorFixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-side-by-side-color.pdf');
+const widthFixture = path.join(projectDir, 'tests', 'fixtures', 'text', 'native-helvetica-width-compensation.pdf');
 const runDir = await mkdtemp(path.join(tmpdir(), 'opds-native-paragraph-'));
 const workingPdf = path.join(runDir, 'native-paragraph-working.pdf');
 const colorWorkingPdf = path.join(runDir, 'native-side-by-side-working.pdf');
+const widthWorkingPdf = path.join(runDir, 'native-width-compensation-working.pdf');
 const saveAsPdf = path.join(runDir, 'native-paragraph-save-as.pdf');
 const colorSaveAsPdf = path.join(runDir, 'native-side-by-side-save-as.pdf');
+const widthSaveAsPdf = path.join(runDir, 'native-width-compensation-save-as.pdf');
+const realWorkingPdf = path.join(runDir, 'native-real-pdf-page-3-working.pdf');
 const sessionPath = path.join(runDir, 'session.json');
 const stdoutPath = path.join(runDir, 'app.stdout.log');
 const stderrPath = path.join(runDir, 'app.stderr.log');
@@ -149,6 +159,20 @@ async function click(selector) {
   const result = await callTool('app_click_element', { selector, searchTabs: false });
   assert.equal(result.ok, true, result.error);
   assert.equal(result.clicked, true, `${selector} was not clicked`);
+  return result;
+}
+
+async function pointerClick(selector) {
+  const state = await waitUi(selector, (value) => (
+    value.found && value.visible && !value.disabled
+      && value.rect?.width > 2 && value.rect?.height > 2
+  ), 60_000);
+  const result = await callTool('app_mouse_click', {
+    x: state.rect.x + state.rect.width / 2,
+    y: state.rect.y + state.rect.height / 2,
+  });
+  assert.equal(result.ok, true, result.error);
+  return result;
 }
 
 async function openPdf(pdfPath) {
@@ -171,7 +195,7 @@ async function setEditTool() {
   assert.equal(result.current, 'editText');
 }
 
-async function openEditor(selector, expectedText) {
+async function openEditor(selector, expectedText, expectedPage = '1') {
   await click(selector);
   try {
     const editor = await waitUi('.pdf-text-editor', (value) => (
@@ -180,7 +204,7 @@ async function openEditor(selector, expectedText) {
     ), 15_000);
     assert.equal(editor.pageTextEditHost?.attached, true,
       `editor was not mounted in a PDF page host: ${JSON.stringify(editor)}`);
-    assert.equal(editor.pageTextEditHost?.page, '1');
+    assert.equal(editor.pageTextEditHost?.page, expectedPage);
     assert.equal(editor.computedStyle?.position, 'absolute');
     assert.equal(editor.computedStyle?.boxShadow, 'none');
     assert.notEqual(editor.computedStyle?.overflowX, 'scroll');
@@ -202,7 +226,10 @@ async function replaceAndCommit(text) {
   await callTool('app_key', { key: 'a', meta: true });
   const typed = await callTool('app_type', { text });
   assert.equal(typed.ok, true, typed.error);
-  await callTool('app_key', { key: 'Enter', meta: true });
+  // app_click_element focuses form controls before dispatching click, matching
+  // the focus hand-off produced by a real pointer. app_mouse_click intentionally
+  // dispatches raw pointer/mouse events and does not synthesize browser focus.
+  const outsideClick = await click('.status-page-input');
   try {
     await waitUi('.pdf-text-editor', (value) => !value.found, 30_000);
   } catch (error) {
@@ -211,7 +238,7 @@ async function replaceAndCommit(text) {
       ui('#native-text-edit-status').catch(() => null),
       callTool('app_get_recent_console').catch(() => null),
     ]);
-    throw new Error(`formatted text did not commit: ${JSON.stringify({ editor, status, consoleLog })}`, {
+    throw new Error(`formatted text did not commit on click-away: ${JSON.stringify({ outsideClick, editor, status, consoleLog })}`, {
       cause: error,
     });
   }
@@ -223,12 +250,12 @@ async function save(pathname = null) {
   return result.path;
 }
 
-async function pdfJsText(pdfPath) {
+async function pdfJsText(pdfPath, pageNumber = 1) {
   const document = await pdfjsLib.getDocument({
     data: new Uint8Array(await readFile(pdfPath)), isEvalSupported: false, verbosity: 0,
   }).promise;
   try {
-    const content = await (await document.getPage(1)).getTextContent();
+    const content = await (await document.getPage(pageNumber)).getTextContent();
     return content.items.map((item) => item.str).filter(Boolean).join('\n');
   } finally {
     await document.destroy();
@@ -255,18 +282,28 @@ const report = {
     genuineReeditPointerAction: 'PENDING',
     repeatSaveIdempotence: 'PENDING',
     sideBySideIsolation: 'PENDING',
+    canonicalSourceAlignment: 'PENDING',
+    scrollAttachment: 'PENDING',
+    substitutionWidthCompensation: 'PENDING',
+    firstSaveClickCommit: 'PENDING',
   },
   saveEvidence: null,
   artifacts: [],
-  testCommands: ['npm run test:native-text-editing:macos'],
+  testCommands: [realPdfSource
+    ? 'OPEN_PDF_STUDIO_NATIVE_REAL_PDF=<local PDF> npm run test:native-text-editing:macos'
+    : 'npm run test:native-text-editing:macos'],
 };
+if (realPdfSource) report.checks.realPdfPage3 = 'PENDING';
 await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
 try {
-  await Promise.all([
-    access(appBundle), access(fixture), access(colorFixture),
+  const preparation = [
+    access(appBundle), access(fixture), access(colorFixture), access(widthFixture),
     copyFile(fixture, workingPdf), copyFile(colorFixture, colorWorkingPdf),
-  ]);
+    copyFile(widthFixture, widthWorkingPdf),
+  ];
+  if (realPdfSource) preparation.push(access(realPdfSource), copyFile(realPdfSource, realWorkingPdf));
+  await Promise.all(preparation);
   const port = await availablePort();
   endpoint = `http://127.0.0.1:${port}/mcp`;
   application = spawn('/usr/bin/open', [
@@ -288,8 +325,18 @@ try {
   await setEditTool();
 
   const nativeSelector = '.textLayer span[data-item-index="2"]';
-  await waitUi(nativeSelector, (value) => value.found && value.visible && value.rect.width > 5, 60_000);
-  await openEditor(nativeSelector, 'ARCALYST penetration');
+  await waitUi(
+    nativeSelector,
+    (value) => value.found && value.visible && value.rect.width > 5,
+    60_000,
+  );
+  const initialEditor = await openEditor(nativeSelector, 'ARCALYST penetration');
+  const hiddenSourceAtOpen = await ui(nativeSelector);
+  assert.ok(Math.abs(initialEditor.rect.left - hiddenSourceAtOpen.rect.left) <= 0.5,
+    `editor/source left edge differed: ${JSON.stringify({ initialEditor, hiddenSourceAtOpen })}`);
+  assert.ok(Math.abs(initialEditor.rect.top - hiddenSourceAtOpen.rect.top) <= 0.5,
+    `editor/source top edge differed: ${JSON.stringify({ initialEditor, hiddenSourceAtOpen })}`);
+  report.checks.canonicalSourceAlignment = 'PASS';
   await callTool('app_set_zoom', { scale: 1.25 });
   await waitUi('.pdf-text-editor', (value) => (
     value.found && value.visible && value.focused && value.pageTextEditHost?.attached
@@ -301,15 +348,30 @@ try {
       && String(value.pageTextEditHost?.parentClass).includes('canvas-container-cont')
       && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
   ), 30_000);
+  const continuousSourceBefore = await ui(nativeSelector);
+  const relativeBeforeScroll = {
+    left: continuousEditor.rect.left - continuousSourceBefore.rect.left,
+    top: continuousEditor.rect.top - continuousSourceBefore.rect.top,
+  };
   await callTool('app_scroll', {
     x: Math.round(continuousEditor.rect.x + continuousEditor.rect.width / 2),
     y: Math.round(continuousEditor.rect.y + continuousEditor.rect.height / 2),
     dy: 120,
   });
-  await waitUi('.pdf-text-editor', (value) => (
+  const scrolledEditor = await waitUi('.pdf-text-editor', (value) => (
     value.found && value.visible && value.focused && value.pageTextEditHost?.attached
       && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
   ), 30_000);
+  const continuousSourceAfter = await ui(nativeSelector);
+  const relativeAfterScroll = {
+    left: scrolledEditor.rect.left - continuousSourceAfter.rect.left,
+    top: scrolledEditor.rect.top - continuousSourceAfter.rect.top,
+  };
+  assert.ok(Math.abs(relativeAfterScroll.left - relativeBeforeScroll.left) <= 0.5,
+    `editor drifted horizontally while scrolling: ${JSON.stringify({ relativeBeforeScroll, relativeAfterScroll })}`);
+  assert.ok(Math.abs(relativeAfterScroll.top - relativeBeforeScroll.top) <= 0.5,
+    `editor drifted vertically while scrolling: ${JSON.stringify({ relativeBeforeScroll, relativeAfterScroll })}`);
+  report.checks.scrollAttachment = 'PASS';
   await callTool('app_set_view_mode', { mode: 'single' });
   await callTool('app_set_zoom', { scale: 1 });
   await waitUi('.pdf-text-editor', (value) => (
@@ -427,19 +489,280 @@ try {
   assert.match(await pdfJsText(colorSaveAsPdf), /Independent packaged right paragraph/u);
 
   report.checks.sideBySideIsolation = 'PASS';
-  await Promise.all([
+
+  await closeActiveTab();
+  await openPdf(widthWorkingPdf);
+  await setEditTool();
+  const widthSelector = '.textLayer span[data-item-index="0"]';
+  await waitUi(widthSelector, (value) => (
+    value.found && value.visible
+      && String(value.accessibility?.label ?? value.text).includes('EUV (extreme ultraviolet')
+  ), 60_000);
+  await openEditor(widthSelector, 'EUV (extreme ultraviolet');
+  const widthLayout = await waitUntil('bounded substitution width compensation', async () => {
+    const viewport = await callTool('app_get_viewport_state');
+    const layout = viewport.editorMetrics?.layoutState;
+    return layout?.pending === false
+      && layout.valid === true
+      && Number.isFinite(layout.result?.widthCompensation)
+      ? layout : null;
+  }, 30_000);
+  assert.ok(Math.abs(widthLayout.result.widthCompensation - 0.393557) <= 0.00001,
+    `unexpected substitution compensation: ${JSON.stringify(widthLayout.result)}`);
+  assert.ok(Math.abs(widthLayout.result.sourceWidth - 215.199998) <= 0.00001,
+    `unexpected source width: ${JSON.stringify(widthLayout.result)}`);
+  assert.ok(widthLayout.result.effectiveContentWidth <= widthLayout.result.sourceWidth + 1 + 1e-6);
+  assert.equal((await ui('.font-substitution-dialog')).found, false);
+  assert.equal((await ui('.pdf-text-editor-apply')).found, false);
+  assert.equal((await ui('.pdf-text-editor-cancel')).found, false);
+  report.checks.substitutionWidthCompensation = 'PASS';
+
+  const widthReplacement = [
+    'EUV (extreme ultraviolet lithography; advanced chip-printing technology',
+    'used for leading-edge semiconductors)/High-NA (high numerical',
+    'aperture; a next-generation EUV system capable of printing even',
+    'smaller circuit patterns onto waferx)',
+  ].join('\n');
+  await callTool('app_key', { key: 'a', meta: true });
+  const widthTyped = await callTool('app_type', { text: widthReplacement });
+  assert.equal(widthTyped.ok, true, widthTyped.error);
+  await waitUntil('edited width fixture exact validation', async () => {
+    const viewport = await callTool('app_get_viewport_state');
+    const layout = viewport.editorMetrics?.layoutState;
+    return layout?.pending === false && layout.valid === true
+      && layout.requestedFingerprint === layout.validatedFingerprint ? layout : null;
+  }, 30_000);
+  const widthBeforeSave = await sha256(widthWorkingPdf);
+  await click('.quick-access-btn[data-action="save"]');
+  await waitUi('.pdf-text-editor', (value) => !value.found, 60_000);
+  try {
+    await waitUntil('first Save click writes width fixture', async () => (
+      await sha256(widthWorkingPdf) !== widthBeforeSave ? true : null
+    ), 60_000);
+  } catch (error) {
+    const [tabs, viewport, loading, consoleLog] = await Promise.all([
+      callTool('app_list_tabs').catch(() => null),
+      callTool('app_get_viewport_state').catch(() => null),
+      ui('.loading-overlay').catch(() => null),
+      callTool('app_get_recent_console').catch(() => null),
+    ]);
+    throw new Error(`first Save click committed but did not write width fixture: ${JSON.stringify({
+      tabs, viewport, loading, consoleLog,
+    })}`, { cause: error });
+  }
+  report.checks.firstSaveClickCommit = 'PASS';
+
+  await closeActiveTab();
+  await openPdf(widthWorkingPdf);
+  assert.match(await pdfJsText(widthWorkingPdf), /smaller circuit patterns onto waferx\)/u);
+  await setEditTool();
+  const widthReedit = await openEditor(
+    '.textLayer span[data-owned-text-edit-hit="true"]',
+    'EUV (extreme ultraviolet',
+  );
+  assert.match(String(widthReedit.value ?? widthReedit.text), /waferx/u);
+  await callTool('app_key', { key: 'Escape' });
+  assert.equal(await save(widthSaveAsPdf), widthSaveAsPdf);
+
+  const evidenceCopies = [
     copyFile(saveAsPdf, evidencePdfPath),
     copyFile(colorSaveAsPdf, colorEvidencePdfPath),
-  ]);
-  report.artifacts = [
+    copyFile(widthSaveAsPdf, widthEvidencePdfPath),
+  ];
+  const evidenceArtifacts = [
     path.relative(path.dirname(reportPath), evidencePdfPath),
     path.relative(path.dirname(reportPath), colorEvidencePdfPath),
+    path.relative(path.dirname(reportPath), widthEvidencePdfPath),
   ];
+
+  // Optional local production acceptance for a user-supplied real document.
+  // CI keeps using the compact deterministic fixture above; this path never
+  // commits or mutates the supplied source PDF.
+  if (realPdfSource) {
+    const realSourceSha256 = await sha256(realPdfSource);
+    await closeActiveTab();
+    await openPdf(realWorkingPdf);
+    const openedRealPdf = await callTool('app_get_viewport_state');
+    assert.ok(openedRealPdf.pageCount >= 3, 'real PDF must contain page 3');
+    const navigation = await callTool('app_go_to_page', { page: 3 });
+    assert.equal(navigation.ok, true, navigation.error);
+    await waitUntil('real PDF page 3', async () => {
+      const viewport = await callTool('app_get_viewport_state');
+      return viewport.doc?.currentPage === 3 ? viewport : null;
+    }, 60_000);
+    await setEditTool();
+
+    const firstLineSelector = '.textLayer[data-page="3"] span[data-item-index="256"]';
+    const middleLineSelector = '.textLayer[data-page="3"] span[data-item-index="263"]';
+    const finalLineSelector = '.textLayer[data-page="3"] span[data-item-index="269"]';
+    await waitUi(firstLineSelector, (value) => (
+      value.found && value.visible && String(value.text).includes('EUV')
+    ), 90_000);
+
+    const paragraphOpenings = [];
+    for (const selector of [firstLineSelector, middleLineSelector, finalLineSelector]) {
+      const editor = await openEditor(selector, 'EUV (extreme ultraviolet', '3');
+      paragraphOpenings.push({ selector, rect: editor.rect });
+      await callTool('app_key', { key: 'Escape' });
+      await waitUi('.pdf-text-editor', (value) => !value.found, 30_000);
+    }
+    for (const opening of paragraphOpenings.slice(1)) {
+      for (const field of ['left', 'top', 'width', 'height']) {
+        assert.ok(Math.abs(opening.rect[field] - paragraphOpenings[0].rect[field]) <= 0.5,
+          `page-3 paragraph ${field} changed by clicked line: ${JSON.stringify(paragraphOpenings)}`);
+      }
+    }
+
+    const realEditor = await openEditor(middleLineSelector, 'EUV (extreme ultraviolet', '3');
+    const sourceAtOpen = await ui(firstLineSelector);
+    assert.ok(Math.abs(realEditor.rect.left - sourceAtOpen.rect.left) <= 0.5,
+      `real PDF editor/source left edge differed: ${JSON.stringify({ realEditor, sourceAtOpen })}`);
+    assert.ok(Math.abs(realEditor.rect.top - sourceAtOpen.rect.top) <= 0.5,
+      `real PDF editor/source top edge differed: ${JSON.stringify({ realEditor, sourceAtOpen })}`);
+    assert.equal((await ui('.font-substitution-dialog')).found, false);
+    assert.equal((await ui('.pdf-text-editor-apply')).found, false);
+    assert.equal((await ui('.pdf-text-editor-cancel')).found, false);
+
+    const realWidthLayout = await waitUntil('real PDF page-3 width compensation', async () => {
+      const viewport = await callTool('app_get_viewport_state');
+      const layout = viewport.editorMetrics?.layoutState;
+      return layout?.pending === false && layout.valid === true
+        && layout.requestedFingerprint === layout.validatedFingerprint
+        && Number.isFinite(layout.result?.widthCompensation) ? layout : null;
+    }, 30_000);
+    assert.ok(Math.abs(realWidthLayout.result.widthCompensation - 0.393557) <= 0.001,
+      `unexpected real PDF substitution compensation: ${JSON.stringify(realWidthLayout.result)}`);
+    assert.ok(realWidthLayout.result.widthCompensation <= 1 + 1e-6);
+    assert.ok(realWidthLayout.result.effectiveContentWidth
+      <= realWidthLayout.result.sourceWidth + 1 + 1e-6);
+
+    await callTool('app_set_view_mode', { mode: 'continuous' });
+    const realContinuousEditor = await waitUi('.pdf-text-editor', (value) => (
+      value.found && value.visible && value.focused
+        && value.pageTextEditHost?.attached && value.pageTextEditHost?.page === '3'
+        && String(value.pageTextEditHost?.parentClass).includes('canvas-container-cont')
+    ), 30_000);
+    const realSourceBeforeScroll = await waitUi(firstLineSelector, (value) => (
+      value.found && value.rect?.width > 0 && value.rect?.height > 0
+    ), 30_000);
+    const realRelativeBeforeScroll = {
+      left: realContinuousEditor.rect.left - realSourceBeforeScroll.rect.left,
+      top: realContinuousEditor.rect.top - realSourceBeforeScroll.rect.top,
+    };
+    await callTool('app_scroll', {
+      x: Math.round(realContinuousEditor.rect.x + realContinuousEditor.rect.width / 2),
+      y: Math.round(realContinuousEditor.rect.y + realContinuousEditor.rect.height / 2),
+      dy: 120,
+    });
+    await delay(500);
+    const realScrolledEditor = await waitUi('.pdf-text-editor', (value) => (
+      value.found && value.visible && value.focused
+        && value.pageTextEditHost?.attached && value.pageTextEditHost?.page === '3'
+    ), 30_000);
+    const realSourceAfterScroll = await waitUi(firstLineSelector, (value) => (
+      value.found && value.rect?.width > 0 && value.rect?.height > 0
+    ), 30_000);
+    const realRelativeAfterScroll = {
+      left: realScrolledEditor.rect.left - realSourceAfterScroll.rect.left,
+      top: realScrolledEditor.rect.top - realSourceAfterScroll.rect.top,
+    };
+    assert.ok(Math.abs(realRelativeAfterScroll.left - realRelativeBeforeScroll.left) <= 0.5,
+      `real PDF editor drifted horizontally while scrolling: ${JSON.stringify({ realRelativeBeforeScroll, realRelativeAfterScroll })}`);
+    assert.ok(Math.abs(realRelativeAfterScroll.top - realRelativeBeforeScroll.top) <= 0.5,
+      `real PDF editor drifted vertically while scrolling: ${JSON.stringify({ realRelativeBeforeScroll, realRelativeAfterScroll })}`);
+
+    await callTool('app_set_view_mode', { mode: 'single' });
+    await waitUi('.pdf-text-editor', (value) => (
+      value.found && value.visible && value.focused
+        && value.pageTextEditHost?.attached && value.pageTextEditHost?.page === '3'
+        && value.pageTextEditHost?.parentId === 'canvas-container'
+    ), 30_000);
+    const realReplacement = [
+      'EUV (extreme ultraviolet lithography; advanced chip-printing technology',
+      'used for leading-edge semiconductors)/High-NA (high numerical',
+      'aperture; a next-generation EUV system capable of printing even',
+      'smaller chip features) lithography (the chip-making process that prints',
+      'extremely small circuit patterns onto waferx)',
+    ].join('\n');
+    await callTool('app_key', { key: 'a', meta: true });
+    const realTyped = await callTool('app_type', { text: realReplacement });
+    assert.equal(realTyped.ok, true, realTyped.error);
+    await waitUntil('real PDF edited exact validation', async () => {
+      const viewport = await callTool('app_get_viewport_state');
+      const layout = viewport.editorMetrics?.layoutState;
+      return layout?.pending === false && layout.valid === true
+        && layout.requestedFingerprint === layout.validatedFingerprint ? layout : null;
+    }, 30_000);
+    const realBeforeSaveSha256 = await sha256(realWorkingPdf);
+    await click('.quick-access-btn[data-action="save"]');
+    await waitUi('.pdf-text-editor', (value) => !value.found, 60_000);
+    await waitUntil('first Save click writes real PDF page 3', async () => (
+      await sha256(realWorkingPdf) !== realBeforeSaveSha256 ? true : null
+    ), 90_000);
+
+    await closeActiveTab();
+    await openPdf(realWorkingPdf);
+    const reopenedNavigation = await callTool('app_go_to_page', { page: 3 });
+    assert.equal(reopenedNavigation.ok, true, reopenedNavigation.error);
+    await waitUi(
+      '.textLayer[data-page="3"] span[data-owned-text-edit-hit="true"]',
+      (value) => value.found && value.visible,
+      90_000,
+    );
+    assert.match(await pdfJsText(realWorkingPdf, 3), /extremely small circuit patterns onto waferx\)/u);
+    await setEditTool();
+    await openEditor(
+      '.textLayer[data-page="3"] span[data-owned-text-edit-hit="true"]',
+      'EUV (extreme ultraviolet',
+      '3',
+    );
+    const reopenedRuns = await richRunStates();
+    assert.ok(reopenedRuns.some((run) => String(run.text).includes('waferx')),
+      `saved page-3 edit could not be genuinely reopened: ${JSON.stringify(reopenedRuns)}`);
+    await callTool('app_key', { key: 'Escape' });
+
+    const firstRealSaveSha256 = await sha256(realWorkingPdf);
+    await save();
+    const repeatedRealSaveSha256 = await sha256(realWorkingPdf);
+    assert.equal(repeatedRealSaveSha256, firstRealSaveSha256,
+      'real PDF repeat Save without edits changed PDF bytes');
+    const realScreenshot = await callTool('app_screenshot_view', { width: 1600 });
+    assert.equal(realScreenshot.ok, true, realScreenshot.error);
+    await writeFile(realPageScreenshotPath, Buffer.from(realScreenshot.png_base64, 'base64'));
+    assert.equal(await sha256(realPdfSource), realSourceSha256,
+      'local acceptance mutated the supplied source PDF');
+
+    report.realPdfEvidence = {
+      sourcePath: realPdfSource,
+      sourceSha256: realSourceSha256,
+      sourcePreserved: await sha256(realPdfSource) === realSourceSha256,
+      page: 3,
+      clickedItemIndexes: [256, 263, 269],
+      paragraphOpenings,
+      widthCompensation: realWidthLayout.result.widthCompensation,
+      sourceWidth: realWidthLayout.result.sourceWidth,
+      effectiveContentWidth: realWidthLayout.result.effectiveContentWidth,
+      relativeBeforeScroll: realRelativeBeforeScroll,
+      relativeAfterScroll: realRelativeAfterScroll,
+      firstSaveSha256: firstRealSaveSha256,
+      repeatedSaveSha256: repeatedRealSaveSha256,
+      repeatSaveByteIdentity: true,
+    };
+    report.checks.realPdfPage3 = 'PASS';
+    evidenceCopies.push(copyFile(realWorkingPdf, realEvidencePdfPath));
+    evidenceArtifacts.push(
+      path.relative(path.dirname(reportPath), realEvidencePdfPath),
+      path.relative(path.dirname(reportPath), realPageScreenshotPath),
+    );
+  }
+
+  await Promise.all(evidenceCopies);
+  report.artifacts = evidenceArtifacts;
   report.status = Object.values(report.checks).every((status) => status === 'PASS') ? 'PASS' : 'FAIL';
   report.completedAt = new Date().toISOString();
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
-  console.log(`Packaged native paragraph editing acceptance passed: ${saveAsPdf}; ${colorSaveAsPdf}`);
+  console.log(`Packaged native paragraph editing acceptance passed: ${saveAsPdf}; ${colorSaveAsPdf}; ${widthSaveAsPdf}`);
 } catch (error) {
   for (const [name, status] of Object.entries(report.checks)) {
     if (status === 'PENDING') report.checks[name] = 'NOT_RUN';

@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Bofya mara mbili au bonyeza Enter ili kuhariri.",
     "timezoneHint": "Tarehe zinaonyeshwa katika saa za eneo {{timezone}} na kuhifadhiwa kwa muundo wa ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Idhinisha ubadilishaji wa fonti",
-    "sourceFace": "Fonti chanzo",
-    "sourceFaces": "Fonti chanzo",
-    "unknown": "Haijulikani",
-    "packagedSubstitute": "Fonti mbadala iliyojumuishwa",
-    "notAvailable": "Haipatikani",
-    "sampleText": "Sampuli",
-    "sampleFallback": "Mbweha mwepesi wa kahawia anaruka juu ya mbwa mvivu.",
-    "scope": "Inatumika kwa",
-    "scopeAnnotation": "Dokezo hili",
-    "scopeSelection": "Visanduku vya maandishi vilivyochaguliwa",
-    "scopeParagraph": "Aya hii ya PDF",
-    "scopeFindReplace": "Hariri hii ya Tafuta/Badilisha",
-    "remember": "Kumbuka idhini hii kwa hati iliyofunguliwa",
-    "approve": "Tumia fonti mbadala",
-    "cancel": "Ghairi"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Hariri maandishi ya PDF",

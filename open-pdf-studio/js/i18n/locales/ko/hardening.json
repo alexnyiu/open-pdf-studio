@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. 편집하려면 두 번 클릭하거나 Enter 키를 누르세요.",
     "timezoneHint": "날짜는 {{timezone}} 시간대로 표시되며 ISO 8601 형식으로 저장됩니다."
   },
-  "fontSubstitution": {
-    "title": "글꼴 대체 승인",
-    "sourceFace": "원본 글꼴",
-    "sourceFaces": "원본 글꼴",
-    "unknown": "알 수 없음",
-    "packagedSubstitute": "내장 대체 글꼴",
-    "notAvailable": "사용할 수 없음",
-    "sampleText": "예시",
-    "sampleFallback": "빠른 갈색 여우가 게으른 개를 뛰어넘습니다.",
-    "scope": "적용 대상",
-    "scopeAnnotation": "이 주석",
-    "scopeSelection": "선택한 텍스트 상자",
-    "scopeParagraph": "이 PDF 문단",
-    "scopeFindReplace": "이 찾기/바꾸기 편집",
-    "remember": "현재 열린 문서에 이 승인을 기억",
-    "approve": "대체 글꼴 사용",
-    "cancel": "취소"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "PDF 텍스트 편집",

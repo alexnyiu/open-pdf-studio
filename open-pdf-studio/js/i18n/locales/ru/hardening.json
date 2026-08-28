@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Чтобы изменить, дважды щёлкните или нажмите Enter.",
     "timezoneHint": "Даты отображаются в часовом поясе {{timezone}} и сохраняются в формате ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Разрешить замену шрифта",
-    "sourceFace": "Исходный шрифт",
-    "sourceFaces": "Исходные шрифты",
-    "unknown": "Неизвестен",
-    "packagedSubstitute": "Встроенный шрифт-замена",
-    "notAvailable": "Недоступен",
-    "sampleText": "Образец",
-    "sampleFallback": "Съешь же ещё этих мягких французских булок, да выпей чаю.",
-    "scope": "Область применения",
-    "scopeAnnotation": "Эта аннотация",
-    "scopeSelection": "Выбранные текстовые поля",
-    "scopeParagraph": "Этот абзац PDF",
-    "scopeFindReplace": "Это изменение поиска и замены",
-    "remember": "Запомнить разрешение для открытого документа",
-    "approve": "Использовать шрифт-замену",
-    "cancel": "Отмена"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Редактировать текст PDF",

@@ -754,3 +754,9 @@ export function clearFormLayers() {
   initializedRadioGroups.clear();
   hideFormFieldsBar();
 }
+
+export function releaseFormLayer(pageNum) {
+  const layer = formLayers.get(Number(pageNum));
+  layer?.remove();
+  formLayers.delete(Number(pageNum));
+}

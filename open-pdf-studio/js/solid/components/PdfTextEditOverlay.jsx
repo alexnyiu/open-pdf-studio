@@ -5,6 +5,7 @@ import { active, editorMountGeneration, editorStyle, editorPlacement, text, setT
   editorLayoutState, setEditorLayoutState,
   richTextSelection, typingStyle, updateRichTextDraft, updateRichTextSelection,
   undoRichTextDraft, redoRichTextDraft, updateEditorGeometry,
+  updateEditorValidatedLayoutGeometry,
   recordEditorGeometryHistory } from '../stores/pdfTextEditStore.js';
 import {
   canonicalRichTextHash,
@@ -29,6 +30,7 @@ import {
 import { documentNeedsContrastAid, editableRunPresentation } from '../../text/text-edit-contrast.js';
 import {
   applyPageTextEditProjection,
+  canonicalEditorBoundsForRichText,
   canonicalDeltaFromDisplayDelta,
   clampPageTextEditBounds,
   projectCommitBounds,
@@ -61,6 +63,7 @@ import {
 import {
   consumeOutsidePointerDownForTextEdit,
   shouldApplyTextEditForOutsideFocus,
+  shouldRestoreTextEditorFocusAfterHostTransition,
   shouldSuppressOutsideApplyFollowup,
   textEditTargetIsWithinFocusBoundary,
   textEditTargetStartsLifecycleTransition,
@@ -94,6 +97,8 @@ export default function PdfTextEditOverlay() {
   const attachmentProjections = new WeakMap();
   const [contentInsetsPx, setContentInsetsPx] = createSignal(null);
   const [projectedStyle, setProjectedStyle] = createSignal(null);
+  const [placementAttached, setPlacementAttached] = createSignal(false);
+  const [initialExactLayoutReady, setInitialExactLayoutReady] = createSignal(false);
   const [commitBoundsStyle, setCommitBoundsStyle] = createSignal(null);
   const [pageDisplayScale, setPageDisplayScale] = createSignal(0);
   const [previewOverflow, setPreviewOverflow] = createSignal(false);
@@ -136,10 +141,10 @@ export default function PdfTextEditOverlay() {
       viewportHeight - 12,
     );
     const maximumWidth = Math.max(96, rightLimit - left);
-    // Reserve enough room for the exact-count notice plus all recovery and
-    // Apply/Cancel controls. The full canonical text remains in the scrollable
+    // Reserve enough room for the exact-count notice and recovery controls.
+    // The full canonical text remains in the scrollable
     // editor; this only bounds what Chromium paints at once.
-    const maximumHeight = Math.max(64, bottomLimit - top - 126);
+    const maximumHeight = Math.max(64, bottomLimit - top - 92);
     const width = Math.min(preview.width, maximumWidth);
     const height = Math.min(preview.height, maximumHeight);
     const actionWidth = Math.min(Math.max(280, width), viewportWidth - 24);
@@ -158,10 +163,16 @@ export default function PdfTextEditOverlay() {
       : 'unplaced';
   };
 
+  const editorReadyForDisplay = () => (
+    (!editorPlacement() || placementAttached())
+      && (!editorOptions().expandableRegion || initialExactLayoutReady())
+  );
+
   const syncPagePlacement = () => {
     const placement = editorPlacement();
     if (!active() || !placement) {
       currentPlacementFrame = null;
+      if (placementAttached()) setPlacementAttached(false);
       if (projectedStyle()) setProjectedStyle(null);
       if (commitBoundsStyle()) setCommitBoundsStyle(null);
       if (pageDisplayScale()) setPageDisplayScale(0);
@@ -170,6 +181,7 @@ export default function PdfTextEditOverlay() {
     }
     let host = findPageTextEditHost(placement);
     if (!host) {
+      if (placementAttached()) setPlacementAttached(false);
       // Host creation is a DOM write. Defer all layout reads until a later
       // frame so the placement pass remains measure-then-write.
       host = ensurePageTextEditHost(placement);
@@ -186,11 +198,13 @@ export default function PdfTextEditOverlay() {
     // number of active frames instead of leaving the portal at its root
     // fallback position for the lifetime of the editor.
     if (!portalRef) {
+      if (placementAttached()) setPlacementAttached(false);
       publishPlacementDebug('portal-missing');
       return false;
     }
     const frame = measurePageTextEditFrame(placement, host);
     if (!frame) {
+      if (placementAttached()) setPlacementAttached(false);
       publishPlacementDebug('frame-unavailable');
       return false;
     }
@@ -213,7 +227,14 @@ export default function PdfTextEditOverlay() {
       }
       host.appendChild(portalRef);
       if (preserveFocus) {
-        queueMicrotask(() => (richEditorRef || textareaRef)?.focus({ preventScroll: true }));
+        queueMicrotask(() => {
+          if (shouldRestoreTextEditorFocusAfterHostTransition({
+            portal: portalRef,
+            activeElement: document.activeElement,
+            body: document.body,
+            documentElement: document.documentElement,
+          })) (richEditorRef || textareaRef)?.focus({ preventScroll: true });
+        });
       }
     }
     for (const attachment of editorOptions().attachedPageElements || []) {
@@ -266,6 +287,7 @@ export default function PdfTextEditOverlay() {
       });
     }
     const attached = portalRef.parentElement === host;
+    if (placementAttached() !== attached) setPlacementAttached(attached);
     publishPlacementDebug(attached ? 'attached' : 'attachment-rejected', {
       hostDocumentId: host.dataset.documentId ?? null,
       hostGeneration: host.dataset.generation ?? null,
@@ -392,6 +414,7 @@ export default function PdfTextEditOverlay() {
   const focusEditorOnOpen = () => {
     const editor = richTextDocument() ? richEditorRef : textareaRef;
     if (!active() || !editor || !selectOnFocus()) return false;
+    if (!editorReadyForDisplay()) return false;
     if (editorPlacement()
         && !portalRef?.parentElement?.classList?.contains('pdf-text-edit-layer')) return false;
     editor.focus({ preventScroll: true });
@@ -454,6 +477,8 @@ export default function PdfTextEditOverlay() {
     setEditorBox(null);
     publishContentInsetsPx(null);
     setProjectedStyle(null);
+    setPlacementAttached(false);
+    setInitialExactLayoutReady(!editorOptions().expandableRegion);
     setCommitBoundsStyle(null);
     setPageDisplayScale(0);
     setPreviewOverflow(false);
@@ -487,6 +512,7 @@ export default function PdfTextEditOverlay() {
     // placement frame. Preserve focus only when the editor owned it before
     // that transition; property-panel and formatting focus is never stolen.
     if (portalRef?.contains(document.activeElement)) restoreFocusAfterHostTransition = true;
+    if (editorPlacement()) setPlacementAttached(false);
     markPlacementDirty();
   };
 
@@ -525,6 +551,9 @@ export default function PdfTextEditOverlay() {
     const workerOptions = {
       width: config.width,
       contentWidth: config.contentWidth,
+      sourceWidth: config.sourceWidth,
+      substitutionWidthAllowance: config.substitutionWidthAllowance,
+      effectiveContentWidth: config.effectiveContentWidth,
       contentInset: config.contentInset,
       inkPadding: config.inkPadding,
       minimumHeight: config.minimumHeight,
@@ -547,6 +576,13 @@ export default function PdfTextEditOverlay() {
       });
       if (response.fingerprint !== fingerprint || currentRevision.fingerprint !== fingerprint) return;
       const result = response.result;
+      updateEditorValidatedLayoutGeometry({
+        canonicalBounds: canonicalEditorBoundsForRichText(
+          result.document.region,
+          editorPlacement()?.pageHeight,
+        ),
+        effectiveContentWidth: result.effectiveContentWidth,
+      });
       const validatedRevision = createEditorLayoutRevision(
         result.document,
         editorOptions().expandableRegion,
@@ -602,6 +638,10 @@ export default function PdfTextEditOverlay() {
       });
       setEditorStatus(message, result.valid ? 'info' : 'invalid');
       config.onDraftLayout?.(result);
+      if (!initialExactLayoutReady()) {
+        setInitialExactLayoutReady(true);
+        markPlacementDirty();
+      }
       queueMicrotask(resizeRichToContent);
     }).catch((error) => {
       if (error?.code === 'TEXT_LAYOUT_CANCELLED' || lastExpandableFingerprint !== fingerprint) return;
@@ -617,6 +657,10 @@ export default function PdfTextEditOverlay() {
         statuses: { shaping: message },
       });
       setEditorStatus(message, 'invalid');
+      if (!initialExactLayoutReady()) {
+        setInitialExactLayoutReady(true);
+        markPlacementDirty();
+      }
       queueMicrotask(resizeRichToContent);
     });
   };
@@ -719,9 +763,27 @@ export default function PdfTextEditOverlay() {
     if (handler) handler(e);
   };
 
-  const handleBlur = () => {
+  const handleBlur = (event) => {
     const handler = blurHandler();
-    if (handler) handler();
+    if (handler) handler(event);
+    const sessionId = getActiveTextEditSession()?.sessionId;
+    if (!sessionId) return;
+    // WebKit reliably emits blur when focus leaves contentEditable, but some
+    // programmatic and accessibility focus transfers do not also bubble a
+    // focusin event through document. Re-check the settled active element so
+    // both paths share the same complete portal/properties boundary policy.
+    queueMicrotask(() => {
+      if (!active() || getActiveTextEditSession()?.sessionId !== sessionId) return;
+      const focused = document.activeElement || event?.relatedTarget;
+      if (!shouldApplyTextEditForOutsideFocus({
+        target: focused,
+        portal: portalRef,
+        documentHasFocus: document.hasFocus(),
+        body: document.body,
+        documentElement: document.documentElement,
+      })) return;
+      void applyTextEditFromOutside();
+    });
   };
 
   const directManipulationEnabled = () => Boolean(
@@ -747,27 +809,16 @@ export default function PdfTextEditOverlay() {
     };
   };
 
-  const actionStyle = () => {
+  const recoveryStyle = () => {
     const pathologicalFrame = pathologicalPreviewFrame();
-    if (pathologicalPaste() && pathologicalFrame) {
-      return {
-        position: 'fixed',
-        left: `${pathologicalFrame.left}px`,
-        top: `${pathologicalFrame.top}px`,
-        width: `${pathologicalFrame.width}px`,
-        'max-width': 'calc(100vw - 24px)',
-        'z-index': '2147483000',
-      };
-    }
-    const style = liveEditorStyle();
-    const box = editorBox();
-    const top = (parseFloat(style.top) || 0)
-      + (box?.height ?? (parseFloat(style.height) || 24)) + 8;
+    if (!pathologicalFrame) return {};
     return {
-      position: 'absolute',
-      left: style.left || '0px',
-      top: `${top}px`,
-      'z-index': String((Number(style['z-index']) || 1000) + 3),
+      position: 'fixed',
+      left: `${pathologicalFrame.left}px`,
+      top: `${pathologicalFrame.top}px`,
+      width: `${pathologicalFrame.width}px`,
+      'max-width': 'calc(100vw - 24px)',
+      'z-index': '2147483000',
     };
   };
 
@@ -788,7 +839,7 @@ export default function PdfTextEditOverlay() {
         (richEditorRef || textareaRef)?.focus?.({ preventScroll: true });
       }
     });
-    outsideApplyPromise = applyActiveTextEditing()
+    outsideApplyPromise = applyActiveTextEditing('click-away')
       .then((result) => {
         if (result === false
             && active()
@@ -846,6 +897,9 @@ export default function PdfTextEditOverlay() {
   const handleOutsideFocusIn = (event) => {
     if (!active()) return;
     const target = event.target;
+    // A deliberate focus move within the broader editing boundary (zoom,
+    // properties, or modal UI) supersedes any pending reparent restoration.
+    if (portalRef && !portalRef.contains(target)) restoreFocusAfterHostTransition = false;
     const sessionId = getActiveTextEditSession()?.sessionId;
     if (!sessionId || !shouldApplyTextEditForOutsideFocus({
       target,
@@ -1259,13 +1313,25 @@ export default function PdfTextEditOverlay() {
     // listener lifecycle. Reinstalling listeners on every keystroke used to
     // cancel the placement frame that was about to attach the portal.
     const observedMountGeneration = editorMountGeneration();
-    const observedSessionGeneration = editorPlacement()?.sessionGeneration ?? null;
+    // Placement geometry is replaced after exact layout, scroll projection,
+    // and direct manipulation. Those updates belong to the same editor
+    // session and must not tear down/reinstall the document listeners. The
+    // mount generation is the reactive session key; read the placement only
+    // for cleanup ownership evidence.
+    const observedSessionGeneration = untrack(editorPlacement)?.sessionGeneration ?? null;
     const richEditorActive = Boolean(untrack(richTextDocument));
     const observer = typeof ResizeObserver === 'undefined'
       ? null : new ResizeObserver(markPlacementDirty);
     let observedPageContainer = null;
     const mutationObserver = typeof MutationObserver === 'undefined'
       ? null : new MutationObserver(() => {
+        // Container replacement may blur a reparented contentEditable before
+        // the next placement frame can inspect document.activeElement. Capture
+        // focus ownership at the mutation boundary; ordinary geometry/scroll
+        // dirtying never sets this flag and therefore never steals focus.
+        if (portalRef?.contains(document.activeElement)) {
+          restoreFocusAfterHostTransition = true;
+        }
         observePlacementContainers();
         markPlacementDirty();
       });
@@ -1757,6 +1823,8 @@ export default function PdfTextEditOverlay() {
     <Show when={active() ? editorMountGeneration() : 0} keyed>
       {() => <>
         <div ref={capturePortalElement} class="pdf-text-edit-portal" data-page={editorPlacement()?.pageNum}
+          data-placement-ready={editorReadyForDisplay() ? 'true' : 'false'}
+          style={{ visibility: editorReadyForDisplay() ? 'visible' : 'hidden' }}
           data-editor-mount-generation={editorMountGeneration()}
           data-text-edit-focus-boundary="true">
           <Show when={editorOptions().fixedRegion && commitBoundsStyle()}>
@@ -1904,46 +1972,30 @@ export default function PdfTextEditOverlay() {
               />
             </div>
           </Show>
-          <div
-            class="pdf-text-editor-actions"
-            style={actionStyle()}
-          >
-            <Show when={pathologicalPaste()}>
-              <div
-                id="pdf-text-pathological-paste-status"
-                class="pdf-text-editor-paste-recovery"
-                role="status"
-                aria-live="polite"
-                aria-atomic="true"
-                data-grapheme-count={pathologicalPaste().graphemeCount}
-                data-line-count={pathologicalPaste().lineCount}
-              >
-                <span>{pathologicalPasteMessage()}</span>
-                <div class="pdf-text-editor-paste-actions">
-                  <button type="button" onClick={undoPathologicalPaste}>
-                    {tHardening('textEditor.pathologicalPaste.undo')}
+          <Show when={pathologicalPaste()}>
+            <div
+              id="pdf-text-pathological-paste-status"
+              class="pdf-text-editor-paste-recovery"
+              style={recoveryStyle()}
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              data-grapheme-count={pathologicalPaste().graphemeCount}
+              data-line-count={pathologicalPaste().lineCount}
+            >
+              <span>{pathologicalPasteMessage()}</span>
+              <div class="pdf-text-editor-paste-actions">
+                <button type="button" onClick={undoPathologicalPaste}>
+                  {tHardening('textEditor.pathologicalPaste.undo')}
+                </button>
+                <Show when={approvedExpansion()}>
+                  <button type="button" onClick={expandPathologicalPasteBox}>
+                    {tHardening('textEditor.pathologicalPaste.expand')}
                   </button>
-                  <Show when={approvedExpansion()}>
-                    <button type="button" onClick={expandPathologicalPasteBox}>
-                      {tHardening('textEditor.pathologicalPaste.expand')}
-                    </button>
-                  </Show>
-                </div>
+                </Show>
               </div>
-            </Show>
-            <button
-              type="button"
-              class="pdf-text-editor-apply"
-              disabled={Boolean(editorOptions().expandableRegion
-                && (editorLayoutState()?.pending || editorLayoutState()?.valid === false))}
-              onClick={applyTextEdit}
-            >{tHardening('textEditor.actions.apply')}</button>
-            <button
-              type="button"
-              class="pdf-text-editor-cancel"
-              onClick={() => cancelActiveTextEditing('cancel-button')}
-            >{tHardening('textEditor.actions.cancel')}</button>
-          </div>
+            </div>
+          </Show>
         </div>
         <Show when={editorOptions().singleLine || editorOptions().fixedRegion || editorOptions().expandableRegion}>
           <div id={editorOptions().expandableRegion ? 'native-text-edit-status' : 'scanned-text-edit-status'} class="ocr-review-live-region" role="status" aria-live="polite" aria-atomic="true">

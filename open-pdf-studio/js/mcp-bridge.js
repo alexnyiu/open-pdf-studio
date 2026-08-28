@@ -273,6 +273,112 @@ async function handleScreenshotView(params) {
   }
 }
 
+async function handleScreenshotRenderedPage(params) {
+  const pageNum = Math.max(1, Number(params?.pageNum) || 1);
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  const stateMod = await import('./core/state.js');
+  const doc = stateMod.getActiveDocument();
+  const wrapper = document.querySelector(
+    `#continuous-container .page-wrapper[data-page="${pageNum}"]`,
+  );
+  const baseSurface = wrapper?.querySelector?.('.pdf-page-raster')
+    || wrapper?.querySelector?.('.pdf-canvas');
+  const baseWidth = Number(baseSurface?.naturalWidth) || Number(baseSurface?.width) || 0;
+  const baseHeight = Number(baseSurface?.naturalHeight) || Number(baseSurface?.height) || 0;
+  if (!doc || !wrapper || !baseWidth || !baseHeight) {
+    return { ok: false, error: `rendered continuous page ${pageNum} is not mounted` };
+  }
+  const pageWidthPt = Number(wrapper.dataset.baseW) || 0;
+  const pageHeightPt = Number(wrapper.dataset.baseH) || 0;
+  const targetScale = Number(wrapper.dataset.rasterTargetScale) || 0;
+  if (!pageWidthPt || !pageHeightPt || !targetScale) {
+    return { ok: false, error: 'rendered page density metadata is unavailable' };
+  }
+  const cropXpt = Math.max(0, Math.min(pageWidthPt, Number(params?.xPt) || 0));
+  const cropYpt = Math.max(0, Math.min(pageHeightPt, Number(params?.yPt) || 0));
+  const cropWpt = Math.max(1, Math.min(
+    pageWidthPt - cropXpt,
+    Number(params?.widthPt) || Math.min(360, pageWidthPt - cropXpt),
+  ));
+  const cropHpt = Math.max(1, Math.min(
+    pageHeightPt - cropYpt,
+    Number(params?.heightPt) || Math.min(180, pageHeightPt - cropYpt),
+  ));
+  // Use the mounted PDFium canvas's literal pixel grid. Re-scaling a
+  // fractional crop into a separately rounded target grid changes WebKit's
+  // sampling phase and makes an identical raster look different in the
+  // direct-PDFium pixel check, especially around small antialiased text.
+  const fullWidth = baseWidth;
+  const fullHeight = baseHeight;
+  const xRasterScale = fullWidth / pageWidthPt;
+  const yRasterScale = fullHeight / pageHeightPt;
+  const cropLeft = Math.floor(cropXpt * xRasterScale);
+  const cropTop = Math.floor(cropYpt * yRasterScale);
+  const cropRight = Math.min(fullWidth, Math.ceil((cropXpt + cropWpt) * xRasterScale));
+  const cropBottom = Math.min(fullHeight, Math.ceil((cropYpt + cropHpt) * yRasterScale));
+  const width = Math.max(1, cropRight - cropLeft);
+  const height = Math.max(1, cropBottom - cropTop);
+  if (width > 4096 || height > 4096 || width * height * 4 > 32 * 1024 * 1024) {
+    return { ok: false, error: 'rendered page crop exceeds the bounded test surface' };
+  }
+  const output = document.createElement('canvas');
+  output.width = width;
+  output.height = height;
+  const context = output.getContext('2d');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, width, height);
+  context.drawImage(
+    baseSurface,
+    cropLeft,
+    cropTop,
+    width,
+    height,
+    0,
+    0,
+    width,
+    height,
+  );
+  for (const tile of wrapper.querySelectorAll('.page-sharp-tile')) {
+    const tileX = Number(tile.dataset.regionXpt) || 0;
+    const tileY = Number(tile.dataset.regionYpt) || 0;
+    const tileW = Number(tile.dataset.regionWpt) || 0;
+    const tileH = Number(tile.dataset.regionHpt) || 0;
+    const left = Math.max(cropXpt, tileX);
+    const top = Math.max(cropYpt, tileY);
+    const right = Math.min(cropXpt + cropWpt, tileX + tileW);
+    const bottom = Math.min(cropYpt + cropHpt, tileY + tileH);
+    if (right <= left || bottom <= top || !tileW || !tileH) continue;
+    context.drawImage(
+      tile,
+      (left - tileX) / tileW * tile.width,
+      (top - tileY) / tileH * tile.height,
+      (right - left) / tileW * tile.width,
+      (bottom - top) / tileH * tile.height,
+      Math.round(left * xRasterScale) - cropLeft,
+      Math.round(top * yRasterScale) - cropTop,
+      Math.round((right - left) * xRasterScale),
+      Math.round((bottom - top) * yRasterScale),
+    );
+  }
+  return {
+    ok: true,
+    pageNum,
+    width,
+    height,
+    fullWidth,
+    fullHeight,
+    cropLeft,
+    cropTop,
+    cropWidth: width,
+    cropHeight: height,
+    targetScale,
+    actualScale: Number(wrapper.dataset.rasterActualScale) || 0,
+    quality: wrapper.dataset.rasterQuality || null,
+    png_base64: output.toDataURL('image/png').split(',', 2)[1],
+  };
+}
+
 // ─── Mouse + keyboard interaction ───────────────────────────────────────
 //
 // All synthetic events use `bubbles: true` and `cancelable: true` so they
@@ -485,10 +591,24 @@ async function handleScroll(params) {
     metaKey: !!params?.metaKey,
   });
   target.dispatchEvent(ev);
+  // Synthetic wheel events do not execute the browser's default scrolling
+  // action. Reproduce that action only when production handlers did not
+  // prevent it, so MCP acceptance exercises the same scroll listener and
+  // virtual-window path as a physical trackpad.
+  let defaultScrollApplied = false;
+  if (!ev.defaultPrevented) {
+    const scrollTarget = target.closest?.('#pdf-container, #thumbnails-container')
+      || document.getElementById('pdf-container');
+    if (scrollTarget) {
+      scrollTarget.scrollBy({ left: dx, top: dy, behavior: 'auto' });
+      defaultScrollApplied = true;
+    }
+  }
   return {
     ok: true,
     x, y, dx, dy,
     ctrlKey: !!params?.ctrlKey,
+    defaultScrollApplied,
     target: describeTarget(target),
   };
 }
@@ -772,6 +892,7 @@ async function handleGetViewportState() {
   let activePageRotation = null;
   let viewMode = null;
   let bookSpread = null;
+  let facingSpread = null;
   let currentTool = null;
   let annotationCount = null;
   let selectedCount = null;
@@ -782,6 +903,12 @@ async function handleGetViewportState() {
   let editorMetrics = null;
   let editorSession = null;
   let ocrWorkflowMetrics = null;
+  let performanceProfile = null;
+  let pageGeometry = null;
+  let renderResources = null;
+  let renderedSurfaceStates = [];
+  let performanceMetrics = null;
+  let nativeRenderResources = null;
   try {
     const stateMod = await import('/js/core/state.ts');
     renderEngine = stateMod.state?.renderEngine ?? null;
@@ -809,10 +936,25 @@ async function handleGetViewportState() {
       : null;
     viewMode = doc?.viewMode ?? null;
     bookSpread = !!doc?.bookSpread;
+    facingSpread = !!doc?.facingSpread;
     annotationCount = (doc?.annotations || []).length;
     selectedCount = (doc?.selectedAnnotations || []).length;
     pageCount = doc?.pdfDoc?.numPages ?? null;
     preloadStatus = doc?.preloadStatus ? { ...doc.preloadStatus } : null;
+    performanceProfile = doc?.performanceProfile ? {
+      pageCount: doc.performanceProfile.pageCount,
+      fileBytes: doc.performanceProfile.fileBytes,
+      maximumPageSurfaceBytes: doc.performanceProfile.maximumPageSurfaceBytes,
+      slowForegroundSamples: doc.performanceProfile.slowForegroundSamples,
+      largeDocument: doc.performanceProfile.largeDocument,
+      largeDocumentReasons: [...(doc.performanceProfile.largeDocumentReasons || [])],
+      budget: doc.performanceProfile.budget ? { ...doc.performanceProfile.budget } : null,
+    } : null;
+    pageGeometry = doc?.pageGeometryIndex ? {
+      pages: doc.pageGeometryIndex.entries?.length || 0,
+      rows: doc.pageGeometryIndex.rows?.(doc.bookSpread ? 'book' : 'continuous')?.length || 0,
+      totalHeight: doc.pageGeometryIndex.totalHeight?.(doc.scale, doc.bookSpread ? 'book' : 'continuous') || 0,
+    } : null;
   } catch {
     // Module may not be loaded yet; leave fields null.
   }
@@ -844,6 +986,10 @@ async function handleGetViewportState() {
             valid: layout.result.valid === true,
             requiredHeight: layout.result.requiredHeight ?? null,
             contentWidth: layout.result.contentWidth ?? null,
+            sourceWidth: layout.result.sourceWidth ?? null,
+            substitutionWidthAllowance: layout.result.substitutionWidthAllowance ?? null,
+            widthCompensation: layout.result.widthCompensation ?? null,
+            effectiveContentWidth: layout.result.effectiveContentWidth ?? null,
             pageEdgeValid: layout.result.pageEdgeValid ?? null,
             columnValid: layout.result.columnValid ?? null,
             rejectionReasons: [...(layout.result.rejectionReasons || [])],
@@ -874,6 +1020,20 @@ async function handleGetViewportState() {
     ocrWorkflowMetrics = ocrWorkflowService.publicationMetrics();
   } catch { /* OCR workflow service may not be initialized yet */ }
 
+  try {
+    const [rendererModule, metricsModule] = await Promise.all([
+      import('/js/pdf/renderer.js'),
+      import('/js/pdf/performance-metrics.js'),
+    ]);
+    renderResources = rendererModule.getContinuousRenderResourceStats();
+    renderedSurfaceStates = rendererModule.getRenderedSurfaceStates();
+    performanceMetrics = metricsModule.performanceMetricsSnapshot();
+  } catch { /* renderer performance state may not be initialized yet */ }
+
+  try {
+    nativeRenderResources = await tauriInvoke()?.('get_render_resource_stats') ?? null;
+  } catch { /* native pixmap cache may not be initialized yet */ }
+
   return {
     ok: true,
     // App-level tool + annotation snapshot (used by the button-sweep
@@ -887,6 +1047,13 @@ async function handleGetViewportState() {
     editorMetrics,
     editorSession,
     ocrWorkflowMetrics,
+    performanceProfile,
+    pageGeometry,
+    performanceMetrics,
+    renderResources,
+    renderedSurfaceStates,
+    nativeRenderResources,
+    mountedThumbnails: Number(window.__mountedThumbnailCount) || 0,
     // Engine + timing — what the user sees in the status-bar chip.
     engine: renderEngine,
     renderTiming,
@@ -900,6 +1067,7 @@ async function handleGetViewportState() {
       pageRotation: activePageRotation,
       viewMode,
       bookSpread,
+      facingSpread,
       preloadStatus,
     },
     // viewport singleton (pdf-viewport.js): the transform that maps world→screen
@@ -942,6 +1110,44 @@ async function handleGetViewportState() {
       scrollTop: container?.scrollTop ?? null,
     } : null,
     devicePixelRatio: window.devicePixelRatio ?? 1,
+  };
+}
+
+async function handleResetPerformanceMetrics(params) {
+  const [metricsModule, rendererModule] = await Promise.all([
+    import('/js/pdf/performance-metrics.js'),
+    import('/js/pdf/renderer.js'),
+  ]);
+  const snapshot = metricsModule.resetPerformanceMetrics({
+    observeLongTasks: params?.observeLongTasks !== false,
+  });
+  const resources = rendererModule.getContinuousRenderResourceStats();
+  metricsModule.recordPerformancePeak('mountedPageSurfaces', resources.mountedPageSurfaces || 0);
+  metricsModule.recordPerformancePeak('mountedThumbnails', Number(window.__mountedThumbnailCount) || 0);
+  metricsModule.recordPerformancePeak('javascriptResourceBytes', resources.budget?.usage?.javascript || 0);
+  metricsModule.recordPerformancePeak('metadataResourceBytes', resources.budget?.usage?.metadata || 0);
+  return { ok: true, snapshot: metricsModule.performanceMetricsSnapshot(), resources };
+}
+
+async function handleGetPerformanceMetrics(params) {
+  const [metricsModule, rendererModule, stateModule] = await Promise.all([
+    import('/js/pdf/performance-metrics.js'),
+    import('/js/pdf/renderer.js'),
+    import('/js/core/state.ts'),
+  ]);
+  const activeDocument = stateModule.state?.documents?.[stateModule.state.activeDocumentIndex] || null;
+  let nativeRenderResources = null;
+  try { nativeRenderResources = await tauriInvoke()?.('get_render_resource_stats') ?? null; } catch {}
+  return {
+    ok: true,
+    metrics: params?.stop === true
+      ? metricsModule.stopPerformanceMetricsCapture()
+      : metricsModule.performanceMetricsSnapshot(),
+    resources: rendererModule.getContinuousRenderResourceStats(),
+    renderedSurfaceStates: rendererModule.getRenderedSurfaceStates(),
+    nativeRenderResources,
+    mountedThumbnails: Number(window.__mountedThumbnailCount) || 0,
+    performanceProfile: activeDocument?.performanceProfile || null,
   };
 }
 
@@ -1154,12 +1360,40 @@ async function handleWheelZoom(params) {
     deltaX: 0, deltaY, deltaZ: 0,
     deltaMode: 0, // 0 = pixel
   };
+  const stateMod = await import('./core/state.js');
+  const scaleBefore = stateMod.getActiveDocument()?.scale ?? null;
   const ev = new WheelEvent('wheel', wheelInit);
   // Dispatch from `target` so e.target / closest('canvas') match real OS
   // behavior; the event bubbles up to .main-view which has the listener.
   target.dispatchEvent(ev);
+  // Let the production RAF-coalesced gesture controller publish this input
+  // before returning. Use a bounded timer alongside RAF because an unfocused
+  // packaged WKWebView may throttle animation callbacks after a long idle.
+  // This only observes the real wheel handler; it never mutates zoom state.
+  const waitDeadline = performance.now() + 250;
+  while (performance.now() < waitDeadline
+      && stateMod.getActiveDocument()?.scale === scaleBefore) {
+    await new Promise((resolve) => {
+      let settled = false;
+      let frame = 0;
+      let timer = 0;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (frame) cancelAnimationFrame(frame);
+        if (timer) clearTimeout(timer);
+        resolve();
+      };
+      frame = requestAnimationFrame(finish);
+      timer = setTimeout(finish, 20);
+    });
+  }
   return {
     ok: true, x, y, deltaY, ctrlKey,
+    eventCtrlKey: ev.ctrlKey,
+    defaultPrevented: ev.defaultPrevented,
+    scaleBefore,
+    scaleAfter: stateMod.getActiveDocument()?.scale ?? null,
     target: describeTarget(target),
   };
 }
@@ -2401,6 +2635,7 @@ const HANDLERS = {
   'mcp:zoom-in':            handleZoomIn,
   'mcp:zoom-out':           handleZoomOut,
   'mcp:screenshot-view':    handleScreenshotView,
+  'mcp:screenshot-rendered-page': handleScreenshotRenderedPage,
   'mcp:mouse-move':         handleMouseMove,
   'mcp:mouse-click':        handleMouseClick,
   'mcp:mouse-drag':         handleMouseDrag,
@@ -2409,6 +2644,8 @@ const HANDLERS = {
   'mcp:type':               handleType,
   'mcp:paste':              handlePaste,
   'mcp:get-viewport-state': handleGetViewportState,
+  'mcp:reset-performance-metrics': handleResetPerformanceMetrics,
+  'mcp:get-performance-metrics': handleGetPerformanceMetrics,
   'mcp:get-recent-console': handleGetRecentConsole,
   'mcp:wheel-zoom':         handleWheelZoom,
   'mcp:zoom-anchor-test':   handleZoomAnchorTest,

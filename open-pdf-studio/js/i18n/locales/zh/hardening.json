@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}。双击或按 Enter 键进行编辑。",
     "timezoneHint": "日期按 {{timezone}} 时区显示，并以 ISO 8601 格式保存。"
   },
-  "fontSubstitution": {
-    "title": "批准字体替换",
-    "sourceFace": "源字体",
-    "sourceFaces": "源字体",
-    "unknown": "未知",
-    "packagedSubstitute": "随附的替代字体",
-    "notAvailable": "不可用",
-    "sampleText": "示例",
-    "sampleFallback": "敏捷的棕色狐狸跃过懒狗。",
-    "scope": "应用于",
-    "scopeAnnotation": "此批注",
-    "scopeSelection": "选中的文本框",
-    "scopeParagraph": "此 PDF 段落",
-    "scopeFindReplace": "此次查找/替换编辑",
-    "remember": "记住对此打开文档的批准",
-    "approve": "使用替代字体",
-    "cancel": "取消"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "编辑 PDF 文本",

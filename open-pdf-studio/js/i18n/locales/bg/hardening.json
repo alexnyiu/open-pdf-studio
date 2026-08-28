@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Щракнете двукратно или натиснете Enter за редактиране.",
     "timezoneHint": "Датите се показват в часовата зона {{timezone}} и се записват във формат ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Одобряване на заместването на шрифт",
-    "sourceFace": "Изходен шрифт",
-    "sourceFaces": "Изходни шрифтове",
-    "unknown": "Неизвестен",
-    "packagedSubstitute": "Вграден заместващ шрифт",
-    "notAvailable": "Не е наличен",
-    "sampleText": "Примерен текст",
-    "sampleFallback": "Бързата кафява лисица прескача мързеливото куче.",
-    "scope": "Отнася се за",
-    "scopeAnnotation": "Тази анотация",
-    "scopeSelection": "Избраните текстови полета",
-    "scopeParagraph": "Този PDF абзац",
-    "scopeFindReplace": "Тази редакция с „Търсене/замяна“",
-    "remember": "Запомняне на това одобрение за отворения документ",
-    "approve": "Използване на заместващия шрифт",
-    "cancel": "Отказ"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Редактиране на PDF текст",

@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}。ダブルクリックするか Enter キーを押すと編集できます。",
     "timezoneHint": "日付は{{timezone}}で表示され、ISO 8601 形式で保存されます。"
   },
-  "fontSubstitution": {
-    "title": "フォントの置換を承認",
-    "sourceFace": "元のフォント",
-    "sourceFaces": "元のフォント",
-    "unknown": "不明",
-    "packagedSubstitute": "同梱の代替フォント",
-    "notAvailable": "利用できません",
-    "sampleText": "サンプル",
-    "sampleFallback": "素早い茶色の狐が怠け者の犬を飛び越える。",
-    "scope": "適用対象",
-    "scopeAnnotation": "この注釈",
-    "scopeSelection": "選択したテキストボックス",
-    "scopeParagraph": "この PDF 段落",
-    "scopeFindReplace": "この検索と置換の編集",
-    "remember": "この開いている文書について承認を記憶する",
-    "approve": "代替フォントを使用",
-    "cancel": "キャンセル"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "PDF テキストを編集",

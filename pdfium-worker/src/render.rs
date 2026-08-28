@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context, Result};
 use crate::protocol::{
     DisplayedPageGeometry, PageBoxGeometry, PdfiumPageGeometry, PdfiumRasterGeometry,
     PDFIUM_PAGE_GEOMETRY_CONTRACT, PDFIUM_PAGE_GEOMETRY_SCHEMA_VERSION,
 };
+use anyhow::{anyhow, Context, Result};
 use pdfium_render::prelude::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -28,22 +28,32 @@ fn bounded_raster_size(
     target_height: f64,
     limits: Option<RasterLimits>,
 ) -> Result<(i32, i32)> {
-    if !target_width.is_finite() || !target_height.is_finite() ||
-        target_width < 1.0 || target_height < 1.0 ||
-        target_width > f64::from(i32::MAX) || target_height > f64::from(i32::MAX) {
+    if !target_width.is_finite()
+        || !target_height.is_finite()
+        || target_width < 1.0
+        || target_height < 1.0
+        || target_width > f64::from(i32::MAX)
+        || target_height > f64::from(i32::MAX)
+    {
         return Err(anyhow!("render dimensions are invalid"));
     }
     let width = target_width as u64;
     let height = target_height as u64;
-    let pixels = width.checked_mul(height)
+    let pixels = width
+        .checked_mul(height)
         .ok_or_else(|| anyhow!("render pixel count overflow"))?;
-    let bytes = pixels.checked_mul(4)
+    let bytes = pixels
+        .checked_mul(4)
         .ok_or_else(|| anyhow!("render byte count overflow"))?;
     if let Some(limits) = limits {
-        if width > u64::from(limits.max_width) ||
-            height > u64::from(limits.max_height) ||
-            pixels > limits.max_pixels || bytes > limits.max_raster_bytes {
-            return Err(anyhow!("OCR raster exceeds the requested allocation limits"));
+        if width > u64::from(limits.max_width)
+            || height > u64::from(limits.max_height)
+            || pixels > limits.max_pixels
+            || bytes > limits.max_raster_bytes
+        {
+            return Err(anyhow!(
+                "OCR raster exceeds the requested allocation limits"
+            ));
         }
     }
     Ok((width as i32, height as i32))
@@ -72,7 +82,10 @@ fn inherited_user_unit(
             }
             return Ok((user_unit, "pdf-page-dictionary".to_string()));
         }
-        object_id = match dictionary.get(b"Parent").and_then(lopdf::Object::as_reference) {
+        object_id = match dictionary
+            .get(b"Parent")
+            .and_then(lopdf::Object::as_reference)
+        {
             Ok(parent) => parent,
             Err(_) => return Ok((1.0, "pdf-default".to_string())),
         };
@@ -131,9 +144,21 @@ fn build_page_geometry(
         .crop()
         .map(|boundary| boundary.bounds)
         .unwrap_or(media);
-    let bleed_box = page.boundaries().bleed().ok().map(|boundary| page_box_geometry(boundary.bounds));
-    let trim_box = page.boundaries().trim().ok().map(|boundary| page_box_geometry(boundary.bounds));
-    let art_box = page.boundaries().art().ok().map(|boundary| page_box_geometry(boundary.bounds));
+    let bleed_box = page
+        .boundaries()
+        .bleed()
+        .ok()
+        .map(|boundary| page_box_geometry(boundary.bounds));
+    let trim_box = page
+        .boundaries()
+        .trim()
+        .ok()
+        .map(|boundary| page_box_geometry(boundary.bounds));
+    let art_box = page
+        .boundaries()
+        .art()
+        .ok()
+        .map(|boundary| page_box_geometry(boundary.bounds));
     let media_box = page_box_geometry(media);
     let crop_box = page_box_geometry(crop);
     let intrinsic_rotation = page
@@ -155,9 +180,13 @@ fn build_page_geometry(
     let ideal_height = displayed_height * requested_scale;
     let requested_width = ideal_width.ceil();
     let requested_height = ideal_height.ceil();
-    if !ideal_width.is_finite() || !ideal_height.is_finite() ||
-        requested_width < 1.0 || requested_height < 1.0 ||
-        requested_width > f64::from(u32::MAX) || requested_height > f64::from(u32::MAX) {
+    if !ideal_width.is_finite()
+        || !ideal_height.is_finite()
+        || requested_width < 1.0
+        || requested_height < 1.0
+        || requested_width > f64::from(u32::MAX)
+        || requested_height > f64::from(u32::MAX)
+    {
         return Err(anyhow!("page geometry raster dimensions are invalid"));
     }
     let requested_width = requested_width as u32;
@@ -333,7 +362,11 @@ impl Renderer {
         let mtime = meta.modified().ok();
         let len = meta.len();
 
-        if let Some(i) = self.cache.iter().position(|c| c.path == path && c.mtime == mtime && c.len == len) {
+        if let Some(i) = self
+            .cache
+            .iter()
+            .position(|c| c.path == path && c.mtime == mtime && c.len == len)
+        {
             return Ok(i);
         }
         // Verouderde versie van hetzelfde pad weggooien.
@@ -342,7 +375,8 @@ impl Renderer {
         let bytes = std::fs::read(path).with_context(|| format!("read {}", path))?;
         // Safety: zie CachedDoc — buffer-adres is stabiel en de bytes blijven
         // in dezelfde struct levend zolang het document bestaat.
-        let bytes_ref: &'static [u8] = unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
+        let bytes_ref: &'static [u8] =
+            unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
         let document = pdfium()?
             .load_pdf_from_byte_slice(bytes_ref, None)
             .map_err(|e| anyhow!("PDFium parse: {}", e))?;
@@ -381,9 +415,9 @@ impl Renderer {
         let reuse = matches!(&entry.page, Some((idx, _, _)) if *idx == page_index);
         if !reuse {
             entry.page = None; // oude handle expliciet sluiten vóór de nieuwe opent
-            // Safety: het document zit in een Box (stabiel heap-adres, ook als de
-            // cache-Vec verplaatst) en leeft zolang deze entry bestaat; `page`
-            // staat vóór `document` in de struct en dropt dus altijd eerder.
+                               // Safety: het document zit in een Box (stabiel heap-adres, ook als de
+                               // cache-Vec verplaatst) en leeft zolang deze entry bestaat; `page`
+                               // staat vóór `document` in de struct en dropt dus altijd eerder.
             let doc_ref: &'static PdfDocument<'static> =
                 unsafe { &*(&entry.document as *const PdfDocument<'static>) };
             let t0 = std::time::Instant::now();
@@ -471,11 +505,7 @@ impl Renderer {
             let h_pt = page.height().value;
             let target_w_value = (f64::from(w_pt) * geometry_user_unit * f64::from(scale)).ceil();
             let target_h_value = (f64::from(h_pt) * geometry_user_unit * f64::from(scale)).ceil();
-            let (target_w, target_h) = bounded_raster_size(
-                target_w_value,
-                target_h_value,
-                limits,
-            )?;
+            let (target_w, target_h) = bounded_raster_size(target_w_value, target_h_value, limits)?;
 
             let rot = match rotation.rem_euclid(360) {
                 0 => PdfPageRenderRotation::None,
@@ -494,7 +524,8 @@ impl Renderer {
                 .use_lcd_text_rendering(true)
                 .set_format(PdfBitmapFormat::BGRA);
 
-            let bitmap = page.render_with_config(&config)
+            let bitmap = page
+                .render_with_config(&config)
                 .map_err(|e| anyhow!("PDFium render: {}", e))?;
 
             let width = bitmap.width() as u32;
@@ -547,7 +578,10 @@ impl Renderer {
         region_h_pt: f32,
     ) -> Result<RenderResult> {
         if rotation != 0 {
-            return Err(anyhow!("render_region: rotation {} not supported", rotation));
+            return Err(anyhow!(
+                "render_region: rotation {} not supported",
+                rotation
+            ));
         }
         if region_w_pt <= 0.0 || region_h_pt <= 0.0 {
             return Err(anyhow!("render_region: region must be positive"));
@@ -559,7 +593,11 @@ impl Renderer {
             let bitmap_w = (region_w_pt * scale).ceil() as i32;
             let bitmap_h = (region_h_pt * scale).ceil() as i32;
             if bitmap_w <= 0 || bitmap_h <= 0 {
-                return Err(anyhow!("render_region: invalid bitmap {}x{}", bitmap_w, bitmap_h));
+                return Err(anyhow!(
+                    "render_region: invalid bitmap {}x{}",
+                    bitmap_w,
+                    bitmap_h
+                ));
             }
 
             // De matrix van FPDF_RenderPageBitmapWithMatrix werkt in WEERGAVE-ruimte
@@ -570,13 +608,21 @@ impl Renderer {
             // voor élke paginarotatie de juiste tegel. Geen rotatie-mapping nodig.
             let config = PdfRenderConfig::new()
                 .set_fixed_size(bitmap_w, bitmap_h)
-                .transform(scale, 0.0, 0.0, scale, -region_x_pt * scale, -region_y_pt * scale)
+                .transform(
+                    scale,
+                    0.0,
+                    0.0,
+                    scale,
+                    -region_x_pt * scale,
+                    -region_y_pt * scale,
+                )
                 .map_err(|e2| anyhow!("invalid transform: {}", e2))?
                 .render_annotations(false)
                 .use_lcd_text_rendering(true)
                 .set_format(PdfBitmapFormat::BGRA);
 
-            let bitmap = page.render_with_config(&config)
+            let bitmap = page
+                .render_with_config(&config)
                 .map_err(|e| anyhow!("PDFium region render: {}", e))?;
 
             RenderResult {
@@ -612,11 +658,14 @@ mod tests {
             pages.set("UserUnit", value as f32);
         }
         document.objects.insert(pages_id, Object::Dictionary(pages));
-        document.objects.insert(page_id, Object::Dictionary(dictionary! {
-            "Type" => "Page",
-            "Parent" => Object::Reference(pages_id),
-            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
-        }));
+        document.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Page",
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            }),
+        );
         (document, page_id)
     }
 

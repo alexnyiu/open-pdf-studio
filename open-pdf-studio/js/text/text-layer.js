@@ -941,6 +941,18 @@ export function clearTextLayers() {
   clearNativeTextSourceCache(getActiveDocument());
 }
 
+/** Release one virtualized continuous-page layer without invalidating the
+ * provenance cache for every other mounted page. */
+export function releaseTextLayer(pageNum) {
+  const entry = textLayers.get(Number(pageNum));
+  const element = entry?.element || entry;
+  if (element) {
+    textLayerRequests.invalidateContainer(element.parentElement);
+    element.remove();
+  }
+  textLayers.delete(Number(pageNum));
+}
+
 /**
  * Gets the text layer for a specific page
  * @param {number} pageNum - Page number

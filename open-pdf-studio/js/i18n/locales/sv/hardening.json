@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Dubbelklicka eller tryck på Retur för att redigera.",
     "timezoneHint": "Datumen visas i tidszonen {{timezone}} och sparas i ISO 8601-format."
   },
-  "fontSubstitution": {
-    "title": "Godkänn teckensnittsersättning",
-    "sourceFace": "Källteckensnitt",
-    "sourceFaces": "Källteckensnitt",
-    "unknown": "Okänt",
-    "packagedSubstitute": "Medföljande ersättningsteckensnitt",
-    "notAvailable": "Inte tillgängligt",
-    "sampleText": "Exempel",
-    "sampleFallback": "Den snabba bruna räven hoppar över den lata hunden.",
-    "scope": "Gäller för",
-    "scopeAnnotation": "Den här anteckningen",
-    "scopeSelection": "De markerade textrutorna",
-    "scopeParagraph": "Det här PDF-stycket",
-    "scopeFindReplace": "Den här Sök/ersätt-redigeringen",
-    "remember": "Kom ihåg godkännandet för det öppna dokumentet",
-    "approve": "Använd ersättningsteckensnitt",
-    "cancel": "Avbryt"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Redigera PDF-text",

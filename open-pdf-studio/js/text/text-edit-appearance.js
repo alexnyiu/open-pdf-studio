@@ -224,6 +224,42 @@ export function restoreTextEditSnapshot(record, snapshot) {
   Object.assign(record, snapshot);
 }
 
+function directRasterImageForGeometrySurface(surface) {
+  if (surface?.dataset?.renderSurface !== 'geometry') return null;
+  const image = surface.parentElement?.querySelector?.('.pdf-page-raster');
+  return image?.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+    ? image
+    : null;
+}
+
+function readSurfaceImageData(surface, bounds) {
+  const directImage = directRasterImageForGeometrySurface(surface);
+  if (!directImage) {
+    const context = surface.getContext?.('2d', { willReadFrequently: true });
+    return context?.getImageData(bounds.x, bounds.y, bounds.width, bounds.height) || null;
+  }
+  // Sampling the direct image through a crop-sized scratch surface preserves
+  // text/background detection without ever allocating a second page-sized
+  // canvas backing store.
+  const scratch = document.createElement('canvas');
+  scratch.width = bounds.width;
+  scratch.height = bounds.height;
+  const context = scratch.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+  context.drawImage(
+    directImage,
+    bounds.x,
+    bounds.y,
+    bounds.width,
+    bounds.height,
+    0,
+    0,
+    bounds.width,
+    bounds.height,
+  );
+  return context.getImageData(0, 0, bounds.width, bounds.height);
+}
+
 export function sampleTextColor(canvas, elementRect, fallback = '#000000') {
   if (!canvas || !elementRect) return fallback;
   try {
@@ -234,9 +270,8 @@ export function sampleTextColor(canvas, elementRect, fallback = '#000000') {
       canvas.height,
     );
     if (!bounds) return fallback;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) return fallback;
-    const image = context.getImageData(bounds.x, bounds.y, bounds.width, bounds.height);
+    const image = readSurfaceImageData(canvas, bounds);
+    if (!image) return fallback;
     return selectTextColor(image.data, fallback, bounds.width, bounds.height);
   } catch (_) {
     return fallback;
@@ -253,9 +288,8 @@ export function sampleDominantBackgroundColor(canvas, elementRect, fallback = '#
       canvas.height,
     );
     if (!bounds) return fallback;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) return fallback;
-    const image = context.getImageData(bounds.x, bounds.y, bounds.width, bounds.height);
+    const image = readSurfaceImageData(canvas, bounds);
+    if (!image) return fallback;
     const color = dominantBackgroundColor(image.data);
     if (!color) return fallback;
     return `#${componentHex(color.r)}${componentHex(color.g)}${componentHex(color.b)}`;

@@ -7,8 +7,10 @@ import {
   documentTabStartsTextEditLifecycle,
   shouldApplyTextEditForOutsideFocus,
   shouldConsumeOutsidePointerDownForTextEdit,
+  shouldRestoreTextEditorFocusAfterHostTransition,
   shouldSuppressOutsideApplyFollowup,
   textEditTargetIsWithinFocusBoundary,
+  textEditTargetStartsCommitAction,
   textEditTargetStartsLifecycleTransition,
 } from './text-edit-focus-boundary.js';
 
@@ -36,6 +38,26 @@ test('editor, properties, view-only controls, and modal UI stay inside the focus
   ), true);
 });
 
+test('host reattachment never steals focus from an explicit control', () => {
+  const editor = {};
+  const portal = { contains: (node) => node === editor };
+  const body = {};
+  const documentElement = {};
+  const zoomInput = {};
+  assert.equal(shouldRestoreTextEditorFocusAfterHostTransition({
+    portal, activeElement: editor, body, documentElement,
+  }), true, 'an editor that retained focus remains the focus owner');
+  assert.equal(shouldRestoreTextEditorFocusAfterHostTransition({
+    portal, activeElement: body, body, documentElement,
+  }), true, 'a reparent blur to body restores the editor');
+  assert.equal(shouldRestoreTextEditorFocusAfterHostTransition({
+    portal, activeElement: documentElement, body, documentElement,
+  }), true, 'a reparent blur to the document root restores the editor');
+  assert.equal(shouldRestoreTextEditorFocusAfterHostTransition({
+    portal, activeElement: zoomInput, body, documentElement,
+  }), false, 'a deliberate zoom-control focus move must win');
+});
+
 test('ordinary outside focus applies while window blur and actual lifecycle controls do not', () => {
   const statusInput = target([]);
   assert.equal(shouldApplyTextEditForOutsideFocus({ target: statusInput }), true);
@@ -49,6 +71,9 @@ test('ordinary outside focus applies while window blur and actual lifecycle cont
   assert.equal(shouldApplyTextEditForOutsideFocus({
     target: target(['.document-tabs-add']),
   }), true, 'Add is an ordinary click-away until a new document actually opens');
+  assert.equal(shouldApplyTextEditForOutsideFocus({
+    target: target(['[data-text-edit-commit-action="true"]']),
+  }), false, 'Save owns its commit barrier and must retain the first click after focus');
   assert.equal(shouldApplyTextEditForOutsideFocus({
     target: target(['[data-text-edit-lifecycle-transition="true"]']),
   }), false);
@@ -87,6 +112,20 @@ test('document-tab markup leaves current-tab and Add clicks ordinary while marki
     /class="document-tabs-add"[^>]*onClick=\{handleAddClick\}/u);
 });
 
+test('editor blur rechecks settled focus when WebKit omits a document focusin event', async () => {
+  const source = await readFile(
+    new URL('../solid/components/PdfTextEditOverlay.jsx', import.meta.url),
+    'utf8',
+  );
+  const blurHandler = source.slice(
+    source.indexOf('const handleBlur = (event) => {'),
+    source.indexOf('\n  const directManipulationEnabled', source.indexOf('const handleBlur = (event) => {')),
+  );
+  assert.match(blurHandler, /const focused = document\.activeElement \|\| event\?\.relatedTarget/u);
+  assert.match(blurHandler, /shouldApplyTextEditForOutsideFocus\(\{/u);
+  assert.match(blurHandler, /applyTextEditFromOutside\(\)/u);
+});
+
 test('a primary outside pointerdown is consumed before an action can race Apply', () => {
   assert.equal(shouldConsumeOutsidePointerDownForTextEdit({
     target: target([]),
@@ -104,6 +143,25 @@ test('a primary outside pointerdown is consumed before an action can race Apply'
     target: target(['.pdf-canvas']),
     button: 1,
   }), false);
+  assert.equal(textEditTargetStartsCommitAction(
+    target(['[data-text-edit-commit-action="true"]']),
+  ), true);
+  const saveButton = {
+    matches(selector) { return selector === '[data-text-edit-commit-action="true"]'; },
+    parentElement: null,
+  };
+  const svgRect = {
+    closest() { return null; },
+    matches() { return false; },
+    parentElement: saveButton,
+  };
+  assert.equal(textEditTargetStartsCommitAction(svgRect), true,
+    'an SVG icon descendant inherits the Save button commit action');
+  assert.equal(shouldConsumeOutsidePointerDownForTextEdit({ target: svgRect, button: 0 }), false);
+  assert.equal(shouldConsumeOutsidePointerDownForTextEdit({
+    target: target(['[data-text-edit-commit-action="true"]']),
+    button: 0,
+  }), false, 'Save must receive the first pointer gesture while sharing the commit barrier');
 
   const calls = [];
   let stopped = false;
@@ -154,4 +212,10 @@ test('follow-up suppression is limited to the pending Apply or matching pointer 
     detail: 1,
     applyPending: true,
   }), false, 'the editor focus boundary remains usable during Apply bookkeeping');
+  assert.equal(shouldSuppressOutsideApplyFollowup({
+    target: target(['[data-text-edit-commit-action="true"]']),
+    eventType: 'click',
+    detail: 1,
+    applyPending: true,
+  }), false, 'Save is never swallowed by outside-commit follow-up suppression');
 });

@@ -13,14 +13,18 @@ export default function PageDisplayTab(props) {
             <span>{t('pageDisplay.thinLines')}</span>
           </label>
         </div>
-        <div class="pref-row pref-checkbox-row">
-          <label class="pref-checkbox-label">
-            <input type="checkbox" checked={p.preloadEntirePdf[0]()} onChange={e => p.preloadEntirePdf[1](e.target.checked)} />
-            <span>
-              {t('pageDisplay.preloadEntirePdf')}
-              <small class="pref-description">{t('pageDisplay.preloadEntirePdfDescription')}</small>
-            </span>
-          </label>
+        <div class="pref-row">
+          <label for="pdf-preload-mode">{t('pageDisplay.preloadMode')}</label>
+          <select
+            id="pdf-preload-mode"
+            value={p.pdfPreloadMode[0]()}
+            onChange={e => p.pdfPreloadMode[1](e.currentTarget.value)}
+          >
+            <option value="adaptive">{t('pageDisplay.preloadAdaptive')}</option>
+            <option value="entire">{t('pageDisplay.preloadEntire')}</option>
+            <option value="off">{t('pageDisplay.preloadOff')}</option>
+          </select>
+          <small class="pref-description">{t('pageDisplay.preloadModeDescription')}</small>
         </div>
         <div class="pref-row pref-checkbox-row">
           <label class="pref-checkbox-label">

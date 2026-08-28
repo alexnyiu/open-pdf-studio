@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. A szerkesztéshez kattintson duplán, vagy nyomja meg az Enter billentyűt.",
     "timezoneHint": "A dátumok a(z) {{timezone}} időzónában jelennek meg, és ISO 8601 formátumban lesznek mentve."
   },
-  "fontSubstitution": {
-    "title": "Betűtípus-helyettesítés jóváhagyása",
-    "sourceFace": "Forrás betűtípus",
-    "sourceFaces": "Forrás betűtípusok",
-    "unknown": "Ismeretlen",
-    "packagedSubstitute": "Beépített helyettesítő betűtípus",
-    "notAvailable": "Nem érhető el",
-    "sampleText": "Minta",
-    "sampleFallback": "A gyors barna róka átugrik a lusta kutya fölött.",
-    "scope": "Alkalmazás erre",
-    "scopeAnnotation": "Ez a jegyzet",
-    "scopeSelection": "A kijelölt szövegdobozok",
-    "scopeParagraph": "Ez a PDF-bekezdés",
-    "scopeFindReplace": "Ez a Keresés/csere módosítás",
-    "remember": "A jóváhagyás megjegyzése ehhez a megnyitott dokumentumhoz",
-    "approve": "Helyettesítő használata",
-    "cancel": "Mégse"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "PDF-szöveg szerkesztése",

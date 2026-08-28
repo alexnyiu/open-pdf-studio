@@ -309,50 +309,114 @@ pub struct CachedPixmap {
     pub rgba: Arc<Vec<u8>>,
 }
 
-/// Bounded-FIFO cache of fully-rendered pixmaps. Key: (path, page_idx,
-/// scale_q = round(scale*10000), rotation). Sized to keep BARN's 7 pages
-/// at 2-3 zoom levels comfortably resident (~20 entries), with headroom
-/// for multi-doc workflows. 40 entries × ~15 MB ≈ 600 MB upper bound.
+/// Byte-bounded LRU cache of fully-rendered pixmaps, with a secondary entry
+/// ceiling as a guard against thousands of tiny allocations. Key:
+/// (path, page_idx, scale_q = round(scale*10000), rotation). A byte ceiling is
+/// essential because an entry can range from a small preview to a 64 MB capped
+/// page; an entry count alone allowed several hundred MB of accidental RSS.
 const PIXMAP_CACHE_MAX_ENTRIES: usize = 40;
+const PIXMAP_CACHE_DEFAULT_MAX_BYTES: usize = 128 * 1024 * 1024;
 
 pub struct PixmapCache {
     map: HashMap<(String, u32, u32, i32), Arc<CachedPixmap>>,
     order: VecDeque<(String, u32, u32, i32)>,
     max_entries: usize,
+    max_bytes: usize,
+    current_bytes: usize,
+    peak_entries: usize,
+    peak_bytes: usize,
 }
 
 impl PixmapCache {
-    fn new(max_entries: usize) -> Self {
+    fn new(max_entries: usize, max_bytes: usize) -> Self {
         Self {
             map: HashMap::new(),
             order: VecDeque::with_capacity(max_entries),
             max_entries,
+            max_bytes,
+            current_bytes: 0,
+            peak_entries: 0,
+            peak_bytes: 0,
         }
     }
 
-    pub fn get(&self, key: &(String, u32, u32, i32)) -> Option<Arc<CachedPixmap>> {
-        self.map.get(key).cloned()
+    pub fn get(&mut self, key: &(String, u32, u32, i32)) -> Option<Arc<CachedPixmap>> {
+        let value = self.map.get(key).cloned();
+        if value.is_some() {
+            self.order.retain(|candidate| candidate != key);
+            self.order.push_back(key.clone());
+        }
+        value
     }
 
     pub fn insert(&mut self, key: (String, u32, u32, i32), value: Arc<CachedPixmap>) {
-        if self.map.insert(key.clone(), value).is_none() {
-            self.order.push_back(key);
-            while self.order.len() > self.max_entries {
-                if let Some(old) = self.order.pop_front() {
-                    self.map.remove(&old);
+        let value_bytes = value.rgba.len();
+        if let Some(previous) = self.map.insert(key.clone(), value) {
+            self.current_bytes = self.current_bytes.saturating_sub(previous.rgba.len());
+            self.order.retain(|candidate| candidate != &key);
+        }
+        self.current_bytes = self.current_bytes.saturating_add(value_bytes);
+        self.order.push_back(key);
+        self.evict_to_budget();
+        self.peak_entries = self.peak_entries.max(self.map.len());
+        self.peak_bytes = self.peak_bytes.max(self.current_bytes);
+    }
+
+    fn evict_to_budget(&mut self) {
+        while self.order.len() > self.max_entries || self.current_bytes > self.max_bytes {
+            if let Some(old) = self.order.pop_front() {
+                if let Some(removed) = self.map.remove(&old) {
+                    self.current_bytes = self.current_bytes.saturating_sub(removed.rgba.len());
                 }
+            } else {
+                break;
             }
         }
+    }
+
+    pub fn set_max_bytes(&mut self, max_bytes: usize) {
+        self.max_bytes = max_bytes.max(32 * 1024 * 1024);
+        self.evict_to_budget();
+    }
+
+    /// Compact the hot cache after foreground interaction settles without
+    /// changing its admission budget. JavaScript retains the mounted page
+    /// bitmaps, so keeping only the newest native responses avoids a second
+    /// long-lived copy while preserving fast revisits for the immediate area.
+    pub fn trim_to_bytes(&mut self, target_bytes: usize) -> usize {
+        let before = self.current_bytes;
+        while self.current_bytes > target_bytes {
+            if let Some(old) = self.order.pop_front() {
+                if let Some(removed) = self.map.remove(&old) {
+                    self.current_bytes = self.current_bytes.saturating_sub(removed.rgba.len());
+                }
+            } else {
+                break;
+            }
+        }
+        before.saturating_sub(self.current_bytes)
     }
 
     pub fn clear(&mut self) {
         self.map.clear();
         self.order.clear();
+        self.current_bytes = 0;
+        self.peak_entries = 0;
+        self.peak_bytes = 0;
     }
 
     pub fn stats(&self) -> (usize, usize) {
-        let bytes: usize = self.map.values().map(|v| v.rgba.len()).sum();
-        (self.map.len(), bytes)
+        (self.map.len(), self.current_bytes)
+    }
+
+    pub fn detailed_stats(&self) -> (usize, usize, usize, usize, usize) {
+        (
+            self.map.len(),
+            self.current_bytes,
+            self.peak_entries,
+            self.peak_bytes,
+            self.max_bytes,
+        )
     }
 }
 
@@ -364,8 +428,61 @@ impl PixmapCacheState {
     pub fn ensure(&self) {
         let mut guard = self.0.lock().unwrap();
         if guard.is_none() {
-            *guard = Some(PixmapCache::new(PIXMAP_CACHE_MAX_ENTRIES));
+            *guard = Some(PixmapCache::new(
+                PIXMAP_CACHE_MAX_ENTRIES,
+                PIXMAP_CACHE_DEFAULT_MAX_BYTES,
+            ));
         }
+    }
+}
+
+#[cfg(test)]
+mod pixmap_cache_tests {
+    use super::{CachedPixmap, PixmapCache};
+    use std::sync::Arc;
+
+    fn pixmap(bytes: usize) -> Arc<CachedPixmap> {
+        Arc::new(CachedPixmap {
+            width: 1,
+            height: 1,
+            rgba: Arc::new(vec![0; bytes]),
+        })
+    }
+
+    #[test]
+    fn pixmap_cache_evicts_by_bytes_and_replacement_updates_accounting() {
+        let mut cache = PixmapCache::new(40, 32 * 1024 * 1024);
+        cache.insert(("a".into(), 0, 1, 0), pixmap(20 * 1024 * 1024));
+        cache.insert(("a".into(), 1, 1, 0), pixmap(20 * 1024 * 1024));
+        assert_eq!(cache.stats(), (1, 20 * 1024 * 1024));
+        cache.insert(("a".into(), 1, 1, 0), pixmap(4 * 1024 * 1024));
+        assert_eq!(cache.stats(), (1, 4 * 1024 * 1024));
+    }
+
+    #[test]
+    fn pixmap_cache_hit_refreshes_lru_order() {
+        let mut cache = PixmapCache::new(2, 32 * 1024 * 1024);
+        let a = ("a".into(), 0, 1, 0);
+        let b = ("a".into(), 1, 1, 0);
+        cache.insert(a.clone(), pixmap(1));
+        cache.insert(b.clone(), pixmap(1));
+        assert!(cache.get(&a).is_some());
+        cache.insert(("a".into(), 2, 1, 0), pixmap(1));
+        assert!(cache.get(&a).is_some());
+        assert!(cache.get(&b).is_none());
+    }
+
+    #[test]
+    fn pixmap_cache_idle_trim_preserves_budget_and_newest_entries() {
+        let mut cache = PixmapCache::new(40, 64 * 1024 * 1024);
+        let a = ("a".into(), 0, 1, 0);
+        let b = ("a".into(), 1, 1, 0);
+        cache.insert(a.clone(), pixmap(12 * 1024 * 1024));
+        cache.insert(b.clone(), pixmap(12 * 1024 * 1024));
+        assert_eq!(cache.trim_to_bytes(12 * 1024 * 1024), 12 * 1024 * 1024);
+        assert!(cache.get(&a).is_none());
+        assert!(cache.get(&b).is_some());
+        assert_eq!(cache.detailed_stats().4, 64 * 1024 * 1024);
     }
 }
 

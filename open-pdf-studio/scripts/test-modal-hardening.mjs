@@ -20,18 +20,17 @@ let failureArtifacts;
 
 try {
   page = await browser.newPage({ viewport: { width: 1000, height: 760 } });
-  failureArtifacts = await startPlaywrightFailureArtifacts(page.context(), 'modal-font-substitution');
+  failureArtifacts = await startPlaywrightFailureArtifacts(page.context(), 'modal-hardening');
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
   await page.goto('http://127.0.0.1:3041', { waitUntil: 'domcontentloaded' });
 
   await page.evaluate(async () => {
     const { state } = await import('/js/core/state.ts');
-    const { requestFontSubstitutionApproval } = await import('/js/text/font-substitution-approval.js');
+    const { resolveAutomaticFontSubstitution } = await import('/js/text/font-substitution-policy.js');
     const owner = {
       id: 'font-owner',
       lifecycleGeneration: 7,
-      fontSubstitutionApprovals: new Map(),
       filePath: '/tmp/font-owner.pdf',
       currentPage: 1,
       pdfDoc: null,
@@ -44,54 +43,18 @@ try {
     state.documents = [owner];
     state.activeDocumentIndex = 0;
     window.__fontOwner = owner;
-    window.__fontApprovalPromise = requestFontSubstitutionApproval({
-      documentState: owner,
+    window.__fontSubstitution = resolveAutomaticFontSubstitution({
       sourceFonts: ['Helvetica Neue'],
-      sampleText: 'Source-owned sample',
-      scope: 'paragraph',
     });
   });
 
-  const fontDialog = page.locator('.font-substitution-dialog');
-  await fontDialog.waitFor({ state: 'visible' });
-  assert.match(await fontDialog.innerText(), /Helvetica Neue/u);
-  assert.match(await fontDialog.innerText(), /Liberation Sans/u);
-  assert.match(await fontDialog.innerText(), /Source-owned sample/u);
-  assert.equal(await page.locator('.app-modal-background').evaluate((element) => element.inert), true);
-  assert.equal(await page.locator('.nonmodal-dialog-background').evaluate((element) => element.inert), true);
-
-  await page.evaluate(async () => {
-    const { openDialog } = await import('/js/solid/stores/dialogStore.js');
-    openDialog('message', { title: 'Top modal', message: 'Only this modal handles Escape.' });
-  });
-  const messageDialog = page.locator('.message-dialog');
-  await messageDialog.waitFor({ state: 'visible' });
-  assert.equal(await fontDialog.locator('xpath=..').getAttribute('aria-hidden'), 'true');
-  assert.equal(await messageDialog.locator('xpath=..').getAttribute('aria-hidden'), null);
-  await page.keyboard.press('Escape');
-  await messageDialog.waitFor({ state: 'detached' });
-  await fontDialog.waitFor({ state: 'visible' });
-  assert.equal(await fontDialog.locator('xpath=..').getAttribute('aria-hidden'), null);
-
-  await fontDialog.locator('input[type="checkbox"]').check();
-  await fontDialog.getByRole('button', { name: 'Use substitute' }).click();
-  const approval = await page.evaluate(() => window.__fontApprovalPromise);
-  assert.equal(approval.approved, true);
-  assert.equal(approval.faceId, 'liberation-sans-regular');
-  assert.equal(await page.evaluate(() => window.__fontOwner.fontSubstitutionApprovals.size), 1);
-  assert.equal(await page.locator('.app-modal-background').evaluate((element) => element.inert), false);
-
-  const remembered = await page.evaluate(async () => {
-    const { requestFontSubstitutionApproval } = await import('/js/text/font-substitution-approval.js');
-    return requestFontSubstitutionApproval({
-      documentState: window.__fontOwner,
-      sourceFonts: ['Helvetica Neue'],
-      sampleText: 'No second prompt',
-      scope: 'paragraph',
-    });
-  });
-  assert.equal(remembered.approved, true);
+  const substitution = await page.evaluate(() => window.__fontSubstitution);
+  assert.equal(substitution.approved, true);
+  assert.equal(substitution.faceId, 'liberation-sans-regular');
   assert.equal(await page.locator('.font-substitution-dialog').count(), 0);
+  assert.equal(await page.evaluate(() => Object.hasOwn(window.__fontOwner, 'fontSubstitutionApprovals')), false);
+  assert.equal(await page.locator('.app-modal-background').evaluate((element) => element.inert), false);
+  const messageDialog = page.locator('.message-dialog');
 
   await page.evaluate(async () => {
     const { openDialog } = await import('/js/solid/stores/dialogStore.js');
@@ -135,7 +98,7 @@ try {
   assert.equal(await page.locator('.app-modal-background').evaluate((element) => element.inert), false);
   assert.equal(pageErrors.length, 0, pageErrors.join('\n'));
 
-  console.log('Modal stack, style preset dialogs, inert background, and document font-approval test passed');
+  console.log('Modal stack, style preset dialogs, inert background, and automatic substitution test passed');
 } catch (error) {
   await failureArtifacts?.capture(page);
   throw error;

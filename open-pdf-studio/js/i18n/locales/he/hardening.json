@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. יש ללחוץ פעמיים או להקיש Enter כדי לערוך.",
     "timezoneHint": "התאריכים מוצגים באזור הזמן {{timezone}} ונשמרים בתבנית ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "אישור החלפת גופן",
-    "sourceFace": "גופן המקור",
-    "sourceFaces": "גופני המקור",
-    "unknown": "לא ידוע",
-    "packagedSubstitute": "גופן חלופי מצורף",
-    "notAvailable": "לא זמין",
-    "sampleText": "דוגמה",
-    "sampleFallback": "שועל חום זריז קופץ מעל כלב עצלן.",
-    "scope": "חל על",
-    "scopeAnnotation": "הערה זו",
-    "scopeSelection": "תיבות הטקסט שנבחרו",
-    "scopeParagraph": "פסקת PDF זו",
-    "scopeFindReplace": "עריכת חיפוש/החלפה זו",
-    "remember": "יש לזכור אישור זה עבור המסמך הפתוח",
-    "approve": "שימוש בגופן החלופי",
-    "cancel": "ביטול"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "עריכת טקסט PDF",

@@ -49,8 +49,17 @@ export function isTextEditingDirtyForDocument(documentId) {
   return registry.isDirtyForDocument(documentId);
 }
 
-export async function applyActiveTextEditing() {
-  return registry.applyActive();
+export async function applyActiveTextEditing(reason = 'apply') {
+  return registry.applyActive(reason);
+}
+
+/**
+ * Commit the active draft for one immutable document owner before a command
+ * such as Save serializes document state. Concurrent callers share the same
+ * in-flight commit and a document with no live draft is already ready.
+ */
+export function commitTextEditingForDocument(documentId, reason = 'document-command') {
+  return registry.commitForDocument(documentId, reason);
 }
 
 export function textEditSessionOwnerIsCurrent(session = registry.active()) {

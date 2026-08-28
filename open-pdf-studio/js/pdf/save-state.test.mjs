@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   canSkipUnmodifiedSamePathSave,
   documentHasPendingPersistence,
+  documentLifecycleOwnerMatches,
+  textEditCommitAllowsSave,
 } from './save-state.js';
 
 const cleanDocument = () => ({
@@ -52,4 +54,31 @@ test('ordinary, OCR, and scanned-text mutations block the no-op', () => {
       outputPath: '/tmp/document.pdf',
     }), false);
   }
+});
+
+test('document-scoped text-edit commit is a mandatory save barrier', async () => {
+  const calls = [];
+  const documentState = { id: 'doc-a' };
+  assert.equal(await textEditCommitAllowsSave(documentState, 'save', async (...args) => {
+    calls.push(args);
+    return false;
+  }), false);
+  assert.deepEqual(calls, [['doc-a', 'save']]);
+  assert.equal(await textEditCommitAllowsSave(documentState, 'save-as', async (...args) => {
+    calls.push(args);
+    return true;
+  }), true);
+  assert.deepEqual(calls.at(-1), ['doc-a', 'save-as']);
+  await assert.rejects(
+    textEditCommitAllowsSave(documentState, 'save', null),
+    /document-scoped text-edit commit barrier/u,
+  );
+});
+
+test('save ownership survives a reactive proxy change but rejects stale lifecycles', () => {
+  const owner = { id: 'doc-a', lifecycleGeneration: 7 };
+  assert.equal(documentLifecycleOwnerMatches(owner, { ...owner }), true);
+  assert.equal(documentLifecycleOwnerMatches(owner, { id: 'doc-b', lifecycleGeneration: 7 }), false);
+  assert.equal(documentLifecycleOwnerMatches(owner, { id: 'doc-a', lifecycleGeneration: 8 }), false);
+  assert.equal(documentLifecycleOwnerMatches(owner, null), false);
 });

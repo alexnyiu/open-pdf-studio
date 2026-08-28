@@ -7,7 +7,11 @@ import { layoutTextboxForExport } from '../annotations/rendering/shapes.js';
 import { markDocumentSaved, updateWindowTitle } from '../ui/chrome/tabs.js';
 import { isTauri, invoke, readBinaryFile, writeBinaryFile, saveFileDialog, unlockFile, lockFile } from '../core/platform.js';
 import { getCachedPdfBytes, hidePdfABar, installValidatedSavedPdfDocument } from './loader.js';
-import { canSkipUnmodifiedSamePathSave } from './save-state.js';
+import {
+  canSkipUnmodifiedSamePathSave,
+  documentLifecycleOwnerMatches,
+  textEditCommitAllowsSave,
+} from './save-state.js';
 import { PDFDocument, PDFString, PDFHexString, PDFName, PDFArray, PDFStream, degrees,
   PDFTextField, PDFCheckBox, PDFDropdown, PDFRadioGroup, PDFOptionList } from 'pdf-lib';
 import { getAnnotationStorage, getAnnotIdToFieldName } from './form-layer.js';
@@ -37,6 +41,8 @@ import { evaluatePdfModificationSavePolicy } from './modification-save-policy.js
 import { loadPackagedFaceBytes, shapeRichTextDocument } from '../text/font-catalog.js';
 import { richTextToPlainText } from '../text/rich-text.js';
 import { applyDocumentMetadataToPdf, assertDocumentMetadataRoundTrip } from './document-metadata.js';
+import { commitTextEditingForDocument } from '../text/text-edit-session.js';
+import { notePdfForegroundActivity } from './foreground-activity.js';
 
 // Sub-modules
 import { hexToRgb, buildBorderStyle, computeAnnotFlags, mapFontToPdfName,
@@ -193,7 +199,29 @@ function stableFreeTextModifiedTimestamp(annotation = {}) {
 
 // Save PDF with annotations
 export async function savePDF(saveAsPath = null) {
-  const activeDoc = getActiveDocument();
+  let activeDoc = getActiveDocument();
+  try {
+    if (!(await textEditCommitAllowsSave(activeDoc, 'save', commitTextEditingForDocument))) {
+      console.warn('[saver] Active text edit rejected the Save commit barrier');
+      return false;
+    }
+  } catch (error) {
+    console.warn('[saver] Active text edit could not be committed:', error);
+    showMessage(i18next.t('textEditor.status.applyRejected', {
+      ns: 'hardening',
+      reason: error instanceof Error ? error.message : String(error),
+    }));
+    return false;
+  }
+  const currentOwner = getActiveDocument();
+  if (activeDoc && !documentLifecycleOwnerMatches(activeDoc, currentOwner)) {
+    console.warn('[saver] Active document lifecycle changed before Save serialization');
+    return false;
+  }
+  // The commit can update a reactive document through a different proxy
+  // wrapper. Continue with the freshly resolved owner so modified state and
+  // committed text records cannot be mistaken for an unchanged document.
+  if (activeDoc) activeDoc = currentOwner;
   const currentPath = activeDoc?.filePath;
   const outputPath = saveAsPath || activeDoc?.saveTargetPath || currentPath;
   let preparedPdfJsDocument = null;
@@ -230,6 +258,7 @@ export async function savePDF(saveAsPath = null) {
   }
 
   window.__pdfSaveInProgress = true;
+  notePdfForegroundActivity('save', 250);
   try {
     showLoading('Saving PDF...');
 
@@ -2954,13 +2983,33 @@ export async function savePDF(saveAsPath = null) {
 
 // Save As - prompt for new file path
 export async function savePDFAs() {
-  if (!getActiveDocument()?.pdfDoc) {
+  let activeDoc = getActiveDocument();
+  if (!activeDoc?.pdfDoc) {
     showMessage(i18next.t('noPdfLoaded'));
     return false;
   }
+  try {
+    if (!(await textEditCommitAllowsSave(activeDoc, 'save-as', commitTextEditingForDocument))) {
+      console.warn('[saver] Active text edit rejected the Save As commit barrier');
+      return false;
+    }
+  } catch (error) {
+    console.warn('[saver] Active text edit could not be committed before Save As:', error);
+    showMessage(i18next.t('textEditor.status.applyRejected', {
+      ns: 'hardening',
+      reason: error instanceof Error ? error.message : String(error),
+    }));
+    return false;
+  }
+  const currentOwner = getActiveDocument();
+  if (!documentLifecycleOwnerMatches(activeDoc, currentOwner)) {
+    console.warn('[saver] Active document lifecycle changed before Save As destination selection');
+    return false;
+  }
+  activeDoc = currentOwner;
 
   // Use current path as default, or the untitled file name
-  const doc = getActiveDocument();
+  const doc = activeDoc;
   const currentPath = doc?.filePath;
   const defaultPath = currentPath || (doc ? doc.fileName : 'Untitled.pdf');
 

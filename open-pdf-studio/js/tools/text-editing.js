@@ -25,7 +25,7 @@ import {
   richTextToPlainText,
 } from '../text/rich-text.js';
 import { resolvePackagedFace } from '../text/font-catalog.js';
-import { requestFontSubstitutionApproval } from '../text/font-substitution-approval.js';
+import { resolveAutomaticFontSubstitution } from '../text/font-substitution-policy.js';
 import {
   createPageTextEditPlacement,
   createPageTextEditStyle,
@@ -101,8 +101,7 @@ export async function startTextEditing(annotation, { isNew = false } = {}) {
   const sourceFamily = annotation.fontFamily || 'Arial';
   let substitution = annotation.richTextSubstitution || null;
   if (!annotation.richText && !/^liberation\s*(sans|serif|mono)/iu.test(sourceFamily)) {
-    substitution = await requestFontSubstitutionApproval({
-      documentState: ownerDocument,
+    substitution = resolveAutomaticFontSubstitution({
       sourceFonts: [sourceFamily],
       bold: annotation.fontBold,
       italic: annotation.fontItalic,
@@ -112,8 +111,8 @@ export async function startTextEditing(annotation, { isNew = false } = {}) {
     if (!substitution) return false;
   }
 
-  // Font approval is asynchronous. Never open a detached draft against a tab
-  // or document generation that stopped owning the creation gesture.
+  // Never open a detached draft against a tab or document generation that
+  // stopped owning the creation gesture.
   if (getActiveDocument() !== ownerDocument
       || getDocumentById(ownerDocument.id) !== ownerDocument
       || ownerDocument.lifecycleGeneration !== ownerGeneration) return false;

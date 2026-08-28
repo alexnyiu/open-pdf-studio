@@ -19,6 +19,7 @@ import {
 import { replaceDocumentPdfProxy } from '../../core/document-lifecycle.js';
 import { authorizeDocumentClose } from './document-close-authorization.js';
 import { showUnsavedClosePrompt } from './unsaved-close-prompt.js';
+import { restoreDocumentScrollPosition } from '../../pdf/document-scroll-position.js';
 
 const pendingTabCloses = new Map();
 
@@ -94,6 +95,9 @@ export function switchToTab(index) {
 
   // Switch active document
   state.activeDocumentIndex = index;
+  import('../../pdf/render-resource-budget.js').then((module) => {
+    module.setActiveRenderDocument(getActiveDocument()?.id || null);
+  });
   import('../../pdf/whole-pdf-preload.js').then((module) => module.startWholePdfPreload(getActiveDocument()));
 
   // Update tab bar UI
@@ -157,8 +161,9 @@ export function switchToTab(index) {
     // Restore scroll position
     if (pdfContainer && newDoc.scrollPosition) {
       setTimeout(() => {
-        pdfContainer.scrollLeft = newDoc.scrollPosition.x;
-        pdfContainer.scrollTop = newDoc.scrollPosition.y;
+        if (getActiveDocument() === newDoc) {
+          restoreDocumentScrollPosition(pdfContainer, newDoc);
+        }
       }, 50);
     }
 
@@ -278,6 +283,8 @@ async function closeDocumentTab(doc, force) {
   if (closedPath) {
     clearCachedPdfBytes(closedPath);
     clearBitmapJSCacheForFile(closedPath);
+    const vectorCache = await import('../../pdf/vector-renderer.js');
+    vectorCache.clearVectorCacheForFile(closedPath);
     if (isTauri()) {
       try {
         await invoke('invalidate_pdf_cache', { path: closedPath });
@@ -296,6 +303,8 @@ async function closeDocumentTab(doc, force) {
 
   // Clear thumbnail cache for this document
   clearThumbnailCache(doc.id);
+  const { clearRenderResourcesForDocument } = await import('../../pdf/render-resource-budget.js');
+  clearRenderResourcesForDocument(doc.id, { release: true });
   invalidateTextCache(doc.id);
   forgetRegisteredDocumentOcrCache(doc.id);
 

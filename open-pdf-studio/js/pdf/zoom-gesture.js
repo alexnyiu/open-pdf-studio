@@ -18,3 +18,20 @@ export function smoothWheelZoomFactor(deltaY, options = {}) {
   const factor = Math.exp(-Number(deltaY || 0) * sensitivity);
   return Math.max(minimum, Math.min(maximum, factor));
 }
+
+export function classifyZoomWheel({ deltaMode = 0, ctrlKey = false, metaKey = false } = {}) {
+  // Chromium represents a precision trackpad pinch as a Ctrl+pixel-wheel
+  // stream. Line/page deltas are coarse wheels even if a modifier is held.
+  return deltaMode === 0 && ctrlKey && !metaKey ? 'trackpad' : 'wheel';
+}
+
+export function zoomFactorForInput(deltaY, source = 'wheel') {
+  if (source === 'trackpad') {
+    return smoothWheelZoomFactor(deltaY, {
+      sensitivity: 0.0034,
+      minimum: 0.72,
+      maximum: 1.38,
+    });
+  }
+  return smoothWheelZoomFactor(deltaY);
+}

@@ -51,24 +51,24 @@ pub async fn spawn_worker(worker: Arc<WorkerState>, exe_path: &std::path::Path) 
         ));
     }
 
-    // mmap the SHM file the worker created (same PID-namespaced path)
-    let shm_path = format!(
-        "{}/pdfium-worker-{}-{}.shm",
-        std::env::temp_dir().to_string_lossy(),
-        ns,
-        worker.slot
-    );
+    // Map the worker's transport once. Foreground routing is document-affine,
+    // so one long PDF reuses one hot mapping instead of faulting a transport
+    // for every page or every response.
+    let shm_path = std::env::temp_dir().join(format!("pdfium-worker-{}-{}.shm", ns, worker.slot));
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(false)
         .open(&shm_path)
-        .with_context(|| format!("open SHM {}", shm_path))?;
+        .with_context(|| format!("open SHM {}", shm_path.display()))?;
     let mmap = unsafe {
         MmapOptions::new()
             .len(SHM_SIZE)
             .map(&file)
-            .with_context(|| format!("mmap SHM {}", shm_path))?
+            .with_context(|| format!("mmap SHM {}", shm_path.display()))?
     };
+    #[cfg(unix)]
+    mmap.advise(memmap2::Advice::Sequential)
+        .with_context(|| format!("advise sequential SHM {}", shm_path.display()))?;
 
     // Stash handles in the WorkerState
     *worker.child.lock().await = Some(child);

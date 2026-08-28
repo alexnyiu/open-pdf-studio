@@ -11,8 +11,7 @@ import {
   replaceFirstRichTextMatch,
   richTextFromPlainText,
 } from '../text/rich-text.js';
-import { resolvePackagedFace } from '../text/font-catalog.js';
-import { requestFontSubstitutionApproval } from '../text/font-substitution-approval.js';
+import { resolveAutomaticFontSubstitution } from '../text/font-substitution-policy.js';
 import { inspectNativeTextSourcesForPage, matchNativeTextSources } from '../text/native-text-provenance.js';
 import { executeForDocument } from '../core/undo-manager.js';
 import { markDocumentModifiedForDocument } from '../ui/chrome/tabs.js';
@@ -391,16 +390,20 @@ async function replaceInPdfContent(doc, result, replaceText) {
     const x = Math.min(...sources.map((source) => Number(source.geometry?.[0]) || 0));
     const right = Math.max(...sources.map((source) => (Number(source.geometry?.[0]) || 0) + (Number(source.geometry?.[2]) || 0)));
     const sourceFont = sources[0].fontName || 'Unknown font';
-    const face = resolvePackagedFace(sourceFont, false, false);
-    const substitution = await requestFontSubstitutionApproval({
-      documentState: doc,
+    const substitution = resolveAutomaticFontSubstitution({
       sourceFonts: [sourceFont],
       sampleText: sourceText,
       scope: 'findReplace',
     });
     if (!substitution || !isCurrentOwner()) return null;
+    const substitutedBold = substitution.faceId.includes('-bold');
+    const substitutedItalic = substitution.faceId.endsWith('-italic');
     const style = {
-      faceId: face.id, size: fontSize, color: '#000000', bold: false, italic: false,
+      faceId: substitution.faceId,
+      size: fontSize,
+      color: '#000000',
+      bold: substitutedBold,
+      italic: substitutedItalic,
       underline: false, strikeout: false, baselineAdvance: fontSize * 1.2,
     };
     const region = { x, y: baselines[0] - fontSize, baseline: baselines[0], width: right - x, height: fontSize * 1.3, rotation: 0 };

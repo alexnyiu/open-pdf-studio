@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Кликните двапут или притисните Enter да бисте уредили.",
     "timezoneHint": "Датуми се приказују у временској зони {{timezone}} и чувају у формату ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Одобри замену фонта",
-    "sourceFace": "Изворни фонт",
-    "sourceFaces": "Изворни фонтови",
-    "unknown": "Непознат",
-    "packagedSubstitute": "Приложени заменски фонт",
-    "notAvailable": "Није доступан",
-    "sampleText": "Пример",
-    "sampleFallback": "Брза смеђа лисица прескаче лењог пса.",
-    "scope": "Примењује се на",
-    "scopeAnnotation": "Ову анотацију",
-    "scopeSelection": "Изабрана текстуална поља",
-    "scopeParagraph": "Овај PDF пасус",
-    "scopeFindReplace": "Ову измену Проналажења/Замене",
-    "remember": "Запамти ово одобрење за отворени документ",
-    "approve": "Користи заменски фонт",
-    "cancel": "Откажи"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Уреди PDF текст",

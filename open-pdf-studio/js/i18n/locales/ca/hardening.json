@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Feu doble clic o premeu Retorn per editar.",
     "timezoneHint": "Les dates es mostren a la zona horària {{timezone}} i es desen en format ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Aprova la substitució del tipus de lletra",
-    "sourceFace": "Tipus de lletra d'origen",
-    "sourceFaces": "Tipus de lletra d'origen",
-    "unknown": "Desconegut",
-    "packagedSubstitute": "Tipus de lletra substitut inclòs",
-    "notAvailable": "No disponible",
-    "sampleText": "Mostra",
-    "sampleFallback": "La guineu marró ràpida salta per damunt del gos mandrós.",
-    "scope": "S'aplica a",
-    "scopeAnnotation": "Aquesta anotació",
-    "scopeSelection": "Els quadres de text seleccionats",
-    "scopeParagraph": "Aquest paràgraf del PDF",
-    "scopeFindReplace": "Aquesta edició de Cerca/Substitueix",
-    "remember": "Recorda aquesta aprovació per a aquest document obert",
-    "approve": "Fes servir el tipus de lletra substitut",
-    "cancel": "Cancel·la"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Edita text del PDF",

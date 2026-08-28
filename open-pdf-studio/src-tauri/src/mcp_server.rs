@@ -241,6 +241,22 @@ fn handle_tools_list() -> Value {
                 }
             },
             {
+                "name": "app_screenshot_rendered_page",
+                "description": "Capture the mounted continuous/facing page raster at its declared settled backing density for sharpness comparison.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "pageNum": { "type": "integer", "minimum": 1 },
+                        "xPt": { "type": "number", "minimum": 0 },
+                        "yPt": { "type": "number", "minimum": 0 },
+                        "widthPt": { "type": "number", "exclusiveMinimum": 0 },
+                        "heightPt": { "type": "number", "exclusiveMinimum": 0 }
+                    },
+                    "required": ["pageNum"],
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "app_mouse_move",
                 "description": "Dispatch a synthetic mousemove at viewport CSS coordinates (x, y) inside the LIVE WebView. Returns the element under the cursor.",
                 "inputSchema": {
@@ -359,6 +375,28 @@ fn handle_tools_list() -> Value {
                 }
             },
             {
+                "name": "app_reset_performance_metrics",
+                "description": "Reset LIVE large-PDF scroll/zoom/render instrumentation before an acceptance sequence. Optionally observes browser long-task entries when the WebView supports them.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "observeLongTasks": { "type": "boolean", "default": true }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "app_get_performance_metrics",
+                "description": "Read LIVE large-PDF scroll, zoom, render, mounted-resource, JS cache, native pixmap, and document-profile measurements. Set stop=true for the final capture snapshot.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "stop": { "type": "boolean", "default": false }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            {
                 "name": "app_get_recent_console",
                 "description": "Return the most recent matching console messages captured by the in-app observability buffer (mcp-bridge.js). Captures lines matching: [render], [tile], [wheel-zoom], [PERF], [pre-render], STALE, JANK. Buffer holds up to 500 entries; oldest auto-evicted. Filter with `since` (epoch-ms cutoff) or `tail` (last N entries) to limit output volume. Use after dispatching a zoom/scroll action to see exactly which render path fired, in what order, and whether any stale-render bailouts triggered.",
                 "inputSchema": {
@@ -460,12 +498,13 @@ fn handle_tools_list() -> Value {
             },
             {
                 "name": "app_set_window_size",
-                "description": "Resize the LIVE app window to a logical width x height. Protocol runs call this up-front so fit-scale, white-margin and ribbon-overflow behaviour are deterministic regardless of the size the window opened with.",
+                "description": "Resize the LIVE app window to a logical width x height. Protocol runs call this up-front so fit-scale, white-margin and ribbon-overflow behaviour are deterministic regardless of the size the window opened with. keepVisible prevents macOS from occluding the test window without taking keyboard focus.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "width":  { "type": "number", "minimum": 200, "description": "Logical window width in px." },
-                        "height": { "type": "number", "minimum": 200, "description": "Logical window height in px." }
+                        "height": { "type": "number", "minimum": 200, "description": "Logical window height in px." },
+                        "keepVisible": { "type": "boolean", "default": false, "description": "Keep the packaged test window above other windows without focusing it." }
                     },
                     "required": ["width", "height"],
                     "additionalProperties": false
@@ -727,7 +766,7 @@ fn handle_tools_list() -> Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "mode": { "type": "string", "enum": ["single", "continuous", "book"] }
+                        "mode": { "type": "string", "enum": ["single", "continuous", "book", "facing"] }
                     },
                     "required": ["mode"],
                     "additionalProperties": false
@@ -834,6 +873,15 @@ async fn handle_tools_call(state: &AppState, params: &Value) -> Result<Value, (i
             )
             .await
         }
+        "app_screenshot_rendered_page" => {
+            tool_app_request(
+                state,
+                "mcp:screenshot-rendered-page",
+                &arguments,
+                Duration::from_secs(30),
+            )
+            .await
+        }
         "app_mouse_move" => {
             tool_app_request(state, "mcp:mouse-move", &arguments, Duration::from_secs(10)).await
         }
@@ -863,6 +911,24 @@ async fn handle_tools_call(state: &AppState, params: &Value) -> Result<Value, (i
             tool_app_request(
                 state,
                 "mcp:get-viewport-state",
+                &arguments,
+                Duration::from_secs(5),
+            )
+            .await
+        }
+        "app_reset_performance_metrics" => {
+            tool_app_request(
+                state,
+                "mcp:reset-performance-metrics",
+                &arguments,
+                Duration::from_secs(5),
+            )
+            .await
+        }
+        "app_get_performance_metrics" => {
+            tool_app_request(
+                state,
+                "mcp:get-performance-metrics",
                 &arguments,
                 Duration::from_secs(5),
             )
@@ -1147,6 +1213,10 @@ async fn tool_set_window_size(state: &AppState, arguments: &Value) -> Result<Val
         .get("height")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
+    let keep_visible = arguments
+        .get("keepVisible")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if width < 200.0 || height < 200.0 {
         return Err((
             jsonrpc_error::INVALID_PARAMS,
@@ -1165,6 +1235,31 @@ async fn tool_set_window_size(state: &AppState, arguments: &Value) -> Result<Val
             "main window not found".to_string(),
         )
     })?;
+    // Packaged performance protocols drive the production WebView. macOS may
+    // launch a directly-spawned app behind another process; an occluded or
+    // minimized WKWebView suspends requestAnimationFrame and would turn the
+    // zoom-latency measurement into a window-activation test. Make the real
+    // window visible and unminimized before fixing its deterministic size;
+    // do not steal focus, so unrelated physical input cannot contaminate the
+    // automated gesture stream.
+    window.show().map_err(|e| {
+        (
+            jsonrpc_error::INTERNAL_ERROR,
+            format!("show window failed: {e}"),
+        )
+    })?;
+    window.unminimize().map_err(|e| {
+        (
+            jsonrpc_error::INTERNAL_ERROR,
+            format!("unminimize window failed: {e}"),
+        )
+    })?;
+    window.set_always_on_top(keep_visible).map_err(|e| {
+        (
+            jsonrpc_error::INTERNAL_ERROR,
+            format!("set always-on-top failed: {e}"),
+        )
+    })?;
     window
         .set_size(tauri::LogicalSize::new(width, height))
         .map_err(|e| {
@@ -1178,7 +1273,14 @@ async fn tool_set_window_size(state: &AppState, arguments: &Value) -> Result<Val
     Ok(json!({
         "content": [{
             "type": "text",
-            "text": json!({ "ok": true, "requested": { "width": width, "height": height } }).to_string(),
+            "text": json!({
+                "ok": true,
+                "requested": {
+                    "width": width,
+                    "height": height,
+                    "keepVisible": keep_visible,
+                }
+            }).to_string(),
         }],
         "isError": false,
     }))

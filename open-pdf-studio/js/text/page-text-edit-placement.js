@@ -192,6 +192,30 @@ export function createPageTextEditStyle(style = {}) {
   return { geometry, typography, padding, border, decoration, layout };
 }
 
+/**
+ * Convert a provenance-backed rich-text region from PDF bottom-left space to
+ * the editor placement contract's unrotated top-left page space. Rotation is
+ * deliberately applied later by `projectPageTextEditPlacement`, so every
+ * click in the same source paragraph resolves to one immutable rectangle.
+ */
+export function canonicalEditorBoundsForRichText(region, pageHeight) {
+  const height = finite(pageHeight, Number.NaN);
+  const x = finite(region?.x, Number.NaN);
+  const y = finite(region?.y, Number.NaN);
+  const width = finite(region?.width, Number.NaN);
+  const regionHeight = finite(region?.height, Number.NaN);
+  if (!(height > 0) || ![x, y, width, regionHeight].every(Number.isFinite)
+      || width <= 0 || regionHeight <= 0) {
+    throw new TypeError('Rich-text placement requires finite positive PDF geometry');
+  }
+  return {
+    x,
+    y: height - (y + regionHeight),
+    width,
+    height: regionHeight,
+  };
+}
+
 /** Merge a semantic style patch without reopening the CSS parsing boundary. */
 export function mergePageTextEditStyle(style, patch) {
   const current = createPageTextEditStyle(style);

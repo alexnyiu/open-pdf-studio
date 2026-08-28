@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}। संपादित करने के लिए डबल-क्लिक करें या Enter दबाएँ।",
     "timezoneHint": "दिनांक {{timezone}} समय क्षेत्र में दिखाए जाते हैं और ISO 8601 प्रारूप में सहेजे जाते हैं।"
   },
-  "fontSubstitution": {
-    "title": "फ़ॉन्ट प्रतिस्थापन स्वीकृत करें",
-    "sourceFace": "मूल फ़ॉन्ट",
-    "sourceFaces": "मूल फ़ॉन्ट",
-    "unknown": "अज्ञात",
-    "packagedSubstitute": "पैकेज में शामिल वैकल्पिक फ़ॉन्ट",
-    "notAvailable": "उपलब्ध नहीं",
-    "sampleText": "नमूना",
-    "sampleFallback": "तेज़ भूरी लोमड़ी आलसी कुत्ते के ऊपर से कूदती है।",
-    "scope": "इन पर लागू",
-    "scopeAnnotation": "यह एनोटेशन",
-    "scopeSelection": "चयनित टेक्स्ट बॉक्स",
-    "scopeParagraph": "यह PDF अनुच्छेद",
-    "scopeFindReplace": "यह खोजें/बदलें संपादन",
-    "remember": "इस खुले दस्तावेज़ के लिए यह स्वीकृति याद रखें",
-    "approve": "वैकल्पिक फ़ॉन्ट का उपयोग करें",
-    "cancel": "रद्द करें"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "PDF टेक्स्ट संपादित करें",

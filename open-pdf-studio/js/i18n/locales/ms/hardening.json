@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Klik dua kali atau tekan Enter untuk menyunting.",
     "timezoneHint": "Tarikh dipaparkan dalam zon waktu {{timezone}} dan disimpan dalam format ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Luluskan penggantian fon",
-    "sourceFace": "Fon sumber",
-    "sourceFaces": "Fon sumber",
-    "unknown": "Tidak diketahui",
-    "packagedSubstitute": "Fon ganti terbina dalam",
-    "notAvailable": "Tidak tersedia",
-    "sampleText": "Contoh",
-    "sampleFallback": "Musang perang yang pantas melompat melepasi anjing malas.",
-    "scope": "Digunakan pada",
-    "scopeAnnotation": "Anotasi ini",
-    "scopeSelection": "Kotak teks yang dipilih",
-    "scopeParagraph": "Perenggan PDF ini",
-    "scopeFindReplace": "Suntingan Cari/Ganti ini",
-    "remember": "Ingat kelulusan ini untuk dokumen yang sedang dibuka",
-    "approve": "Gunakan fon ganti",
-    "cancel": "Batal"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Sunting teks PDF",

@@ -119,6 +119,50 @@ test('exact layout run coalescing does not dirty an unchanged native draft', asy
   }), false);
 });
 
+test('exact layout preserves an unchanged two-line native source rectangle', async () => {
+  const source = createRichTextDocument([
+    createTextLine([
+      createTextRun('ARCALYST penetration ', {
+        faceId: 'liberation-sans-regular', size: 9,
+      }),
+      createTextRun('(the share of the potential market already ', {
+        faceId: 'liberation-sans-italic', size: 9, italic: true,
+      }),
+    ], { baseline: 735, baselineAdvance: 11, breakAfter: 'soft' }),
+    createTextLine([
+      createTextRun('using the product) ', {
+        faceId: 'liberation-sans-italic', size: 9, italic: true,
+      }),
+      createTextRun('+ pipeline', {
+        faceId: 'liberation-sans-regular', size: 9,
+      }),
+    ], { baseline: 724, baselineAdvance: 11, breakAfter: 'hard' }),
+  ], { x: 180, y: 722.2, width: 300, height: 20 });
+  const baseline = createTextEditDirtyBaseline({
+    text: 'ARCALYST penetration (the share of the potential market already using the product) + pipeline',
+    richText: source,
+  });
+  const layout = await layoutExpandableNativeText(source, {
+    width: source.region.width,
+    contentWidth: source.region.width,
+    contentInset: 0,
+    minimumHeight: source.region.height,
+    anchorTop: source.region.y + source.region.height,
+    manualLineBreaks: true,
+  });
+
+  assert.equal(layout.requiredHeight, source.region.height);
+  assert.deepEqual(layout.document.region, source.region);
+  assert.deepEqual(
+    layout.document.lines.map((line) => line.baseline),
+    source.lines.map((line) => line.baseline),
+  );
+  assert.equal(textEditDraftIsDirty(baseline, {
+    text: 'ARCALYST penetration (the share of the potential market already using the product) + pipeline',
+    richText: layout.document,
+  }), false);
+});
+
 test('run-format-only changes make the draft dirty', () => {
   const source = richTextFixture();
   const baseline = createTextEditDirtyBaseline({ text: 'First line\nSecond line', richText: source });

@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Upravte dvojitým kliknutím alebo stlačením klávesu Enter.",
     "timezoneHint": "Dátumy sa zobrazujú v časovom pásme {{timezone}} a ukladajú sa vo formáte ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Schváliť náhradu písma",
-    "sourceFace": "Zdrojové písmo",
-    "sourceFaces": "Zdrojové písma",
-    "unknown": "Neznáme",
-    "packagedSubstitute": "Pribalené náhradné písmo",
-    "notAvailable": "Nie je k dispozícii",
-    "sampleText": "Ukážka",
-    "sampleFallback": "Rýchla hnedá líška preskočí lenivého psa.",
-    "scope": "Platí pre",
-    "scopeAnnotation": "Túto anotáciu",
-    "scopeSelection": "Vybrané textové polia",
-    "scopeParagraph": "Tento odsek PDF",
-    "scopeFindReplace": "Túto úpravu Nájsť/Nahradiť",
-    "remember": "Zapamätať toto schválenie pre otvorený dokument",
-    "approve": "Použiť náhradné písmo",
-    "cancel": "Zrušiť"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Upraviť text PDF",

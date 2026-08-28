@@ -14,6 +14,52 @@ use render::{RasterLimits, Renderer};
 use shm::Shm;
 use std::io::{BufRead, Write};
 
+const PNG_TRANSFER_PREFIX: &str = "open-pdf-studio-render-";
+const PNG_TRANSFER_SUFFIX: &str = ".png";
+
+fn validate_transfer_token(token: &str) -> Result<()> {
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("invalid PNG transfer token");
+    }
+    Ok(())
+}
+
+fn transfer_path(token: &str) -> Result<std::path::PathBuf> {
+    validate_transfer_token(token)?;
+    Ok(std::env::temp_dir().join(format!("{PNG_TRANSFER_PREFIX}{token}{PNG_TRANSFER_SUFFIX}")))
+}
+
+fn encode_png_to_transfer_file(rgba: &[u8], width: u32, height: u32, token: &str) -> Result<u64> {
+    use image::ImageEncoder;
+
+    let path = transfer_path(token)?;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .with_context(|| format!("create exclusive PNG transfer {}", path.display()))?;
+    let encoded = (|| -> Result<u64> {
+        let mut writer = std::io::BufWriter::with_capacity(16 * 1024, file);
+        image::codecs::png::PngEncoder::new_with_quality(
+            &mut writer,
+            image::codecs::png::CompressionType::Fast,
+            image::codecs::png::FilterType::NoFilter,
+        )
+        .write_image(rgba, width, height, image::ExtendedColorType::Rgba8)
+        .context("encode display PNG directly to transfer file")?;
+        writer.flush().context("flush display PNG transfer file")?;
+        Ok(writer
+            .get_ref()
+            .metadata()
+            .context("stat display PNG transfer file")?
+            .len())
+    })();
+    if encoded.is_err() {
+        let _ = std::fs::remove_file(&path);
+    }
+    encoded
+}
+
 fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--probe-pdfium") {
         let _renderer = Renderer::new().context("probe PDFium runtime")?;
@@ -95,6 +141,42 @@ fn main() -> Result<()> {
                         id,
                         ok: false,
                         error: format!("{}", e),
+                    },
+                };
+                writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
+                stdout.flush()?;
+            }
+            Request::RenderPng {
+                id,
+                path,
+                page_index,
+                scale,
+                rotation,
+                transfer_token,
+            } => {
+                let resp = match renderer.render(&path, page_index, scale, rotation) {
+                    Ok(result) => encode_png_to_transfer_file(
+                        &result.rgba,
+                        result.width,
+                        result.height,
+                        &transfer_token,
+                    )
+                    .map(|bytes| Response::RenderPngOk {
+                        id,
+                        ok: true,
+                        w: result.width,
+                        h: result.height,
+                        file_bytes: bytes,
+                    })
+                    .unwrap_or_else(|error| Response::RenderErr {
+                        id,
+                        ok: false,
+                        error: format!("PNG transport: {error}"),
+                    }),
+                    Err(error) => Response::RenderErr {
+                        id,
+                        ok: false,
+                        error: error.to_string(),
                     },
                 };
                 writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
@@ -237,4 +319,35 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transfer_token_is_bounded_and_path_is_derived() {
+        let token = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let path = transfer_path(token).unwrap();
+        assert_eq!(
+            path.file_name().unwrap().to_string_lossy(),
+            format!("{PNG_TRANSFER_PREFIX}{token}{PNG_TRANSFER_SUFFIX}")
+        );
+        assert!(validate_transfer_token("../escape").is_err());
+        assert!(validate_transfer_token(&"a".repeat(63)).is_err());
+    }
+
+    #[test]
+    fn png_is_encoded_directly_to_exclusive_file() {
+        let token = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        let path = transfer_path(token).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let rgba = [255_u8, 255, 255, 255];
+        let bytes = encode_png_to_transfer_file(&rgba, 1, 1, token).unwrap();
+        let encoded = std::fs::read(&path).unwrap();
+        assert_eq!(bytes, encoded.len() as u64);
+        assert!(encoded.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(encode_png_to_transfer_file(&rgba, 1, 1, token).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
 }

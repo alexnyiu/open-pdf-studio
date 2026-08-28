@@ -150,8 +150,10 @@ async function runAcceptance(options) {
       insertedText: 'PENDING',
       textbox: 'PENDING',
       callout: 'PENDING',
-      visibleApply: 'PENDING',
-      visibleCancel: 'PENDING',
+      clickAwayCommit: 'PENDING',
+      escapeDiscard: 'PENDING',
+      noApplyCancelControls: 'PENDING',
+      noSubstitutionDialog: 'PENDING',
       saveReopen: 'PENDING',
       repeatSaveIdempotence: 'PENDING',
       genuineReeditPointerAction: 'PENDING',
@@ -224,21 +226,23 @@ async function runAcceptance(options) {
     return result;
   }
 
-  async function approveFontIfNeeded() {
-    const approval = await ui('.font-substitution-dialog .pref-btn-primary');
-    if (!approval.found || !approval.visible || approval.disabled) return false;
-    await clickVisible('.font-substitution-dialog .pref-btn-primary');
-    return true;
-  }
-
   async function waitEditor() {
     return waitUntil('visible annotation text editor', async () => {
       const editor = await ui('.pdf-text-editor');
       if (editor.found && editor.visible) {
         if (!editor.focused) await clickVisible('.pdf-text-editor');
+        const [apply, cancel, substitutionDialog] = await Promise.all([
+          ui('.pdf-text-editor-apply'),
+          ui('.pdf-text-editor-cancel'),
+          ui('.font-substitution-dialog'),
+        ]);
+        assert.equal(apply.found, false, 'Apply control must not be rendered');
+        assert.equal(cancel.found, false, 'Cancel control must not be rendered');
+        assert.equal(substitutionDialog.found, false, 'font substitution must be automatic');
+        report.checks.noApplyCancelControls = 'PASS';
+        report.checks.noSubstitutionDialog = 'PASS';
         return ui('.pdf-text-editor');
       }
-      await approveFontIfNeeded();
       return null;
     }, 60_000);
   }
@@ -253,29 +257,23 @@ async function runAcceptance(options) {
   }
 
   async function applyEditor() {
-    const apply = await waitUi(
-      '.pdf-text-editor-apply',
-      (value) => value.found && value.visible && !value.disabled,
-      60_000,
-    );
-    assert.equal(apply.visible, true);
-    await clickVisible('.pdf-text-editor-apply');
-    await waitUntil('editor Apply cleanup', async () => {
+    await clickVisible('.status-page-input');
+    await waitUntil('editor click-away cleanup', async () => {
       const editor = await ui('.pdf-text-editor');
       return !editor.found ? true : null;
     }, 60_000);
-    report.checks.visibleApply = 'PASS';
+    report.checks.clickAwayCommit = 'PASS';
   }
 
   async function cancelEditor() {
-    const cancel = await waitUi('.pdf-text-editor-cancel');
-    assert.equal(cancel.visible, true);
-    await clickVisible('.pdf-text-editor-cancel');
-    await waitUntil('editor Cancel cleanup', async () => {
+    await waitEditor();
+    const escaped = await callTool('app_key', { key: 'Escape' });
+    assert.equal(escaped.ok, true, escaped.error);
+    await waitUntil('editor Escape cleanup', async () => {
       const editor = await ui('.pdf-text-editor');
       return !editor.found ? true : null;
     }, 30_000);
-    report.checks.visibleCancel = 'PASS';
+    report.checks.escapeDiscard = 'PASS';
   }
 
   async function canvasState() {

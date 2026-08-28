@@ -214,6 +214,79 @@ test('explicit manual capacity still rejects genuinely visible overflow', async 
   assert.match(result.rejectionReasons.join('; '), /press Enter/u);
 });
 
+test('automatic substitution compensates an exact 0.393557 PDF-point width delta', async () => {
+  const text = 'EUV advanced lithography substitute width';
+  const probe = documentFor(text, { x: 100, width: 300 });
+  const measured = await layoutExpandableNativeText(probe, {
+    width: 300,
+    contentWidth: 300,
+    contentInset: 0,
+    minimumHeight: probe.region.height,
+    manualLineBreaks: true,
+  });
+  const requiredAdvance = measured.paintedLineAdvances[0];
+  const sourceWidth = requiredAdvance - 0.393557;
+  const source = documentFor(text, { x: 100, width: sourceWidth });
+  const result = await layoutExpandableNativeText(source, {
+    width: sourceWidth,
+    contentWidth: sourceWidth,
+    sourceWidth,
+    substitutionWidthAllowance: 1,
+    contentInset: 0,
+    minimumHeight: source.region.height,
+    anchorTop: source.region.y + source.region.height,
+    pageBounds: { x: 0, y: 0, width: 612, height: 792 },
+    columnBounds: { left: 100, right: 100 + sourceWidth + 12.84 },
+    manualLineBreaks: true,
+  });
+
+  assert.equal(result.valid, true, result.rejectionReasons.join('; '));
+  assert.ok(Math.abs(result.widthCompensation - 0.393557) < 1e-6);
+  assert.ok(Math.abs(result.effectiveContentWidth - requiredAdvance) < 1e-6);
+  assert.ok(Math.abs(result.document.region.width - (sourceWidth + 0.393557)) < 1e-6);
+  assert.equal(result.document.region.x, source.region.x);
+  assert.equal(result.document.region.y + result.document.region.height,
+    source.region.y + source.region.height);
+});
+
+test('substitution compensation above one point or across a column boundary fails closed', async () => {
+  const text = 'EUV advanced lithography substitute width';
+  const probe = documentFor(text, { x: 100, width: 300 });
+  const measured = await layoutExpandableNativeText(probe, {
+    width: 300, contentWidth: 300, contentInset: 0, manualLineBreaks: true,
+  });
+  const requiredAdvance = measured.paintedLineAdvances[0];
+
+  const tooNarrowWidth = requiredAdvance - 1.0001;
+  const tooNarrow = documentFor(text, { x: 100, width: tooNarrowWidth });
+  const overAllowance = await layoutExpandableNativeText(tooNarrow, {
+    width: tooNarrowWidth,
+    contentWidth: tooNarrowWidth,
+    sourceWidth: tooNarrowWidth,
+    substitutionWidthAllowance: 1,
+    contentInset: 0,
+    manualLineBreaks: true,
+  });
+  assert.equal(overAllowance.widthCompensation, 0);
+  assert.equal(overAllowance.valid, false);
+  assert.match(overAllowance.rejectionReasons.join('; '), /press Enter/u);
+
+  const boundaryWidth = requiredAdvance - 0.393557;
+  const boundarySource = documentFor(text, { x: 100, width: boundaryWidth });
+  const crossesBoundary = await layoutExpandableNativeText(boundarySource, {
+    width: boundaryWidth,
+    contentWidth: boundaryWidth,
+    sourceWidth: boundaryWidth,
+    substitutionWidthAllowance: 1,
+    contentInset: 0,
+    columnBounds: { left: 100, right: 100 + boundaryWidth + 0.2 },
+    manualLineBreaks: true,
+  });
+  assert.equal(crossesBoundary.widthCompensation, 0);
+  assert.equal(crossesBoundary.valid, false);
+  assert.match(crossesBoundary.rejectionReasons.join('; '), /press Enter/u);
+});
+
 test('trailing Unicode whitespace does not shift explicit right alignment', async () => {
   const plain = documentFor('aligned');
   const spaced = documentFor('aligned\u00a0');
@@ -315,7 +388,7 @@ test('manual-line shaping preserves complete run and paragraph formatting', asyn
     createTextLine([createTextRun('next', {
       faceId: 'liberation-mono-italic', size: 7.2, color: '#123456', italic: true,
     })], {
-      baseline: 80.5, baselineAdvance: 10.25, alignment: 'center', breakAfter: 'hard',
+      baseline: 80.4997, baselineAdvance: 10.25, alignment: 'center', breakAfter: 'hard',
     }),
   ], { x: 10, y: 70, width: 90, height: 24 });
   const result = await layoutExpandableNativeText(source, {
@@ -326,6 +399,7 @@ test('manual-line shaping preserves complete run and paragraph formatting', asyn
   });
   assert.equal(result.valid, true);
   assert.deepEqual(result.document.lines.map((line) => ({
+    baseline: line.baseline,
     alignment: line.alignment,
     baselineAdvance: line.baselineAdvance,
     breakAfter: line.breakAfter,
@@ -340,6 +414,7 @@ test('manual-line shaping preserves complete run and paragraph formatting', asyn
       strikeout: run.strikeout,
     })),
   })), source.lines.map((line) => ({
+    baseline: line.baseline,
     alignment: line.alignment,
     baselineAdvance: line.baselineAdvance,
     breakAfter: line.breakAfter,

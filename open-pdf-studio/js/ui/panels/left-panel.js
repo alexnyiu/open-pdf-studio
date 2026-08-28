@@ -21,6 +21,13 @@ import {
   getThumbnailContainerRef as getContainerRef,
   thumbnailSelectedPages, selectThumbnailPage,
 } from '../../bridge.js';
+import { shouldPreloadEntireDocument, shouldPreloadNearby } from '../../pdf/preload-policy.js';
+import {
+  registerRenderResource,
+  touchRenderResource,
+  unregisterRenderResource,
+} from '../../pdf/render-resource-budget.js';
+import { recordPerformancePeak } from '../../pdf/performance-metrics.js';
 
 // Thumbnail scale (relative to actual page size). The thumbnail panel
 // displays at ~152 px wide; rendering close to that 1:1 saves PDFium
@@ -34,6 +41,34 @@ const thumbnailCache = new Map();
 const thumbnailPromises = new Map();
 const thumbnailRenderTasks = new Map();
 const preloadOnlyPages = new Map();
+const thumbnailResourceKey = (docId, pageNum) => `thumbnail:${docId}:${pageNum}`;
+
+function recordThumbnailMemory() {
+  recordPerformancePeak(
+    'thumbnailBytes',
+    [...thumbnailCache.values()].reduce((total, cache) => total
+      + [...cache.values()].reduce((sum, entry) => sum + (Number(entry?.bytes) || 0), 0), 0),
+  );
+}
+
+function registerThumbnailResource(doc, pageNum, entry, cache) {
+  registerRenderResource({
+    key: thumbnailResourceKey(doc.id, pageNum),
+    category: 'metadata',
+    documentId: doc.id,
+    bytes: entry.bytes,
+    protected: () => getActiveDocument()?.id === doc.id
+      && (getActiveDocument()?.currentPage === pageNum || visibleThumbnailPages().includes(pageNum)),
+    release: () => {
+      const current = cache.get(pageNum);
+      revokeThumbnailEntry(current);
+      cache.delete(pageNum);
+      recordThumbnailMemory();
+      preloadOnlyPages.get(doc.id)?.delete(pageNum);
+      if (getActiveDocument()?.id === doc.id) removeThumbnailImage(pageNum);
+    },
+  });
+}
 
 // Per-doc per-page generation counter. Bumped on invalidateThumbnail() so a
 // stale render-completion (annotations changed mid-flight, rapid re-invalidate)
@@ -103,10 +138,15 @@ let scrollDebounceTimer = null;
 
 // Track if scroll listener is attached
 let scrollListenerAttached = false;
+let foregroundActivityListenerAttached = false;
 
 // Initialize left panel
 export function initLeftPanel() {
   attachScrollListener();
+  if (!foregroundActivityListenerAttached) {
+    window.addEventListener('opds:pdf-foreground-activity', () => pauseThumbnails(250));
+    foregroundActivityListenerAttached = true;
+  }
 }
 
 // Attach scroll listener to the thumbnails container via store ref
@@ -184,7 +224,7 @@ function updateVisiblePriorities() {
   if (priorityPages.size > 0) {
     startProcessor();
   }
-  if (state.preferences.preloadEntirePdf) {
+  if (shouldPreloadEntireDocument(activeDoc, state.preferences)) {
     import('../../pdf/whole-pdf-preload.js').then((module) => module.startWholePdfPreload(activeDoc));
   }
 }
@@ -315,7 +355,7 @@ export async function generateThumbnails() {
 
   // Start the processor if not running
   startProcessor();
-  if (state.preferences.preloadEntirePdf) {
+  if (shouldPreloadEntireDocument(activeDoc, state.preferences)) {
     void import('../../pdf/whole-pdf-preload.js').then((module) => module.startWholePdfPreload(activeDoc));
   }
 }
@@ -325,19 +365,18 @@ export async function generateThumbnails() {
 let _thumbnailsPaused = false;
 let _thumbnailPauseTimer = null;
 
-export function pauseThumbnails() {
+export function pauseThumbnails(settleMs = 250) {
   _thumbnailsPaused = true;
   if (_thumbnailPauseTimer) clearTimeout(_thumbnailPauseTimer);
   // Auto-resume after a short window of no navigation. Was 3000ms — that
   // caused thumbnails to sit idle for ~3s after document open because
   // renderer.js calls pauseThumbnails() on the very first page render.
-  // 500ms is enough to coalesce rapid page-up/page-down without making the
-  // user wait several seconds for thumbnails on initial load.
+  // Resume after the shared interaction settle period.
   _thumbnailPauseTimer = setTimeout(() => {
     _thumbnailsPaused = false;
     _thumbnailPauseTimer = null;
     startProcessor();
-  }, 500);
+  }, Math.max(0, Number(settleMs) || 250));
 }
 
 // Resume thumbnail rendering immediately. Called by the page renderer once
@@ -393,7 +432,8 @@ async function processNextThumbnail() {
       }
     }
 
-    if (activeDocId && !state.preferences.preloadEntirePdf) {
+    if (activeDocId && shouldPreloadNearby(state.preferences)
+        && !shouldPreloadEntireDocument(activeDoc, state.preferences)) {
       const docState = documentState.get(activeDocId);
       const docCache = thumbnailCache.get(activeDocId);
       const center = activeDoc?.currentPage || 1;
@@ -507,28 +547,18 @@ async function renderCompleteWorkerThumbnail(pdfDoc, pageNum, doc) {
   const expected = await expectedThumbnailSize(pdfDoc, pageNum, doc);
   const renderWidth = 280;
   const renderScale = Math.max(0.008, Math.min(0.75, renderWidth / Math.max(1, expected.viewport.width)));
-  const { renderPdfPage } = await import('../../pdf/engine-router.js');
-  const raw = await renderPdfPage({
+  const { renderPdfPageBitmap } = await import('../../pdf/engine-router.js');
+  const rendered = await renderPdfPageBitmap({
     path: doc.filePath,
     pageIndex: pageNum - 1,
     scale: renderScale,
     rotation: owningPageRotation(doc, pageNum),
   });
-  const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-  if (bytes.length <= 8) return null;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, 8);
-  const sourceWidth = view.getUint32(0, true);
-  const sourceHeight = view.getUint32(4, true);
-  if (sourceWidth <= 0 || sourceHeight <= 0 || sourceWidth * sourceHeight * 4 !== bytes.length - 8) return null;
-
-  const source = document.createElement('canvas');
-  source.width = sourceWidth;
-  source.height = sourceHeight;
-  source.getContext('2d').putImageData(new ImageData(
-    new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + 8, sourceWidth * sourceHeight * 4),
-    sourceWidth,
-    sourceHeight,
-  ), 0, 0);
+  const { bitmap, width: sourceWidth, height: sourceHeight } = rendered;
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    try { bitmap?.close?.(); } catch {}
+    return null;
+  }
   const canvas = document.createElement('canvas');
   canvas.width = expected.width;
   canvas.height = expected.height;
@@ -537,7 +567,8 @@ async function renderCompleteWorkerThumbnail(pdfDoc, pageNum, doc) {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  try { bitmap.close?.(); } catch {}
   const dataURL = canvas.toDataURL('image/jpeg', 0.78);
   const composited = await overlayAnnotationsOnDataURL(
     dataURL,
@@ -694,17 +725,10 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
           // downschalen naar 140 px.
           const renderW = 280;
           const thumbScale = Math.max(0.008, Math.min(0.5, renderW / widthPt));
-          const { renderPdfPage } = await import('../../pdf/engine-router.js');
-          const raw = await renderPdfPage({ path: doc.filePath, pageIndex: pageNum - 1, scale: thumbScale, rotation });
-          const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-          if (bytes && bytes.length > 8) {
-            const dv = new DataView(bytes.buffer, bytes.byteOffset, 8);
-            const rw = dv.getUint32(0, true), rh = dv.getUint32(4, true);
-            if (rw > 0 && rh > 0 && rw * rh * 4 === bytes.length - 8) {
-              const rgba = new Uint8ClampedArray(bytes.buffer, bytes.byteOffset + 8, rw * rh * 4);
-              const src = document.createElement('canvas');
-              src.width = rw; src.height = rh;
-              src.getContext('2d').putImageData(new ImageData(rgba, rw, rh), 0, 0);
+          const { renderPdfPageBitmap } = await import('../../pdf/engine-router.js');
+          const rendered = await renderPdfPageBitmap({ path: doc.filePath, pageIndex: pageNum - 1, scale: thumbScale, rotation });
+          if (rendered?.bitmap && rendered.width > 0 && rendered.height > 0) {
+              const { bitmap, width: rw, height: rh } = rendered;
               const targetW = 140;
               const s = targetW / rw;
               const w = Math.max(1, Math.round(rw * s));
@@ -714,7 +738,8 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
               const ctx = canvas.getContext('2d');
               ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h);
               ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-              ctx.drawImage(src, 0, 0, w, h);
+              ctx.drawImage(bitmap, 0, 0, w, h);
+              try { bitmap.close?.(); } catch {}
               const dataURL = canvas.toDataURL('image/jpeg', 0.7);
               const oScale = doc.pageDims?.[pageNum]?.widthPt ? w / doc.pageDims[pageNum].widthPt : null;
               if (oScale) {
@@ -726,7 +751,6 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
               }
               console.log(`[thumb] p${pageNum} via pool-render (${w}x${h}, zonder overlay)`);
               return { dataURL, width: w, height: h };
-            }
           }
         } catch (e) {
           console.log(`[thumb] p${pageNum} pool-thumb faalde: ${String(e).slice(0, 80)}`);
@@ -870,7 +894,10 @@ export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false }
   if (!thumbnailCache.has(doc.id)) thumbnailCache.set(doc.id, new Map());
   const cache = thumbnailCache.get(doc.id);
   const cached = cache.get(pageNum);
-  if (cached) return cached;
+  if (cached) {
+    touchRenderResource(thumbnailResourceKey(doc.id, pageNum));
+    return cached;
+  }
   const key = `${doc.id}:${pageNum}`;
   if (thumbnailPromises.has(key)) return thumbnailPromises.get(key);
   const generation = getPageGen(doc.id, pageNum);
@@ -883,8 +910,13 @@ export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false }
       return null;
     }
     const previous = cache.get(pageNum);
-    if (previous) revokeThumbnailEntry(previous);
+    if (previous) {
+      revokeThumbnailEntry(previous);
+      unregisterRenderResource(thumbnailResourceKey(doc.id, pageNum));
+    }
     cache.set(pageNum, entry);
+    recordThumbnailMemory();
+    registerThumbnailResource(doc, pageNum, entry, cache);
     if (preloadOnly) {
       if (!preloadOnlyPages.has(doc.id)) preloadOnlyPages.set(doc.id, new Set());
       preloadOnlyPages.get(doc.id).add(pageNum);
@@ -899,7 +931,9 @@ export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false }
 }
 
 export function getCachedThumbnailEntry(doc, pageNum) {
-  return doc ? thumbnailCache.get(doc.id)?.get(pageNum) || null : null;
+  const entry = doc ? thumbnailCache.get(doc.id)?.get(pageNum) || null : null;
+  if (entry) touchRenderResource(thumbnailResourceKey(doc.id, pageNum));
+  return entry;
 }
 
 export function releaseThumbnailPage(doc, pageNum) {
@@ -907,6 +941,7 @@ export function releaseThumbnailPage(doc, pageNum) {
   if (!cache) return;
   revokeThumbnailEntry(cache.get(pageNum));
   cache.delete(pageNum);
+  unregisterRenderResource(thumbnailResourceKey(doc.id, pageNum));
   preloadOnlyPages.get(doc.id)?.delete(pageNum);
   if (getActiveDocument()?.id === doc.id) removeThumbnailImage(pageNum);
 }
@@ -948,6 +983,7 @@ export function releasePreloadOnlyThumbnails(doc, keepPages = []) {
     if (keep.has(pageNum)) continue;
     revokeThumbnailEntry(cache.get(pageNum));
     cache.delete(pageNum);
+    unregisterRenderResource(thumbnailResourceKey(doc.id, pageNum));
     preloadPages.delete(pageNum);
     if (getActiveDocument()?.id === doc.id) removeThumbnailImage(pageNum);
   }
@@ -993,6 +1029,7 @@ export function invalidateThumbnail(pageNum) {
   if (docCache) {
     revokeThumbnailEntry(docCache.get(pageNum));
     docCache.delete(pageNum);
+    unregisterRenderResource(thumbnailResourceKey(activeDoc.id, pageNum));
   }
   // Bump generation: any in-flight render for this page will discard its
   // result on completion (see pageGenMatches in process*Thumbnail).
@@ -1017,6 +1054,7 @@ export function invalidateThumbnails(pageNums) {
     if (docCache) {
       revokeThumbnailEntry(docCache.get(pageNum));
       docCache.delete(pageNum);
+      unregisterRenderResource(thumbnailResourceKey(activeDoc.id, pageNum));
     }
     bumpPageGen(activeDoc.id, pageNum);
     removeThumbnailImage(pageNum);
@@ -1029,7 +1067,10 @@ export function invalidateThumbnails(pageNums) {
 // Clear thumbnail cache for a specific document
 export function clearThumbnailCache(docId) {
   if (docId) {
-    for (const entry of thumbnailCache.get(docId)?.values() || []) revokeThumbnailEntry(entry);
+    for (const [pageNum, entry] of thumbnailCache.get(docId)?.entries() || []) {
+      revokeThumbnailEntry(entry);
+      unregisterRenderResource(thumbnailResourceKey(docId, pageNum));
+    }
     thumbnailCache.delete(docId);
     documentState.delete(docId);
     preloadOnlyPages.delete(docId);

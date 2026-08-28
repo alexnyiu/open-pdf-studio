@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Clique duas vezes ou pressione Enter para editar.",
     "timezoneHint": "As datas são exibidas no fuso horário {{timezone}} e salvas no formato ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Aprovar substituição de fonte",
-    "sourceFace": "Fonte original",
-    "sourceFaces": "Fontes originais",
-    "unknown": "Desconhecida",
-    "packagedSubstitute": "Fonte substituta incluída",
-    "notAvailable": "Não disponível",
-    "sampleText": "Exemplo",
-    "sampleFallback": "A rápida raposa marrom salta sobre o cão preguiçoso.",
-    "scope": "Aplicável a",
-    "scopeAnnotation": "Esta anotação",
-    "scopeSelection": "As caixas de texto selecionadas",
-    "scopeParagraph": "Este parágrafo do PDF",
-    "scopeFindReplace": "Esta edição de Localizar/Substituir",
-    "remember": "Lembrar esta aprovação para o documento aberto",
-    "approve": "Usar fonte substituta",
-    "cancel": "Cancelar"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Editar texto do PDF",

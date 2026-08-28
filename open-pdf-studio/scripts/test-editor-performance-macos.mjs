@@ -256,19 +256,14 @@ async function runPerformance(options) {
     const clicked = await callTool('app_click_element', { selector: sourceSelector, searchTabs: false });
     assert.equal(clicked.clicked, true, clicked.error);
 
-    await waitUntil('native paragraph editor or font approval', async () => {
+    await waitUntil('automatically substituted native paragraph editor', async () => {
       const editor = await ui('.pdf-text-editor');
       if (editor.found && editor.visible) return editor;
-      const approval = await ui('.font-substitution-dialog .pref-btn-primary');
-      if (approval.found && approval.visible && !approval.disabled) {
-        const approved = await callTool('app_click_element', {
-          selector: '.font-substitution-dialog .pref-btn-primary',
-          searchTabs: false,
-        });
-        assert.equal(approved.clicked, true, approved.error);
-      }
       return null;
     }, 30_000);
+    assert.equal((await ui('.font-substitution-dialog')).found, false);
+    assert.equal((await ui('.pdf-text-editor-apply')).found, false);
+    assert.equal((await ui('.pdf-text-editor-cancel')).found, false);
     const editor = await waitUntil('focused native paragraph editor', async () => {
       const value = await ui('.pdf-text-editor');
       return value.found && value.visible && value.focused && value.pageTextEditHost?.attached
@@ -289,13 +284,11 @@ async function runPerformance(options) {
     assert.equal(typing.performance?.samples, 500);
 
     const activeMetrics = await waitUntil('settled exact layout', async () => {
-      const apply = await ui('.pdf-text-editor-apply');
       const viewport = await callTool('app_get_viewport_state');
       const layout = viewport.editorMetrics?.layoutState;
-      return apply.found
-        && apply.visible
-        && layout
+      return layout
         && layout.pending === false
+        && typeof layout.valid === 'boolean'
         && typeof layout.requestedFingerprint === 'string'
         && layout.requestedFingerprint === layout.validatedFingerprint
         && viewport.editorMetrics?.exactLayout?.activeTasks === 0

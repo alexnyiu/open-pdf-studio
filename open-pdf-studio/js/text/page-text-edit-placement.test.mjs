@@ -7,6 +7,7 @@ import {
   canonicalDeltaFromDisplayDelta,
   clampPageTextEditBounds,
   canonicalBoundsFromDisplayRect,
+  canonicalEditorBoundsForRichText,
   createPageTextEditPlacement,
   createPageTextEditStyle,
   mergePageTextEditStyle,
@@ -200,6 +201,29 @@ test('keyed portal handoff clears stale editor refs before replacement sizing', 
     'stale editor refs must be cleared before replacement placement work is scheduled');
 });
 
+test('outside-edit listeners are keyed to the editor mount rather than placement revisions', async () => {
+  const source = await readFile(
+    new URL('../solid/components/PdfTextEditOverlay.jsx', import.meta.url),
+    'utf8',
+  );
+  const listenerEffect = source.slice(
+    source.indexOf('// Global listeners and geometry observers exist only for an active editor.'),
+    source.indexOf('\n  onCleanup(() => {', source.indexOf('// Global listeners and geometry observers exist only for an active editor.')),
+  );
+  assert.match(listenerEffect,
+    /const observedSessionGeneration = untrack\(editorPlacement\)\?\.sessionGeneration/u);
+  assert.doesNotMatch(listenerEffect,
+    /const observedSessionGeneration = editorPlacement\(\)\?\.sessionGeneration/u);
+});
+
+test('page-host mutation handoff preserves only focus already owned by the editor', async () => {
+  const source = await readFile(new URL('../solid/components/PdfTextEditOverlay.jsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(portalRef\?\.contains\(document\.activeElement\)\) \{\s*restoreFocusAfterHostTransition = true;/u);
+  assert.match(source, /const preserveFocus = restoreFocusAfterHostTransition\s*\|\| portalRef\.contains\(document\.activeElement\);/u);
+  assert.doesNotMatch(source, /(?:scroll|resize)[^\n]*restoreFocusAfterHostTransition = true/iu,
+    'ordinary geometry revisions must not acquire editor focus');
+});
+
 test('unchanged exact-layout insets do not perpetually dirty editor placement', async () => {
   const source = await readFile(
     new URL('../solid/components/PdfTextEditOverlay.jsx', import.meta.url),
@@ -280,6 +304,58 @@ test('rotation is reprojected from canonical page geometry', () => {
   assert.equal(projected.left, '1565px');
   assert.equal(projected.top, '27px');
   assert.equal(projected.transform, 'rotate(90deg)');
+});
+
+test('PDF rich-text source geometry projects from one immutable top-left at every rotation', () => {
+  const canonicalBounds = canonicalEditorBoundsForRichText({
+    x: 50, y: 100, width: 200, height: 40,
+  }, 792);
+  assert.deepEqual(canonicalBounds, { x: 50, y: 652, width: 200, height: 40 });
+  const sourcePlacement = placement({
+    pageWidth: 612,
+    pageHeight: 792,
+    canonicalBounds,
+    canonicalStyle: createPageTextEditStyle({ geometry: { width: 200, height: 40 } }),
+    sourceClientAnchor: null,
+  });
+  const expected = new Map([
+    [0, ['50px', '652px']],
+    [90, ['140px', '50px']],
+    [180, ['562px', '140px']],
+    [270, ['652px', '562px']],
+  ]);
+  for (const [rotation, [left, top]] of expected) {
+    const projected = projectPageTextEditPlacement(sourcePlacement, {
+      pageWidth: 612, pageHeight: 792, rotation, scale: 1, offsetX: 0, offsetY: 0,
+    });
+    assert.equal(projected.left, left);
+    assert.equal(projected.top, top);
+  }
+});
+
+test('native paragraph entry ignores the clicked span rectangle and minimum CSS seed box', async () => {
+  const source = await readFile(new URL('../tools/text-edit-tool.js', import.meta.url), 'utf8');
+  const entry = source.slice(
+    source.indexOf('async function startPdfTextEditing'),
+    source.indexOf('async function finishPdfTextEditing'),
+  );
+  assert.match(entry, /canonicalEditorBoundsForRichText\(\s*originalRichText\.region/u);
+  assert.match(entry, /canonicalBounds,/u);
+  assert.doesNotMatch(entry, /block\.rect|groupRect|Math\.max\([^\n]*,\s*80\)|Math\.max\([^\n]*,\s*24\)/u);
+  const grouping = source.slice(
+    source.indexOf('const groups = blocks.map'),
+    source.indexOf('// ── Hover & click wiring'),
+  );
+  assert.match(grouping, /for \(const sp of allSpans\) spanToBlock\.set\(sp, group\)/u,
+    'every first, middle, and final source span must resolve to the same paragraph group');
+  const richSourceRegion = source.slice(
+    source.indexOf('function richTextForNativeBlock'),
+    source.indexOf('function selectionItemForRecord'),
+  );
+  assert.match(richSourceRegion, /const sourceAscent = fontSize \* 0\.8/u,
+    'canonical native placement must share the text-layer baseline ascent');
+  assert.match(richSourceRegion, /sourceAscent \+ sourceDescent/u);
+  assert.doesNotMatch(richSourceRegion, /fontSize \* 1\.3/u);
 });
 
 test('axis-aligned display bounds round-trip through a rotated page', () => {

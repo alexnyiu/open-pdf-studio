@@ -8,6 +8,8 @@ import {
 } from '../text/native-text-provenance.js';
 import { BoundedPdfPreloadController, directionalPreloadPages } from './pdf-preload-controller.js';
 import { isThumbnailPipelineIdle } from '../ui/panels/left-panel.js';
+import { isPdfForegroundIdle } from './foreground-activity.js';
+import { backgroundRenderAdmissionAllowed } from './render-resource-budget.js';
 
 const controllers = new WeakMap();
 
@@ -42,9 +44,11 @@ function controllerFor(doc) {
   let controller = controllers.get(doc);
   if (controller) return controller;
   controller = new BoundedPdfPreloadController({
-    maxPages: 1000,
-    maxBytes: 256 * 1024 * 1024,
-    isIdle: () => (window.__pdfRenderInFlight || 0) === 0 && isThumbnailPipelineIdle(),
+    maxPages: doc.performanceProfile?.largeDocument ? 9 : 50,
+    maxBytes: Math.max(8 * 1024 * 1024, Math.floor(
+      (doc.performanceProfile?.budget?.metadataBytes || 32 * 1024 * 1024) * 0.8,
+    )),
+    isIdle: () => isPdfForegroundIdle() && backgroundRenderAdmissionAllowed() && isThumbnailPipelineIdle(),
     log: (event) => {
       logPreload(event);
       if (event.type === 'eviction') discardNativeTextSourcePages(doc, [event.page]);

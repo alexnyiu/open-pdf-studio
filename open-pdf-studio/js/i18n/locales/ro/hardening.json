@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Fă dublu clic sau apasă Enter pentru a edita.",
     "timezoneHint": "Datele sunt afișate în fusul orar {{timezone}} și salvate în format ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Aprobă înlocuirea fontului",
-    "sourceFace": "Font sursă",
-    "sourceFaces": "Fonturi sursă",
-    "unknown": "Necunoscut",
-    "packagedSubstitute": "Font înlocuitor inclus",
-    "notAvailable": "Indisponibil",
-    "sampleText": "Exemplu",
-    "sampleFallback": "Vulpea brună și rapidă sare peste câinele leneș.",
-    "scope": "Se aplică pentru",
-    "scopeAnnotation": "Această adnotare",
-    "scopeSelection": "Casetele de text selectate",
-    "scopeParagraph": "Acest paragraf PDF",
-    "scopeFindReplace": "Această editare Căutare/Înlocuire",
-    "remember": "Reține această aprobare pentru documentul deschis",
-    "approve": "Folosește fontul înlocuitor",
-    "cancel": "Anulează"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Editează textul PDF",

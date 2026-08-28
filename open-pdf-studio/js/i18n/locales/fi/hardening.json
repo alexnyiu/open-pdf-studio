@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Muokkaa kaksoisnapsauttamalla tai painamalla Enter.",
     "timezoneHint": "Päivämäärät näytetään aikavyöhykkeellä {{timezone}} ja tallennetaan ISO 8601 -muodossa."
   },
-  "fontSubstitution": {
-    "title": "Hyväksy fontin korvaaminen",
-    "sourceFace": "Alkuperäinen fontti",
-    "sourceFaces": "Alkuperäiset fontit",
-    "unknown": "Tuntematon",
-    "packagedSubstitute": "Sovellukseen sisältyvä korvaava fontti",
-    "notAvailable": "Ei saatavilla",
-    "sampleText": "Esimerkki",
-    "sampleFallback": "Nopea ruskea kettu hyppää laiskan koiran yli.",
-    "scope": "Koskee",
-    "scopeAnnotation": "Tätä merkintää",
-    "scopeSelection": "Valittuja tekstiruutuja",
-    "scopeParagraph": "Tätä PDF-kappaletta",
-    "scopeFindReplace": "Tätä Etsi/korvaa-muokkausta",
-    "remember": "Muista tämä hyväksyntä avoimessa asiakirjassa",
-    "approve": "Käytä korvaavaa fonttia",
-    "cancel": "Peruuta"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Muokkaa PDF-tekstiä",

@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. انقر نقرًا مزدوجًا أو اضغط Enter للتحرير.",
     "timezoneHint": "تُعرض التواريخ وفق المنطقة الزمنية {{timezone}} وتُحفظ بتنسيق ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "الموافقة على استبدال الخط",
-    "sourceFace": "الخط الأصلي",
-    "sourceFaces": "الخطوط الأصلية",
-    "unknown": "غير معروف",
-    "packagedSubstitute": "الخط البديل المضمّن",
-    "notAvailable": "غير متوفر",
-    "sampleText": "عيّنة",
-    "sampleFallback": "نص تجريبي لعرض شكل الخط البديل.",
-    "scope": "ينطبق على",
-    "scopeAnnotation": "هذا التعليق التوضيحي",
-    "scopeSelection": "مربعات النص المحددة",
-    "scopeParagraph": "فقرة PDF هذه",
-    "scopeFindReplace": "تعديل البحث والاستبدال هذا",
-    "remember": "تذكّر هذه الموافقة لهذا المستند المفتوح",
-    "approve": "استخدام الخط البديل",
-    "cancel": "إلغاء"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "تحرير نص PDF",

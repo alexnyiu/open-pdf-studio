@@ -15,6 +15,12 @@ import {
 } from './page-bitmap-cache.js';
 import { tileCoversViewport } from './tile-coverage.js';
 import { canvasBackingDimensions, normalizedCanvasDpr } from './canvas-dpr.js';
+import {
+  registerRenderResource,
+  unregisterRenderResource,
+} from './render-resource-budget.js';
+import { recordPerformancePeak } from './performance-metrics.js';
+import { releaseCanvasBackingStores } from './viewport-backing-store.js';
 
 // ─── Viewport State (singleton via window to survive HMR/dynamic imports) ───
 if (!window.__pdfViewport) {
@@ -45,12 +51,52 @@ export const viewport = window.__pdfViewport;
 viewport.documentId ??= null;
 viewport.documentLifecycleGeneration ??= 0;
 viewport.viewportRevision ??= 0;
+viewport.backingStoresSuspended ??= false;
 
 let _canvas = null;
 let _ctx = null;
 let _rafId = 0;
 let _annotationRedraw = null; // callback for annotation overlay
 let _resizeObserver = null;
+const _viewportCanvasResourceKeys = new Set();
+
+function _registerViewportCanvasResources(container) {
+  const doc = getActiveDocument();
+  if (!doc || !_canvas) return;
+  const expectedPrefix = `viewport-canvas:${doc.id}:${Number(doc.lifecycleGeneration) || 0}:`;
+  for (const key of [..._viewportCanvasResourceKeys]) {
+    if (key.startsWith(expectedPrefix)) continue;
+    unregisterRenderResource(key);
+    _viewportCanvasResourceKeys.delete(key);
+  }
+  const surfaces = [
+    ['pdf', _canvas],
+    ['annotation', container?.querySelector('.annotation-canvas, #annotation-canvas')],
+    ['highlight', container?.querySelector('#text-highlight-canvas')],
+  ];
+  let totalBytes = 0;
+  for (const [kind, canvas] of surfaces) {
+    if (!canvas) continue;
+    const key = `${expectedPrefix}${kind}`;
+    const bytes = Math.max(0, (canvas.width || 0) * (canvas.height || 0) * 4);
+    totalBytes += bytes;
+    _viewportCanvasResourceKeys.add(key);
+    registerRenderResource({
+      key,
+      category: 'javascript',
+      documentId: doc.id,
+      bytes,
+      protected: () => _canvas === canvas && getActiveDocument()?.id === doc.id,
+      release: () => {
+        if (viewport.active && viewport.documentId === doc.id) return;
+        canvas.width = 0;
+        canvas.height = 0;
+        _viewportCanvasResourceKeys.delete(key);
+      },
+    });
+  }
+  recordPerformancePeak('mountedViewportCanvasBytes', totalBytes);
+}
 
 function _dispatchViewportEvent(type, reason) {
   if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
@@ -108,9 +154,49 @@ export function initViewport(canvas, annotationRedrawFn) {
   _startLoop();
 }
 
-export function destroyViewport() {
+/**
+ * Continuous/facing modes own page-local surfaces and must not retain the
+ * hidden single-page canvas stack as a second raster owner. Keep the DOM nodes
+ * and listeners intact, but release their pixel backing stores until setPage()
+ * reactivates the viewport.
+ */
+export function suspendViewportBackingStores(reason = 'inactive-view') {
+  if (viewport.backingStoresSuspended) {
+    return Object.freeze({ releasedBytes: 0, releasedCount: 0 });
+  }
+
   viewport.active = false;
-  bumpViewportRevision('teardown');
+  viewport.backingStoresSuspended = true;
+  viewport.currentBitmap = null;
+  viewport.currentTile = null;
+  viewport.currentTileMeta = null;
+  viewport.dirty = false;
+  _vx = 0;
+  _vy = 0;
+  if (_panTileTimer) clearTimeout(_panTileTimer);
+  _panTileTimer = null;
+  if (_zoomOrchTimer) clearTimeout(_zoomOrchTimer);
+  _zoomOrchTimer = null;
+  if (_zoomFreezeTimer) clearTimeout(_zoomFreezeTimer);
+  _zoomFreezeTimer = null;
+  _zoomFreezeBitmap = null;
+
+  const container = document.getElementById('pdf-container');
+  const result = releaseCanvasBackingStores([
+    _canvas || document.getElementById('pdf-canvas'),
+    container?.querySelector('.annotation-canvas, #annotation-canvas')
+      || document.getElementById('annotation-canvas'),
+    container?.querySelector('#text-highlight-canvas')
+      || document.getElementById('text-highlight-canvas'),
+  ]);
+  for (const key of _viewportCanvasResourceKeys) unregisterRenderResource(key);
+  _viewportCanvasResourceKeys.clear();
+  bumpViewportRevision(reason);
+  return result;
+}
+
+export function destroyViewport() {
+  suspendViewportBackingStores('teardown');
   _dispatchViewportEvent('opds:viewport-teardown', 'teardown');
   cancelAnimationFrame(_rafId);
   window.removeEventListener('resize', _resizeCanvas);
@@ -120,6 +206,8 @@ export function destroyViewport() {
   }
   _canvas = null;
   _ctx = null;
+  for (const key of _viewportCanvasResourceKeys) unregisterRenderResource(key);
+  _viewportCanvasResourceKeys.clear();
 }
 
 // Canvas backing-store DPR multiplier. window.devicePixelRatio (1.0–3.0 typical)
@@ -129,7 +217,7 @@ export function destroyViewport() {
 function _getDpr() { return normalizedCanvasDpr(window.devicePixelRatio); }
 
 function _resizeCanvas() {
-  if (!_canvas) return;
+  if (!_canvas || viewport.backingStoresSuspended) return;
   const container = document.getElementById('pdf-container');
   if (!container) return;
   const w = container.clientWidth;
@@ -190,6 +278,7 @@ function _resizeCanvas() {
     viewport.dirty = true;
     bumpViewportRevision('resize');
   }
+  _registerViewportCanvasResources(container);
 }
 
 // ─── Cross-monitor DPI change (issue #263) ─────────────────────────────────
@@ -239,19 +328,12 @@ async function _applyDprChange() {
   const doc = getActiveDocument();
   _dispatchViewportEvent('opds:dpr-change', 'device-pixel-ratio');
   if (doc && doc.viewMode === 'continuous') {
-    // Continuous/book/facing mode paints per-page canvases sized at
-    // getCanvasDPR() when they are built. Rebuild them at the new dpr so they
-    // stay crisp, and restore the logical scroll position across the rebuild
-    // (the innerHTML reset collapses scrollHeight → scrollTop would snap to 0).
+    // Keep the old raster mounted as a temporary preview. Geometry is CSS/PDF
+    // based and therefore unchanged by DPR; only mounted backing stores need
+    // one latest-only sharp refresh.
     try {
-      const scrollEl = document.getElementById('pdf-container');
-      const prevTop = scrollEl ? scrollEl.scrollTop : 0;
-      const prevH = scrollEl ? scrollEl.scrollHeight : 0;
       const m = await import('./renderer.js');
-      await m.renderContinuous(true);
-      if (scrollEl && prevH > 0) {
-        scrollEl.scrollTop = (prevTop / prevH) * scrollEl.scrollHeight;
-      }
+      await m.reRenderVisibleContinuousPages();
     } catch { /* re-render is best-effort */ }
     return;
   }
@@ -963,6 +1045,7 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
     viewport.currentTileMeta = null;
   }
 
+  const wasBackingStoreSuspended = viewport.backingStoresSuspended;
   viewport.filePath = filePath;
   viewport.documentId = nextDocumentId;
   viewport.documentLifecycleGeneration = nextLifecycleGeneration;
@@ -973,6 +1056,8 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
   viewport.originY = originY || 0;
   viewport.rotation = rotation || 0;
   viewport.active = true;
+  viewport.backingStoresSuspended = false;
+  if (wasBackingStoreSuspended) _resizeCanvas();
 
   if (_suppressNextFit) {
     _suppressNextFit = false;

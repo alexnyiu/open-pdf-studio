@@ -8,8 +8,10 @@ import {
   PACKAGED_FONT_FACES,
   resolvePackagedFace,
   setPackagedFontAssetLoader,
+  shapeOwnedTextEditForPersistence,
   shapeRichTextDocument,
   shapeTextRun,
+  shapedRunCacheMetrics,
 } from '../js/text/font-catalog.js';
 import { richTextFromPlainText } from '../js/text/rich-text.js';
 
@@ -75,4 +77,50 @@ test('packaged shaping supplies shared advances, glyphs, decoration metrics, and
     shapeTextRun({ text: '🫠', faceId: 'liberation-sans-regular', size: 12, direction: 'ltr' }),
     /Missing glyph/u,
   );
+});
+
+test('concurrent same-run shaping retains one bounded LRU entry', async () => {
+  const loader = (face) => readFile(fileURLToPath(new URL(face.fileName, assetRoot)));
+  const run = {
+    text: 'Concurrent packaged shaping must share one cache entry',
+    faceId: 'liberation-sans-regular',
+    size: 11,
+    direction: 'ltr',
+  };
+  setPackagedFontAssetLoader(loader);
+  await shapeTextRun(run);
+  const single = shapedRunCacheMetrics();
+
+  setPackagedFontAssetLoader(loader);
+  const [left, right] = await Promise.all([shapeTextRun(run), shapeTextRun({ ...run })]);
+  const concurrent = shapedRunCacheMetrics();
+  assert.deepEqual(right, left);
+  assert.equal(concurrent.entries, 1);
+  assert.equal(concurrent.bytes, single.bytes,
+    'a concurrent same-key miss must not double-count the retained bytes');
+});
+
+test('persistence accepts the exact worker-validated vector-text geometry', async () => {
+  const draft = richTextFromPlainText('Exact persisted width', {
+    faceId: 'liberation-sans-regular',
+    size: 12,
+  }, { x: 40, y: 700, width: 300, height: 40, baseline: 712 });
+  const measured = await shapeRichTextDocument(draft, { antialiasMargin: 0 });
+  const exact = {
+    ...draft,
+    region: {
+      ...draft.region,
+      width: measured.width,
+      height: measured.height,
+    },
+  };
+
+  const previewBounds = await shapeRichTextDocument(exact);
+  const persistedBounds = await shapeOwnedTextEditForPersistence(exact);
+  assert.equal(previewBounds.overflow, true,
+    'raster preview padding should exceed an exactly fitted vector-text region');
+  assert.equal(persistedBounds.overflow, false,
+    'save-time validation must preserve the exact geometry accepted by the worker');
+  assert.equal(persistedBounds.width, measured.width);
+  assert.equal(persistedBounds.height, measured.height);
 });

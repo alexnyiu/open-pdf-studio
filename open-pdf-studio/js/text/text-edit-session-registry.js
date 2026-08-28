@@ -34,6 +34,75 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
     return true;
   };
 
+  const applySession = (session, reason = 'apply') => {
+    if (!session) return Promise.resolve(false);
+    if (activeApplyOperation?.session === session) return activeApplyOperation.promise;
+    if (!ownerMatches(session)) {
+      activeSession = null;
+      session.cancel('stale-owner');
+      return Promise.resolve(false);
+    }
+    const operationState = {
+      session,
+      valid: true,
+      reason: null,
+      operation: null,
+      promise: null,
+    };
+    const operation = Object.freeze({
+      operationId: `text-edit-apply-${now().toString(36)}-${(++nextOperationId).toString(36)}`,
+      sessionId: session.sessionId,
+      ownerDocumentId: session.ownerDocumentId,
+      ownerDocumentGeneration: session.ownerDocumentGeneration,
+      reason,
+      isCurrent() {
+        return operationState.valid
+          && activeApplyOperation === operationState
+          && ownerMatches(session);
+      },
+    });
+    operationState.operation = operation;
+    activeApplyOperation = operationState;
+    let resolveOperation;
+    let rejectOperation;
+    operationState.promise = new Promise((resolve, reject) => {
+      resolveOperation = resolve;
+      rejectOperation = reject;
+    });
+    void (async () => {
+      try {
+        const result = await session.commit(operation);
+        if (!ownerMatches(session)) {
+          invalidateApplyOperation(session, 'stale-owner');
+          if (activeSession?.sessionId === session.sessionId) {
+            activeSession = null;
+            session.cancel('stale-owner');
+          }
+          resolveOperation(false);
+          return;
+        }
+        if (!operation.isCurrent() || result === false) {
+          resolveOperation(false);
+          return;
+        }
+        clearIfCurrent(session);
+        resolveOperation(true);
+      } catch (error) {
+        if (!ownerMatches(session)) {
+          invalidateApplyOperation(session, 'stale-owner');
+          if (activeSession?.sessionId === session.sessionId) {
+            activeSession = null;
+            session.cancel('stale-owner');
+          }
+        }
+        rejectOperation(error);
+      } finally {
+        if (activeApplyOperation === operationState) activeApplyOperation = null;
+      }
+    })();
+    return operationState.promise;
+  };
+
   return {
     register({
       ownerDocumentId,
@@ -87,59 +156,13 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
         return true;
       }
     },
-    async applyActive() {
+    applyActive(reason = 'apply') {
+      return applySession(activeSession, reason);
+    },
+    commitForDocument(documentId, reason = 'document-command') {
       const session = activeSession;
-      if (!session) return false;
-      if (activeApplyOperation?.session === session) return false;
-      if (!ownerMatches(session)) {
-        activeSession = null;
-        session.cancel('stale-owner');
-        return false;
-      }
-      const operationState = {
-        session,
-        valid: true,
-        reason: null,
-        operation: null,
-      };
-      const operation = Object.freeze({
-        operationId: `text-edit-apply-${now().toString(36)}-${(++nextOperationId).toString(36)}`,
-        sessionId: session.sessionId,
-        ownerDocumentId: session.ownerDocumentId,
-        ownerDocumentGeneration: session.ownerDocumentGeneration,
-        isCurrent() {
-          return operationState.valid
-            && activeApplyOperation === operationState
-            && ownerMatches(session);
-        },
-      });
-      operationState.operation = operation;
-      activeApplyOperation = operationState;
-      try {
-        const result = await session.commit(operation);
-        if (!ownerMatches(session)) {
-          invalidateApplyOperation(session, 'stale-owner');
-          if (activeSession?.sessionId === session.sessionId) {
-            activeSession = null;
-            session.cancel('stale-owner');
-          }
-          return false;
-        }
-        if (!operation.isCurrent() || result === false) return false;
-        clearIfCurrent(session);
-        return true;
-      } catch (error) {
-        if (!ownerMatches(session)) {
-          invalidateApplyOperation(session, 'stale-owner');
-          if (activeSession?.sessionId === session.sessionId) {
-            activeSession = null;
-            session.cancel('stale-owner');
-          }
-        }
-        throw error;
-      } finally {
-        if (activeApplyOperation === operationState) activeApplyOperation = null;
-      }
+      if (!session || session.ownerDocumentId !== documentId) return Promise.resolve(true);
+      return applySession(session, reason);
     },
     ownerIsCurrent(session = activeSession) {
       return ownerMatches(session);

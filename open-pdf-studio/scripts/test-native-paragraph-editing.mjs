@@ -158,6 +158,10 @@ try {
   assert.equal(pageLocalState.hostPage, '1');
   assert.equal(pageLocalState.hostDocument, 'native-paragraph-test-document');
   assert.equal(pageLocalState.boxShadow, 'none');
+  await page.waitForFunction(() => {
+    const activeEditor = document.querySelector('.pdf-text-editor');
+    return activeEditor && document.activeElement === activeEditor;
+  });
   await page.evaluate(() => {
     const previous = document.getElementById('canvas-container');
     previous.id = 'retired-native-page-container';
@@ -174,8 +178,26 @@ try {
     document.querySelector('.pdf-text-editor')?.closest('.pdf-text-edit-layer')?.parentElement?.id
       === 'canvas-container'
   ));
-  assert.equal(await editor.evaluate((node) => document.activeElement === node), true,
-    'page-container replacement must preserve editor focus');
+  try {
+    await page.waitForFunction(() => {
+      const activeEditor = document.querySelector('.pdf-text-editor');
+      return activeEditor && document.activeElement === activeEditor;
+    }, null, {
+      timeout: 5_000,
+    });
+  } catch (error) {
+    const focusState = await page.evaluate(() => ({
+      activeTag: document.activeElement?.tagName || null,
+      activeClass: document.activeElement?.className || null,
+      editorConnected: document.querySelector('.pdf-text-editor')?.isConnected === true,
+      editorParent: document.querySelector('.pdf-text-editor')
+        ?.closest('.pdf-text-edit-layer')?.parentElement?.id || null,
+      placement: window.__pdfTextEditPlacementDebug || null,
+    }));
+    throw new Error(`page-container replacement did not preserve editor focus: ${JSON.stringify(focusState)}`, {
+      cause: error,
+    });
+  }
   await page.evaluate(() => document.getElementById('retired-native-page-container')?.remove());
   assert.equal(await target.evaluate((node) => node.style.visibility), 'hidden',
     'owned source spans must be hidden before the rich editor is painted');

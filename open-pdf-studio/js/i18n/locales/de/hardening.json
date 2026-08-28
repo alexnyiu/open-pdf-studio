@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Zum Bearbeiten doppelklicken oder die Eingabetaste drücken.",
     "timezoneHint": "Datumsangaben werden in der Zeitzone {{timezone}} angezeigt und im Format ISO 8601 gespeichert."
   },
-  "fontSubstitution": {
-    "title": "Schriftersetzung genehmigen",
-    "sourceFace": "Originalschriftart",
-    "sourceFaces": "Originalschriftarten",
-    "unknown": "Unbekannt",
-    "packagedSubstitute": "Mitgelieferte Ersatzschrift",
-    "notAvailable": "Nicht verfügbar",
-    "sampleText": "Beispiel",
-    "sampleFallback": "Franz jagt im komplett verwahrlosten Taxi quer durch Bayern.",
-    "scope": "Gilt für",
-    "scopeAnnotation": "Diese Anmerkung",
-    "scopeSelection": "Die ausgewählten Textfelder",
-    "scopeParagraph": "Diesen PDF-Absatz",
-    "scopeFindReplace": "Diese Suchen/Ersetzen-Änderung",
-    "remember": "Diese Genehmigung für das geöffnete Dokument merken",
-    "approve": "Ersatzschrift verwenden",
-    "cancel": "Abbrechen"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "PDF-Text bearbeiten",

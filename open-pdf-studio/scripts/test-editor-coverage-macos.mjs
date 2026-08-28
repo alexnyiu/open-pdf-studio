@@ -318,13 +318,6 @@ async function runCoverage(options) {
       return tool;
     }
 
-    async function approveFontIfNeeded() {
-      const approval = await ui('.font-substitution-dialog .pref-btn-primary', false);
-      if (!approval.found || !approval.visible || approval.disabled) return false;
-      await click('.font-substitution-dialog .pref-btn-primary', false);
-      return true;
-    }
-
     function editorSnapshot(editor) {
       return {
         sample: String(editor.value ?? editor.text ?? '').slice(0, 300),
@@ -339,9 +332,16 @@ async function runCoverage(options) {
       return waitUntil(`${adapter.id} editor`, async () => {
         const editor = await ui('.pdf-text-editor', false);
         if (!editor.found || !editor.visible) {
-          await approveFontIfNeeded();
           return null;
         }
+        const [apply, cancel, substitutionDialog] = await Promise.all([
+          ui('.pdf-text-editor-apply', false),
+          ui('.pdf-text-editor-cancel', false),
+          ui('.font-substitution-dialog', false),
+        ]);
+        assert.equal(apply.found, false, 'Apply control must not be rendered');
+        assert.equal(cancel.found, false, 'Cancel control must not be rendered');
+        assert.equal(substitutionDialog.found, false, 'font substitution must be automatic');
         const viewport = await call('app_get_viewport_state');
         const sample = String(editor.value ?? editor.text ?? '');
         if (!normalize(sample).includes(normalize(adapter.expected).slice(0, 80))) return null;
@@ -387,16 +387,36 @@ async function runCoverage(options) {
     }
 
     async function setZoomPercent(zoomPercent) {
-      await click('.status-zoom-input', false);
-      await call('app_key', { key: 'a', meta: true });
+      const clicked = await click('.status-zoom-input', false);
+      const selected = await call('app_key', { key: 'a', meta: true });
       const typed = await call('app_type', { text: `${zoomPercent}%` });
       assert.equal(typed.ok, true, typed.error);
-      await call('app_key', { key: 'Enter' });
-      const viewport = await waitUntil(`zoom ${zoomPercent}%`, async () => {
-        const state = await call('app_get_viewport_state');
-        const actual = Number(state.viewport?.active ? state.viewport.zoom : state.doc?.scale);
-        return Math.abs(actual - zoomPercent / 100) <= 0.01 ? state : null;
-      });
+      const inputAfterTyping = await ui('.status-zoom-input', false);
+      const submitted = await call('app_key', { key: 'Enter' });
+      let viewport;
+      try {
+        viewport = await waitUntil(`zoom ${zoomPercent}%`, async () => {
+          const state = await call('app_get_viewport_state');
+          const actual = Number(state.viewport?.active ? state.viewport.zoom : state.doc?.scale);
+          return Math.abs(actual - zoomPercent / 100) <= 0.01 ? state : null;
+        });
+      } catch (error) {
+        const [inputAfterTimeout, viewportAfterTimeout] = await Promise.all([
+          ui('.status-zoom-input', false),
+          call('app_get_viewport_state'),
+        ]);
+        throw new Error(`${error.message}; zoom-submit=${JSON.stringify({
+          clicked,
+          selected,
+          typed,
+          inputAfterTyping,
+          submitted,
+          inputAfterTimeout,
+          observedZoom: Number(viewportAfterTimeout.viewport?.active
+            ? viewportAfterTimeout.viewport.zoom : viewportAfterTimeout.doc?.scale),
+          session: viewportAfterTimeout.editorSession ?? null,
+        })}`);
+      }
       return {
         control: '.status-zoom-input',
         submitted: `${zoomPercent}%`,
@@ -461,22 +481,18 @@ async function runCoverage(options) {
     }
 
     async function applyEditor() {
-      await waitUi(
-        '.pdf-text-editor-apply',
-        (value) => value.found && value.visible && !value.disabled,
-        90_000,
-      );
-      await click('.pdf-text-editor-apply', false);
+      await clickAtElement('.status-page-input');
       await waitUi('.pdf-text-editor', (value) => !value.found, 90_000);
       const viewport = await call('app_get_viewport_state');
-      assert.equal(viewport.editorSession, null, 'Apply left an editor session registered');
+      assert.equal(viewport.editorSession, null, 'click-away left an editor session registered');
     }
 
     async function cancelEditor() {
-      await click('.pdf-text-editor-cancel', false);
+      await focusEditor();
+      await call('app_key', { key: 'Escape' });
       await waitUi('.pdf-text-editor', (value) => !value.found);
       const viewport = await call('app_get_viewport_state');
-      assert.equal(viewport.editorSession, null, 'Cancel left an editor session registered');
+      assert.equal(viewport.editorSession, null, 'Escape left an editor session registered');
     }
 
     async function listAnnotations() {
@@ -523,7 +539,6 @@ async function runCoverage(options) {
       await waitUntil(`${type} editor`, async () => {
         const editor = await ui('.pdf-text-editor', false);
         if (editor.found && editor.visible) return editor;
-        await approveFontIfNeeded();
         return null;
       });
       await replaceDraft(text);
@@ -590,10 +605,11 @@ async function runCoverage(options) {
     }
 
     async function openAnnotationEditor(adapter) {
-      const annotation = (await listAnnotations()).find((candidate) => (
-        candidate.type === adapter.id && normalize(candidate.text) === normalize(adapter.expected)
+      const annotation = await waitUntil(`${adapter.id} annotation fixture`, async () => (
+        (await listAnnotations()).find((candidate) => (
+          candidate.type === adapter.id && normalize(candidate.text) === normalize(adapter.expected)
+        )) || null
       ));
-      assert.ok(annotation, `${adapter.id} annotation fixture is missing`);
       await activateTool('#tool-select', 'select');
       const point = await annotationPoint(annotation);
       const pointer = await call('app_mouse_click', { ...point, double: true });
@@ -719,6 +735,17 @@ async function runCoverage(options) {
       return { editor, viewport };
     }
 
+    async function waitForSettledEditorValidation(adapter, timeoutMs = 90_000) {
+      return waitUntil(`${adapter.id} settled editor validation`, async () => {
+        const viewport = await call('app_get_viewport_state');
+        const layout = viewport.editorMetrics?.layoutState;
+        if (!viewport.editorSession || !layout || layout.pending === true) return null;
+        if (layout.requestedFingerprint
+            && layout.requestedFingerprint !== layout.validatedFingerprint) return null;
+        return viewport;
+      }, timeoutMs);
+    }
+
     async function assertViewOnlySessionClean(adapter, sessionId, transition) {
       const { viewport } = await assertLiveEditor(adapter, sessionId);
       assert.equal(
@@ -784,13 +811,11 @@ async function runCoverage(options) {
       const ownerDocumentId = opened.viewport.editorSession.ownerDocumentId;
       const ownerGeneration = opened.viewport.editorSession.ownerDocumentGeneration;
       try {
-        await waitUi(
-          '.pdf-text-editor-apply',
-          (value) => value.found && value.visible && !value.disabled,
-          90_000,
-        );
+        const validation = await waitForSettledEditorValidation(adapter);
+        assert.notEqual(validation.editorMetrics?.layoutState?.valid, false,
+          `${adapter.id} initial exact validation failed`);
       } catch (error) {
-        await captureApplyDiagnostics(adapter, 'initial-apply-validation');
+        await captureApplyDiagnostics(adapter, 'initial-layout-validation');
         throw error;
       }
       const settledOpen = await call('app_get_viewport_state');
@@ -801,10 +826,18 @@ async function runCoverage(options) {
       assert.equal(settledOpen.editorSession?.dirty, false,
         `${adapter.id} became dirty during initial exact-layout normalization`);
       let latestActions = {};
+      const transitionZoomPercent = EDITOR_COVERAGE_DIMENSIONS.zoomPercents[0];
       for (const viewMode of EDITOR_COVERAGE_DIMENSIONS.viewModes) {
+        // End-of-slice evidence is captured at 250%. Return to the first
+        // required zoom before rebuilding the page host or rotating it; doing
+        // either transition at 250% creates a transient 124 MB one-page raster
+        // that exceeds the production worker's 64 MB shared-memory transport.
+        // Every requested 250% view/rotation combination is still asserted.
+        latestActions.zoom = await setZoomPercent(transitionZoomPercent);
         latestActions.view = await setViewMode(viewMode);
         await assertViewOnlySessionClean(adapter, sessionId, `view mode ${viewMode}`);
         for (const rotation of EDITOR_COVERAGE_DIMENSIONS.rotations) {
+          latestActions.zoom = await setZoomPercent(transitionZoomPercent);
           latestActions.rotation = await setRotation(rotation);
           await assertViewOnlySessionClean(adapter, sessionId, `rotation ${rotation}`);
           for (const zoomPercent of EDITOR_COVERAGE_DIMENSIONS.zoomPercents) {
@@ -823,15 +856,11 @@ async function runCoverage(options) {
               assert.equal(viewport.editorSession.ownerDocumentGeneration, ownerGeneration);
               assert.equal(viewport.editorSession.dirty, false,
                 `${adapter.id} became dirty from view-only matrix operations`);
-              let apply;
+              let validation;
               try {
-                apply = await waitUi(
-                  '.pdf-text-editor-apply',
-                  (value) => value.found && value.visible && !value.disabled,
-                  90_000,
-                );
+                validation = await waitForSettledEditorValidation(adapter);
               } catch (error) {
-                await captureApplyDiagnostics(adapter, 'matrix-apply-validation', {
+                await captureApplyDiagnostics(adapter, 'matrix-layout-validation', {
                   viewMode,
                   rotation,
                   zoomPercent,
@@ -839,9 +868,15 @@ async function runCoverage(options) {
                 });
                 throw error;
               }
-              const cancel = await ui('.pdf-text-editor-cancel', false);
-              assert.equal(apply.found && apply.visible && !apply.disabled, true);
-              assert.equal(cancel.found && cancel.visible, true);
+              const [apply, cancel, substitutionDialog] = await Promise.all([
+                ui('.pdf-text-editor-apply', false),
+                ui('.pdf-text-editor-cancel', false),
+                ui('.font-substitution-dialog', false),
+              ]);
+              assert.equal(validation.editorMetrics?.layoutState?.valid, true);
+              assert.equal(apply.found, false);
+              assert.equal(cancel.found, false);
+              assert.equal(substitutionDialog.found, false);
               const evidenceId = [adapter.id, viewMode, rotation, zoomPercent, theme].join('|');
               const evidence = {
                 evidenceId,
@@ -861,9 +896,10 @@ async function runCoverage(options) {
                   zoom: actualZoom,
                   rotation: observedRotation(viewport),
                   themeAttributeMatched: true,
-                  applyVisible: true,
-                  applyEnabledAfterExactValidation: true,
-                  cancelVisible: true,
+                  exactValidationPassed: true,
+                  applyControlAbsent: true,
+                  cancelControlAbsent: true,
+                  substitutionDialogAbsent: true,
                 },
                 productionActions: structuredClone(latestActions),
               };
@@ -1237,8 +1273,8 @@ async function runCoverage(options) {
       const keyboardSession = await openAdapterForPhase(adapter, 'keyboard-controls-open');
       const applyControl = await ui('.pdf-text-editor-apply', false);
       const cancelControl = await ui('.pdf-text-editor-cancel', false);
-      assert.equal(applyControl.found && applyControl.visible, true);
-      assert.equal(cancelControl.found && cancelControl.visible, true);
+      assert.equal(applyControl.found, false);
+      assert.equal(cancelControl.found, false);
       await focusEditor();
       await call('app_key', { key: 'Escape' });
       await waitUi('.pdf-text-editor', (value) => !value.found);
@@ -1247,8 +1283,8 @@ async function runCoverage(options) {
       await assertPersistedText(adapter, adapter.expected, 'original');
       await recordLifecycle(adapter, 'keyboard-only-controls', {
         sessionId: keyboardSession.viewport.editorSession.sessionId,
-        applyControlVisible: true,
-        cancelControlVisible: true,
+        applyControlAbsent: true,
+        cancelControlAbsent: true,
         escapeCancelled: true,
         sourceRestored: true,
       }, ['focus production editor', 'press Escape', 'inspect source and registry']);
@@ -1319,8 +1355,10 @@ async function runCoverage(options) {
       // identical canonical box, rich-text region, and callout-leader geometry.
       await resetFamily(adapter);
       const textAnnotation = adapter.id === 'textbox' || adapter.id === 'callout'
-        ? (await listAnnotations()).find((candidate) => (
-          candidate.type === adapter.id && normalize(candidate.text) === normalize(adapter.expected)
+        ? await waitUntil(`${adapter.id} geometry fixture`, async () => (
+          (await listAnnotations()).find((candidate) => (
+            candidate.type === adapter.id && normalize(candidate.text) === normalize(adapter.expected)
+          )) || null
         ))
         : null;
       if (adapter.id === 'textbox' || adapter.id === 'callout') {

@@ -592,6 +592,43 @@ export function updateEditorGeometry({ canonicalBounds, width, minimumHeight, an
   } : previous);
 }
 
+/**
+ * Publish exact-layout geometry without changing the immutable source width
+ * used to decide whether automatic font compensation is permitted.
+ */
+export function updateEditorValidatedLayoutGeometry({ canonicalBounds, effectiveContentWidth }) {
+  if (!canonicalBounds) return;
+  const safeWidth = Math.max(0.0001, Number(canonicalBounds.width) || 0.0001);
+  const safeHeight = Math.max(0.0001, Number(canonicalBounds.height) || 0.0001);
+  setEditorPlacement((previous) => previous ? {
+    ...previous,
+    canonicalBounds: { ...canonicalBounds },
+    sourceClientAnchor: null,
+    canonicalStyle: mergePageTextEditStyle(previous.canonicalStyle, {
+      geometry: { width: safeWidth, height: safeHeight, offsetX: 0, offsetY: 0 },
+    }),
+  } : previous);
+  setEditorStyle((previous) => {
+    const placement = editorPlacement();
+    const sourceScale = Math.max(0.0001, Number(placement?.sourceScale) || 1);
+    return {
+      ...(previous || {}),
+      width: `${safeWidth * sourceScale}px`,
+      height: `${safeHeight * sourceScale}px`,
+    };
+  });
+  setEditorOptions((previous) => previous?.expandableRegion ? {
+    ...previous,
+    expandableRegion: {
+      ...previous.expandableRegion,
+      effectiveContentWidth: Math.max(
+        0.0001,
+        Number(effectiveContentWidth) || previous.expandableRegion.contentWidth,
+      ),
+    },
+  } : previous);
+}
+
 function applyEditorGeometryHistory(geometry) {
   if (!geometry?.canonicalBounds) return;
   updateEditorGeometry({

@@ -3381,6 +3381,7 @@ dependencies = [
  "tauri-plugin-store",
  "tauri-plugin-updater",
  "tokio",
+ "tokio-util",
  "url",
  "urlencoding",
  "whoami",
@@ -3561,6 +3562,7 @@ name = "pdfium-worker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "image",
  "lopdf",
  "memmap2",
  "pdfium-render",

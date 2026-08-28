@@ -14,11 +14,20 @@ import {
   visibleThumbnailPages,
 } from '../ui/panels/left-panel.js';
 import { wholeDocumentPreloadPages } from './pdf-preload-controller.js';
+import { documentPreloadMode, shouldPreloadEntireDocument } from './preload-policy.js';
+import { isPdfForegroundIdle } from './foreground-activity.js';
+import { backgroundRenderAdmissionAllowed } from './render-resource-budget.js';
 
 export const WHOLE_PDF_PRELOAD_LIMITS = Object.freeze({
   maxPages: 1000,
   maxBytes: 256 * 1024 * 1024,
   maxWorkMs: 120_000,
+});
+
+export const ADAPTIVE_PDF_PRELOAD_LIMITS = Object.freeze({
+  maxPages: 50,
+  maxBytes: 64 * 1024 * 1024,
+  maxWorkMs: 30_000,
 });
 
 const coordinators = new WeakMap();
@@ -74,10 +83,16 @@ export class WholePdfPreloadCoordinator {
   }
 
   isForegroundIdle() {
-    return (window.__pdfRenderInFlight || 0) === 0
-      && !window.__pdfSaveInProgress
+    return isPdfForegroundIdle()
+      && backgroundRenderAdmissionAllowed()
       && !state.isDrawing
       && !state.isEditingText;
+  }
+
+  effectiveLimits() {
+    return documentPreloadMode(state.preferences) === 'adaptive'
+      ? ADAPTIVE_PDF_PRELOAD_LIMITS
+      : this.limits;
   }
 
   cancel({ release = false, reason = 'cancelled' } = {}) {
@@ -104,7 +119,7 @@ export class WholePdfPreloadCoordinator {
   }
 
   start() {
-    if (!this.doc?.pdfDoc || !state.preferences.preloadEntirePdf) return Promise.resolve();
+    if (!this.doc?.pdfDoc || !shouldPreloadEntireDocument(this.doc, state.preferences)) return Promise.resolve();
     if (this.pdfIdentity !== this.doc.pdfDoc) {
       this.cancel({ release: true, reason: 'reload' });
       this.completedPages.clear();
@@ -128,7 +143,7 @@ export class WholePdfPreloadCoordinator {
   async run(order, generation) {
     for (const pageNum of order) {
       if (generation !== this.generation || !this.doc.pdfDoc) return;
-      if (!state.preferences.preloadEntirePdf) {
+      if (!shouldPreloadEntireDocument(this.doc, state.preferences)) {
         this.cancel({ release: true, reason: 'preference-off' });
         return;
       }
@@ -171,7 +186,7 @@ export class WholePdfPreloadCoordinator {
           return;
         }
         const pageBytes = (thumbnail?.bytes || 0) + (vector?.bytes || 0) + (editable?.bytes || 0);
-        if (this.retainedBytes + pageBytes > this.limits.maxBytes) {
+        if (this.retainedBytes + pageBytes > this.effectiveLimits().maxBytes) {
           releaseThumbnailPage(this.doc, pageNum);
           releaseEditableMetadataPage(this.doc, pageNum);
           if (this.doc.filePath) {
@@ -199,9 +214,10 @@ export class WholePdfPreloadCoordinator {
   }
 
   limitReason() {
-    if (this.completedPages.size >= this.limits.maxPages) return 'pages';
-    if (this.retainedBytes >= this.limits.maxBytes) return 'bytes';
-    if (this.workMs >= this.limits.maxWorkMs) return 'time';
+    const limits = this.effectiveLimits();
+    if (this.completedPages.size >= limits.maxPages) return 'pages';
+    if (this.retainedBytes >= limits.maxBytes) return 'bytes';
+    if (this.workMs >= limits.maxWorkMs) return 'time';
     return null;
   }
 }
@@ -229,5 +245,5 @@ export function restartWholePdfPreload(doc = getActiveDocument()) {
   const old = coordinators.get(doc);
   old?.cancel({ release: true, reason: 'mutation' });
   coordinators.delete(doc);
-  return state.preferences.preloadEntirePdf ? startWholePdfPreload(doc) : Promise.resolve();
+  return shouldPreloadEntireDocument(doc, state.preferences) ? startWholePdfPreload(doc) : Promise.resolve();
 }

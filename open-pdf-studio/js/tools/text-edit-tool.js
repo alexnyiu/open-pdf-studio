@@ -29,7 +29,7 @@ import {
   unionSelectionGeometry,
 } from '../text/text-edit-selection.js';
 import { resolvePackagedFace } from '../text/font-catalog.js';
-import { requestFontSubstitutionApproval } from '../text/font-substitution-approval.js';
+import { resolveAutomaticFontSubstitution } from '../text/font-substitution-policy.js';
 import { openDialog, showMessage } from '../solid/stores/dialogStore.js';
 import { showOcrParagraphMenu } from '../solid/stores/contextMenuStore.js';
 import { injectSyntheticTextSpans, refreshPendingOcrTextLayer, resolveTextLayerFonts } from '../text/text-layer.js';
@@ -76,6 +76,7 @@ import {
 import {
   canonicalDeltaFromDisplayDelta,
   canonicalBoundsFromDisplayRect,
+  canonicalEditorBoundsForRichText,
   createPageTextEditPlacement,
   createPageTextEditStyle,
 } from '../text/page-text-edit-placement.js';
@@ -471,6 +472,12 @@ function richTextForNativeBlock(block, pageNum) {
   const { lineData, lineSpacing } = block;
   const fontSize = lineData[0].fontSize;
   const pdfY = lineData[0].pdfY;
+  // The native text layer anchors spans by their PDF baseline using the same
+  // 0.8em ascent. Keep the canonical paragraph rectangle on that visible top
+  // edge instead of treating the whole em square as ascent, which placed the
+  // editor roughly 0.2em above the source text.
+  const sourceAscent = fontSize * 0.8;
+  const sourceDescent = fontSize - sourceAscent;
   return createRichTextDocument(lineData.map((line, index) => {
     const runs = line.runs.map((run) => cloneTextEditRecord(run));
     const nextText = lineData[index + 1]?.text || '';
@@ -486,9 +493,9 @@ function richTextForNativeBlock(block, pageNum) {
     });
   }), {
     x: lineData[0].pdfX,
-    y: pdfY - (lineData.length - 1) * lineSpacing - fontSize * 0.3,
+    y: pdfY - (lineData.length - 1) * lineSpacing - sourceDescent,
     width: Math.max(...lineData.map((line) => line.pdfWidth)),
-    height: (lineData.length - 1) * lineSpacing + fontSize * 1.3,
+    height: (lineData.length - 1) * lineSpacing + sourceAscent + sourceDescent,
     rotation: getPageRotation(pageNum),
   });
 }
@@ -522,8 +529,7 @@ async function openCombinedTextBoxEditor() {
   const items = [...selectedTextItems.values()];
   const unsupported = [...new Set(items.flatMap((item) => item.unsupportedFonts || []))];
   if (unsupported.length) {
-    const substitution = await requestFontSubstitutionApproval({
-      documentState: ownerDocument,
+    const substitution = resolveAutomaticFontSubstitution({
       sourceFonts: unsupported,
       sampleText: items.map((item) => richTextToPlainText(item.richText)).join('\n'),
       scope: 'selection',
@@ -1052,13 +1058,14 @@ function pagePlacementForViewportStyle({
   const sourceTop = Number(sourceRect?.top);
   const sourceWidth = Number(sourceRect?.width);
   const sourceHeight = Number(sourceRect?.height);
-  if (![sourceLeft, sourceTop, sourceWidth, sourceHeight].every(Number.isFinite)
-      || sourceWidth <= 0 || sourceHeight <= 0) {
-    throw new TypeError('Page text editor source geometry must be finite display pixels');
+  const hasSourceRect = [sourceLeft, sourceTop, sourceWidth, sourceHeight].every(Number.isFinite)
+    && sourceWidth > 0 && sourceHeight > 0;
+  if (!canonicalBounds && !hasSourceRect) {
+    throw new TypeError('Page text editor requires canonical or finite display geometry');
   }
-  const displayX = (sourceLeft - containerRect.left - pageOffsetX) / sourceScale;
-  const displayY = (sourceTop - containerRect.top - pageOffsetY) / sourceScale;
   const anchor = canonicalBounds || (() => {
+    const displayX = (sourceLeft - containerRect.left - pageOffsetX) / sourceScale;
+    const displayY = (sourceTop - containerRect.top - pageOffsetY) / sourceScale;
     const point = invertPageRotation(
       displayX,
       displayY,
@@ -1083,7 +1090,7 @@ function pagePlacementForViewportStyle({
     sourceScale,
     sourceRotation: geometry.rotation,
     canonicalStyle,
-    sourceClientAnchor: { left: sourceLeft, top: sourceTop },
+    sourceClientAnchor: hasSourceRect ? { left: sourceLeft, top: sourceTop } : null,
     mode,
     generation: doc.lifecycleGeneration,
   });
@@ -1119,11 +1126,19 @@ function expandableNativeEditorOptions(document, pageNum, canvasEl, layer, optio
   // The editor's ink padding is presentation-only and must not reduce the
   // authored width or move the canonical PDF origin.
   const contentInset = Math.max(0, Number(options.contentInset) || 0);
+  const sourceWidth = Math.max(0.0001, Number(options.sourceWidth) || document.region.width);
+  const substitutionWidthAllowance = Math.max(
+    0,
+    Math.min(1, Number(options.substitutionWidthAllowance) || 0),
+  );
   return {
     manualLineBreaks: options.manualLineBreaks ?? true,
     directManipulation: true,
     width: document.region.width,
     contentWidth: Math.max(0.0001, document.region.width - (contentInset * 2)),
+    sourceWidth,
+    substitutionWidthAllowance,
+    effectiveContentWidth: Math.max(0.0001, document.region.width - (contentInset * 2)),
     contentInset,
     contentInsetPx: contentInset * displayScale,
     minimumHeight: options.minimumHeight ?? document.region.height,
@@ -2391,8 +2406,7 @@ async function startPdfTextEditing(span, pageNum) {
   ))).filter((name) => !/^liberation\s*(sans|serif|mono)/iu.test(name)))];
   let substitution = null;
   if (unsupportedFonts.length > 0) {
-    substitution = await requestFontSubstitutionApproval({
-      documentState: ownerDocument,
+    substitution = resolveAutomaticFontSubstitution({
       sourceFonts: unsupportedFonts,
       bold: lineData[0].isBold,
       italic: lineData[0].isItalic,
@@ -2402,8 +2416,8 @@ async function startPdfTextEditing(span, pageNum) {
     if (!substitution) return;
   }
 
-  // Font approval is promise-based. A tab switch, close, or proxy replacement
-  // while the dialog is open invalidates the source spans and their geometry.
+  // Never open a draft against a tab or document generation that stopped
+  // owning the source gesture.
   if (getActiveDocument() !== ownerDocument
       || getDocumentById(ownerDocument.id) !== ownerDocument
       || (Number(ownerDocument.lifecycleGeneration) || 0) !== ownerGeneration) return;
@@ -2413,10 +2427,10 @@ async function startPdfTextEditing(span, pageNum) {
   const pdfY = lineData[0].pdfY;
   const fontSize = lineData[0].fontSize;
   const pdfWidth = Math.max(...lineData.map(l => l.pdfWidth));
-  const groupRect = block.rect;
 
-  // Match the PDF.js line box exactly. The previous 0.82 multiplier made the
-  // live text visibly shrink and move as soon as editing started.
+  // DOM font metrics are presentation-only. Placement is derived exclusively
+  // from the provenance-backed PDF region below, so clicking any source span
+  // in this paragraph opens the exact same canonical editor rectangle.
   const numLines = lineData.length;
   const editorFontSize = Math.max(1, lineData[0].domBottom - lineData[0].domTop);
   const visualLineHeight = numLines > 1
@@ -2424,14 +2438,6 @@ async function startPdfTextEditing(span, pageNum) {
     : editorFontSize * (lineSpacing / fontSize);
   const originalRichText = richTextForNativeBlock(block, pageNum);
   combinedText = richTextToPlainText(originalRichText);
-
-  // Place editor in the textLayer's parent container (not in the textLayer itself)
-  // because .textLayer has opacity: 0.25 which makes all children semi-transparent
-  const editorContainer = textLayer.parentElement || textLayer;
-  const containerRect = editorContainer.getBoundingClientRect();
-  const layerRect = textLayer.getBoundingClientRect();
-  const offsetX = layerRect.left - containerRect.left;
-  const offsetY = layerRect.top - containerRect.top;
 
   // Use PDF.js loaded font if available (exact visual match), else map to standard CSS font
   const loadedFont = lineData[0].loadedFontName || '';
@@ -2447,27 +2453,37 @@ async function startPdfTextEditing(span, pageNum) {
   } else {
     cssFallbackFont = 'Helvetica, Arial, sans-serif';
   }
-  const editorFont = loadedFont ? `"${loadedFont}", ${cssFallbackFont}` : cssFallbackFont;
-  const displayFontName = editableFontName(lineData[0], cssFallbackFont);
+  const substituteFamily = substitution?.faceId?.includes('-mono-') ? 'Liberation Mono'
+    : substitution?.faceId?.includes('-serif-') ? 'Liberation Serif'
+    : substitution ? 'Liberation Sans' : null;
+  const editorFont = substituteFamily
+    ? cssFamilyFor(substituteFamily)
+    : loadedFont ? `"${loadedFont}", ${cssFallbackFont}` : cssFallbackFont;
+  const displayFontName = substituteFamily || editableFontName(lineData[0], cssFallbackFont);
   const editorBold = lineData[0].isBold || false;
   const editorItalic = lineData[0].isItalic || false;
-  const targetBaseline = containerRect.top + groupRect.top + offsetY
-    + cssBaselineOffset(editorFont, editorFontSize, editorFontSize, editorBold, editorItalic);
-  const editorTop = targetBaseline
-    - cssBaselineOffset(editorFont, editorFontSize, visualLineHeight, editorBold, editorItalic);
-  const editorLeft = containerRect.left + groupRect.left + offsetX;
-  const editorWidth = Math.max(pdfWidth * (editorFontSize / fontSize), 80);
-  const editorHeight = Math.max(numLines * visualLineHeight, 24);
+  const pageCanvas = textLayer.parentElement?.querySelector('canvas.pdf-canvas')
+    || pdfCanvas || document.getElementById('pdf-canvas');
+  const placementGeometry = pageCanvas ? getTextEditGeometry(pageNum, pageCanvas) : null;
+  if (!placementGeometry) {
+    showMessage(hardeningText('textEditor.status.operationFailed'));
+    return;
+  }
+  const placementScale = Math.max(0.0001, editorFontSize / fontSize);
+  const canonicalBounds = canonicalEditorBoundsForRichText(
+    originalRichText.region,
+    placementGeometry.pageHeight,
+  );
+  const editorWidth = canonicalBounds.width * placementScale;
+  const editorHeight = canonicalBounds.height * placementScale;
 
-  // Build style object for the Solid overlay
-  // Use fixed positioning based on container's viewport position
+  // The portal remains hidden until its page-local host has projected this
+  // canonical rectangle. These finite seed values are never used as a visible
+  // viewport-global fallback.
   const styleObj = {
     position: 'absolute',
-    left: `${editorLeft}px`,
-    top: `${editorTop}px`,
-    // PDF.js fallback-font scaleX can make DOM word bounds far wider than
-    // their source operator. Size from PDF geometry so editing does not
-    // stretch or jump as soon as the inline editor opens.
+    left: '0px',
+    top: '0px',
     width: `${editorWidth}px`,
     height: `${editorHeight}px`,
     'font-size': `${editorFontSize}px`,
@@ -2478,29 +2494,15 @@ async function startPdfTextEditing(span, pageNum) {
   };
   if (editorBold) styleObj['font-weight'] = 'bold';
   if (editorItalic) styleObj['font-style'] = 'italic';
-  const pageCanvas = textLayer.parentElement?.querySelector('canvas.pdf-canvas')
-    || pdfCanvas || document.getElementById('pdf-canvas');
-  const placementGeometry = pageCanvas ? getTextEditGeometry(pageNum, pageCanvas) : null;
-  const placementScale = editorFontSize / fontSize;
-  const placementViewport = window.__pdfViewport;
-  const placementUsesViewport = editorContainer.id === 'canvas-container'
-    && placementViewport?.active && placementViewport.pageNum === pageNum;
-  const placementOffsetX = placementUsesViewport ? placementViewport.offsetX || 0 : offsetX;
-  const placementOffsetY = placementUsesViewport ? placementViewport.offsetY || 0 : offsetY;
-  const placement = placementGeometry ? pagePlacementForViewportStyle({
+  const placement = pagePlacementForViewportStyle({
     doc: ownerDocument,
     pageNum,
     geometry: placementGeometry,
-    sourceRect: {
-      left: editorLeft,
-      top: editorTop,
-      width: editorWidth,
-      height: editorHeight,
-    },
+    canonicalBounds,
     canonicalStyle: createPageTextEditStyle({
       geometry: {
-        width: editorWidth / placementScale,
-        height: editorHeight / placementScale,
+        width: canonicalBounds.width,
+        height: canonicalBounds.height,
         zIndex: 1000,
       },
       typography: {
@@ -2511,13 +2513,12 @@ async function startPdfTextEditing(span, pageNum) {
         fontStyle: editorItalic ? 'italic' : 'normal',
         color: lineData[0].color || '#000000',
       },
+      padding: { all: 0 },
+      border: { width: 0, style: 'none', boxSizing: 'border-box' },
     }),
-    containerRect,
-    pageOffsetX: placementOffsetX,
-    pageOffsetY: placementOffsetY,
     sourceScale: placementScale,
     mode: 'native-expandable',
-  }) : null;
+  });
 
   // Hide all spans BEFORE showing editor so text doesn't double-render
   for (const s of block.spans) s.style.visibility = 'hidden';
@@ -2535,7 +2536,7 @@ async function startPdfTextEditing(span, pageNum) {
     numOriginalLines: lineData.length,
     scale: ownerDocument.scale || 1.5,
     visualScale: editorFontSize / fontSize,
-    editorBaseline: targetBaseline,
+    editorBaseline: null,
     placement,
     // Accumulated style state edited via the properties panel; seeded from the
     // block's detected formatting. Persisted onto the edit record on commit.
@@ -2615,6 +2616,8 @@ async function startPdfTextEditing(span, pageNum) {
           block,
           provenance: sourceProvenance,
           displayScale: editorFontSize / fontSize,
+          sourceWidth: originalRichText.region.width,
+          substitutionWidthAllowance: substitution ? 1 : 0,
           onDraftLayout: (layout) => {
             if (activeEditor?.block === block) activeEditor.draftLayout = layout;
           },
@@ -3268,6 +3271,8 @@ export function startTextEditEditing(textEdit, pageNum, canvasEl, transaction = 
           provenance: draftTextEdit.sourceProvenance,
           editId: draftTextEdit.id,
           displayScale: editScale,
+          sourceWidth: draftTextEdit.original?.region?.width || view.richText.region.width,
+          substitutionWidthAllowance: draftTextEdit.substitution?.approved === true ? 1 : 0,
           manualLineBreaks: nativeExpandable,
           onDraftLayout: (layout) => {
             if (activeEditor?._recordRef === draftTextEdit) activeEditor.draftLayout = layout;

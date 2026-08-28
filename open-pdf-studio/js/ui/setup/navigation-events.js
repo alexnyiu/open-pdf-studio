@@ -1,7 +1,14 @@
 import { state, getActiveDocument } from '../../core/state.js';
-import { goToPage } from '../../pdf/renderer.js';
+import { cancelDeferredZoomRenders, goToPage } from '../../pdf/renderer.js';
 import { viewport, bumpViewportRevision, suppressNextFit, addPanVelocity, stopPanMomentum } from '../../pdf/pdf-viewport.js';
 import { normalizedWheelDelta } from '../../pdf/zoom-gesture.js';
+import { ZoomGestureController } from '../../pdf/zoom-gesture-controller.js';
+import { createPageNavigationGestureGate } from '../../pdf/page-navigation-gesture.js';
+import { notePdfForegroundActivity } from '../../pdf/foreground-activity.js';
+import {
+  startPerformanceFrameCadence,
+  stopPerformanceFrameCadence,
+} from '../../pdf/performance-metrics.js';
 import {
   cancelPendingDocumentZoom,
   scheduleDocumentZoom,
@@ -16,15 +23,66 @@ import { getTool } from '../../tools/tool-registry.js';
 //                 direction, navigate to next/previous page.
 // In legacy mode it falls back to scroll-position-based page nav.
 
-let _pageNavCooldown = false;
+const _pageNavGesture = createPageNavigationGestureGate({ threshold: 80 });
 // Pixels of slack at the page edge before we treat the page as "at the edge"
 // and trigger a page change. Without this, sub-pixel float offsets prevent nav.
 const EDGE_SLACK = 1;
 
 export function setupWheelZoom() {
-  document.querySelector('.main-view')?.addEventListener('wheel', async (e) => {
+  const mainView = document.querySelector('.main-view');
+  if (!mainView) return;
+  const zoomController = new ZoomGestureController({
+    schedule: scheduleDocumentZoom,
+    onStart: () => {
+      stopPanMomentum();
+      notePdfForegroundActivity('zoom');
+      startPerformanceFrameCadence('zoomFrameIntervalMs');
+    },
+    onEnd: () => {
+      stopPerformanceFrameCadence('zoomFrameIntervalMs');
+      import('../../pdf/renderer.js').then((module) => {
+        module.finishContinuousZoomGesture();
+        module.finishLegacyBlankZoomGesture();
+      });
+      window.dispatchEvent(new CustomEvent('opds:zoom-gesture-end'));
+    },
+  });
+  const requestForPointer = (event, { delta = 0, factor = null } = {}) => {
+    const activeDoc = getActiveDocument();
+    if (!activeDoc?.pdfDoc) return { delta, factor };
+    if (activeDoc.viewMode === 'continuous' && activeDoc.filePath) {
+      const pointed = document.elementFromPoint?.(event.clientX, event.clientY)
+        ?.closest?.('#continuous-container .page-wrapper');
+      return {
+        delta,
+        factor,
+        clientPoint: { x: event.clientX, y: event.clientY },
+        anchor: {
+          pageNum: Number(pointed?.dataset?.page) || activeDoc.currentPage,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        },
+      };
+    }
+    if (!viewport.active || !activeDoc.filePath) {
+      return { delta, factor, clientPoint: { x: event.clientX, y: event.clientY } };
+    }
+    const pdfCanvas = document.getElementById('pdf-canvas');
+    const rect = pdfCanvas?.getBoundingClientRect();
+    return {
+      delta,
+      factor,
+      screenPoint: rect
+        ? { x: event.clientX - rect.left, y: event.clientY - rect.top }
+        : { x: event.clientX, y: event.clientY },
+    };
+  };
+  zoomController.attachNative(mainView, (event) => requestForPointer(event));
+
+  mainView.addEventListener('wheel', async (e) => {
     const activeDoc = getActiveDocument();
     if (!activeDoc?.pdfDoc) return;
+    notePdfForegroundActivity(e.ctrlKey || e.metaKey ? 'zoom-wheel' : 'scroll');
 
     // Ctrl+wheel = zoom — handled FIRST, before tool delegation, so the
     // user can always zoom regardless of the active tool (line, pencil,
@@ -46,15 +104,11 @@ export function setupWheelZoom() {
         if (activeDoc.viewMode === 'continuous' && activeDoc.filePath) {
           const contDy = normalizedWheelDelta(e.deltaY, e.deltaMode, window.innerHeight);
           if (contDy !== 0) {
-            const container = document.getElementById('pdf-container');
-            const anchorY = container
-              ? e.clientY - container.getBoundingClientRect().top
-              : null;
             // Proportional zoom: scale tracks the wheel delta directly so the
             // page follows the cursor immediately instead of jumping a fixed
             // chunk per notch. Clamp per event so a high-res wheel can't
             // slingshot through several zoom levels at once.
-            scheduleDocumentZoom({ delta: contDy, anchorY });
+            zoomController.wheel(e, requestForPointer(e, { delta: contDy }));
           }
           return;
         }
@@ -68,10 +122,7 @@ export function setupWheelZoom() {
         if (activeDoc.pdfDoc && activeDoc.filePath === null) {
           const wheelDy = normalizedWheelDelta(e.deltaY, e.deltaMode, window.innerHeight);
           if (wheelDy !== 0) {
-            scheduleDocumentZoom({
-              delta: wheelDy,
-              clientPoint: { x: e.clientX, y: e.clientY },
-            });
+            zoomController.wheel(e, requestForPointer(e, { delta: wheelDy }));
           }
         }
         return;
@@ -82,14 +133,8 @@ export function setupWheelZoom() {
       // that case gives wrong sx/sy and the zoom anchor drifts. The
       // pdf-canvas, annotation-canvas and text-highlight-canvas all share the
       // same rect, so the pdf-canvas rect is the authoritative reference.
-      const _pdfCanvas = document.getElementById('pdf-canvas');
-      const rect = _pdfCanvas?.getBoundingClientRect()
-        || e.target.closest('canvas')?.getBoundingClientRect()
-        || e.target.getBoundingClientRect();
-      const sx = e.clientX - rect.left;
-      const sy = e.clientY - rect.top;
       const dy = normalizedWheelDelta(e.deltaY, e.deltaMode, window.innerHeight);
-      if (dy) scheduleDocumentZoom({ delta: dy, screenPoint: { x: sx, y: sy } });
+      if (dy) zoomController.wheel(e, requestForPointer(e, { delta: dy }));
       return;
     }
 
@@ -136,10 +181,12 @@ export function setupWheelZoom() {
       const atBottom = pageBottom <= canvasH + EDGE_SLACK;        // can't pan down further
 
       // Page nav: only if scroll direction matches an exhausted edge AND we're
-      // single-page mode AND not already cooling down from a previous nav.
-      if (activeDoc.viewMode === 'single' && !_pageNavCooldown && Math.abs(dy) > Math.abs(dx)) {
+      // single-page mode. The accumulated 80 px gesture gate permits sustained
+      // trackpad traversal without a timer while preventing one inertial tail
+      // from skipping several pages.
+      if (activeDoc.viewMode === 'single' && Math.abs(dy) > Math.abs(dx)) {
         if (dy > 0 && atBottom && activeDoc.currentPage < activeDoc.pdfDoc.numPages) {
-          _pageNavCooldown = true;
+          if (!_pageNavGesture.shouldNavigate(dy, { atEdge: true })) return;
           // Kill any in-flight pan momentum so the new page doesn't inherit
           // the previous page's residual scroll velocity (would slingshot
           // past the top into the centered fit position).
@@ -150,18 +197,17 @@ export function setupWheelZoom() {
           suppressNextFit();
           await goToPage(activeDoc.currentPage + 1);
           alignPageToTop();
-          setTimeout(() => { _pageNavCooldown = false; }, 250);
           return;
         }
         if (dy < 0 && atTop && activeDoc.currentPage > 1) {
-          _pageNavCooldown = true;
+          if (!_pageNavGesture.shouldNavigate(dy, { atEdge: true })) return;
           stopPanMomentum();
           suppressNextFit();
           await goToPage(activeDoc.currentPage - 1);
           alignPageToBottom();
-          setTimeout(() => { _pageNavCooldown = false; }, 250);
           return;
         }
+        _pageNavGesture.shouldNavigate(dy, { atEdge: false });
       }
 
       // Smooth pan: feed wheel deltas into the velocity accumulator instead
@@ -180,8 +226,6 @@ export function setupWheelZoom() {
 
     // ─── Legacy mode: scroll-position-based page nav ──────────────────────
     if (activeDoc?.viewMode !== 'single') return;
-    if (_pageNavCooldown) return;
-
     const pdfContainer = document.getElementById('pdf-container');
     if (!pdfContainer) return;
 
@@ -190,15 +234,15 @@ export function setupWheelZoom() {
     const atTopLegacy = !canScroll || pdfContainer.scrollTop <= 5;
 
     if (e.deltaY > 0 && atBottomLegacy && activeDoc.currentPage < activeDoc.pdfDoc.numPages) {
+      if (!_pageNavGesture.shouldNavigate(e.deltaY, { atEdge: true })) return;
       e.preventDefault();
-      _pageNavCooldown = true;
       await goToPage(activeDoc.currentPage + 1);
-      setTimeout(() => { _pageNavCooldown = false; }, 300);
     } else if (e.deltaY < 0 && atTopLegacy && activeDoc.currentPage > 1) {
+      if (!_pageNavGesture.shouldNavigate(e.deltaY, { atEdge: true })) return;
       e.preventDefault();
-      _pageNavCooldown = true;
       await goToPage(activeDoc.currentPage - 1);
-      setTimeout(() => { _pageNavCooldown = false; }, 300);
+    } else {
+      _pageNavGesture.shouldNavigate(e.deltaY, { atEdge: false });
     }
   }, { passive: false });
 }
@@ -250,4 +294,5 @@ function alignPageToBottom() {
 
 export function cancelPendingZoom() {
   cancelPendingDocumentZoom();
+  cancelDeferredZoomRenders();
 }

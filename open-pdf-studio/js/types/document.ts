@@ -81,6 +81,122 @@ export interface PreloadStatus {
   readonly limitReason: 'pages' | 'bytes' | 'time' | null;
 }
 
+export interface PdfPerformanceProfile {
+  pageCount: number;
+  fileBytes: number;
+  maximumPageSurfaceBytes: number;
+  foregroundRenderSamples: number[];
+  slowForegroundSamples: number;
+  budget: RenderResourceBudget;
+  largeDocument: boolean;
+  largeDocumentReasons: string[];
+}
+
+export interface RenderResourceBudget {
+  physicalMemoryBytes: number | null;
+  globalBytes: number;
+  javascriptBytes: number;
+  nativePixmapBytes: number;
+  metadataBytes: number;
+  activeDocumentShare: number;
+}
+
+export interface PageGeometryEntry {
+  readonly pageNum: number;
+  readonly widthPt: number;
+  readonly heightPt: number;
+  readonly applicationRotation: 0 | 90 | 180 | 270;
+}
+
+export interface PageGeometryIndex {
+  readonly entries: ReadonlyArray<PageGeometryEntry>;
+  totalHeight(scale?: number, layout?: 'continuous' | 'book'): number;
+  contentWidth(scale?: number, layout?: 'continuous' | 'book', minimumWidth?: number): number;
+  pageAtOffset(offset: number, options?: Record<string, unknown>): number | null;
+  pageRect(pageNum: number, options?: Record<string, unknown>): {
+    pageNum: number; x: number; y: number; width: number; height: number; rowIndex: number;
+  } | null;
+  visiblePages(options?: Record<string, unknown>): number[];
+}
+
+export interface RenderWorkRequest {
+  key: string;
+  ownerKey: string;
+  pageNum: number;
+  priority: number;
+  kind: 'foreground' | 'background';
+}
+
+export type RasterQuality = 'preview' | 'final';
+
+export interface PageRasterKey {
+  readonly documentId: string;
+  readonly lifecycleGeneration: number;
+  readonly pageRevision: number;
+  readonly filePath: string;
+  readonly pageNum: number;
+  readonly rotation: number;
+  readonly cssScaleBucket: number;
+  readonly devicePixelRatio: number;
+  readonly quality: RasterQuality;
+}
+
+export interface RasterLease {
+  readonly key: PageRasterKey;
+  readonly quality: RasterQuality;
+  readonly targetRasterScale: number;
+  readonly actualRasterScale: number;
+  readonly width: number;
+  readonly height: number;
+  readonly bytes: number;
+  release(): void;
+}
+
+export interface PageRasterRegistry {
+  get(key: PageRasterKey, targetRasterScale: number): RasterLease | null;
+  ensure(key: PageRasterKey, targetRasterScale: number): Promise<RasterLease | null>;
+  invalidatePage(documentId: string, lifecycleGeneration: number, pageNum: number): void;
+  clearDocument(documentId: string, lifecycleGeneration: number): void;
+}
+
+export interface RenderedSurfaceState {
+  readonly targetRasterScale: number;
+  readonly actualRasterScale: number;
+  readonly cssScale: number;
+  readonly devicePixelRatio: number;
+  readonly quality: RasterQuality;
+  readonly source: string;
+  readonly ownerGeneration: number;
+  readonly publicationRevision: number;
+  readonly publishedAt: number;
+}
+
+export interface RenderStreamDescriptor {
+  readonly url: string;
+  readonly width: number;
+  readonly height: number;
+  readonly bytes: number;
+  readonly expiresAt: number;
+}
+
+export interface ZoomAnchor {
+  documentId: string;
+  lifecycleGeneration: number;
+  pageNum: number;
+  pdfX: number;
+  pdfY: number;
+  clientX: number;
+  clientY: number;
+}
+
+export interface ZoomGestureSession {
+  source: 'native-gesture' | 'trackpad' | 'wheel';
+  ownerDocumentId: string;
+  ownerDocumentGeneration: number;
+  startedAt: number;
+  anchor: ZoomAnchor;
+}
+
 export interface DocumentState {
   id: string;
   /**
@@ -89,18 +205,25 @@ export interface DocumentState {
    * before it may publish or mutate document-owned state.
    */
   lifecycleGeneration: number;
-  /** Runtime-only font substitutions approved for this open document. */
-  fontSubstitutionApprovals: Map<string, boolean>;
   filePath: string | null;
   fileName: string;
   pdfDoc: any; // pdfjs-dist PDFDocumentProxy
   metadata: DocumentMetadata;
   preloadStatus: PreloadStatus;
+  /** Runtime-only source size and adaptive render profile. */
+  sourceByteLength: number;
+  performanceProfile: PdfPerformanceProfile | null;
+  pageGeometryIndex: PageGeometryIndex | null;
+  pageGeometryBaseDimensions: Array<[number, number]> | null;
+  /** Runtime-only content revision used to invalidate only edited pages. */
+  pageRenderRevisions: Record<number, number>;
   currentPage: number;
   scale: number;
   viewMode: 'single' | 'continuous';
   /** Boekweergave (issue #201): continuous met 2-pagina-spreads, pagina 1 rechts. */
   bookSpread?: boolean;
+  /** Niet-doorlopende spreadweergave met maximaal twee gemonteerde pagina's. */
+  facingSpread?: boolean;
   annotations: Annotation[];
   textEdits: Array<TextEditRecordV2 | LegacyTextEdit>;
   /** Application-owned rich text manifest. Unknown versions fail closed. */

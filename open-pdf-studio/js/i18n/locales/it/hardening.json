@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Fai doppio clic o premi Invio per modificare.",
     "timezoneHint": "Le date sono visualizzate nel fuso orario {{timezone}} e salvate in formato ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Approva sostituzione del carattere",
-    "sourceFace": "Carattere originale",
-    "sourceFaces": "Caratteri originali",
-    "unknown": "Sconosciuto",
-    "packagedSubstitute": "Carattere sostitutivo incluso",
-    "notAvailable": "Non disponibile",
-    "sampleText": "Esempio",
-    "sampleFallback": "La rapida volpe marrone salta sopra il cane pigro.",
-    "scope": "Si applica a",
-    "scopeAnnotation": "Questa annotazione",
-    "scopeSelection": "Le caselle di testo selezionate",
-    "scopeParagraph": "Questo paragrafo PDF",
-    "scopeFindReplace": "Questa modifica Trova/Sostituisci",
-    "remember": "Ricorda questa approvazione per il documento aperto",
-    "approve": "Usa il sostituto",
-    "cancel": "Annulla"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Modifica testo PDF",

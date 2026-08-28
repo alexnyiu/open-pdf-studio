@@ -4,6 +4,7 @@ import { setColorPickerValue, setLineWidthValue, setCurrentTheme, openDialog } f
 import { updateStatusMessage } from '../ui/chrome/status-bar.js';
 import { changeLanguage } from '../i18n/useTranslation.js';
 import { isTauri, getUsername, savePreferencesFile, loadPreferencesFile } from './platform.js';
+import { normalizePdfPreloadMode } from '../pdf/preload-policy.js';
 
 // Load preferences from Rust file storage, with localStorage migration fallback
 export async function loadPreferences() {
@@ -20,6 +21,11 @@ export async function loadPreferences() {
     }
 
     if (loaded) {
+      // Large-document preload migration: the old boolean opted into a broad
+      // all-page sweep by default. Preserve an explicit opt-out, while old
+      // enabled/default values become adaptive foreground-first loading.
+      loaded.pdfPreloadMode = normalizePdfPreloadMode(loaded.pdfPreloadMode, loaded.preloadEntirePdf);
+      delete loaded.preloadEntirePdf;
       // Migrate renamed themes
       if (loaded.theme === 'deep-forge') loaded.theme = 'warm-ember';
       // Standards migration: dimension ticks are open circles, not closed

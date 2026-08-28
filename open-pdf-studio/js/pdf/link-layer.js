@@ -278,6 +278,12 @@ export function clearLinkLayers() {
   linkLayers.clear();
 }
 
+export function releaseLinkLayer(pageNum) {
+  const layer = linkLayers.get(Number(pageNum));
+  layer?.remove();
+  linkLayers.delete(Number(pageNum));
+}
+
 /**
  * Gets the link layer for a specific page
  * @param {number} pageNum - Page number

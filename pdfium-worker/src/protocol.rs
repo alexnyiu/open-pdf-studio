@@ -77,6 +77,14 @@ pub enum Request {
         scale: f32,
         rotation: i32,
     },
+    RenderPng {
+        id: u64,
+        path: String,
+        page_index: u32,
+        scale: f32,
+        rotation: i32,
+        transfer_token: String,
+    },
     RenderOcr {
         id: u64,
         path: String,
@@ -131,6 +139,13 @@ pub enum Response {
         w: u32,
         h: u32,
         shm_bytes: u64,
+    },
+    RenderPngOk {
+        id: u64,
+        ok: bool,
+        w: u32,
+        h: u32,
+        file_bytes: u64,
     },
     RenderOcrOk {
         id: u64,
@@ -187,6 +202,23 @@ mod tests {
         };
         let line = serde_json::to_string(&req).unwrap();
         assert!(line.contains("\"op\":\"render_ocr\""));
+        assert_eq!(serde_json::from_str::<Request>(&line).unwrap(), req);
+    }
+
+    #[test]
+    fn lossless_display_render_round_trips() {
+        let req = Request::RenderPng {
+            id: 11,
+            path: "/private/large.pdf".to_string(),
+            page_index: 53,
+            scale: 1.25,
+            rotation: 90,
+            transfer_token: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+        };
+        let line = serde_json::to_string(&req).unwrap();
+        assert!(line.contains("\"op\":\"render_png\""));
+        assert!(line.contains("\"transfer_token\""));
         assert_eq!(serde_json::from_str::<Request>(&line).unwrap(), req);
     }
 

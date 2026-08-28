@@ -11,6 +11,7 @@ from reportlab.pdfgen import canvas
 
 OUTPUT = Path(__file__).resolve().parents[1] / "tests/fixtures/text/native-paragraph-table.pdf"
 SIDE_BY_SIDE_OUTPUT = Path(__file__).resolve().parents[1] / "tests/fixtures/text/native-side-by-side-color.pdf"
+HELVETICA_WIDTH_OUTPUT = Path(__file__).resolve().parents[1] / "tests/fixtures/text/native-helvetica-width-compensation.pdf"
 
 
 def deterministic_canvas(*args, **kwargs) -> canvas.Canvas:
@@ -70,6 +71,46 @@ def build_side_by_side_fixture() -> None:
     pdf.save()
 
 
+def build_helvetica_width_fixture() -> None:
+    """Reproduce the harmless page-3 packaged-substitute width delta."""
+    pdf = canvas.Canvas(str(HELVETICA_WIDTH_OUTPUT), pagesize=letter, invariant=1)
+    pdf.setTitle("Open PDF Studio Helvetica substitution width fixture")
+    source_width = 215.199998
+    substitute_width = 215.593555
+    x = 180.0
+    baseline = 706.0
+    font_size = 6.792646389957232
+    leading = 9.0
+    lines = [
+        "EUV (extreme ultraviolet lithography; advanced chip-printing technology",
+        "used for leading-edge semiconductors)/High-NA (high numerical",
+        "aperture; a next-generation EUV system capable of printing even",
+        "smaller circuit patterns onto wafers)",
+    ]
+    source_advance = pdfmetrics.stringWidth(lines[0], "Helvetica", font_size)
+    horizontal_scale = source_width / source_advance * 100
+
+    text = pdf.beginText(x, baseline)
+    text.setFont("Helvetica", font_size)
+    text.setLeading(leading)
+    text.setHorizScale(horizontal_scale)
+    for line in lines:
+        text.textLine(line)
+    pdf.drawText(text)
+
+    # A neighboring column starts 12.84 pt beyond the immutable source edge,
+    # matching the clearance that permits only the 0.393557 pt far-edge grow.
+    neighbor_x = x + source_width + 12.84
+    pdf.setFont("Helvetica", font_size)
+    for index in range(len(lines)):
+        pdf.drawString(neighbor_x, baseline - index * leading, f"Adjacent column {index + 1}")
+    pdf.setStrokeColor(colors.HexColor("#c8d2dc"))
+    pdf.line(x + source_width + 12.84 / 2, baseline - leading * 4, x + source_width + 12.84 / 2, baseline + leading)
+    pdf.setAuthor(f"source={source_width:.6f}; substitute={substitute_width:.6f}")
+    pdf.showPage()
+    pdf.save()
+
+
 def main() -> None:
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     font_root = Path(__file__).resolve().parents[1] / "public/pdfjs/web/standard_fonts"
@@ -120,6 +161,7 @@ def main() -> None:
     ]))
     document.build([table], canvasmaker=deterministic_canvas)
     build_side_by_side_fixture()
+    build_helvetica_width_fixture()
 
 
 if __name__ == "__main__":

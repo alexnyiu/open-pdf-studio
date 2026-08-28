@@ -24,6 +24,26 @@ export const TEXT_EDIT_LIFECYCLE_TRANSITION_SELECTOR = [
   '#attachments-panel .attachments-toolbar-btn',
 ].join(', ');
 
+export const TEXT_EDIT_COMMIT_ACTION_SELECTOR = '[data-text-edit-commit-action="true"]';
+
+function targetMatchesSelectorAncestor(target, selector) {
+  if (!target) return false;
+  try {
+    if (target.closest?.(selector)) return true;
+  } catch { /* fall through to the namespace-safe ancestor walk */ }
+  // WebKit can return null from SVGElement.closest() when the matching
+  // ancestor is an HTML button. Walk parentElement explicitly so icon paths,
+  // rects, and use elements inherit the control's text-edit semantics.
+  let current = target;
+  while (current) {
+    try {
+      if (current.matches?.(selector)) return true;
+    } catch { /* ignore nodes that cannot evaluate the selector */ }
+    current = current.parentElement || current.getRootNode?.()?.host || null;
+  }
+  return false;
+}
+
 /** Only a real document/compare-tab switch is a lifecycle cancellation. */
 export function documentTabStartsTextEditLifecycle({
   tabIndex,
@@ -37,11 +57,33 @@ export function documentTabStartsTextEditLifecycle({
 export function textEditTargetIsWithinFocusBoundary(target, portal = null) {
   if (!target) return false;
   if (portal?.contains?.(target)) return true;
-  return Boolean(target.closest?.(TEXT_EDIT_FOCUS_BOUNDARY_SELECTOR));
+  return targetMatchesSelectorAncestor(target, TEXT_EDIT_FOCUS_BOUNDARY_SELECTOR);
 }
 
 export function textEditTargetStartsLifecycleTransition(target) {
-  return Boolean(target?.closest?.(TEXT_EDIT_LIFECYCLE_TRANSITION_SELECTOR));
+  return targetMatchesSelectorAncestor(target, TEXT_EDIT_LIFECYCLE_TRANSITION_SELECTOR);
+}
+
+export function textEditTargetStartsCommitAction(target) {
+  return targetMatchesSelectorAncestor(target, TEXT_EDIT_COMMIT_ACTION_SELECTOR);
+}
+
+/**
+ * Reparenting an editor portal can transiently drop focus onto the document.
+ * Restore it only in that case (or when it never left the portal). A later
+ * explicit focus move to zoom, formatting, or another control must win.
+ */
+export function shouldRestoreTextEditorFocusAfterHostTransition({
+  portal = null,
+  activeElement = null,
+  body = null,
+  documentElement = null,
+} = {}) {
+  if (!portal) return false;
+  return !activeElement
+    || activeElement === body
+    || activeElement === documentElement
+    || portal.contains?.(activeElement) === true;
 }
 
 export function shouldApplyTextEditForOutsideFocus({
@@ -56,6 +98,7 @@ export function shouldApplyTextEditForOutsideFocus({
     && target !== body
     && target !== documentElement
     && !textEditTargetIsWithinFocusBoundary(target, portal)
+    && !textEditTargetStartsCommitAction(target)
     && !textEditTargetStartsLifecycleTransition(target));
 }
 
@@ -66,6 +109,7 @@ export function shouldConsumeOutsidePointerDownForTextEdit({
 } = {}) {
   if (button !== 0
       || textEditTargetIsWithinFocusBoundary(target, portal)
+      || textEditTargetStartsCommitAction(target)
       || textEditTargetStartsLifecycleTransition(target)) return false;
   return Boolean(target);
 }
@@ -97,6 +141,7 @@ export function shouldSuppressOutsideApplyFollowup({
   const primary = button === 0 || (eventType === 'click' && button == null);
   if (!primary
       || textEditTargetIsWithinFocusBoundary(target, portal)
+      || textEditTargetStartsCommitAction(target)
       || textEditTargetStartsLifecycleTransition(target)) return false;
   // Native compatibility mouse events carry a positive click count. Keyboard
   // activation and HTMLElement.click() use detail=0 and must not inherit a

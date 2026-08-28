@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Düzenlemek için çift tıklayın veya Enter'a basın.",
     "timezoneHint": "Tarihler {{timezone}} saat diliminde gösterilir ve ISO 8601 biçiminde kaydedilir."
   },
-  "fontSubstitution": {
-    "title": "Yazı tipi değişikliğini onayla",
-    "sourceFace": "Kaynak yazı tipi",
-    "sourceFaces": "Kaynak yazı tipleri",
-    "unknown": "Bilinmiyor",
-    "packagedSubstitute": "Paketle birlikte gelen yedek yazı tipi",
-    "notAvailable": "Kullanılamıyor",
-    "sampleText": "Örnek",
-    "sampleFallback": "Hızlı kahverengi tilki tembel köpeğin üzerinden atlar.",
-    "scope": "Şunlara uygulanır",
-    "scopeAnnotation": "Bu ek açıklama",
-    "scopeSelection": "Seçili metin kutuları",
-    "scopeParagraph": "Bu PDF paragrafı",
-    "scopeFindReplace": "Bu Bul/Değiştir düzenlemesi",
-    "remember": "Bu onayı açık belge için hatırla",
-    "approve": "Yedek yazı tipini kullan",
-    "cancel": "İptal"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "PDF metnini düzenle",

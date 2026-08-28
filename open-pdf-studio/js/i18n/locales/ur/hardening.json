@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}۔ ترمیم کے لیے ڈبل کلک کریں یا Enter دبائیں۔",
     "timezoneHint": "تاریخیں {{timezone}} ٹائم زون میں دکھائی جاتی ہیں اور ISO 8601 فارمیٹ میں محفوظ کی جاتی ہیں۔"
   },
-  "fontSubstitution": {
-    "title": "فونٹ کی تبدیلی منظور کریں",
-    "sourceFace": "ماخذ فونٹ",
-    "sourceFaces": "ماخذ فونٹس",
-    "unknown": "نامعلوم",
-    "packagedSubstitute": "ساتھ فراہم کردہ متبادل فونٹ",
-    "notAvailable": "دستیاب نہیں",
-    "sampleText": "نمونہ",
-    "sampleFallback": "تیز بھوری لومڑی سست کتے کے اوپر سے چھلانگ لگاتی ہے۔",
-    "scope": "لاگو ہوتا ہے",
-    "scopeAnnotation": "یہ تشریح",
-    "scopeSelection": "منتخب ٹیکسٹ باکسز",
-    "scopeParagraph": "یہ PDF پیراگراف",
-    "scopeFindReplace": "یہ تلاش/تبدیل ترمیم",
-    "remember": "اس کھلی دستاویز کے لیے یہ منظوری یاد رکھیں",
-    "approve": "متبادل فونٹ استعمال کریں",
-    "cancel": "منسوخ کریں"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "PDF متن میں ترمیم کریں",

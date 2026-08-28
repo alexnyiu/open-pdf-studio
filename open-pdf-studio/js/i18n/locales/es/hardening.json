@@ -4,24 +4,6 @@
     "editValueHint": "{{label}}. Haz doble clic o pulsa Intro para editar.",
     "timezoneHint": "Las fechas se muestran en la zona horaria {{timezone}} y se guardan en formato ISO 8601."
   },
-  "fontSubstitution": {
-    "title": "Aprobar la sustitución de fuente",
-    "sourceFace": "Fuente original",
-    "sourceFaces": "Fuentes originales",
-    "unknown": "Desconocida",
-    "packagedSubstitute": "Fuente sustituta incluida",
-    "notAvailable": "No disponible",
-    "sampleText": "Muestra",
-    "sampleFallback": "El veloz murciélago hindú comía feliz cardillo y kiwi.",
-    "scope": "Se aplica a",
-    "scopeAnnotation": "Esta anotación",
-    "scopeSelection": "Los cuadros de texto seleccionados",
-    "scopeParagraph": "Este párrafo del PDF",
-    "scopeFindReplace": "Esta edición de Buscar/Reemplazar",
-    "remember": "Recordar esta aprobación para el documento abierto",
-    "approve": "Usar la fuente sustituta",
-    "cancel": "Cancelar"
-  },
   "textEditor": {
     "aria": {
       "editPlain": "Editar texto del PDF",
