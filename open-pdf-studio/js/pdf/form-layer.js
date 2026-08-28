@@ -1,6 +1,7 @@
 import { state, getActiveDocument } from '../core/state.js';
 import { AnnotationLayer } from 'pdfjs-dist';
 import { showFormFieldsBar as showBar, hideFormFieldsBar as hideBar } from '../bridge.js';
+import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
 
 // Sub-module imports
 import { parseJSConstants, parseJSFunctions, decodeJSString, getMessagesForBlurAction } from './form-layer/js-parser.js';
@@ -61,7 +62,7 @@ export function resetAnnotationStorage() {
   if (annotationStorage) {
     annotationStorage.onSetModified = () => {
       const doc = state.documents[state.activeDocumentIndex];
-      if (doc) doc.modified = true;
+      if (doc) noteDocumentMutation(doc, { reason: 'form:value-change' });
     };
   }
 }

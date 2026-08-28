@@ -12,6 +12,7 @@ import {
   captureAnnotationStyle,
   resolveAnnotationStyleActionTarget,
 } from '../../text/annotation-style-presets.js';
+import { noteDocumentMutation } from '../../core/document-revision-state.runtime.js';
 
 /**
  * Named line-style presets (WEERGAVE-stijlen).
@@ -154,7 +155,7 @@ export function createStylePreset(name) {
   if (!props) return null;
   const preset = { id: _newId(), name: trimmed, props };
   doc.stylePresets = [...(doc.stylePresets || []), preset];
-  doc.modified = true;
+  noteDocumentMutation(doc, { reason: 'style-preset:create' });
   return preset;
 }
 
@@ -164,7 +165,7 @@ export function deleteStylePreset(id) {
   const next = doc.stylePresets.filter(p => p.id !== id);
   if (next.length !== doc.stylePresets.length) {
     doc.stylePresets = next;
-    doc.modified = true;
+    noteDocumentMutation(doc, { reason: 'style-preset:delete' });
   }
 }
 
@@ -176,7 +177,7 @@ export function renameStylePreset(id, name) {
   doc.stylePresets = doc.stylePresets.map(p =>
     p.id === id ? { ...p, name: trimmed } : p
   );
-  doc.modified = true;
+  noteDocumentMutation(doc, { reason: 'style-preset:rename' });
 }
 
 /** Apply a stored preset (by id) to the current selection. */

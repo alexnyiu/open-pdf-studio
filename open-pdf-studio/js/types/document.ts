@@ -81,6 +81,37 @@ export interface PreloadStatus {
   readonly limitReason: 'pages' | 'bytes' | 'time' | null;
 }
 
+export type DocumentSaveState =
+  | 'idle'
+  | 'pending'
+  | 'saving'
+  | 'persisted'
+  | 'synchronizing'
+  | 'saved'
+  | 'failed'
+  | 'saved-refresh-failed';
+
+export interface DocumentRevisionState {
+  contentRevision: number;
+  serializedRevision: number;
+  persistedRevision: number;
+  livePdfRevision: number;
+  visibleRenderRevision: number;
+  visibleSemanticRevision: number;
+  pageContentRevisions: Record<number, number>;
+  pageRenderReadyRevisions: Record<number, number>;
+  pageSemanticReadyRevisions: Record<number, number>;
+  visibleRequiredPages: number[];
+  pendingChangedPages: number[] | null;
+  pendingStructuralChange: boolean;
+  lastMutationReason: string | null;
+  saveState: DocumentSaveState;
+  activeSaveRequestId: string | null;
+  lastPersistedPath: string | null;
+  lastSaveError: string | null;
+  lastSynchronizationError: string | null;
+}
+
 export interface PdfPerformanceProfile {
   pageCount: number;
   fileBytes: number;
@@ -205,6 +236,8 @@ export interface DocumentState {
    * before it may publish or mutate document-owned state.
    */
   lifecycleGeneration: number;
+  /** Persistence, live-proxy, render, and semantic ownership state. */
+  revisionState: DocumentRevisionState;
   filePath: string | null;
   fileName: string;
   pdfDoc: any; // pdfjs-dist PDFDocumentProxy
@@ -215,7 +248,7 @@ export interface DocumentState {
   performanceProfile: PdfPerformanceProfile | null;
   pageGeometryIndex: PageGeometryIndex | null;
   pageGeometryBaseDimensions: Array<[number, number]> | null;
-  /** Runtime-only content revision used to invalidate only edited pages. */
+  /** Compatibility alias of revisionState.pageContentRevisions. */
   pageRenderRevisions: Record<number, number>;
   currentPage: number;
   scale: number;

@@ -2,7 +2,6 @@ import { createSignal } from 'solid-js';
 
 import Dialog from '../Dialog.jsx';
 import { getActiveDocument } from '../../../core/state.js';
-import { markDocumentModified } from '../../../ui/chrome/tabs.js';
 import { refreshPendingOcrTextLayer } from '../../../text/text-layer.js';
 import {
   prepareScannedTextRegionSplit,
@@ -53,7 +52,6 @@ export default function OcrRegionSplitDialog(props) {
         leftText: leftText(),
         rightText: rightText(),
       });
-      markDocumentModified();
       closeDialog('split-ocr-region');
       refreshPendingOcrTextLayer(data.pageNum);
       window.dispatchEvent(new CustomEvent('open-pdf-studio:request-text-edit-hover-refresh'));

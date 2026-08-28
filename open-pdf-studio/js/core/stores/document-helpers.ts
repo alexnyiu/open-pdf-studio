@@ -1,15 +1,18 @@
 import type { DocumentState } from '../../types/document.js';
 import { createDocumentOcrState } from '../../ocr/document-state.js';
 import { createEmptyDocumentMetadata } from '../../pdf/document-metadata.js';
+import { createInitialDocumentRevisionState } from '../document-revision-state.runtime.js';
 
 /**
  * Creates a new document state object
  */
 export function createDocument(filePath: string | null = null): DocumentState {
   const id = Date.now() + Math.random().toString(36).substr(2, 9);
+  const revisionState = createInitialDocumentRevisionState() as DocumentState['revisionState'];
   return {
     id,
     lifecycleGeneration: 0,
+    revisionState,
     filePath: filePath,
     fileName: filePath ? filePath.split(/[\\/]/).pop()! : 'Untitled',
     pdfDoc: null,
@@ -19,7 +22,7 @@ export function createDocument(filePath: string | null = null): DocumentState {
     performanceProfile: null,
     pageGeometryIndex: null,
     pageGeometryBaseDimensions: null,
-    pageRenderRevisions: {},
+    pageRenderRevisions: revisionState.pageContentRevisions,
     currentPage: 1,
     scale: 1.5,
     viewMode: 'single',

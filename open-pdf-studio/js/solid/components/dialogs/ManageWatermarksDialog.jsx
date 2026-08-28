@@ -3,7 +3,6 @@ import Dialog from '../Dialog.jsx';
 import { closeDialog, openDialog } from '../../stores/dialogStore.js';
 import { state, getActiveDocument } from '../../../core/state.js';
 import { recordRemoveWatermark, recordModifyWatermark } from '../../../core/undo-manager.js';
-import { markDocumentModified } from '../../../ui/chrome/tabs.js';
 import { redrawAnnotations, redrawContinuous } from '../../../annotations/rendering.js';
 import { useTranslation } from '../../../i18n/useTranslation.js';
 
@@ -60,7 +59,6 @@ export default function ManageWatermarksDialog() {
     const oldState = { ...wm };
     wm.enabled = checked;
     recordModifyWatermark(wm.id, oldState, { ...wm });
-    markDocumentModified();
     refresh();
   }
 
@@ -81,7 +79,6 @@ export default function ManageWatermarksDialog() {
     if (idx !== -1) {
       watermarks.splice(idx, 1);
       recordRemoveWatermark(wm, idx);
-      markDocumentModified();
       refresh();
     }
   }

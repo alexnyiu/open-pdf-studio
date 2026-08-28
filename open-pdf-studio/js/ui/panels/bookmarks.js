@@ -1,7 +1,6 @@
 import i18next from '../../i18n/config.js';
 import { state, getActiveDocument } from '../../core/state.js';
 import { goToPage } from '../../pdf/renderer.js';
-import { markDocumentModified } from '../../ui/chrome/tabs.js';
 import { isPdfAReadOnly } from '../../pdf/loader.js';
 import {
   openDialog, setBookmarkTree as setTree, setBookmarkCountText as setCountText,
@@ -260,7 +259,6 @@ export async function addBookmark() {
 
   doc.bookmarks.push(bm);
   selectedBookmarkId = bm.id;
-  markDocumentModified();
 
   // Record undo
   const { recordAddBookmark } = await import('../../core/undo-manager.js');
@@ -304,7 +302,6 @@ export async function addChildBookmark() {
 
   doc.bookmarks.push(bm);
   selectedBookmarkId = bm.id;
-  markDocumentModified();
 
   const { recordAddBookmark } = await import('../../core/undo-manager.js');
   recordAddBookmark(bm);
@@ -327,7 +324,6 @@ export async function editBookmark() {
   const oldState = { ...bm };
   bm.title = result.title;
   bm.page = result.page;
-  markDocumentModified();
 
   const { recordModifyBookmark } = await import('../../core/undo-manager.js');
   recordModifyBookmark(bm.id, oldState, { ...bm });
@@ -367,7 +363,6 @@ export async function deleteBookmark() {
 
   doc.bookmarks = doc.bookmarks.filter(b => !idsToRemove.has(b.id));
   selectedBookmarkId = null;
-  markDocumentModified();
 
   const { recordRemoveBookmark } = await import('../../core/undo-manager.js');
   recordRemoveBookmark(removedBookmarks);
@@ -397,4 +392,3 @@ function showBookmarkDialog(dialogTitle, currentTitle, currentPage) {
     });
   });
 }
-

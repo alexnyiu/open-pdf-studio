@@ -3,7 +3,6 @@ import Dialog from '../Dialog.jsx';
 import { closeDialog, showMessage } from '../../stores/dialogStore.js';
 import { state, getActiveDocument } from '../../../core/state.js';
 import { recordAddWatermark, recordModifyWatermark } from '../../../core/undo-manager.js';
-import { markDocumentModified } from '../../../ui/chrome/tabs.js';
 import { redrawAnnotations, redrawContinuous } from '../../../annotations/rendering.js';
 import { useTranslation } from '../../../i18n/useTranslation.js';
 
@@ -165,7 +164,6 @@ export default function WatermarkDialog(props) {
       recordAddWatermark(wm);
     }
 
-    markDocumentModified();
     refresh();
     close();
   }

@@ -18,7 +18,7 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 
 ## Architecture implemented
 
-- revision state: Pending
+- revision state: Implemented in Phase 1; explicit content, serialized, persisted, live-PDF, visible-render, visible-semantic, and page readiness identities now fail closed on impossible transitions
 - save coordinator: Pending
 - proxy synchronization: Pending
 - publication tokens: Pending
@@ -30,18 +30,18 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 
 | Finding | Status | Commit | Files | Tests/evidence |
 |---|---|---|---|---|
-| F-01 | Reproduced | Pending | `open-pdf-studio/js/pdf/save-state.test.mjs` | Deterministic false no-op regression fails at baseline |
+| F-01 | Resolved in Phase 1 | Pending Phase 1 commit | `open-pdf-studio/js/pdf/save-state.js`, `open-pdf-studio/js/core/document-revision-state.runtime.js` | Deterministic regression now passes; same-path no-op rejects synchronization debt |
 | F-02 | Pending | Pending | Pending | Pending |
 | F-03 | Pending | Pending | Pending | Pending |
 | F-04 | Pending | Pending | Pending | Pending |
-| F-05 | Pending | Pending | Pending | Pending |
+| F-05 | Foundation complete in Phase 1 | Pending Phase 1 commit | document revision state and persistent mutation routing | Content identity advances once per committed mutation |
 | F-06 | Pending | Pending | Pending | Pending |
-| F-07 | Pending | Pending | Pending | Pending |
+| F-07 | Foundation complete in Phase 1 | Pending Phase 1 commit | `open-pdf-studio/js/core/undo-manager.js` | Undo/redo receives monotonic content identity |
 | F-08 | Pending | Pending | Pending | Pending |
 | F-09 | Pending | Pending | Pending | Pending |
 | F-10 | Pending | Pending | Pending | Pending |
-| F-11 | Pending | Pending | Pending | Pending |
-| F-12 | Pending | Pending | Pending | Pending |
+| F-11 | Foundation complete in Phase 1 | Pending Phase 1 commit | page content revision compatibility alias | Page-scoped mutation identity is explicit |
+| F-12 | Foundation complete in Phase 1 | Pending Phase 1 commit | structural revision invalidation | Structural changes invalidate page readiness and geometry identity |
 | F-13 | Pending | Pending | Pending | Pending |
 | F-14 | Pending | Pending | Pending | Pending |
 | F-15 | Pending | Pending | Pending | Pending |
@@ -78,6 +78,21 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 - Failure: 19 OCR tests fail after missing generated PNG fixtures produce `ENOENT`; the first missing file is `open-pdf-studio/tests/fixtures/ocr/quality-v1/punctuation-unicode.png`.
 - Consequence: frontend build, whitespace, Rust, desktop build, packaged editor acceptance, and performance jobs are skipped.
 - Local/CI difference: the PNG files exist locally but `git ls-files` contains only the fixture Markdown and JSON files.
+
+### Phase 1 revision model
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | PASS |
+| `node --test js/core/document-revision-state.test.mjs js/pdf/save-state.test.mjs js/pdf/page-raster.test.mjs` | PASS: 20/20 |
+| `npm run test:editor-lifecycle:unit` | PASS: 123/123 |
+| `npm run test:unit` | PASS: 225/225 |
+| `git diff --check` | PASS |
+
+- All document instances initialize one stable revision-state object.
+- `pageRenderRevisions` remains a compatibility alias of `pageContentRevisions`; there are not two independent counters.
+- Persistence debt and live-proxy synchronization debt are separate, and disk-clean state cannot suppress required synchronization.
+- Persistent mutation entry points route through the revision helper or the typed undo-command boundary; OCR/scanned inner state retains the existing `modified` compatibility marker while its owning command advances revision identity exactly once.
 
 ## Packaged acceptance
 

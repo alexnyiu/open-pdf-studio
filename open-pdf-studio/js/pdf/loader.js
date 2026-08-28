@@ -14,6 +14,7 @@ import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
 import { replaceDocumentPdfProxy } from '../core/document-lifecycle.js';
 import { restoreDocumentScrollPosition } from './document-scroll-position.js';
+import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
 
 // Sub-module imports
 import { extractAnnotationColors } from './loader/color-extraction.js';
@@ -122,7 +123,7 @@ export async function reloadDocumentFromBytes(doc, bytes) {
   const previousPdfDocument = replaceDocumentPdfProxy(doc, reloadedPdfDocument, 'reload-from-bytes');
   try { await previousPdfDocument?.destroy?.(); } catch (_) {}
 
-  doc.modified = true;
+  noteDocumentMutation(doc, { structural: true, reason: 'reload-from-bytes' });
 }
 
 /**
@@ -740,7 +741,7 @@ export async function createDocFromTemplate(templatePath) {
     if (doc) doc.isUntitled = true;
     await loadPDF(tempPath, index, typedArray);
     if (doc) doc.fileName = displayName;
-    markDocumentModified();
+    markDocumentModified({ reason: 'document:create-from-template' });
     try { await fitPage(); } catch (e) { console.warn('[template-pdf] fitPage failed:', e); }
     updateWindowTitle();
   } catch (e) {
@@ -794,7 +795,7 @@ export async function createBlankPDF(widthPt, heightPt, numPages) {
       await loadPDF(tempPath, index, typedArray);
       if (doc) doc.fileName = displayName;
       // Mark as modified so Ctrl+S triggers Save As right away
-      markDocumentModified();
+      markDocumentModified({ reason: 'document:create-blank' });
       try { await fitPage(); } catch (e) { console.warn('[blank-pdf] fitPage failed:', e); }
       updateWindowTitle();
       return;
@@ -843,7 +844,7 @@ export async function createBlankPDF(widthPt, heightPt, numPages) {
     if (pdfContainer) pdfContainer.classList.add('visible');
 
     // Mark as modified so Ctrl+S will trigger Save As
-    markDocumentModified();
+    markDocumentModified({ reason: 'document:create-blank' });
 
     // Manual fit: the in-memory path bypasses the viewport, so fitPage() is
     // a no-op — compute a fit-zoom from the container directly.

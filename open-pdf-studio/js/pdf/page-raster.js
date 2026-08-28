@@ -2,6 +2,10 @@
  * Runtime-only raster identity and density policy shared by every PDF view.
  * Persistence and semantic page layers deliberately do not depend on this.
  */
+import {
+  initializeDocumentRevisionState,
+  noteDocumentMutation,
+} from '../core/document-revision-state.runtime.js';
 
 export const RasterQuality = Object.freeze({
   PREVIEW: 'preview',
@@ -26,17 +30,20 @@ export function rasterScaleBucket(scale) {
 }
 
 export function pageRenderRevision(documentState, pageNum) {
-  const revision = Number(documentState?.pageRenderRevisions?.[Number(pageNum)]);
+  if (!documentState) return 0;
+  const state = initializeDocumentRevisionState(documentState);
+  const revision = Number(state.pageContentRevisions?.[Number(pageNum)]);
   return Number.isInteger(revision) && revision >= 0 ? revision : 0;
 }
 
 export function bumpPageRenderRevision(documentState, pageNum) {
   const page = Number(pageNum);
   if (!documentState || !Number.isInteger(page) || page <= 0) return 0;
-  documentState.pageRenderRevisions ||= {};
-  const revision = pageRenderRevision(documentState, page) + 1;
-  documentState.pageRenderRevisions[page] = revision;
-  return revision;
+  noteDocumentMutation(documentState, {
+    pages: [page],
+    reason: 'page-content:legacy-invalidation',
+  });
+  return pageRenderRevision(documentState, page);
 }
 
 export function requestedRasterScale(cssScale, devicePixelRatio = 1) {

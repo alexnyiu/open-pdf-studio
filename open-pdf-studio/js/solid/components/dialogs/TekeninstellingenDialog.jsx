@@ -22,6 +22,7 @@ import {
   DEFAULT_SCALE_KEY, TEKST_SOORTEN, duplicateRegelset,
 } from '../../../drafting/tekeningtype.js';
 import { redrawAnnotations, redrawContinuous } from '../../../annotations/rendering.js';
+import { noteDocumentMutation } from '../../../core/document-revision-state.runtime.js';
 
 function redraw() {
   const doc = getActiveDocument();
@@ -127,7 +128,10 @@ export default function TekeninstellingenDialog() {
     else delete region.tekeningtypeId;
     region.modifiedAt = new Date().toISOString();
     const doc = getActiveDocument();
-    if (doc) doc.modified = true;
+    if (doc) noteDocumentMutation(doc, {
+      pages: [region.page],
+      reason: 'drawing-settings:assign-region',
+    });
     setRev(rev() + 1);
     redraw();
   }

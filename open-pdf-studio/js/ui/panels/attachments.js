@@ -3,6 +3,7 @@ import { getActiveDocument } from '../../core/state.js';
 import { isTauri, writeBinaryFile, readBinaryFile } from '../../core/platform.js';
 import { PDFDocument, PDFName, PDFHexString, PDFDict, PDFArray, PDFString } from 'pdf-lib';
 import { getCachedPdfBytes } from '../../pdf/loader.js';
+import { noteDocumentMutation } from '../../core/document-revision-state.runtime.js';
 import {
   setAttachmentItems as setItems, setAttachmentCountText as setCountText,
   setAttachmentEmptyMessage as setEmptyMessage, setAttachmentSelectedKey as setSelectedKey,
@@ -222,7 +223,7 @@ async function embedAttachment(activeDoc, filename, fileBytes) {
 
     const savedBytes = await pdfDocLib.save();
     await reloadDocumentFromBytes(activeDoc, savedBytes);
-    activeDoc.modified = true;
+    noteDocumentMutation(activeDoc, { reason: 'attachment:embed' });
   } catch (e) {
     console.error('Failed to embed attachment:', e);
   }
@@ -270,7 +271,7 @@ async function removeAttachment(activeDoc, key) {
 
     const savedBytes = await pdfDocLib.save();
     await reloadDocumentFromBytes(activeDoc, savedBytes);
-    activeDoc.modified = true;
+    noteDocumentMutation(activeDoc, { reason: 'attachment:remove' });
   } catch (e) {
     console.error('Failed to remove attachment:', e);
   }

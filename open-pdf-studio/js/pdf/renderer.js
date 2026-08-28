@@ -66,6 +66,7 @@ import {
   serializePageRasterKey,
 } from './page-raster.js';
 import { planVisiblePageTiles } from './page-tile-plan.js';
+import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
 import {
   tileCacheFindCovering,
   tileCacheGet,
@@ -3349,7 +3350,7 @@ export async function rotatePage(delta, targetPage) {
   rebuildDocumentPageGeometryIndex(doc);
 
   // Mark document as modified
-  if (doc) doc.modified = true;
+  noteDocumentMutation(doc, { pages: [pageNum], structural: true, reason: 'page:rotate' });
 
   // Re-render
   if (doc?.viewMode === 'continuous') {

@@ -20,6 +20,11 @@ import { replaceDocumentPdfProxy } from '../../core/document-lifecycle.js';
 import { authorizeDocumentClose } from './document-close-authorization.js';
 import { showUnsavedClosePrompt } from './unsaved-close-prompt.js';
 import { restoreDocumentScrollPosition } from '../../pdf/document-scroll-position.js';
+import {
+  documentHasRevisionPersistenceDebt,
+  initializeDocumentRevisionState,
+  noteDocumentMutation,
+} from '../../core/document-revision-state.runtime.js';
 
 const pendingTabCloses = new Map();
 
@@ -355,7 +360,7 @@ export async function closeActiveTab() {
  * @returns {boolean}
  */
 export function hasUnsavedChanges() {
-  return state.documents.some(doc => doc.modified);
+  return state.documents.some(doc => doc.modified || documentHasRevisionPersistenceDebt(doc));
 }
 
 /**
@@ -363,7 +368,9 @@ export function hasUnsavedChanges() {
  * @returns {string[]}
  */
 export function getUnsavedDocumentNames() {
-  return state.documents.filter(doc => doc.modified).map(doc => doc.fileName);
+  return state.documents
+    .filter(doc => doc.modified || documentHasRevisionPersistenceDebt(doc))
+    .map(doc => doc.fileName);
 }
 
 /**
@@ -479,14 +486,18 @@ export function updateWindowTitle() {
 /**
  * Mark the active document as modified
  */
-export function markDocumentModified() {
-  return markDocumentModifiedForDocument(getActiveDocument());
+export function markDocumentModified(options = {}) {
+  return markDocumentModifiedForDocument(getActiveDocument(), options);
 }
 
 /** Mark an immutable owner document modified even when another tab is visible. */
-export function markDocumentModifiedForDocument(doc) {
+export function markDocumentModifiedForDocument(doc, {
+  pages = [],
+  structural = false,
+  reason = 'direct-document-mutation',
+} = {}) {
   if (doc) {
-    doc.modified = true;
+    noteDocumentMutation(doc, { pages, structural, reason });
     // Direct modification bypasses undo stack, so clean point is unreachable
     doc.savedUndoStackLength = -1;
     updateTabBar();
@@ -506,10 +517,15 @@ export function markDocumentSaved() {
 /** Mark the immutable saved owner clean even if another tab became visible. */
 export function markDocumentSavedForDocument(doc) {
   if (doc) {
+    const revisions = initializeDocumentRevisionState(doc);
     // A failed or non-macOS save leaves OCR dirty; validated macOS persistence
     // clears it only after native atomic replacement succeeds.
-    doc.modified = doc.ocr?.dirty === true;
-    doc.savedUndoStackLength = (doc.undoStack || []).length;
+    const scannedDirty = doc.scannedTextEditRemovalPending === true
+      || Number(doc.scannedTextEdits?.stateRevision ?? 0)
+        !== Number(doc.scannedTextEditPersistedRevision ?? 0);
+    const exactPersistedRevision = revisions.contentRevision === revisions.persistedRevision;
+    doc.modified = !exactPersistedRevision || doc.ocr?.dirty === true || scannedDirty;
+    if (exactPersistedRevision) doc.savedUndoStackLength = (doc.undoStack || []).length;
     updateTabBar();
     updateWindowTitle();
     return true;

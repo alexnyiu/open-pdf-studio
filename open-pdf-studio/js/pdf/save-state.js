@@ -1,3 +1,9 @@
+import {
+  documentHasRevisionPersistenceDebt,
+  documentNeedsSynchronization,
+  initializeDocumentRevisionState,
+} from '../core/document-revision-state.runtime.js';
+
 /**
  * Return whether an owner document still has state that must cross the PDF
  * persistence boundary. `modified` covers ordinary annotations, metadata,
@@ -6,6 +12,8 @@
  */
 export function documentHasPendingPersistence(documentState) {
   if (!documentState) return false;
+  initializeDocumentRevisionState(documentState);
+  if (documentHasRevisionPersistenceDebt(documentState)) return true;
   if (documentState.modified === true || documentState.ocr?.dirty === true) return true;
   if (documentState.scannedTextEditRemovalPending === true) return true;
   const scannedRevision = Number(documentState.scannedTextEdits?.stateRevision ?? 0);
@@ -32,7 +40,8 @@ export function canSkipUnmodifiedSamePathSave({
     && !saveAsPath
     && !documentState.saveTargetPath
     && documentState.isUntitled !== true
-    && !documentHasPendingPersistence(documentState),
+    && !documentHasPendingPersistence(documentState)
+    && !documentNeedsSynchronization(documentState),
   );
 }
 

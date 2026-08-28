@@ -2,7 +2,6 @@ import { state, getActiveDocument } from '../core/state.js';
 import { getCachedPdfBytes, setCachedPdfBytes, cancelAnnotationLoading, markAllAnnotationPagesLoaded } from './loader.js';
 import { setViewMode } from './renderer.js';
 import { generateThumbnails, clearThumbnailCache } from '../ui/panels/left-panel.js';
-import { markDocumentModified } from '../ui/chrome/tabs.js';
 import { updateAllStatus } from '../ui/chrome/status-bar.js';
 import { hideProperties } from '../ui/panels/properties-panel.js';
 import { saveFileDialog, writeBinaryFile, readBinaryFile, isTauri } from '../core/platform.js';
@@ -266,7 +265,6 @@ export async function reloadFromBytes(newBytes, annotations, rotations, targetPa
   clearThumbnailCache(doc.id);
   generateThumbnails();
   updateAllStatus();
-  markDocumentModified();
 }
 
 // Build remapped annotations array based on page mapping

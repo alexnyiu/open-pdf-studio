@@ -344,7 +344,7 @@ function replaceInTextEdit(doc, result, replaceText) {
 
 let _replacing = false;
 
-async function replaceInPdfContent(doc, result, replaceText) {
+async function replaceInPdfContent(doc, result, replaceText, { noteRevision = true } = {}) {
   if (_replacing) return null;
   _replacing = true;
   const ownerGeneration = Number(doc.lifecycleGeneration) || 0;
@@ -419,8 +419,11 @@ async function replaceInPdfContent(doc, result, replaceText) {
     });
     if (!doc.textEdits) doc.textEdits = [];
     doc.textEdits.push(record);
-    executeForDocument(doc, { type: 'addTextEdit', textEdit: structuredClone(record) });
-    markDocumentModifiedForDocument(doc);
+    executeForDocument(
+      doc,
+      { type: 'addTextEdit', textEdit: structuredClone(record) },
+      { noteRevision },
+    );
     return { type: 'textEdit', id: record.id, oldText: sourceText, newText: replacementText };
   } catch (err) {
     console.error('[replaceInPdfContent]', err);
@@ -477,11 +480,23 @@ export async function replaceCurrentMatch(replaceText) {
 
   // Try annotation text first
   const replaced = replaceInAnnotation(doc, result, replaceText);
-  if (replaced) return replaced;
+  if (replaced) {
+    markDocumentModifiedForDocument(doc, {
+      pages: [result.pageNum],
+      reason: 'find-replace:annotation',
+    });
+    return replaced;
+  }
 
   // Try existing text edits
   const replacedEdit = replaceInTextEdit(doc, result, replaceText);
-  if (replacedEdit) return replacedEdit;
+  if (replacedEdit) {
+    markDocumentModifiedForDocument(doc, {
+      pages: [result.pageNum],
+      reason: 'find-replace:text-edit',
+    });
+    return replacedEdit;
+  }
 
   // Base PDF content — create text edit via text-edit-tool infrastructure
   const replacedPdf = await replaceInPdfContent(doc, result, replaceText);
@@ -499,6 +514,7 @@ export async function replaceAllMatches(replaceText) {
 
   const results = [...state.search.results];
   let count = 0;
+  const changedPages = new Set();
 
   const annReplacements = new Map();
   const editReplacements = new Map();
@@ -526,19 +542,33 @@ export async function replaceAllMatches(replaceText) {
   for (const [annId, matches] of annReplacements) {
     const ann = doc.annotations.find(a => a.id === annId);
     if (!ann || !ann.text) continue;
-    count += replaceAllInAnnotationText(doc, ann, matches, replaceText);
+    const replaced = replaceAllInAnnotationText(doc, ann, matches, replaceText);
+    count += replaced;
+    if (replaced > 0) changedPages.add(ann.page);
   }
 
   for (const [editId, matches] of editReplacements) {
     const edit = doc.textEdits?.find(e => e.id === editId);
     if (!edit) continue;
-    count += replaceAllInTextEditText(doc, edit, matches, replaceText);
+    const replaced = replaceAllInTextEditText(doc, edit, matches, replaceText);
+    count += replaced;
+    if (replaced > 0) changedPages.add(edit.page);
   }
 
   // PDF content — process each match individually via text-edit-tool
   for (const result of pdfContentResults) {
-    const replaced = await replaceInPdfContent(doc, result, replaceText);
-    if (replaced) count++;
+    const replaced = await replaceInPdfContent(doc, result, replaceText, { noteRevision: false });
+    if (replaced) {
+      count++;
+      changedPages.add(result.pageNum);
+    }
+  }
+
+  if (count > 0) {
+    markDocumentModifiedForDocument(doc, {
+      pages: [...changedPages],
+      reason: 'find-replace:all',
+    });
   }
 
   return count;

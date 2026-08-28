@@ -3,7 +3,6 @@ import i18next from '../i18n/config.js';
 import { execute, executeForDocument } from '../core/undo-manager.js';
 import { redrawAnnotations, redrawContinuous } from '../annotations/rendering.js';
 import { showTextEditProperties, hideProperties } from '../ui/panels/properties-panel.js';
-import { markDocumentModified, markDocumentModifiedForDocument } from '../ui/chrome/tabs.js';
 import { canvasContainer, continuousContainer, pdfCanvas } from '../ui/dom-elements.js';
 import { showPdfTextEditor, hidePdfTextEditor, getPdfEditorText as getEditorText,
   updatePdfEditorStyle, shiftPdfEditorPosition, setPdfEditorStatus,
@@ -334,7 +333,6 @@ function ocrParagraphActionsForSpan({ doc, pageNum, span, context, region, exist
     && selectedRegions[0].lineIds.length + selectedRegions[1].lineIds.length <= 32;
   const ensureRaster = async () => existingRaster || sourceRasterForScannedLine(doc, context.result);
   const complete = async () => {
-    markDocumentModified();
     ocrParagraphCache.clear();
     onApplied?.();
     refreshPendingOcrTextLayer(pageNum);
@@ -2224,7 +2222,6 @@ async function startScannedTextEditing(span, pageNum, stagedLineIds = []) {
         cleanup();
         return false;
       }
-      markDocumentModifiedForDocument(doc);
       cleanup();
       if (getActiveDocument() === doc) {
         refreshPendingOcrTextLayer(pageNum);
@@ -3425,7 +3422,6 @@ export function deleteActiveTextEdit() {
     if (doc && editor.existingOwnedEdit) {
       try {
         removeScannedTextEditForDocument(doc, editor.selectionId);
-        markDocumentModifiedForDocument(doc);
         if (getActiveDocument() === doc) refreshPendingOcrTextLayer(editor.pageNum);
         enableTextLayerHover();
       } catch (error) {

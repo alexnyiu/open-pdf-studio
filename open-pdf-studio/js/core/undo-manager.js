@@ -3,6 +3,10 @@ import { cloneAnnotation } from '../annotations/factory.js';
 import { restoreOcrCommandState } from '../ocr/document-state.js';
 import { restoreScannedTextEditCommandState } from '../ocr/editing/edit-state.js';
 import { applyNativeTextSourceProjection } from '../text/native-text-source-projection.js';
+import {
+  documentHasRevisionPersistenceDebt,
+  noteDocumentMutation,
+} from './document-revision-state.runtime.js';
 const MAX_UNDO_STACK = 100;
 const DOCUMENT_STATE_COMMAND_TYPES = new Set([
   'ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned', 'scannedTextEdit',
@@ -21,9 +25,12 @@ function clonePlainValue(value) {
 function syncModifiedState(targetDocument = null) {
   const doc = targetDocument || getActiveDocument();
   if (!doc) return;
-  const isClean = doc.savedUndoStackLength >= 0 &&
-                  (doc.undoStack || []).length === doc.savedUndoStackLength;
-  doc.modified = !isClean || doc.ocr?.dirty === true;
+  const scannedDirty = doc.scannedTextEditRemovalPending === true
+    || Number(doc.scannedTextEdits?.stateRevision ?? 0)
+      !== Number(doc.scannedTextEditPersistedRevision ?? 0);
+  doc.modified = documentHasRevisionPersistenceDebt(doc)
+    || doc.ocr?.dirty === true
+    || scannedDirty;
 }
 
 // Per-document undo stack stored on the document object
@@ -115,6 +122,39 @@ function pagesForCommand(cmd) {
     if (doc && Number.isInteger(doc.currentPage)) addPage(doc.currentPage);
   }
   return pages;
+}
+
+function revisionMutationForCommand(cmd, result = { pages: new Set(), structural: false }) {
+  if (!cmd) return result;
+  if (cmd.type === 'pageStructure') result.structural = true;
+  const addPage = (value) => {
+    const page = Number(value);
+    if (Number.isSafeInteger(page) && page > 0) result.pages.add(page);
+  };
+  const addFrom = (value) => addPage(value?.page ?? value?.pageNum);
+  addPage(cmd.pageNum);
+  for (const page of cmd.pageNumbers || []) addPage(page);
+  for (const key of ['annotation', 'oldState', 'newState', 'textEdit', 'oldTextEdit', 'newTextEdit']) {
+    addFrom(cmd[key]);
+  }
+  for (const item of cmd.annotations || []) addFrom(item);
+  for (const item of cmd.items || []) {
+    addFrom(item);
+    addFrom(item.annotation);
+    addFrom(item.oldState);
+    addFrom(item.newState);
+  }
+  for (const command of cmd.commands || []) revisionMutationForCommand(command, result);
+  return result;
+}
+
+function noteUndoCommandMutation(doc, cmd, reasonPrefix = 'command') {
+  const mutation = revisionMutationForCommand(cmd);
+  return noteDocumentMutation(doc, {
+    pages: [...mutation.pages],
+    structural: mutation.structural,
+    reason: `${reasonPrefix}:${cmd.type}`,
+  });
 }
 
 const _pendingThumbPages = new Set();
@@ -232,7 +272,7 @@ export function execute(cmd) {
 }
 
 /** Record a command against its owning document even while another tab is active. */
-export function executeForDocument(doc, cmd) {
+export function executeForDocument(doc, cmd, { noteRevision = true } = {}) {
   if (!doc || !cmd || typeof cmd.type !== 'string') return false;
   if (pendingPropertyChange) flushPropertyChange();
   if (undoTransactionDepth > 0 && undoTransactionDocumentId === doc.id &&
@@ -246,6 +286,7 @@ export function executeForDocument(doc, cmd) {
   }
   pushUndoForDocument(doc, cmd);
   doc.redoStack = [];
+  if (noteRevision) noteUndoCommandMutation(doc, cmd);
   syncModifiedState(doc);
   updateButtons();
   if (doc === getActiveDocument()) scheduleThumbnailRefresh(cmd);
@@ -269,6 +310,7 @@ export async function undo() {
     const { restorePageState } = await import('../pdf/page-manager.js');
     await restorePageState(cmd.oldBytes, cmd.oldAnnotations, cmd.oldRotations, cmd.oldPage);
     void import('../pdf/whole-pdf-preload.js').then((module) => module.restartWholePdfPreload(getActiveDocument()));
+    noteUndoCommandMutation(getActiveDocument(), cmd, 'undo');
     syncModifiedState();
     updateButtons();
     return;
@@ -277,6 +319,7 @@ export async function undo() {
   applyUndo(cmd);
   await refreshTextEditLayerProjections(cmd, 'undo');
   await persistMeasureScaleIfNeeded(cmd);
+  noteUndoCommandMutation(getActiveDocument(), cmd, 'undo');
   syncModifiedState();
 
   if (DOCUMENT_STATE_COMMAND_TYPES.has(cmd.type)) {
@@ -327,6 +370,7 @@ export async function redo() {
     const { restorePageState } = await import('../pdf/page-manager.js');
     await restorePageState(cmd.newBytes, cmd.newAnnotations, cmd.newRotations, cmd.newPage);
     void import('../pdf/whole-pdf-preload.js').then((module) => module.restartWholePdfPreload(getActiveDocument()));
+    noteUndoCommandMutation(getActiveDocument(), cmd, 'redo');
     syncModifiedState();
     updateButtons();
     return;
@@ -335,6 +379,7 @@ export async function redo() {
   applyRedo(cmd);
   await refreshTextEditLayerProjections(cmd, 'redo');
   await persistMeasureScaleIfNeeded(cmd);
+  noteUndoCommandMutation(getActiveDocument(), cmd, 'redo');
   syncModifiedState();
 
   if (DOCUMENT_STATE_COMMAND_TYPES.has(cmd.type)) {
@@ -991,10 +1036,8 @@ export function flushPropertyChange() {
       }
     }
     targetDoc.redoStack = [];
-    // Sync modified state
-    const isClean = targetDoc.savedUndoStackLength >= 0 &&
-                    targetDoc.undoStack.length === targetDoc.savedUndoStackLength;
-    targetDoc.modified = !isClean || targetDoc.ocr?.dirty === true;
+    noteUndoCommandMutation(targetDoc, cmd);
+    syncModifiedState(targetDoc);
   }
 
   pendingPropertyChange = null;

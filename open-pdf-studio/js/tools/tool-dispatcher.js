@@ -22,7 +22,6 @@ import {
   endUndoTransaction,
 } from '../core/undo-manager.js';
 import { cloneForInsert } from './edit-ops.js';
-import { markDocumentModified } from '../ui/chrome/tabs.js';
 import { isPdfAReadOnly } from '../pdf/loader.js';
 import { setTypeLengthCursorScreen } from './type-length-input.js';
 import { getAnnotationType } from '../plugins/annotation-type-registry.js';
@@ -808,7 +807,6 @@ function _finishDragResize(ctx, e, coords) {
   const _fSel = _fDoc ? _fDoc.selectedAnnotations : [];
   if (state._ctrlDragCopy && state._ctrlCopiesCreated) {
     recordBulkAdd(_fSel);
-    markDocumentModified();
   } else {
     const modifiedScaleBars = _fSel.filter(a => a.type === 'scaleBar');
     const hasScaleBarChange = modifiedScaleBars.length > 0;

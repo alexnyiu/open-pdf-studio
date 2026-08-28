@@ -531,9 +531,6 @@ export async function onReplace() {
 
     const replaced = await replaceCurrentMatch(replaceWith);
     if (replaced) {
-      const { markDocumentModified } = await import('../ui/chrome/tabs.js');
-      markDocumentModified();
-
       const doc = getActiveDocument();
       if (doc) clearTextCache(doc.id);
 
@@ -555,9 +552,6 @@ export async function onReplaceAll() {
 
   const count = await replaceAllMatches(replaceWith);
   if (count > 0) {
-    const { markDocumentModified } = await import('../ui/chrome/tabs.js');
-    markDocumentModified();
-
     const doc = getActiveDocument();
     if (doc) clearTextCache(doc.id);
 

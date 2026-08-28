@@ -2,7 +2,6 @@ import { createSignal } from 'solid-js';
 
 import Dialog from '../Dialog.jsx';
 import { getActiveDocument } from '../../../core/state.js';
-import { markDocumentModified } from '../../../ui/chrome/tabs.js';
 import { refreshPendingOcrTextLayer } from '../../../text/text-layer.js';
 import { mergeScannedTextEditRegionsForDocument } from '../../../ocr/editing/undo-commands.js';
 import { useTranslation } from '../../../i18n/useTranslation.js';
@@ -40,7 +39,6 @@ export default function OcrRegionMergeDialog(props) {
         pageGeometry: recognition.geometry,
         replacementText: text(),
       });
-      markDocumentModified();
       closeDialog('merge-ocr-regions');
       refreshPendingOcrTextLayer(data.pageNum);
       window.dispatchEvent(new CustomEvent('open-pdf-studio:request-text-edit-hover-refresh'));
