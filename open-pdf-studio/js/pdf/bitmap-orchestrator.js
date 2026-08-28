@@ -39,6 +39,11 @@ import {
     tileSupportsZoom,
 } from './tile-render-policy.js';
 import { RasterQuality } from './page-raster.js';
+import {
+    captureRenderPublicationToken,
+    recordRejectedRenderPublication,
+    renderPublicationTokenIsCurrent,
+} from './render-publication-token.js';
 
 
 // PDFium / browser canvas axis limit. Above this, we cap the whole-page
@@ -56,6 +61,9 @@ const _tileRequests = createInflightKeyGate();
 
 function rasterOwnerContext(quality, targetRasterScale) {
     const documentState = state.documents?.find?.((doc) => doc.id === viewport.documentId);
+    const publicationToken = documentState?.pdfDoc
+        ? captureRenderPublicationToken(documentState, viewport.pageNum, `viewport-${quality}`)
+        : null;
     return {
         documentId: viewport.documentId || documentState?.id || viewport.filePath,
         lifecycleGeneration: Number(viewport.documentLifecycleGeneration) || 0,
@@ -64,7 +72,26 @@ function rasterOwnerContext(quality, targetRasterScale) {
         devicePixelRatio: window.devicePixelRatio || 1,
         quality,
         targetRasterScale,
+        publicationDocument: documentState || null,
+        publicationToken,
     };
+}
+
+function viewportPublication(source, pageNum = viewport.pageNum) {
+    const documentState = state.documents?.find?.((doc) => doc.id === viewport.documentId);
+    if (!documentState?.pdfDoc) return null;
+    return {
+        documentState,
+        token: captureRenderPublicationToken(documentState, pageNum, source),
+    };
+}
+
+function viewportPublicationIsCurrent(publication) {
+    return Boolean(publication
+        && viewport.active
+        && viewport.documentId === publication.documentState.id
+        && viewport.pageNum === publication.token.pageNum
+        && renderPublicationTokenIsCurrent(publication.token, publication.documentState));
 }
 
 export async function ensureBitmapForCurrentView() {
@@ -73,6 +100,8 @@ export async function ensureBitmapForCurrentView() {
         viewport.dirty = true;
         return;
     }
+    const foregroundPublication = viewportPublication('viewport-raster');
+    if (!viewportPublicationIsCurrent(foregroundPublication)) return;
 
     // Additief pad: een ZWARE raster-pagina (grote content-stream) met de voorkeur
     // aan, vullen we progressief tegel-voor-tegel in i.p.v. één trage whole-page
@@ -89,7 +118,9 @@ export async function ensureBitmapForCurrentView() {
 
     const _prefOn = !!(state.preferences && state.preferences.progressiveRender);
     const _heavy = _prefOn ? await isHeavyPage(viewport.filePath, viewport.pageNum) : false;
+    if (!viewportPublicationIsCurrent(foregroundPublication)) return;
     const _extreme = _heavy ? await isExtremePage(viewport.filePath, viewport.pageNum) : false;
+    if (!viewportPublicationIsCurrent(foregroundPublication)) return;
     if (_prefOn && _heavy && (!_extreme || !needsVisibleTile(viewport.zoom, dpr, capScale))) {
         console.log(`[prog-guard] zware pagina p${viewport.pageNum} → progressief pad`);
         _bitmapGen++; // maak een eventuele in-flight gewone render stale
@@ -149,9 +180,14 @@ export async function ensureBitmapForCurrentView() {
         useBucket,
         context,
     );
+    const contextPublication = {
+        documentState: context.publicationDocument,
+        token: context.publicationToken,
+    };
     if (myGen !== _bitmapGen
         || viewport.documentId !== ownerDocumentId
-        || (Number(viewport.documentLifecycleGeneration) || 0) !== ownerGeneration) return;
+        || (Number(viewport.documentLifecycleGeneration) || 0) !== ownerGeneration
+        || !viewportPublicationIsCurrent(contextPublication)) return;
     if (entry && entry.bitmap) {
         viewport.currentBitmap = entry.bitmap;
         viewport.dirty = true;
@@ -183,6 +219,8 @@ const PREWARM_GIVEUP_MS = 10000;
 export async function prewarmZoomTiles(filePath, pageNum) {
     const canvas = document.getElementById('pdf-canvas');
     if (!canvas || !viewport.active || viewport.filePath !== filePath || viewport.pageNum !== pageNum) return;
+    const publication = viewportPublication('tile-prewarm', pageNum);
+    if (!viewportPublicationIsCurrent(publication)) return;
 
     // View-handtekening: wijzigt zodra de gebruiker zoomt/pant of het venster
     // van maat verandert — de goedkoopste betrouwbare "interactie"-detector
@@ -190,13 +228,15 @@ export async function prewarmZoomTiles(filePath, pageNum) {
     const viewSig = () =>
         `${viewport.zoom.toFixed(4)}|${Math.round(viewport.offsetX)}|${Math.round(viewport.offsetY)}|${canvas.width}x${canvas.height}`;
     const { progressiveRunActive } = await import('./progressive-render.js');
+    if (!viewportPublicationIsCurrent(publication)) return;
 
     const tWait0 = performance.now();
     let sig = viewSig();
     let calmSince = tWait0;
     for (;;) {
         await new Promise((r) => setTimeout(r, 200));
-        if (!viewport.active || viewport.filePath !== filePath || viewport.pageNum !== pageNum) return;
+        if (!viewport.active || viewport.filePath !== filePath || viewport.pageNum !== pageNum
+            || !viewportPublicationIsCurrent(publication)) return;
         const s = viewSig();
         if (s !== sig || progressiveRunActive()) {
             sig = s;
@@ -260,6 +300,7 @@ export async function prewarmZoomTiles(filePath, pageNum) {
 
             try {
                 const { invokeTileRegion, perfMark } = await import('./progressive-render.js');
+                if (!viewportPublicationIsCurrent(publication)) return;
                 const started = performance.now();
                 const raw = await invokeTileRegion({
                     path: filePath,
@@ -270,8 +311,13 @@ export async function prewarmZoomTiles(filePath, pageNum) {
                     regionYPt: region.y,
                     regionWPt: region.w,
                     regionHPt: region.h,
+                    requestId: publication.token.requestId,
                 });
-                if (!viewport.active || viewport.filePath !== filePath || viewport.pageNum !== pageNum) return;
+                if (!viewport.active || viewport.filePath !== filePath || viewport.pageNum !== pageNum
+                    || !viewportPublicationIsCurrent(publication)) {
+                    recordRejectedRenderPublication(publication.token, 'tile-prewarm-native-result');
+                    return;
+                }
                 const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
                 perfMark(`prewarm-coverage-invoke z=${zoom}-${coveragePlan.supportZoom} ${Math.round(performance.now() - started)}ms (${(bytes.length / 1048576).toFixed(1)}MB)`);
                 if (bytes?.length > 8) {
@@ -292,7 +338,7 @@ export async function prewarmZoomTiles(filePath, pageNum) {
                             regionHpt: region.h,
                             zoom,
                             renderScale,
-                        });
+                        }, publication);
                         perfMark(`prewarm-coverage-cacheSet ${w}x${h} ${Math.round(performance.now() - cacheStarted)}ms`);
                         console.log(`[tile-orch] prewarm coverage z=${zoom}-${coveragePlan.supportZoom} bucket=${zoomBucket} reg=${regionBucket} (${w}x${h})`);
                         return;
@@ -308,7 +354,8 @@ export async function prewarmZoomTiles(filePath, pageNum) {
     // inzoomen tot ruim 300%.
     for (const zoom of [1.5, 3.0]) {
         if (!needsVisibleTile(zoom, dpr, capScale)) continue;
-        if (!viewport.active || viewport.filePath !== filePath || viewport.pageNum !== pageNum) return;
+        if (!viewport.active || viewport.filePath !== filePath || viewport.pageNum !== pageNum
+            || !viewportPublicationIsCurrent(publication)) return;
         // Gebruiker weer bezig (view gewijzigd of nieuwe progressieve run)?
         // Dan direct stoppen — de interactie-render heeft voorrang op de
         // speculatieve pre-warm.
@@ -347,6 +394,7 @@ export async function prewarmZoomTiles(filePath, pageNum) {
 
         try {
             const { invokeTileRegion, perfMark } = await import('./progressive-render.js');
+            if (!viewportPublicationIsCurrent(publication)) return;
             const _pw0 = performance.now();
             const raw = await invokeTileRegion({
                 path: filePath,
@@ -357,8 +405,13 @@ export async function prewarmZoomTiles(filePath, pageNum) {
                 regionYPt: region.y,
                 regionWPt: region.w,
                 regionHPt: region.h,
+                requestId: publication.token.requestId,
             });
-            if (!viewport.active || viewport.filePath !== filePath || viewport.pageNum !== pageNum) return;
+            if (!viewport.active || viewport.filePath !== filePath || viewport.pageNum !== pageNum
+                || !viewportPublicationIsCurrent(publication)) {
+                recordRejectedRenderPublication(publication.token, 'tile-prewarm-native-result');
+                return;
+            }
             const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
             perfMark(`prewarm-invoke z=${zoom} ${Math.round(performance.now() - _pw0)}ms (${(bytes.length / 1048576).toFixed(1)}MB)`);
             if (!bytes || bytes.length <= 8) continue;
@@ -375,7 +428,7 @@ export async function prewarmZoomTiles(filePath, pageNum) {
                 regionHpt: region.h,
                 zoom,
                 renderScale,
-            });
+            }, publication);
             perfMark(`prewarm-cacheSet z=${zoom} ${w}x${h} ${Math.round(performance.now() - _pw1)}ms`);
             console.log(`[tile-orch] prewarm z=${zoom} bucket=${zoomBucket} reg=${regionBucket} (${w}x${h})`);
         } catch (e) {
@@ -450,7 +503,18 @@ export async function ensureTileForCurrentView(canvas) {
     const pageNum = viewport.pageNum;
     const rotation = viewport.rotation || 0;
     const requestedZoom = viewport.zoom;
-    const requestKey = `${filePath}|${pageNum}|${zoomBucket}|${rotation}|${regionBucket}`;
+    const publication = viewportPublication('tile-foreground', pageNum);
+    if (!viewportPublicationIsCurrent(publication)) return;
+    const requestKey = [
+        filePath,
+        pageNum,
+        zoomBucket,
+        rotation,
+        regionBucket,
+        publication.token.lifecycleGeneration,
+        publication.token.contentRevision,
+        publication.token.pageRevision,
+    ].join('|');
 
     // GIS-style tile-cover lookup: zoom buckets describe how a tile was
     // produced, not where it may be reused. A tile from another zoom level is
@@ -486,6 +550,7 @@ export async function ensureTileForCurrentView(canvas) {
     if (!requestToken) return;
     try {
         const { invokeTileRegion } = await import('./progressive-render.js');
+        if (!viewportPublicationIsCurrent(publication)) return;
         const renderScale = tileCoverageRenderScale({
             zoom: requestedZoom,
             devicePixelRatio: dpr,
@@ -502,8 +567,12 @@ export async function ensureTileForCurrentView(canvas) {
             regionYPt: bufferedRegion.y,
             regionWPt: bufferedRegion.w,
             regionHPt: bufferedRegion.h,
+            requestId: publication.token.requestId,
         });
-        if (!_tileRequests.isCurrent(requestToken)) return;
+        if (!_tileRequests.isCurrent(requestToken) || !viewportPublicationIsCurrent(publication)) {
+            recordRejectedRenderPublication(publication.token, 'tile-native-result');
+            return;
+        }
         const bytes = rgbaData instanceof Uint8Array ? rgbaData : new Uint8Array(rgbaData);
         if (!bytes || bytes.length <= 8) return;
         const view = new DataView(bytes.buffer, bytes.byteOffset, 8);
@@ -523,8 +592,17 @@ export async function ensureTileForCurrentView(canvas) {
             zoom: requestedZoom,
             renderScale,
         };
-        await tileCacheSet(filePath, pageNum, zoomBucket, rotation, regionBucket, imageData, regionMeta);
-        if (!_tileRequests.isCurrent(requestToken)) return;
+        await tileCacheSet(
+            filePath,
+            pageNum,
+            zoomBucket,
+            rotation,
+            regionBucket,
+            imageData,
+            regionMeta,
+            publication,
+        );
+        if (!_tileRequests.isCurrent(requestToken) || !viewportPublicationIsCurrent(publication)) return;
         const cached = tileCacheGet(filePath, pageNum, zoomBucket, rotation, regionBucket);
         if (cached && cached.bitmap) {
             viewport.currentTile = cached.bitmap;

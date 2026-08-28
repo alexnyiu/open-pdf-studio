@@ -32,6 +32,10 @@ import {
   unregisterRenderResource,
   isActiveRenderDocument,
 } from './render-resource-budget.js';
+import {
+  recordRejectedRenderPublication,
+  renderPublicationTokenIsCurrent,
+} from './render-publication-token.js';
 
 // Cache: Map<"filePath:pageNum:rotation", { bytes: Uint8Array, w, h, x0, y0 }>
 // Rotation is part of the key so a page rotated 90° coexists with the same
@@ -132,9 +136,14 @@ export function invalidatePageCache(filePath, pageNum) {
   }
 }
 
-export function cacheCommands(filePath, pageNum, rawBytes, rotation) {
+export function cacheCommands(filePath, pageNum, rawBytes, rotation, publication = null) {
   const bytes = rawBytes instanceof Uint8Array ? rawBytes : new Uint8Array(rawBytes);
-  if (bytes.length < 16) return;
+  if (bytes.length < 16) return false;
+  if (publication?.token
+      && !renderPublicationTokenIsCurrent(publication.token, publication.documentState)) {
+    recordRejectedRenderPublication(publication.token, 'vector-commands-before-cache');
+    return false;
+  }
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   // 16-byte header: x0, y0, width, height (all f32 LE)
   const x0 = dv.getFloat32(0, true);
@@ -146,6 +155,7 @@ export function cacheCommands(filePath, pageNum, rawBytes, rotation) {
   const entry = { bytes, x0, y0, w, h, filePath, pageNum };
   _cache.set(key, entry);
   registerCommandResource(key, entry);
+  return true;
 }
 
 export function hasCachedCommands(filePath, pageNum, rotation) {
@@ -181,7 +191,7 @@ let _imagePreparing = false;
 
 /// Pre-decode all images in the command buffer before rendering.
 /// Returns a promise that resolves when all images are ready.
-export async function prepareImages(filePath, pageNum, rotation) {
+export async function prepareImages(filePath, pageNum, rotation, publication = null) {
   const commandKey = _key(filePath, pageNum, rotation);
   const entry = _cache.get(commandKey);
   if (!entry) return;
@@ -242,7 +252,9 @@ export async function prepareImages(filePath, pageNum, rotation) {
             w,
             h,
             imgBytes,
-            () => _cache.get(commandKey) === entry,
+            () => _cache.get(commandKey) === entry
+              && (!publication?.token
+                || renderPublicationTokenIsCurrent(publication.token, publication.documentState)),
             filePath,
             pageNum,
           ));
@@ -258,6 +270,11 @@ export async function prepareImages(filePath, pageNum, rotation) {
     _imagePreparing = true;
     await Promise.all(promises);
     _imagePreparing = false;
+  }
+  if (publication?.token
+      && !renderPublicationTokenIsCurrent(publication.token, publication.documentState)) {
+    if (_cache.get(commandKey) === entry) releaseVectorEntry(commandKey);
+    recordRejectedRenderPublication(publication.token, 'vector-images-after-decode');
   }
 }
 

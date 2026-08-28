@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createRenderWorkScheduler } from './render-work-scheduler.js';
+import { createInitialDocumentRevisionState } from '../core/document-revision-state.runtime.js';
+import { captureRenderPublicationToken } from './render-publication-token.js';
 
 test('scheduler runs one foreground task at a time and orders queued work by priority', async () => {
   const scheduler = createRenderWorkScheduler();
@@ -45,4 +47,30 @@ test('foreground interaction invalidates a running background completion', async
   release('late bitmap');
   assert.equal((await background).status, 'cancelled');
   assert.equal(scheduler.snapshot().statistics.cancelled, 1);
+});
+
+test('scheduler rejects a completion whose publication revision advanced while running', async () => {
+  const revisionState = createInitialDocumentRevisionState();
+  revisionState.contentRevision = 1;
+  revisionState.pageContentRevisions[1] = 1;
+  const documentState = {
+    id: 'scheduled-owner',
+    lifecycleGeneration: 1,
+    pdfDoc: {},
+    revisionState,
+    pageRenderRevisions: revisionState.pageContentRevisions,
+  };
+  const token = captureRenderPublicationToken(documentState, 1, 'scheduled-render');
+  const scheduler = createRenderWorkScheduler();
+  let release;
+  const barrier = new Promise((resolve) => { release = resolve; });
+  const result = scheduler.schedule({
+    key: 'revision-owned',
+    publicationToken: token,
+    publicationDocument: documentState,
+    run: () => barrier,
+  });
+  documentState.revisionState.pageContentRevisions[1] = 2;
+  release('late pixels');
+  assert.equal((await result).status, 'cancelled');
 });

@@ -1,4 +1,9 @@
-import { state, getActiveDocument, getPageRotation } from '../../core/state.js';
+import {
+  state,
+  getActiveDocument,
+  getDocumentById,
+  getPageRotation,
+} from '../../core/state.js';
 import { drawAnnotation } from '../../annotations/rendering.js';
 import { updateAnnotationsList } from './annotations-list.js';
 import { updateAttachmentsList } from './attachments.js';
@@ -28,6 +33,12 @@ import {
   unregisterRenderResource,
 } from '../../pdf/render-resource-budget.js';
 import { recordPerformancePeak } from '../../pdf/performance-metrics.js';
+import {
+  captureRenderPublicationToken,
+  recordRejectedRenderPublication,
+  renderPublicationTokenIsCurrent,
+  trackPdfJsRenderTask,
+} from '../../pdf/render-publication-token.js';
 
 // Thumbnail scale (relative to actual page size). The thumbnail panel
 // displays at ~152 px wide; rendering close to that 1:1 saves PDFium
@@ -85,7 +96,7 @@ function revokeThumbnailEntry(entry) {
   if (typeof src === 'string' && src.startsWith('blob:')) URL.revokeObjectURL(src);
 }
 
-async function normalizeThumbnailEntry(rendered, generation) {
+async function normalizeThumbnailEntry(rendered, generation, publicationToken = null) {
   if (!rendered) return null;
   let src = rendered.src || rendered.dataURL || '';
   let bytes = Number(rendered.bytes) || 0;
@@ -104,6 +115,7 @@ async function normalizeThumbnailEntry(rendered, generation) {
     height: Math.max(1, Math.round(rendered.height || 1)),
     bytes,
     generation,
+    publicationToken,
   };
 }
 
@@ -119,6 +131,11 @@ function getPageGen(docId, pageNum) {
 }
 function pageGenMatches(docId, pageNum, gen) {
   return getPageGen(docId, pageNum) === gen;
+}
+
+function thumbnailPublicationIsCurrent(doc, publicationToken) {
+  return getDocumentById(doc?.id) === doc
+    && renderPublicationTokenIsCurrent(publicationToken, doc);
 }
 
 // Store pdfDoc references and state for each document
@@ -521,8 +538,12 @@ async function overlayAnnotationsOnDataURL(dataURL, pageNum, width, height, scal
   }
 }
 
-async function expectedThumbnailSize(pdfDoc, pageNum, doc) {
+async function expectedThumbnailSize(pdfDoc, pageNum, doc, publicationToken = null) {
   const page = await pdfDoc.getPage(pageNum);
+  if (publicationToken && !thumbnailPublicationIsCurrent(doc, publicationToken)) {
+    recordRejectedRenderPublication(publicationToken, 'thumbnail-size-after-page');
+    return null;
+  }
   const rotation = (page.rotate + owningPageRotation(doc, pageNum)) % 360;
   const viewport = page.getViewport({ scale: 1, rotation });
   const scale = 140 / Math.max(1, viewport.width);
@@ -542,9 +563,10 @@ async function expectedThumbnailSize(pdfDoc, pageNum, doc) {
   return { ...size, viewport, rotation };
 }
 
-async function renderCompleteWorkerThumbnail(pdfDoc, pageNum, doc) {
+async function renderCompleteWorkerThumbnail(pdfDoc, pageNum, doc, publicationToken) {
   if (!doc?.filePath || !window.__TAURI__) return null;
-  const expected = await expectedThumbnailSize(pdfDoc, pageNum, doc);
+  const expected = await expectedThumbnailSize(pdfDoc, pageNum, doc, publicationToken);
+  if (!expected) return null;
   const renderWidth = 280;
   const renderScale = Math.max(0.008, Math.min(0.75, renderWidth / Math.max(1, expected.viewport.width)));
   const { renderPdfPageBitmap } = await import('../../pdf/engine-router.js');
@@ -553,7 +575,13 @@ async function renderCompleteWorkerThumbnail(pdfDoc, pageNum, doc) {
     pageIndex: pageNum - 1,
     scale: renderScale,
     rotation: owningPageRotation(doc, pageNum),
+    requestId: publicationToken?.requestId || '',
   });
+  if (!thumbnailPublicationIsCurrent(doc, publicationToken)) {
+    try { rendered?.bitmap?.close?.(); } catch {}
+    recordRejectedRenderPublication(publicationToken, 'thumbnail-native-result-stale');
+    return null;
+  }
   const { bitmap, width: sourceWidth, height: sourceHeight } = rendered;
   if (sourceWidth <= 0 || sourceHeight <= 0) {
     try { bitmap?.close?.(); } catch {}
@@ -585,7 +613,7 @@ async function renderCompleteWorkerThumbnail(pdfDoc, pageNum, doc) {
 // (already extracted by the main viewer) for ~3-6× speedup; falls back to the
 // Rust backend, then PDF.js. Reusing the cache avoids re-parsing the PDF
 // content stream + IPC + JPEG encode + base64 round-trip.
-async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
+async function renderThumbnailToDataURL(pdfDoc, pageNum, doc, publicationToken) {
   if (!pdfDoc || !Number.isInteger(pageNum) || pageNum < 1 || pageNum > pdfDoc.numPages) return null;
   const _th0 = performance.now();
 
@@ -661,7 +689,12 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
   } catch (_) { /* fall through to Rust path */ }
 
   try {
-    const complete = await renderCompleteWorkerThumbnail(pdfDoc, pageNum, doc);
+    const complete = await renderCompleteWorkerThumbnail(
+      pdfDoc,
+      pageNum,
+      doc,
+      publicationToken,
+    );
     if (complete) return complete;
   } catch (error) {
     console.warn(`[Thumbnails] Worker thumbnail failed for page ${pageNum}:`, error);
@@ -726,7 +759,13 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
           const renderW = 280;
           const thumbScale = Math.max(0.008, Math.min(0.5, renderW / widthPt));
           const { renderPdfPageBitmap } = await import('../../pdf/engine-router.js');
-          const rendered = await renderPdfPageBitmap({ path: doc.filePath, pageIndex: pageNum - 1, scale: thumbScale, rotation });
+          const rendered = await renderPdfPageBitmap({
+            path: doc.filePath,
+            pageIndex: pageNum - 1,
+            scale: thumbScale,
+            rotation,
+            requestId: publicationToken?.requestId || '',
+          });
           if (rendered?.bitmap && rendered.width > 0 && rendered.height > 0) {
               const { bitmap, width: rw, height: rh } = rendered;
               const targetW = 140;
@@ -776,6 +815,7 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
         maxWidth: 140,
         rotation: extraRot || 0,
         skipImages: false,
+        requestId: publicationToken?.requestId || '',
       });
       const data = JSON.parse(result);
       // Plugin/Solid-store annotations zijn niet in de PDF tot save; overlay
@@ -821,14 +861,15 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
       canvas.height = viewport.height;
       const ctx = canvas.getContext('2d');
 
-      renderTask = page.render({
+      renderTask = trackPdfJsRenderTask(publicationToken, doc, page.render({
         canvasContext: ctx,
         viewport: viewport,
         annotationMode: 0
-      });
-      thumbnailRenderTasks.set(`${doc?.id || 'unknown'}:${pageNum}`, renderTask);
+      }));
+      const taskKey = `${doc?.id || 'unknown'}:${pageNum}:${publicationToken?.requestId || 'legacy'}`;
+      thumbnailRenderTasks.set(taskKey, renderTask);
       await renderTask.promise;
-      thumbnailRenderTasks.delete(`${doc?.id || 'unknown'}:${pageNum}`);
+      thumbnailRenderTasks.delete(taskKey);
 
       const output = document.createElement('canvas');
       output.width = 140;
@@ -881,7 +922,9 @@ async function renderThumbnailToDataURL(pdfDoc, pageNum, doc) {
     console.log(`[PERF-THUMB] page ${pageNum}: PDF.js fallback DONE: ${(performance.now() - _th0).toFixed(0)}ms`);
     return result;
   } catch (err) {
-    thumbnailRenderTasks.delete(`${doc?.id || 'unknown'}:${pageNum}`);
+    for (const key of thumbnailRenderTasks.keys()) {
+      if (key.startsWith(`${doc?.id || 'unknown'}:${pageNum}:`)) thumbnailRenderTasks.delete(key);
+    }
     if (timeoutId) clearTimeout(timeoutId);
     try { renderTask?.cancel(); } catch { /* ignore */ }
     console.warn(`[PERF-THUMB] page ${pageNum}: PDF.js fallback FAILED (${(performance.now() - _th0).toFixed(0)}ms):`, err.message);
@@ -893,20 +936,48 @@ export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false }
   if (!doc?.pdfDoc || !Number.isInteger(pageNum) || pageNum < 1 || pageNum > doc.pdfDoc.numPages) return null;
   if (!thumbnailCache.has(doc.id)) thumbnailCache.set(doc.id, new Map());
   const cache = thumbnailCache.get(doc.id);
+  const publicationToken = captureRenderPublicationToken(doc, pageNum, 'thumbnail');
   const cached = cache.get(pageNum);
-  if (cached) {
+  if (cached?.publicationToken
+      && renderPublicationTokenIsCurrent(cached.publicationToken, doc)) {
     touchRenderResource(thumbnailResourceKey(doc.id, pageNum));
     return cached;
   }
-  const key = `${doc.id}:${pageNum}`;
+  if (cached) {
+    revokeThumbnailEntry(cached);
+    cache.delete(pageNum);
+    unregisterRenderResource(thumbnailResourceKey(doc.id, pageNum));
+  }
+  const key = [
+    doc.id,
+    pageNum,
+    publicationToken.lifecycleGeneration,
+    publicationToken.contentRevision,
+    publicationToken.pageRevision,
+  ].join(':');
   if (thumbnailPromises.has(key)) return thumbnailPromises.get(key);
   const generation = getPageGen(doc.id, pageNum);
+  const tokenIsCurrent = () => thumbnailPublicationIsCurrent(doc, publicationToken);
   const promise = (async () => {
-    await expectedThumbnailSize(doc.pdfDoc, pageNum, doc);
-    const rendered = await renderThumbnailToDataURL(doc.pdfDoc, pageNum, doc);
-    const entry = await normalizeThumbnailEntry(rendered, generation);
-    if (!entry || !pageGenMatches(doc.id, pageNum, generation) || !doc.pdfDoc) {
+    await expectedThumbnailSize(doc.pdfDoc, pageNum, doc, publicationToken);
+    if (!tokenIsCurrent()) {
+      recordRejectedRenderPublication(publicationToken, 'thumbnail-after-size');
+      return null;
+    }
+    const rendered = await renderThumbnailToDataURL(
+      doc.pdfDoc,
+      pageNum,
+      doc,
+      publicationToken,
+    );
+    if (!tokenIsCurrent()) {
+      recordRejectedRenderPublication(publicationToken, 'thumbnail-after-render');
+      return null;
+    }
+    const entry = await normalizeThumbnailEntry(rendered, generation, publicationToken);
+    if (!entry || !pageGenMatches(doc.id, pageNum, generation) || !tokenIsCurrent()) {
       revokeThumbnailEntry(entry);
+      if (entry) recordRejectedRenderPublication(publicationToken, 'thumbnail-before-cache');
       return null;
     }
     const previous = cache.get(pageNum);
@@ -932,7 +1003,13 @@ export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false }
 
 export function getCachedThumbnailEntry(doc, pageNum) {
   const entry = doc ? thumbnailCache.get(doc.id)?.get(pageNum) || null : null;
-  if (entry) touchRenderResource(thumbnailResourceKey(doc.id, pageNum));
+  if (!entry) return null;
+  if (!entry.publicationToken
+      || !renderPublicationTokenIsCurrent(entry.publicationToken, doc)) {
+    releaseThumbnailPage(doc, pageNum);
+    return null;
+  }
+  touchRenderResource(thumbnailResourceKey(doc.id, pageNum));
   return entry;
 }
 
@@ -956,7 +1033,7 @@ export function cancelDocumentThumbnailWork(doc) {
   }
   for (const key of thumbnailPromises.keys()) {
     if (!key.startsWith(prefix)) continue;
-    const pageNum = Number(key.slice(prefix.length));
+    const pageNum = Number(key.slice(prefix.length).split(':')[0]);
     if (Number.isInteger(pageNum)) bumpPageGen(doc.id, pageNum);
   }
 }

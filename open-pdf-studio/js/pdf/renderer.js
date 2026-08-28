@@ -68,6 +68,14 @@ import {
 import { planVisiblePageTiles } from './page-tile-plan.js';
 import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
 import {
+  cancelPdfJsRenderTasksForDocument,
+  cancelStalePdfJsRenderTasks,
+  captureRenderPublicationToken,
+  recordRejectedRenderPublication,
+  renderPublicationTokenIsCurrent,
+  trackPdfJsRenderTask,
+} from './render-publication-token.js';
+import {
   tileCacheFindCovering,
   tileCacheGet,
   tileCacheSet,
@@ -175,8 +183,19 @@ let _foregroundRenderGen = 0;
 // switched to tab B, then write A's filePath into the viewport singleton,
 // making the RAF render loop draw A's pages on B's tab — the ghost/bleed-through
 // the user reports when switching tabs rapidly across multiple PDFs.
-function _isStaleDoc(doc) {
-  return doc !== state.documents[state.activeDocumentIndex];
+function _isStaleDoc(doc, publicationToken = null) {
+  const current = state.documents[state.activeDocumentIndex];
+  const stale = String(current?.id || '') !== String(doc?.id || '')
+    || (publicationToken && !renderPublicationTokenIsCurrent(publicationToken, current));
+  if (stale && publicationToken) {
+    if (String(current?.id || '') !== String(doc?.id || '')) {
+      cancelPdfJsRenderTasksForDocument(doc?.id, 'inactive-owner');
+    } else {
+      cancelStalePdfJsRenderTasks(current);
+    }
+    recordRejectedRenderPublication(publicationToken);
+  }
+  return stale;
 }
 
 
@@ -209,17 +228,23 @@ export async function renderPage(pageNum) {
   const owner = getActiveDocument();
   const ownerId = owner?.id || null;
   const ownerGeneration = Number(owner?.lifecycleGeneration) || 0;
+  const eventPublicationToken = owner?.pdfDoc
+    ? captureRenderPublicationToken(owner, pageNum, 'page-rendered-event')
+    : null;
   try {
     const result = await _renderPageImpl(pageNum);
     const current = getActiveDocument();
     if (current && current.id === ownerId
         && (Number(current.lifecycleGeneration) || 0) === ownerGeneration
+        && renderPublicationTokenIsCurrent(eventPublicationToken, current)
         && current.currentPage === pageNum
         && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('opds:page-rendered', {
         detail: {
           documentId: ownerId,
           lifecycleGeneration: ownerGeneration,
+          contentRevision: Number(current.revisionState?.contentRevision) || 0,
+          pageRevision: Number(current.revisionState?.pageContentRevisions?.[pageNum]) || 0,
           pageNum,
         },
       }));
@@ -246,6 +271,7 @@ async function _renderPageImpl(pageNum) {
 
   // Validate page number against THIS document's page count
   if (!Number.isInteger(pageNum) || pageNum < 1 || pageNum > pdfDoc.numPages) return;
+  const publicationToken = captureRenderPublicationToken(doc, pageNum, 'single-page');
 
   // Stamp this invocation with a fresh render-generation. Re-checked after
   // each await before any canvas / viewport mutation — see `_isStaleGen`
@@ -254,7 +280,7 @@ async function _renderPageImpl(pageNum) {
   const _isStaleGen = () => _renderGen !== _foregroundRenderGen;
 
   const page = await pdfDoc.getPage(pageNum);
-  if (_isStaleDoc(doc)) return; // user switched tabs while we awaited PDF.js page
+  if (_isStaleDoc(doc, publicationToken)) return; // user switched tabs while we awaited PDF.js page
   const extraRotation = getPageRotation(pageNum);
   const viewportOpts = { scale };
   if (extraRotation) {
@@ -318,7 +344,7 @@ async function _renderPageImpl(pageNum) {
       pauseThumbnails();
       console.log(`[PERF] renderPage(${pageNum}) trying vector path: ${(performance.now() - _rp0).toFixed(0)}ms`);
       const vr = await import('./vector-renderer.js');
-      if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
+      if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
       const userRotation = getPageRotation(pageNum);
 
       // Engine-override gate: vector path only runs in Auto mode (override===null).
@@ -347,7 +373,7 @@ async function _renderPageImpl(pageNum) {
           console.log(`[PERF] renderPage(${pageNum}) analyze_page_type=${pageType} (js-cache): ${(performance.now() - _rp0).toFixed(0)}ms`);
         } else {
           pageType = await invoke('analyze_page_type', { path: doc.filePath, pageIndex: pageNum - 1 });
-          if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
+          if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
           ptcMod.cachePageType(doc.filePath, pageNum - 1, pageType);
           console.log(`[PERF] renderPage(${pageNum}) analyze_page_type=${pageType}: ${(performance.now() - _rp0).toFixed(0)}ms`);
         }
@@ -366,15 +392,27 @@ async function _renderPageImpl(pageNum) {
             path: doc.filePath,
             pageIndex: pageNum - 1,
             rotation: userRotation,
+            requestId: publicationToken.requestId,
           });
-          if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
+          if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
           const cmdBytes = cmdData instanceof Uint8Array ? cmdData : new Uint8Array(cmdData);
           console.log(`[PERF] renderPage(${pageNum}) extract_draw_commands DONE (${cmdBytes.length} bytes): ${(performance.now() - _rp0).toFixed(0)}ms`);
-          vr.cacheCommands(doc.filePath, pageNum, cmdBytes, userRotation);
+          vr.cacheCommands(
+            doc.filePath,
+            pageNum,
+            cmdBytes,
+            userRotation,
+            { token: publicationToken, documentState: doc },
+          );
           // Pre-decode any images in the command buffer (async, must complete before render)
           console.log(`[PERF] renderPage(${pageNum}) prepareImages START: ${(performance.now() - _rp0).toFixed(0)}ms`);
-          await vr.prepareImages(doc.filePath, pageNum, userRotation);
-          if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
+          await vr.prepareImages(
+            doc.filePath,
+            pageNum,
+            userRotation,
+            { token: publicationToken, documentState: doc },
+          );
+          if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
           console.log(`[PERF] renderPage(${pageNum}) prepareImages DONE: ${(performance.now() - _rp0).toFixed(0)}ms`);
         }
       }
@@ -387,7 +425,7 @@ async function _renderPageImpl(pageNum) {
           // singleton. If we do, the RAF render loop will then draw the OLD
           // doc's content on the SHARED #pdf-canvas — that's the ghost the
           // user reports when switching tabs rapidly across multiple PDFs.
-          if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
+          if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
 
           // Initialize viewport (idempotent — safe to call multiple times).
           // Call redrawAnnotations SYNCHRONOUSLY inside the viewport's RAF tick
@@ -414,15 +452,15 @@ async function _renderPageImpl(pageNum) {
             const rustTextOk = await createTextLayerFromRust(
               canvasContainer || container, pageNum, dims.w, dims.h
             );
-            if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
+            if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
             if (!rustTextOk) {
               const page = await pdfDoc.getPage(pageNum);
-              if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
+              if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
               const textViewport = page.getViewport(
                 rawPdfTextLayerViewportOptions(page.userUnit),
               );
               await createSinglePageTextLayer(page, textViewport);
-              if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
+              if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
             }
             if (window.__pdfViewport) window.__pdfViewport.dirty = true;
           } catch (e) {
@@ -451,7 +489,7 @@ async function _renderPageImpl(pageNum) {
       if (_useRaster) {
         const { initViewport, setPage, wireEvents, viewport: pdfVP } =
           await import('./pdf-viewport.js');
-        if (_isStaleDoc(doc)) { resumeThumbnails(); return; }
+        if (_isStaleDoc(doc, publicationToken)) { resumeThumbnails(); return; }
 
         // Init viewport on the main PDF canvas if not already running.
         initViewport(pdfCanvas, () => redrawAnnotations(true));
@@ -548,12 +586,13 @@ async function _renderPageImpl(pageNum) {
       pdfCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       pdfCtx.fillStyle = '#ffffff';
       pdfCtx.fillRect(0, 0, viewport.width, viewport.height);
-      await page.render({
+      const renderTask = trackPdfJsRenderTask(publicationToken, doc, page.render({
         canvasContext: pdfCtx,
         viewport,
         annotationMode: 0,
-      }).promise;
-      if (_isStaleDoc(doc)) return;
+      }));
+      await renderTask.promise;
+      if (_isStaleDoc(doc, publicationToken)) return;
       state.renderEngine = 'Raster (PDF.js)';
     } catch (e) {
       console.warn('[render] Blank-doc PDF.js render failed:', e);
@@ -585,21 +624,21 @@ async function _renderPageImpl(pageNum) {
         ? page.getViewport(rawPdfTextLayerViewportOptions(page.userUnit))
         : viewport;
       await createSinglePageTextLayer(page, textViewport);
-      if (_isStaleDoc(doc)) return;
+      if (_isStaleDoc(doc, publicationToken)) return;
     } catch (e) {
       console.warn('Failed to create text layer:', e);
     }
 
     try {
       await createSinglePageLinkLayer(page, viewport);
-      if (_isStaleDoc(doc)) return;
+      if (_isStaleDoc(doc, publicationToken)) return;
     } catch (e) {
       console.warn('Failed to create link layer:', e);
     }
 
     try {
       await createSinglePageFormLayer(page, viewport);
-      if (_isStaleDoc(doc)) return;
+      if (_isStaleDoc(doc, publicationToken)) return;
     } catch (e) {
       console.warn('Failed to create form layer:', e);
     }
@@ -630,7 +669,7 @@ async function _renderPageImpl(pageNum) {
   if (!_skipBitmapRender || !document.querySelector('.textLayer')) {
     console.log(`[PERF] renderPage(${pageNum}) ensureAnnotations START: ${(performance.now() - _rp0).toFixed(0)}ms`);
     await ensureAnnotationsForPage(pageNum);
-    if (_isStaleDoc(doc)) return;
+    if (_isStaleDoc(doc, publicationToken)) return;
     console.log(`[PERF] renderPage(${pageNum}) ensureAnnotations DONE: ${(performance.now() - _rp0).toFixed(0)}ms`);
     if (state.preferences.snapToPdfContent) {
       prefetchPdfVectorGeometry(pageNum);
@@ -640,7 +679,7 @@ async function _renderPageImpl(pageNum) {
   // Final stale-doc check before mutating shared canvas — without this, an
   // earlier renderPage() that finished after a tab switch would resize and
   // overwrite the annotation canvas of the now-active document.
-  if (_isStaleDoc(doc)) return;
+  if (_isStaleDoc(doc, publicationToken)) return;
 
   // Resize annotation canvas and redraw in one synchronous block — no blink
   setupCanvasHiDPI(annotationCanvas, viewport.width, viewport.height);
@@ -674,9 +713,10 @@ export async function renderPageOffscreen(pageNum) {
   const scale = doc.scale;
 
   if (!Number.isInteger(pageNum) || pageNum < 1 || pageNum > pdfDoc.numPages) return;
+  const publicationToken = captureRenderPublicationToken(doc, pageNum, 'single-page-offscreen');
 
   const page = await pdfDoc.getPage(pageNum);
-  if (_isStaleDoc(doc)) return;
+  if (_isStaleDoc(doc, publicationToken)) return;
   const extraRotation = getPageRotation(pageNum);
   const viewportOpts = { scale };
   if (extraRotation) viewportOpts.rotation = (page.rotate + extraRotation) % 360;
@@ -705,8 +745,9 @@ export async function renderPageOffscreen(pageNum) {
       path: doc.filePath,
       pageIndex: pageNum - 1,
       scale: scale,
+      requestId: publicationToken.requestId,
     });
-    if (_isStaleDoc(doc)) {
+    if (_isStaleDoc(doc, publicationToken)) {
       try { rendered?.bitmap?.close?.(); } catch {}
       return;
     }
@@ -734,11 +775,11 @@ export async function renderPageOffscreen(pageNum) {
 
   // Create text, link, form layers
   try { await createSinglePageTextLayer(page, viewport); } catch {}
-  if (_isStaleDoc(doc)) return;
+  if (_isStaleDoc(doc, publicationToken)) return;
   try { await createSinglePageLinkLayer(page, viewport); } catch {}
-  if (_isStaleDoc(doc)) return;
+  if (_isStaleDoc(doc, publicationToken)) return;
   try { await createSinglePageFormLayer(page, viewport); } catch {}
-  if (_isStaleDoc(doc)) return;
+  if (_isStaleDoc(doc, publicationToken)) return;
 
   // Re-apply overlay state — see comment near renderer block ~line 455.
   // Only editText forces pe:none statically; select uses dynamic fallthrough.
@@ -755,7 +796,7 @@ export async function renderPageOffscreen(pageNum) {
   }
 
   await ensureAnnotationsForPage(pageNum);
-  if (_isStaleDoc(doc)) return;
+  if (_isStaleDoc(doc, publicationToken)) return;
   if (state.preferences.snapToPdfContent) prefetchPdfVectorGeometry(pageNum);
   redrawAnnotations();
   onPageRendered();
@@ -1069,8 +1110,8 @@ const _lowResResourceKey = (key) => `low-res:${key}`;
 // Rotation is part of the key so a rotated page doesn't reuse the pre-rotation
 // (old-orientation) preview canvas — that stale preview flashed in the OLD
 // orientation on the continuous-view rebuild after rotating (issue #262).
-function _lowResKey(pageNum) {
-  return `${getActiveDocument()?.filePath || 'blank'}|${pageNum}|${getPageRotation(pageNum) || 0}`;
+function _lowResKey(pageNum, doc = getActiveDocument()) {
+  return `${doc?.filePath || 'blank'}|${pageNum}|${Number(doc?.pageRotations?.[pageNum]) || 0}`;
 }
 
 function _storeLowResPreview(cacheKey, entry, doc, pageNum) {
@@ -1106,8 +1147,9 @@ function _storeLowResPreview(cacheKey, entry, doc, pageNum) {
 }
 
 // Render a quick low-res preview of a page (fast, <50ms per page)
-async function renderLowResPreview(pdfDoc, pageNum, targetWidth, targetHeight) {
-  const cacheKey = _lowResKey(pageNum);
+async function renderLowResPreview(doc, pdfDoc, pageNum, targetWidth, targetHeight) {
+  const publicationToken = captureRenderPublicationToken(doc, pageNum, 'low-resolution-preview');
+  const cacheKey = _lowResKey(pageNum, doc);
   if (_lowResCache.has(cacheKey)) {
     const entry = _lowResCache.get(cacheKey);
     _lowResCache.delete(cacheKey);
@@ -1118,12 +1160,14 @@ async function renderLowResPreview(pdfDoc, pageNum, targetWidth, targetHeight) {
 
   try {
     const { getCachedThumbnailEntry } = await import('../ui/panels/left-panel.js');
-    const shared = getCachedThumbnailEntry(getActiveDocument(), pageNum);
+    if (_isStaleDoc(doc, publicationToken)) return null;
+    const shared = getCachedThumbnailEntry(doc, pageNum);
     if (shared?.src) return null; // wrapper reuses this source directly; do not clone it into another canvas cache
   } catch { /* fall back to a PDF.js low-resolution render */ }
 
   const page = await pdfDoc.getPage(pageNum);
-  const extraRotation = getPageRotation(pageNum);
+  if (_isStaleDoc(doc, publicationToken)) return null;
+  const extraRotation = Number(doc.pageRotations?.[pageNum]) || 0;
   const vpOpts = { scale: LOW_RES_SCALE };
   if (extraRotation) vpOpts.rotation = (page.rotate + extraRotation) % 360;
   const viewport = page.getViewport(vpOpts);
@@ -1134,22 +1178,31 @@ async function renderLowResPreview(pdfDoc, pageNum, targetWidth, targetHeight) {
   const ctx = canvas.getContext('2d');
 
   try {
-    await page.render({
+    const renderTask = trackPdfJsRenderTask(publicationToken, doc, page.render({
       canvasContext: ctx,
       viewport,
       annotationMode: 0,
-    }).promise;
+    }));
+    await renderTask.promise;
   } catch (e) {
+    canvas.width = 0;
+    canvas.height = 0;
     if (e.name === 'RenderingCancelledException') return null;
     return null;
   }
 
-  _storeLowResPreview(cacheKey, { canvas, scale: LOW_RES_SCALE }, getActiveDocument(), pageNum);
+  if (_isStaleDoc(doc, publicationToken)) {
+    canvas.width = 0;
+    canvas.height = 0;
+    return null;
+  }
+  _storeLowResPreview(cacheKey, { canvas, scale: LOW_RES_SCALE }, doc, pageNum);
   return canvas;
 }
 
 function scheduleNearbyLowResPreviews(pdfDoc, centerPage, direction = 1) {
   const doc = getActiveDocument();
+  if (!doc?.pdfDoc || doc.pdfDoc !== pdfDoc) return;
   if (shouldPreloadEntireDocument(doc, state.preferences)) {
     void import('./whole-pdf-preload.js').then(({ startWholePdfPreload }) => startWholePdfPreload());
     return;
@@ -1165,8 +1218,8 @@ function scheduleNearbyLowResPreviews(pdfDoc, centerPage, direction = 1) {
     for (const page of pages) {
       if (generation !== _lowResPreloadGeneration || !isPdfForegroundIdle()
           || !backgroundRenderAdmissionAllowed()) return;
-      if (_lowResCache.has(_lowResKey(page))) continue;
-      try { await renderLowResPreview(pdfDoc, page, 0, 0); } catch {}
+      if (_lowResCache.has(_lowResKey(page, doc))) continue;
+      try { await renderLowResPreview(doc, pdfDoc, page, 0, 0); } catch {}
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
   })();
@@ -1206,11 +1259,14 @@ function renderContinuousPage(pageNum, priority = 100, kind = 'foreground') {
   const scaleRevision = Math.round(doc.scale * 10000);
   const densityRevision = Math.round(requestedRasterScale(doc.scale, getCanvasDPR()) * 10000);
   const pageRevision = Number(doc.pageRenderRevisions?.[pageNum]) || 0;
+  const publicationToken = captureRenderPublicationToken(doc, pageNum, 'continuous-scheduler');
   return _continuousRenderScheduler.schedule({
     key: `${ownerKey}:${pageNum}:${pageRevision}:${scaleRevision}:${densityRevision}`,
     ownerKey,
     priority,
     kind,
+    publicationToken,
+    publicationDocument: doc,
     run: async ({ isCurrent }) => {
       if (typeof window !== 'undefined') window.__pdfRenderInFlight = (window.__pdfRenderInFlight || 0) + 1;
       try {
@@ -1235,6 +1291,8 @@ function _continuousRasterContext(doc, pageNum, cssScale, devicePixelRatio, qual
     devicePixelRatio,
     quality,
     targetRasterScale,
+    publicationDocument: doc,
+    publicationToken: captureRenderPublicationToken(doc, pageNum, `continuous-raster-${quality}`),
   };
 }
 
@@ -1248,6 +1306,7 @@ async function _ensureContinuousSharpTiles({
   isCurrent,
   expectedScale,
   devicePixelRatio,
+  publicationToken,
 }) {
   const scrollContainer = document.getElementById('pdf-container');
   if (!scrollContainer || !pageWrapper.isConnected) return false;
@@ -1278,7 +1337,7 @@ async function _ensureContinuousSharpTiles({
   };
   for (let index = 0; index < plans.length; index += 1) {
     const plan = plans[index];
-    if (_isStaleDoc(doc) || !isCurrent() || !pageWrapper.isConnected
+    if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected
         || doc.scale !== expectedScale || getCanvasDPR() !== devicePixelRatio) return abort();
     const regionBucket = [plan.regionXpt, plan.regionYpt, plan.regionWpt, plan.regionHpt]
       .map((value) => Math.round(value * 1_000) / 1_000).join(',');
@@ -1332,8 +1391,9 @@ async function _ensureContinuousSharpTiles({
           regionYPt: plan.regionYpt,
           regionWPt: plan.regionWpt,
           regionHPt: plan.regionHpt,
+          requestId: publicationToken.requestId,
         });
-        if (_isStaleDoc(doc) || !isCurrent() || !pageWrapper.isConnected
+        if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected
             || doc.scale !== expectedScale || getCanvasDPR() !== devicePixelRatio) {
           incrementPerformanceCounter('tileRasterCancelled');
           return abort();
@@ -1366,6 +1426,7 @@ async function _ensureContinuousSharpTiles({
             renderScale: plan.targetScale,
             quality: RasterQuality.FINAL,
           },
+          { token: publicationToken, documentState: doc },
         );
         entry = tileCacheGet(doc.filePath, pageNum, plan.targetScale, rotation, regionBucket);
       } catch (error) {
@@ -1418,11 +1479,12 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
 
   const doc = state.documents[state.activeDocumentIndex];
   if (!doc || !doc.pdfDoc) return;
+  const publicationToken = captureRenderPublicationToken(doc, pageNum, 'continuous-page');
   const expectedScale = doc.scale;
   const startedAt = performance.now();
   _renderedPages.add(pageNum);
   const page = await doc.pdfDoc.getPage(pageNum);
-  if (_isStaleDoc(doc) || !isCurrent() || !pageWrapper.isConnected || doc.scale !== expectedScale) {
+  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected || doc.scale !== expectedScale) {
     _renderedPages.delete(pageNum);
     return;
   }
@@ -1557,6 +1619,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
         quality: baseQuality,
         ownerGeneration: Number(doc.lifecycleGeneration) || 0,
         rasterKey,
+        requestId: publicationToken.requestId,
       });
       if (directImageLease) {
         directRasterImage = await _loadContinuousRasterImage(directImageLease);
@@ -1589,7 +1652,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
       return;
     }
   }
-  if (_isStaleDoc(doc) || !isCurrent() || !pageWrapper.isConnected
+  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected
       || doc.scale !== expectedScale || getCanvasDPR() !== devicePixelRatio) {
     directImageLease?.cancel?.('stale-owner');
     if (directRasterImage) {
@@ -1660,6 +1723,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
       isCurrent,
       expectedScale,
       devicePixelRatio,
+      publicationToken,
     });
   } else {
     for (const tile of canvasContainer.querySelectorAll('.page-sharp-tile')) {
@@ -1728,7 +1792,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   } catch (e) {
     console.warn(`Failed to create text layer for page ${pageNum}:`, e);
   }
-  if (_isStaleDoc(doc) || !isCurrent() || !pageWrapper.isConnected) return;
+  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected) return;
 
   // Create link layer
   try {
@@ -1736,7 +1800,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   } catch (e) {
     console.warn(`Failed to create link layer for page ${pageNum}:`, e);
   }
-  if (_isStaleDoc(doc) || !isCurrent() || !pageWrapper.isConnected) return;
+  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected) return;
 
   // Create form layer
   try {
@@ -1744,7 +1808,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   } catch (e) {
     console.warn(`Failed to create form layer for page ${pageNum}:`, e);
   }
-  if (_isStaleDoc(doc) || !isCurrent() || !pageWrapper.isConnected) return;
+  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected) return;
 
   // Re-apply overlay state for newly created form/link layers
     if (state.currentTool === 'select' || state.currentTool === 'editText') {
@@ -2815,22 +2879,39 @@ async function _runPrefetch(centerPage, waited) {
 async function _prefetchOnePage(doc, pageNum, centerPage) {
   if (!isTauri() || !doc.filePath) return;
   if (state.renderEngineOverride != null) return; // user forced a raster engine
+  const publicationToken = captureRenderPublicationToken(doc, pageNum, 'adjacent-vector-preload');
+  const isCurrent = () => _prefetchDocIfStill(centerPage) === doc
+    && renderPublicationTokenIsCurrent(publicationToken, doc);
   const rotation = getPageRotation(pageNum);
   const vr = await import('./vector-renderer.js');
+  if (!isCurrent()) return;
   if (vr.hasCachedCommands(doc.filePath, pageNum, rotation)) return; // already primed
   const ptcMod = await import('./page-type-cache.js');
   let pageType = ptcMod.getCachedPageType(doc.filePath, pageNum - 1);
   if (!pageType) {
-    pageType = await invoke('analyze_page_type', { path: doc.filePath, pageIndex: pageNum - 1 });
+    pageType = await invoke('analyze_page_type', {
+      path: doc.filePath,
+      pageIndex: pageNum - 1,
+      requestId: publicationToken.requestId,
+    });
+    if (!isCurrent()) return;
     ptcMod.cachePageType(doc.filePath, pageNum - 1, pageType);
   }
   if (pageType !== 'vector') return; // raster pages aren't command-cached
-  if (!_prefetchDocIfStill(centerPage)) return;
-  const cmdData = await invoke('extract_draw_commands', { path: doc.filePath, pageIndex: pageNum - 1, rotation });
+  if (!isCurrent()) return;
+  const cmdData = await invoke('extract_draw_commands', {
+    path: doc.filePath,
+    pageIndex: pageNum - 1,
+    rotation,
+    requestId: publicationToken.requestId,
+  });
+  if (!isCurrent()) return;
   const cmdBytes = cmdData instanceof Uint8Array ? cmdData : new Uint8Array(cmdData);
-  vr.cacheCommands(doc.filePath, pageNum, cmdBytes, rotation);
-  if (!_prefetchDocIfStill(centerPage)) return;
-  await vr.prepareImages(doc.filePath, pageNum, rotation);
+  const publication = { token: publicationToken, documentState: doc };
+  vr.cacheCommands(doc.filePath, pageNum, cmdBytes, rotation, publication);
+  if (!isCurrent()) return;
+  await vr.prepareImages(doc.filePath, pageNum, rotation, publication);
+  if (!isCurrent()) return;
   console.log(`[prefetch] primed page ${pageNum}`);
 }
 

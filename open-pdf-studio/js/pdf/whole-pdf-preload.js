@@ -17,6 +17,11 @@ import { wholeDocumentPreloadPages } from './pdf-preload-controller.js';
 import { documentPreloadMode, shouldPreloadEntireDocument } from './preload-policy.js';
 import { isPdfForegroundIdle } from './foreground-activity.js';
 import { backgroundRenderAdmissionAllowed } from './render-resource-budget.js';
+import {
+  captureRenderPublicationToken,
+  recordRejectedRenderPublication,
+  renderPublicationTokenIsCurrent,
+} from './render-publication-token.js';
 
 export const WHOLE_PDF_PRELOAD_LIMITS = Object.freeze({
   maxPages: 1000,
@@ -50,21 +55,35 @@ function status(doc, patch) {
   });
 }
 
-async function preloadVectorCommands(doc, pageNum) {
+function preloadTokenIsCurrent(token, doc) {
+  return getActiveDocument() === doc && renderPublicationTokenIsCurrent(token, doc);
+}
+
+async function preloadVectorCommands(doc, pageNum, publicationToken) {
   if (!isTauri() || !doc.filePath || state.renderEngineOverride != null) return { bytes: 0 };
   const rotation = Number(doc.pageRotations?.[pageNum]) || 0;
   const vector = await import('./vector-renderer.js');
+  if (!preloadTokenIsCurrent(publicationToken, doc)) return { bytes: 0, stale: true };
   if (vector.hasCachedCommands(doc.filePath, pageNum, rotation)) return { bytes: 0 };
-  const pageType = await invoke('analyze_page_type', { path: doc.filePath, pageIndex: pageNum - 1 });
+  const pageType = await invoke('analyze_page_type', {
+    path: doc.filePath,
+    pageIndex: pageNum - 1,
+    requestId: publicationToken.requestId,
+  });
+  if (!preloadTokenIsCurrent(publicationToken, doc)) return { bytes: 0, stale: true };
   if (pageType !== 'vector') return { bytes: 0 };
   const result = await invoke('extract_draw_commands', {
     path: doc.filePath,
     pageIndex: pageNum - 1,
     rotation,
+    requestId: publicationToken.requestId,
   });
+  if (!preloadTokenIsCurrent(publicationToken, doc)) return { bytes: 0, stale: true };
   const bytes = result instanceof Uint8Array ? result : new Uint8Array(result);
-  vector.cacheCommands(doc.filePath, pageNum, bytes, rotation);
-  await vector.prepareImages(doc.filePath, pageNum, rotation);
+  const publication = { token: publicationToken, documentState: doc };
+  vector.cacheCommands(doc.filePath, pageNum, bytes, rotation, publication);
+  await vector.prepareImages(doc.filePath, pageNum, rotation, publication);
+  if (!preloadTokenIsCurrent(publicationToken, doc)) return { bytes: 0, stale: true };
   return { bytes: bytes.byteLength };
 }
 
@@ -141,8 +160,17 @@ export class WholePdfPreloadCoordinator {
   }
 
   async run(order, generation) {
+    const runPage = Math.min(
+      Math.max(1, Number(this.doc.currentPage) || 1),
+      Math.max(1, Number(this.doc.pdfDoc?.numPages) || 1),
+    );
+    const runToken = captureRenderPublicationToken(this.doc, runPage, 'whole-pdf-preload-run');
     for (const pageNum of order) {
-      if (generation !== this.generation || !this.doc.pdfDoc) return;
+      if (generation !== this.generation || !this.doc.pdfDoc
+          || !preloadTokenIsCurrent(runToken, this.doc)) {
+        recordRejectedRenderPublication(runToken, 'whole-preload-run-stale');
+        return;
+      }
       if (!shouldPreloadEntireDocument(this.doc, state.preferences)) {
         this.cancel({ release: true, reason: 'preference-off' });
         return;
@@ -158,31 +186,47 @@ export class WholePdfPreloadCoordinator {
         return;
       }
       while (!this.isForegroundIdle()) {
-        if (generation !== this.generation || getActiveDocument() !== this.doc) return;
+        if (generation !== this.generation || !preloadTokenIsCurrent(runToken, this.doc)) {
+          recordRejectedRenderPublication(runToken, 'whole-preload-during-pause');
+          return;
+        }
         status(this.doc, { state: 'paused' });
         await delay(50);
       }
+      if (!preloadTokenIsCurrent(runToken, this.doc)) {
+        recordRejectedRenderPublication(runToken, 'whole-preload-after-pause');
+        return;
+      }
       status(this.doc, { state: 'running' });
       const started = clock();
+      const publicationToken = captureRenderPublicationToken(
+        this.doc,
+        pageNum,
+        'whole-pdf-preload-page',
+      );
       try {
         const thumbnail = await preloadThumbnailPage(this.doc, pageNum, { preloadOnly: true });
-        if (generation !== this.generation) {
+        if (generation !== this.generation || !preloadTokenIsCurrent(publicationToken, this.doc)) {
           releaseThumbnailPage(this.doc, pageNum);
+          recordRejectedRenderPublication(publicationToken, 'whole-preload-after-thumbnail');
           return;
         }
-        const vector = await preloadVectorCommands(this.doc, pageNum);
-        if (generation !== this.generation) {
+        const vector = await preloadVectorCommands(this.doc, pageNum, publicationToken);
+        if (generation !== this.generation || vector?.stale
+            || !preloadTokenIsCurrent(publicationToken, this.doc)) {
           releaseThumbnailPage(this.doc, pageNum);
           if (this.doc.filePath) {
             const vectorCache = await import('./vector-renderer.js');
             vectorCache.invalidatePageCache(this.doc.filePath, pageNum);
           }
+          recordRejectedRenderPublication(publicationToken, 'whole-preload-after-vector');
           return;
         }
         const editable = await preloadEditableMetadataPage(this.doc, pageNum);
-        if (generation !== this.generation) {
+        if (generation !== this.generation || !preloadTokenIsCurrent(publicationToken, this.doc)) {
           releaseThumbnailPage(this.doc, pageNum);
           releaseEditableMetadataPage(this.doc, pageNum);
+          recordRejectedRenderPublication(publicationToken, 'whole-preload-after-metadata');
           return;
         }
         const pageBytes = (thumbnail?.bytes || 0) + (vector?.bytes || 0) + (editable?.bytes || 0);
@@ -202,15 +246,22 @@ export class WholePdfPreloadCoordinator {
       } catch (error) {
         console.warn(`[preload] page ${pageNum} failed:`, error?.message || error);
       } finally {
-        this.workMs += clock() - started;
-        status(this.doc, {
-          completed: this.completedPages.size,
-          retainedBytes: this.retainedBytes,
-        });
+        if (generation === this.generation
+            && preloadTokenIsCurrent(publicationToken, this.doc)) {
+          this.workMs += clock() - started;
+          status(this.doc, {
+            completed: this.completedPages.size,
+            retainedBytes: this.retainedBytes,
+          });
+        }
       }
       await delay(0);
     }
-    if (generation === this.generation) status(this.doc, { state: 'complete' });
+    if (generation === this.generation && preloadTokenIsCurrent(runToken, this.doc)) {
+      status(this.doc, { state: 'complete' });
+    } else {
+      recordRejectedRenderPublication(runToken, 'whole-preload-before-complete');
+    }
   }
 
   limitReason() {

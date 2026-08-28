@@ -32,6 +32,11 @@ import {
   recordPerformanceEvent,
   recordPerformancePeak,
 } from './performance-metrics.js';
+import {
+  recordRejectedRenderPublication,
+  releaseStaleRenderResult,
+  renderPublicationTokenIsCurrent,
+} from './render-publication-token.js';
 
 // Map<key, { bitmap: ImageBitmap, w, h, scale }>
 const _cache = new Map();
@@ -485,10 +490,18 @@ function _ensureBitmapAtScale(filePath, pageNum, rotation, cacheBucket, renderSc
   const expectedGlobalGeneration = _globalGeneration;
   const expectedFileGeneration = _fileGenerations.get(filePath) || 0;
   const expectedOwnerGeneration = request?.key.lifecycleGeneration ?? null;
+  const expectedPageRevision = request?.key.pageRevision ?? null;
+  const pageRevisionReader = _filePageRevisionReaders.get(filePath);
+  const publicationToken = context?.publicationToken || null;
+  const publicationDocument = context?.publicationDocument || null;
   const stillCurrent = () => expectedGlobalGeneration === _globalGeneration
     && expectedFileGeneration === (_fileGenerations.get(filePath) || 0)
     && (expectedOwnerGeneration == null
-      || expectedOwnerGeneration === (_fileOwnerGenerations.get(filePath) || 0));
+      || expectedOwnerGeneration === (_fileOwnerGenerations.get(filePath) || 0))
+    && (expectedPageRevision == null
+      || expectedPageRevision === (Number(pageRevisionReader?.(pageNum)) || 0))
+    && (!publicationToken
+      || renderPublicationTokenIsCurrent(publicationToken, publicationDocument));
 
   const p = (async () => {
     try {
@@ -511,13 +524,20 @@ function _ensureBitmapAtScale(filePath, pageNum, rotation, cacheBucket, renderSc
         quality: request?.quality || RasterQuality.FINAL,
         ownerGeneration: request?.key.lifecycleGeneration || 0,
         rasterKey: request ? serializePageRasterKey(request.key) : key,
+        requestId: publicationToken?.requestId || '',
       });
       if (!stillCurrent()) {
-        try { rendered?.bitmap?.close?.(); } catch {}
+        releaseStaleRenderResult(rendered);
+        recordRejectedRenderPublication(publicationToken, 'native-bitmap-returned-stale');
         return null;
       }
       console.log(`[pbc] whole-page KLAAR p${pageNum} scale=${renderScale.toFixed(3)} @${Math.round(performance.now() - _t0)}ms`);
       const { bitmap, width: w, height: h } = rendered;
+      if (!stillCurrent()) {
+        releaseStaleRenderResult(rendered);
+        recordRejectedRenderPublication(publicationToken, 'native-bitmap-before-cache');
+        return null;
+      }
       import('../solid/stores/engineStatusStore.js')
         .then((m) => m.reportActiveEngine('pdfium', filePath, pageNum))
         .catch(() => {});

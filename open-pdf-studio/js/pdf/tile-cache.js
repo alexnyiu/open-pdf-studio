@@ -17,6 +17,11 @@ import {
   recordPerformanceEvent,
   recordPerformancePeak,
 } from './performance-metrics.js';
+import {
+  recordRejectedRenderPublication,
+  releaseStaleRenderResult,
+  renderPublicationTokenIsCurrent,
+} from './render-publication-token.js';
 
 const CACHE = new Map();
 const FILE_OWNERS = new Map();
@@ -100,11 +105,26 @@ export function tileCacheFindCovering(filePath, pageNum, rotation, request) {
   return hit.entry;
 }
 
-export async function tileCacheSet(filePath, pageNum, zoomBucket, rotation, regionBucket, imageData, regionMeta) {
+export async function tileCacheSet(
+  filePath,
+  pageNum,
+  zoomBucket,
+  rotation,
+  regionBucket,
+  imageData,
+  regionMeta,
+  publication = null,
+) {
   const key = makeKey(filePath, pageNum, zoomBucket, rotation, regionBucket);
-  const replaced = CACHE.get(key);
   try {
     const bitmap = await createImageBitmap(imageData);
+    if (publication?.token
+        && !renderPublicationTokenIsCurrent(publication.token, publication.documentState)) {
+      releaseStaleRenderResult(bitmap);
+      recordRejectedRenderPublication(publication.token, 'tile-before-cache-insertion');
+      return null;
+    }
+    const replaced = CACHE.get(key);
     if (replaced) releaseEntry(key, replaced);
     const entry = { bitmap, w: imageData.width, h: imageData.height, regionMeta };
     CACHE.set(key, entry);

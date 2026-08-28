@@ -1,3 +1,8 @@
+import {
+  recordRejectedRenderPublication,
+  renderPublicationTokenIsCurrent,
+} from './render-publication-token.js';
+
 const clock = () => globalThis.performance?.now?.() ?? Date.now();
 
 export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 } = {}) {
@@ -36,6 +41,10 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
     .filter((entry) => entry.kind !== 'background' || !isBackgroundPaused())
     .sort((left, right) => right.priority - left.priority || left.sequence - right.sequence)[0] || null;
 
+  const entryIsCurrent = (entry) => entry.valid
+    && (!entry.publicationToken
+      || renderPublicationTokenIsCurrent(entry.publicationToken, entry.publicationDocument));
+
   const pump = () => {
     while (running.size < concurrency) {
       const entry = nextEntry();
@@ -44,14 +53,22 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
         return;
       }
       queued.delete(entry.key);
+      if (!entryIsCurrent(entry)) {
+        recordRejectedRenderPublication(entry.publicationToken, 'scheduler-before-run');
+        settleCancelled(entry, 'stale-publication-token');
+        continue;
+      }
       running.set(entry.key, entry);
       statistics.maxRunning = Math.max(statistics.maxRunning, running.size);
-      void Promise.resolve(entry.run({ isCurrent: () => entry.valid && running.get(entry.key) === entry }))
+      void Promise.resolve(entry.run({
+        isCurrent: () => entryIsCurrent(entry) && running.get(entry.key) === entry,
+      }))
         .then((value) => {
-          if (entry.valid) {
+          if (entryIsCurrent(entry)) {
             statistics.completed += 1;
             entry.resolve({ status: 'complete', value });
           } else {
+            recordRejectedRenderPublication(entry.publicationToken, 'scheduler-after-run');
             statistics.cancelled += 1;
             entry.resolve({ status: 'cancelled', reason: 'stale' });
           }
@@ -67,7 +84,15 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
   };
 
   return {
-    schedule({ key, ownerKey = '', priority = 0, kind = 'foreground', run }) {
+    schedule({
+      key,
+      ownerKey = '',
+      priority = 0,
+      kind = 'foreground',
+      publicationToken = null,
+      publicationDocument = null,
+      run,
+    }) {
       if (!key || typeof run !== 'function') throw new TypeError('Render work requires a key and run callback');
       const existing = queued.get(key) || running.get(key);
       if (existing) return existing.promise;
@@ -79,6 +104,7 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
       });
       queued.set(key, {
         key, ownerKey, priority: Number(priority) || 0, kind, run,
+        publicationToken, publicationDocument,
         sequence: ++sequence, valid: true, resolve, reject, promise,
       });
       statistics.scheduled += 1;

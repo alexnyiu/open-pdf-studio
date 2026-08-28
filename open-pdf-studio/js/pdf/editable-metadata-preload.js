@@ -10,6 +10,11 @@ import { BoundedPdfPreloadController, directionalPreloadPages } from './pdf-prel
 import { isThumbnailPipelineIdle } from '../ui/panels/left-panel.js';
 import { isPdfForegroundIdle } from './foreground-activity.js';
 import { backgroundRenderAdmissionAllowed } from './render-resource-budget.js';
+import {
+  captureRenderPublicationToken,
+  recordRejectedRenderPublication,
+  renderPublicationTokenIsCurrent,
+} from './render-publication-token.js';
 
 const controllers = new WeakMap();
 
@@ -53,15 +58,32 @@ function controllerFor(doc) {
       logPreload(event);
       if (event.type === 'eviction') discardNativeTextSourcePages(doc, [event.page]);
     },
-    beforeLoad: (pages) => inspectNativeTextSourcesForPages(pages),
     load: async (pageNum) => {
+      const publicationToken = captureRenderPublicationToken(doc, pageNum, 'editable-metadata');
+      const isCurrent = () => getActiveDocument() === doc
+        && renderPublicationTokenIsCurrent(publicationToken, doc);
       const [page, sourceMaps] = await Promise.all([
         doc.pdfDoc.getPage(pageNum),
         inspectNativeTextSourcesForPages([pageNum]),
       ]);
+      if (!isCurrent()) {
+        discardNativeTextSourcePages(doc, [pageNum]);
+        recordRejectedRenderPublication(publicationToken, 'metadata-after-source-extraction');
+        return null;
+      }
       const textContent = await page.getTextContent();
+      if (!isCurrent()) {
+        discardNativeTextSourcePages(doc, [pageNum]);
+        recordRejectedRenderPublication(publicationToken, 'metadata-after-text-extraction');
+        return null;
+      }
       const sourceMap = sourceMaps.get(pageNum) || null;
       const value = { textContent, sourceMap, blocks: pureBlocks(textContent, sourceMap) };
+      if (!isCurrent()) {
+        discardNativeTextSourcePages(doc, [pageNum]);
+        recordRejectedRenderPublication(publicationToken, 'metadata-before-cache-insertion');
+        return null;
+      }
       return { value, bytes: byteEstimate(textContent, sourceMap) };
     },
   });
