@@ -15,8 +15,13 @@ import { resolveAutomaticFontSubstitution } from '../text/font-substitution-poli
 import { inspectNativeTextSourcesForPage, matchNativeTextSources } from '../text/native-text-provenance.js';
 import { executeForDocument } from '../core/undo-manager.js';
 import { markDocumentModifiedForDocument } from '../ui/chrome/tabs.js';
-import { invalidateTextCache } from './text-cache.js';
+import {
+  documentSearchTextRevisionAvailable,
+  invalidateTextCache,
+} from './text-cache.js';
 import { extractPageText } from './text-extraction.js';
+import { initializeDocumentRevisionState } from '../core/document-revision-state.runtime.js';
+import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-transition.js';
 
 export { extractPageText } from './text-extraction.js';
 
@@ -26,12 +31,44 @@ let _searchGeneration = 0;
 /**
  * Extract text content from all pages (cached)
  */
-async function extractAllText(pdfDoc) {
-  const doc = getActiveDocument();
+function captureSearchRevision(doc) {
+  if (!doc?.pdfDoc) return null;
+  return Object.freeze({
+    documentId: String(doc.id || ''),
+    lifecycleGeneration: Number(doc.lifecycleGeneration) || 0,
+    pdfDocument: doc.pdfDoc,
+    contentRevision: Number(doc.revisionState?.contentRevision) || 0,
+    livePdfRevision: Number(doc.revisionState?.livePdfRevision) || 0,
+  });
+}
+
+function searchRevisionIsCurrent(revision, doc) {
+  return Boolean(revision && doc
+    && getDocumentById(revision.documentId) === doc
+    && String(doc.id || '') === revision.documentId
+    && (Number(doc.lifecycleGeneration) || 0) === revision.lifecycleGeneration
+    && doc.pdfDoc === revision.pdfDocument
+    && (Number(doc.revisionState?.contentRevision) || 0) === revision.contentRevision
+    && (Number(doc.revisionState?.livePdfRevision) || 0) === revision.livePdfRevision);
+}
+
+async function coherentSearchOwner(documentState = getActiveDocument()) {
+  if (!documentState?.pdfDoc) return null;
+  await waitForSavedDocumentSynchronization(documentState.id);
+  const current = getDocumentById(documentState.id);
+  if (current !== documentState || !current?.pdfDoc) return null;
+  initializeDocumentRevisionState(current);
+  if (!documentSearchTextRevisionAvailable(current)) return null;
+  return current;
+}
+
+async function extractAllText(pdfDoc, doc, revision) {
 
   const pagesText = [];
   for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
-    pagesText.push(await extractPageText(pdfDoc, pageNum, doc));
+    const pageText = await extractPageText(pdfDoc, pageNum, doc);
+    if (!pageText || !searchRevisionIsCurrent(revision, doc)) return null;
+    pagesText.push(pageText);
   }
 
   return pagesText;
@@ -119,13 +156,18 @@ function buildPattern(query, matchCase, wholeWord) {
  * Perform a full (non-progressive) search. Used as fallback.
  */
 export async function performSearch(query, options = {}) {
-  if (!query || !getActiveDocument()?.pdfDoc) return [];
+  const initialOwner = getActiveDocument();
+  if (!query || !initialOwner?.pdfDoc) return [];
 
   const { matchCase = false, wholeWord = false } = options;
   state.search.isSearching = true;
 
   try {
-    const pagesText = await extractAllText(getActiveDocument().pdfDoc);
+    const doc = await coherentSearchOwner(initialOwner);
+    if (!doc) return [];
+    const revision = captureSearchRevision(doc);
+    const pagesText = await extractAllText(doc.pdfDoc, doc, revision);
+    if (!pagesText || !searchRevisionIsCurrent(revision, doc)) return [];
     const pattern = buildPattern(query, matchCase, wholeWord);
     const results = [];
 
@@ -156,28 +198,35 @@ export function executeProgressiveSearch(onProgress) {
   }
 
   const generation = ++_searchGeneration;
-  const pdfDoc = doc.pdfDoc;
-  const totalPages = pdfDoc.numPages;
-  const currentPage = doc.currentPage || 1;
   const pattern = buildPattern(query, matchCase, wholeWord);
 
   const allResults = [];
   let searchedCount = 0;
 
-  const pageOrder = [currentPage];
-  for (let p = 1; p <= totalPages; p++) {
-    if (p !== currentPage) pageOrder.push(p);
-  }
-
   let cancelled = false;
 
   (async () => {
+    const coherentOwner = await coherentSearchOwner(doc);
+    if (cancelled || generation !== _searchGeneration) return;
+    if (!coherentOwner) {
+      onProgress([], 0, 0, true);
+      return;
+    }
+    const revision = captureSearchRevision(coherentOwner);
+    const totalPages = coherentOwner.pdfDoc.numPages;
+    const currentPage = Math.min(totalPages, Math.max(1, coherentOwner.currentPage || 1));
+    const pageOrder = [currentPage];
+    for (let page = 1; page <= totalPages; page += 1) {
+      if (page !== currentPage) pageOrder.push(page);
+    }
     for (const pageNum of pageOrder) {
-      if (cancelled || generation !== _searchGeneration) return;
+      if (cancelled || generation !== _searchGeneration
+          || !searchRevisionIsCurrent(revision, coherentOwner)) return;
 
-      const pageData = await extractPageText(pdfDoc, pageNum, doc);
+      const pageData = await extractPageText(coherentOwner.pdfDoc, pageNum, coherentOwner);
 
-      if (cancelled || generation !== _searchGeneration) return;
+      if (!pageData || cancelled || generation !== _searchGeneration
+          || !searchRevisionIsCurrent(revision, coherentOwner)) return;
 
       const pageResults = searchPage(pageData, pattern, query);
       for (const r of pageResults) {
@@ -193,7 +242,8 @@ export function executeProgressiveSearch(onProgress) {
       }
     }
 
-    if (cancelled || generation !== _searchGeneration) return;
+    if (cancelled || generation !== _searchGeneration
+        || !searchRevisionIsCurrent(revision, coherentOwner)) return;
 
     allResults.sort(compareResultsVisually);
     allResults.forEach((r, i) => r.index = i);
@@ -359,7 +409,7 @@ async function replaceInPdfContent(doc, result, replaceText, { noteRevision = tr
     if (!isCurrentOwner()) return null;
     const textContent = await page?.getTextContent();
     if (!isCurrentOwner()) return null;
-    const sourceMap = await inspectNativeTextSourcesForPage(result.pageNum);
+    const sourceMap = await inspectNativeTextSourcesForPage(result.pageNum, doc);
     if (!isCurrentOwner()) return null;
     if (!textContent || !sourceMap?.runs?.length) return null;
     const textItems = textContent.items.filter((item) => item.str !== undefined);

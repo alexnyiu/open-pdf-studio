@@ -51,6 +51,11 @@ function status(doc, patch) {
     retainedBytes: 0,
     limitReason: null,
     ...(doc.preloadStatus || {}),
+    documentId: String(doc.id || ''),
+    lifecycleGeneration: Number(doc.lifecycleGeneration) || 0,
+    pdfDocument: doc.pdfDoc || null,
+    contentRevision: Number(doc.revisionState?.contentRevision) || 0,
+    livePdfRevision: Number(doc.revisionState?.livePdfRevision) || 0,
     ...patch,
   });
 }
@@ -222,7 +227,11 @@ export class WholePdfPreloadCoordinator {
           recordRejectedRenderPublication(publicationToken, 'whole-preload-after-vector');
           return;
         }
-        const editable = await preloadEditableMetadataPage(this.doc, pageNum);
+        const editable = await preloadEditableMetadataPage(
+          this.doc,
+          pageNum,
+          publicationToken,
+        );
         if (generation !== this.generation || !preloadTokenIsCurrent(publicationToken, this.doc)) {
           releaseThumbnailPage(this.doc, pageNum);
           releaseEditableMetadataPage(this.doc, pageNum);
@@ -271,6 +280,16 @@ export class WholePdfPreloadCoordinator {
     if (this.workMs >= limits.maxWorkMs) return 'time';
     return null;
   }
+}
+
+export function wholePdfPreloadStatusIsCurrent(doc) {
+  const preloadStatus = doc?.preloadStatus;
+  return Boolean(preloadStatus
+    && preloadStatus.documentId === String(doc.id || '')
+    && preloadStatus.lifecycleGeneration === (Number(doc.lifecycleGeneration) || 0)
+    && preloadStatus.pdfDocument === doc.pdfDoc
+    && preloadStatus.contentRevision === (Number(doc.revisionState?.contentRevision) || 0)
+    && preloadStatus.livePdfRevision === (Number(doc.revisionState?.livePdfRevision) || 0));
 }
 
 function coordinatorFor(doc) {

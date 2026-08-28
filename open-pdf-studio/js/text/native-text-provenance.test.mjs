@@ -6,6 +6,10 @@ import {
   sameNativeTextOwnership,
 } from './native-text-matching.js';
 import { collectVisibleNativeTextProvenance } from './native-text-blocks.js';
+import {
+  captureSemanticRevisionIdentity,
+  semanticRevisionIdentityIsCurrent,
+} from '../core/semantic-revision-identity.js';
 
 function run(text, x, width, index) {
   return {
@@ -82,4 +86,22 @@ test('ignores synthetic whitespace spans but requires every visible fragment', (
     [source],
   );
   assert.equal(collectVisibleNativeTextProvenance([span('Owned text', [source]), span('visible')]), null);
+});
+
+test('native source provenance identity rejects an old proxy and revision', () => {
+  const documentState = {
+    id: 'native-revision-owner',
+    lifecycleGeneration: 1,
+    pdfDoc: { id: 'proxy-one' },
+    revisionState: { contentRevision: 1, livePdfRevision: 1 },
+  };
+  const oldRevision = captureSemanticRevisionIdentity(documentState);
+  assert.equal(semanticRevisionIdentityIsCurrent(oldRevision, documentState), true);
+  documentState.pdfDoc = { id: 'proxy-two' };
+  documentState.lifecycleGeneration = 2;
+  documentState.revisionState.contentRevision = 2;
+  documentState.revisionState.livePdfRevision = 2;
+  assert.equal(semanticRevisionIdentityIsCurrent(oldRevision, documentState), false);
+  const newRevision = captureSemanticRevisionIdentity(documentState);
+  assert.equal(semanticRevisionIdentityIsCurrent(newRevision, documentState), true);
 });

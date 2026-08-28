@@ -1,4 +1,5 @@
 import {
+  initializeDocumentRevisionState,
   markDocumentSaveState,
   markLivePdfRevision,
   markPageRenderReady,
@@ -30,6 +31,85 @@ function positivePages(values, fallback = null) {
     .sort((left, right) => left - right);
   if (pages.length > 0) return pages;
   return fallback == null ? [] : [Math.max(1, Number(fallback) || 1)];
+}
+
+export async function invalidateSavedDocumentSemanticState({
+  documentState,
+  requestedRevision,
+  changedPages = null,
+}) {
+  if (!documentState?.id || !documentState.pdfDoc) {
+    throw new TypeError('A live saved document is required for semantic invalidation');
+  }
+  const revisions = initializeDocumentRevisionState(documentState);
+  if (revisions.livePdfRevision !== Number(requestedRevision)) {
+    throw new RangeError('Semantic invalidation must target the installed live PDF revision');
+  }
+  const [editableMetadata, provenance, searchCache] = await Promise.all([
+    import('./editable-metadata-preload.js'),
+    import('../text/native-text-provenance.js'),
+    import('../search/text-cache.js'),
+  ]);
+  editableMetadata.clearEditableMetadataPreload(documentState);
+  provenance.clearNativeTextSourceCache(documentState);
+  searchCache.invalidateTextCache(documentState.id);
+  documentState.preloadStatus = Object.freeze({
+    state: 'idle',
+    completed: 0,
+    total: Number(documentState.pdfDoc.numPages) || 0,
+    retainedBytes: 0,
+    limitReason: null,
+    documentId: String(documentState.id),
+    lifecycleGeneration: Number(documentState.lifecycleGeneration) || 0,
+    pdfDocument: documentState.pdfDoc,
+    contentRevision: revisions.contentRevision,
+    livePdfRevision: revisions.livePdfRevision,
+    changedPages: changedPages === null ? null : Object.freeze(positivePages(changedPages)),
+  });
+  return true;
+}
+
+export async function rebuildSavedDocumentEditableMetadata({
+  documentState,
+  requestedRevision,
+  requiredPages = [],
+  changedPages = null,
+}) {
+  const revisions = initializeDocumentRevisionState(documentState);
+  if (revisions.livePdfRevision !== Number(requestedRevision)) return [];
+  const [{ preloadEditableMetadataPage }, publication] = await Promise.all([
+    import('./editable-metadata-preload.js'),
+    import('./render-publication-token.js'),
+  ]);
+  const required = positivePages(requiredPages);
+  const changed = changedPages === null ? [] : positivePages(changedPages);
+  const ordered = [...changed, ...required.filter((page) => !changed.includes(page))];
+  const ready = [];
+  for (const pageNum of ordered) {
+    const token = publication.captureRenderPublicationToken(
+      documentState,
+      pageNum,
+      'saved-semantic-rebuild',
+    );
+    const result = await preloadEditableMetadataPage(documentState, pageNum, token);
+    if (!publication.renderPublicationTokenIsCurrent(token, documentState)
+        || initializeDocumentRevisionState(documentState).livePdfRevision
+          !== Number(requestedRevision)) return ready;
+    if (result && required.includes(pageNum)) ready.push(pageNum);
+  }
+  return ready;
+}
+
+export async function restartSavedDocumentSemanticPreload({ documentState }) {
+  const [{ getDocumentById }, preload] = await Promise.all([
+    import('../core/state.js'),
+    import('./whole-pdf-preload.js'),
+  ]);
+  if (getDocumentById(documentState?.id) !== documentState) return false;
+  void Promise.resolve(preload.restartWholePdfPreload(documentState)).catch((error) => {
+    console.warn('[preload] Saved-revision restart failed:', error?.message || error);
+  });
+  return true;
 }
 
 function cloneSearchState(search) {
@@ -158,6 +238,10 @@ async function runSynchronization(record, { retry = false } = {}) {
     rebuildRequiredPages,
     restoreViewState,
     waitForEditReadiness,
+    invalidateSemanticState,
+    rebuildEditableMetadata,
+    restartSemanticPreload,
+    changedPages,
     diagnostic,
   } = record;
   const viewState = record.viewState || captureViewState(documentState);
@@ -181,6 +265,10 @@ async function runSynchronization(record, { retry = false } = {}) {
       record.proxyInstalled = true;
       markLivePdfRevision(documentState, requestedRevision);
     }
+    if (!record.semanticInvalidated) {
+      await invalidateSemanticState({ documentState, requestedRevision, changedPages });
+      record.semanticInvalidated = true;
+    }
     const requiredPages = Array.isArray(installResult?.requiredPages)
       ? positivePages(installResult.requiredPages)
       : positivePages(null, viewState.pageNumber || documentState.currentPage);
@@ -193,12 +281,27 @@ async function runSynchronization(record, { retry = false } = {}) {
       viewState,
       installResult: installResult || {},
     }) || {};
+    const metadataReadyPages = await rebuildEditableMetadata({
+      documentState,
+      requestedRevision,
+      requiredPages,
+      changedPages,
+      viewState,
+    });
     for (const page of positivePages(readiness.renderReadyPages)) {
       if (requiredPages.includes(page)) markPageRenderReady(documentState, page, requestedRevision);
     }
     for (const page of positivePages(readiness.semanticReadyPages)) {
-      if (requiredPages.includes(page)) markPageSemanticReady(documentState, page, requestedRevision);
+      if (requiredPages.includes(page) && metadataReadyPages.includes(page)) {
+        markPageSemanticReady(documentState, page, requestedRevision);
+      }
     }
+    await restartSemanticPreload({
+      documentState,
+      requestedRevision,
+      requiredPages,
+      changedPages,
+    });
     await restoreViewState(documentState, viewState);
     const ready = await waitForEditReadiness({
       documentState,
@@ -253,6 +356,18 @@ export async function synchronizeSavedDocument(input) {
     proxyInstalled: false,
     installResult: null,
     viewState: null,
+    semanticInvalidated: false,
+    changedPages: input.changedPages !== undefined
+      ? (input.changedPages === null ? null : positivePages(input.changedPages))
+      : (initializeDocumentRevisionState(documentState).pendingChangedPages === null
+        ? null
+        : positivePages(initializeDocumentRevisionState(documentState).pendingChangedPages)),
+    invalidateSemanticState: input.invalidateSemanticState
+      || invalidateSavedDocumentSemanticState,
+    rebuildEditableMetadata: input.rebuildEditableMetadata
+      || rebuildSavedDocumentEditableMetadata,
+    restartSemanticPreload: input.restartSemanticPreload
+      || restartSavedDocumentSemanticPreload,
   };
   const promise = runSynchronization(record)
     .then((result) => {

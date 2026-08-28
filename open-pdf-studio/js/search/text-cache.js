@@ -1,10 +1,52 @@
 // @ts-check
 import { projectTextEditRecord } from '../text/rich-text.js';
 
-/** @typedef {{pdfDoc: object, signature: string, value: unknown}} PageCacheEntry */
+/** @typedef {{pdfDoc: object, revisionIdentity: object, signature: string, value: unknown}} PageCacheEntry */
 
 /** @type {Map<string, Map<number, PageCacheEntry>>} */
 const documentTextCache = new Map();
+
+function revisionNumber(value) {
+  const number = Number(value);
+  return Number.isSafeInteger(number) && number >= 0 ? number : 0;
+}
+
+export function captureTextCacheRevision(doc, pdfDoc, pageNum) {
+  if (!doc?.id || !pdfDoc) return null;
+  return Object.freeze({
+    documentId: String(doc.id),
+    lifecycleGeneration: revisionNumber(doc.lifecycleGeneration),
+    pdfDocument: pdfDoc,
+    contentRevision: revisionNumber(doc.revisionState?.contentRevision),
+    livePdfRevision: revisionNumber(doc.revisionState?.livePdfRevision),
+    pageRevision: revisionNumber(
+      doc.revisionState?.pageContentRevisions?.[pageNum]
+      ?? doc.pageRenderRevisions?.[pageNum],
+    ),
+    pageNum: Number(pageNum),
+  });
+}
+
+export function textCacheRevisionIsCurrent(revisionIdentity, doc, pdfDoc = doc?.pdfDoc) {
+  if (!revisionIdentity || !doc || !pdfDoc) return false;
+  const current = captureTextCacheRevision(doc, pdfDoc, revisionIdentity.pageNum);
+  return Boolean(current
+    && current.documentId === revisionIdentity.documentId
+    && current.lifecycleGeneration === revisionIdentity.lifecycleGeneration
+    && current.pdfDocument === revisionIdentity.pdfDocument
+    && current.contentRevision === revisionIdentity.contentRevision
+    && current.livePdfRevision === revisionIdentity.livePdfRevision
+    && current.pageRevision === revisionIdentity.pageRevision);
+}
+
+export function documentSearchTextRevisionAvailable(doc) {
+  const revisions = doc?.revisionState;
+  if (!doc?.pdfDoc || !revisions) return false;
+  return revisionNumber(revisions.persistedRevision) <= revisionNumber(revisions.livePdfRevision)
+    && revisions.saveState !== 'persisted'
+    && revisions.saveState !== 'synchronizing'
+    && revisions.saveState !== 'saved-refresh-failed';
+}
 
 /** @param {unknown} value */
 function scalar(value) {
@@ -49,7 +91,9 @@ export function pageTextSignature(doc, pageNum) {
 export function readPageTextCache(doc, pdfDoc, pageNum) {
   const byPage = documentTextCache.get(doc?.id);
   const entry = byPage?.get(pageNum);
-  if (!entry || entry.pdfDoc !== pdfDoc || entry.signature !== pageTextSignature(doc, pageNum)) {
+  if (!entry || entry.pdfDoc !== pdfDoc
+      || !textCacheRevisionIsCurrent(entry.revisionIdentity, doc, pdfDoc)
+      || entry.signature !== pageTextSignature(doc, pageNum)) {
     return null;
   }
   return entry.value;
@@ -70,6 +114,7 @@ export function writePageTextCache(doc, pdfDoc, pageNum, value) {
   }
   byPage.set(pageNum, {
     pdfDoc,
+    revisionIdentity: captureTextCacheRevision(doc, pdfDoc, pageNum),
     signature: pageTextSignature(doc, pageNum),
     value,
   });

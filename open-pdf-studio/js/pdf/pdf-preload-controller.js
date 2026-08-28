@@ -79,6 +79,13 @@ export class BoundedPdfPreloadController {
     return this.task;
   }
 
+  async loadNow(page, { protectedPages = [page] } = {}) {
+    const generation = ++this.generation;
+    this.protectedPages = new Set(protectedPages);
+    await this._load(page, generation);
+    return this.get(page);
+  }
+
   async _load(page, generation) {
     if (this.entries.has(page)) { this.get(page); return; }
     if (this.promises.has(page)) { this.log({ type: 'deduplicated', page }); await this.promises.get(page); return; }

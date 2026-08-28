@@ -62,6 +62,15 @@ test('controller yields completely while foreground work is active and resumes o
   assert.deepEqual(calls, [1, 2]);
 });
 
+test('foreground metadata load bypasses background-idle admission', async () => {
+  const controller = new BoundedPdfPreloadController({
+    isIdle: () => false,
+    load: async (page) => ({ value: `p${page}`, bytes: 1 }),
+  });
+  assert.equal(await controller.loadNow(4), 'p4');
+  assert.equal(controller.get(4), 'p4');
+});
+
 test('completion from a cancelled generation is discarded before the replacement sweep runs', async () => {
   let releaseFirst;
   const firstGate = new Promise((resolve) => { releaseFirst = resolve; });

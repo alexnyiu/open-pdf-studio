@@ -6,7 +6,9 @@ import {
   recordOcrExistingTextAssessment,
 } from '../ocr/document-state.js';
 import {
+  captureTextCacheRevision,
   readPageTextCache,
+  textCacheRevisionIsCurrent,
   writePageTextCache,
 } from './text-cache.js';
 import { projectTextEditRecord } from '../text/rich-text.js';
@@ -21,8 +23,12 @@ import { projectTextEditRecord } from '../text/rich-text.js';
 export async function extractPageText(pdfDoc, pageNum, doc) {
   const cached = readPageTextCache(doc, pdfDoc, pageNum);
   if (cached) return cached;
+  const revisionIdentity = captureTextCacheRevision(doc, pdfDoc, pageNum);
+  if (doc && !textCacheRevisionIsCurrent(revisionIdentity, doc, pdfDoc)) return null;
   const page = await pdfDoc.getPage(pageNum);
+  if (doc && !textCacheRevisionIsCurrent(revisionIdentity, doc, pdfDoc)) return null;
   const textContent = await page.getTextContent();
+  if (doc && !textCacheRevisionIsCurrent(revisionIdentity, doc, pdfDoc)) return null;
   if (doc) {
     recordOcrExistingTextAssessment(doc, pageNum, assessPdfJsTextContent(textContent));
   }
@@ -96,5 +102,6 @@ export async function extractPageText(pdfDoc, pageNum, doc) {
     pageText += item.text;
   }
 
+  if (doc && !textCacheRevisionIsCurrent(revisionIdentity, doc, pdfDoc)) return null;
   return writePageTextCache(doc, pdfDoc, pageNum, { pageNum, text: pageText, items });
 }

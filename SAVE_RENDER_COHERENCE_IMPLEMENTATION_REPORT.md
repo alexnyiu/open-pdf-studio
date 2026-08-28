@@ -22,6 +22,7 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 - save coordinator: Implemented in Phase 2; one revision-owned queue per document coordinates automatic and manual requests through bounded editor completion, persistence-boundary ownership, follow-up scheduling, and lifecycle cancellation
 - proxy synchronization: Implemented in Phase 3; automatic and manual persistence share one saved-document transition, with live revision advancement, view restoration, edit activation holding, and Phase-B-only recovery
 - publication tokens: Implemented in Phase 4; foreground and background raster, tile, preview, thumbnail, vector, metadata, and whole-document preload work publish only for their exact document, proxy, lifecycle, content revision, and page revision
+- semantic invalidation: Implemented in Phase 5; live-proxy installation clears editable metadata, native provenance, search text, and preload completion state before required-page metadata is rebuilt and edit readiness is published
 - edit readiness: Pending
 - cache invalidation: Pending
 - UI recovery: Pending
@@ -31,20 +32,20 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 | Finding | Status | Commit | Files | Tests/evidence |
 |---|---|---|---|---|
 | F-01 | Resolved in Phase 1 | `6dc046f9` | `open-pdf-studio/js/pdf/save-state.js`, `open-pdf-studio/js/core/document-revision-state.runtime.js` | Deterministic regression now passes; same-path no-op rejects synchronization debt |
-| F-02 | Resolved in Phase 4 | Pending Phase 4 commit | render publication tokens across renderer, viewport raster orchestration, thumbnails, and caches | Old asynchronous work is rejected after proxy, lifecycle, content, or page-revision change |
+| F-02 | Resolved in Phase 4 | `b3934494` | render publication tokens across renderer, viewport raster orchestration, thumbnails, and caches | Old asynchronous work is rejected after proxy, lifecycle, content, or page-revision change |
 | F-03 | Resolved in Phase 3 | `c593ec19` | `open-pdf-studio/js/pdf/saved-document-transition.js`, `open-pdf-studio/js/pdf/loader.js` | Every persisted revision enters mandatory proxy synchronization |
-| F-04 | Resolved in Phase 4 | Pending Phase 4 commit | `open-pdf-studio/js/pdf/render-publication-token.js`, `open-pdf-studio/js/pdf/tile-cache.js` | Deterministic deferred-result races cover raster, continuous, tile, preview, thumbnail, metadata, preload, and native-result publication |
-| F-05 | Foundation complete in Phase 1 | `6dc046f9` | document revision state and persistent mutation routing | Content identity advances once per committed mutation |
+| F-04 | Resolved in Phase 4 | `b3934494` | `open-pdf-studio/js/pdf/render-publication-token.js`, `open-pdf-studio/js/pdf/tile-cache.js` | Deterministic deferred-result races cover raster, continuous, tile, preview, thumbnail, metadata, preload, and native-result publication |
+| F-05 | Resolved in Phase 5 | Pending Phase 5 commit | saved semantic transition, revision-owned editable metadata/native provenance/search caches | Content identity advances once and stale semantic entries cannot survive a live-proxy transition |
 | F-06 | Pending | Pending | Pending | Pending |
 | F-07 | Resolved in Phase 2 | `eca8b23e` | `open-pdf-studio/js/pdf/save-coordinator.js`, `open-pdf-studio/js/core/undo-manager.js` | Newer revisions force an owned follow-up; old serialization cannot replace or mark clean |
 | F-08 | Resolved in Phase 3 | `c593ec19` | saved-document transition edit hold | A requested next edit starts only after the new proxy generation is ready |
 | F-09 | Resolved in Phase 3 | `c593ec19` | immutable owner lookup and transition tests | Active-tab wrapper changes do not suppress the correct document refresh |
-| F-10 | Resolved in Phase 4 | Pending Phase 4 commit | PDF.js task registry and native request IDs | PDF.js tasks are actively cancelled on revision change; uncancellable native completions are rejected before publication |
-| F-11 | Foundation complete in Phase 1 | `6dc046f9` | page content revision compatibility alias | Page-scoped mutation identity is explicit |
+| F-10 | Resolved in Phase 4 | `b3934494` | PDF.js task registry and native request IDs | PDF.js tasks are actively cancelled on revision change; uncancellable native completions are rejected before publication |
+| F-11 | Resolved in Phase 5 | Pending Phase 5 commit | explicit document/revision metadata preload and changed-page-first rebuild | Required-page native metadata is rebuilt before semantic/edit readiness; uncertain provenance changes clear the whole source cache |
 | F-12 | Foundation complete in Phase 1 | `6dc046f9` | structural revision invalidation | Structural changes invalidate page readiness and geometry identity |
-| F-13 | Resolved in Phase 4 | Pending Phase 4 commit | revision-owned tile, preview, thumbnail, vector, and bitmap caches | Async cache insertion validates the complete publication owner and releases rejected resources |
+| F-13 | Resolved in Phase 4 | `b3934494` | revision-owned tile, preview, thumbnail, vector, and bitmap caches | Async cache insertion validates the complete publication owner and releases rejected resources |
 | F-14 | Pending | Pending | Pending | Pending |
-| F-15 | Resolved in Phase 4 | Pending Phase 4 commit | whole-document and editable-metadata preload token validation | Old preloads cannot insert metadata or mark a new revision complete |
+| F-15 | Resolved in Phase 4 | `b3934494` | whole-document and editable-metadata preload token validation | Old preloads cannot insert metadata or mark a new revision complete |
 | F-16 | Foundation complete in Phase 3 | `c593ec19` | saved-document transition readiness ownership | `livePdfRevision` advances only after candidate proxy install; final Saved waits for readiness |
 | F-17 | Resolved in Phase 2 | `eca8b23e` | save coordinator persistence/publication boundaries | Superseded and closed-document requests cannot publish stale state |
 | F-18 | Resolved in Phase 2 | `eca8b23e` | save coordinator editor promise and deadline | Save waits on the session commit promise and fails visibly at a bounded deadline |
@@ -147,6 +148,23 @@ Pending implementation. Baseline reproduction confirms that automatic persistenc
 - Bitmap, tile, vector, preview, thumbnail, metadata, and whole-document preload paths close or revoke stale resources and use bounded rejection diagnostics.
 - Deterministic paused-result tests cover every race required by the plan, including direct tile-cache insertion and scheduler completion rejection.
 
+### Phase 5 semantic invalidation and preload rebuilding
+
+| Command | Result |
+|---|---|
+| `npm run typecheck` | PASS |
+| `node --test js/pdf/saved-document-transition.test.mjs js/pdf/editable-metadata-preload.test.mjs js/pdf/pdf-preload-controller.test.mjs js/text/native-text-provenance.test.mjs js/search/text-cache.test.mjs` | PASS: 27/27 |
+| `npm run test:editor-lifecycle:unit` | PASS |
+| `npm run test:unit` | PASS |
+| `npm run build` | PASS |
+| `git diff --check` | PASS |
+
+- Saved semantic invalidation runs only after the validated candidate proxy is installed and `livePdfRevision` advances; the former pre-install metadata clear was removed.
+- Editable metadata controllers and native source provenance caches are owned by direct proxy, lifecycle, content revision, and live-PDF revision, even when the outer document object remains stable.
+- Required foreground metadata bypasses background-idle admission and is rebuilt before page semantic readiness; precisely changed pages are attempted first.
+- Whole-document preload status carries revision identity, restarts after required-page rebuilding, and stale runs cannot publish `complete` for a newer revision.
+- Search waits for saved-document synchronization, refuses persisted-newer-than-live or refresh-failed owners, and caches page text under direct proxy plus document/page revision identity.
+
 ## Packaged acceptance
 
 - app artifact: Pending
@@ -166,5 +184,5 @@ Pending Phase 10 measurements.
 
 ## Remaining risks
 
-- Semantic invalidation, complete cache invalidation, visible edit readiness, click-away scheduling, UI recovery, packaged acceptance, and CI enforcement remain for Phases 5–12.
+- Complete visual/engine cache invalidation, visible edit readiness, click-away scheduling, UI recovery, packaged acceptance, and CI enforcement remain for Phases 6–12.
 - The source audit named by the supplied plan, `open-pdf-studio-ocr-release-hardening-bug-audit.md`, was not present in the workspace, Downloads, or Documents search scope.

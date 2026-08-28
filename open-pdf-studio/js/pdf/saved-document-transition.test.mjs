@@ -68,10 +68,13 @@ function transitionInput(documentState, overrides = {}) {
       return { requiredPages: [2] };
     },
     invalidateRevision: async () => {},
+    invalidateSemanticState: async () => {},
     rebuildRequiredPages: async ({ requiredPages }) => ({
       renderReadyPages: requiredPages,
       semanticReadyPages: requiredPages,
     }),
+    rebuildEditableMetadata: async ({ requiredPages }) => requiredPages,
+    restartSemanticPreload: async () => true,
     restoreViewState: async (document, snapshot) => {
       restoreSavedDocumentViewState(document, snapshot);
     },
@@ -90,6 +93,52 @@ test('automatic persistence installs its validated proxy and reaches the persist
   assert.equal(document.revisionState.livePdfRevision, 1);
   assert.equal(document.revisionState.saveState, 'saved');
   assert.equal(documentIsEditReady(document, 2), true);
+});
+
+test('automatic save invalidates old semantics and rebuilds changed metadata before readiness', async () => {
+  const document = persistedDocument();
+  document.revisionState.pendingChangedPages = [3, 2];
+  const order = [];
+  await synchronizeSavedDocument(transitionInput(document, {
+    installProxy: async ({ documentState: owner, preparedPdfJsDocument }) => {
+      order.push('install-proxy');
+      owner.pdfDoc = preparedPdfJsDocument;
+      owner.lifecycleGeneration += 1;
+      return { requiredPages: [2] };
+    },
+    invalidateSemanticState: async ({ documentState: owner, requestedRevision, changedPages }) => {
+      order.push('clear-semantic-caches');
+      assert.equal(owner.pdfDoc.id, 'prepared');
+      assert.equal(owner.revisionState.livePdfRevision, requestedRevision);
+      assert.deepEqual(changedPages, [2, 3]);
+    },
+    rebuildRequiredPages: async ({ requiredPages }) => {
+      order.push('render-required-pages');
+      return { renderReadyPages: requiredPages, semanticReadyPages: requiredPages };
+    },
+    rebuildEditableMetadata: async ({ requiredPages, changedPages }) => {
+      order.push('rebuild-editable-metadata');
+      assert.deepEqual(requiredPages, [2]);
+      assert.deepEqual(changedPages, [2, 3]);
+      return requiredPages;
+    },
+    restartSemanticPreload: async () => {
+      order.push('restart-whole-preload');
+      return true;
+    },
+    waitForEditReadiness: async ({ documentState: owner, requiredPages }) => {
+      order.push('page-edit-ready');
+      return requiredPages.every((page) => documentRevisionReadinessSatisfied(owner, page));
+    },
+  }));
+  assert.deepEqual(order, [
+    'install-proxy',
+    'clear-semantic-caches',
+    'render-required-pages',
+    'rebuild-editable-metadata',
+    'restart-whole-preload',
+    'page-edit-ready',
+  ]);
 });
 
 test('a disk-clean but unsynchronized document performs Phase B without persistence', async () => {

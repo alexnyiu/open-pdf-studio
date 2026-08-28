@@ -269,8 +269,6 @@ function productionSavedTransitionCallbacks(outputPath, savedBytes) {
       scrollContainer: document.getElementById('pdf-container'),
     }),
     installProxy: async ({ documentState: owner, preparedPdfJsDocument: candidate }) => {
-      const { clearEditableMetadataPreload } = await import('./editable-metadata-preload.js');
-      clearEditableMetadataPreload(owner);
       return installValidatedSavedPdfDocument(owner, outputPath, savedBytes, candidate);
     },
     invalidateRevision: async () => {},
