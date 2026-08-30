@@ -112,6 +112,7 @@ import {
 import { runPageEditIntent } from '../text/page-edit-intent.js';
 import { acquirePageLease, releasePageLease } from '../pdf/page-lease-registry.js';
 import {
+  authoredFinalTextLayoutInput,
   awaitFinalTextLayout,
   disposeFinalTextLayoutSession,
 } from '../text/final-text-layout.js';
@@ -1483,21 +1484,21 @@ async function nativeLayoutReadyForCommit(editor, draft, operation) {
   // Source reconciliation is allowed only for an unchanged source draft.
   // This function is reached after authored dirty-state succeeds, so a width
   // increase must use the explicit safe auto-fit transaction instead.
-  const finalOptions = Object.freeze({
-    ...draft.options,
-    substitutionWidthAllowance: 0,
+  const finalInput = authoredFinalTextLayoutInput({
+    document: draft.document,
+    options: draft.options,
   });
   const finalRevision = createEditorLayoutRevision(
-    draft.document,
-    finalOptions,
+    finalInput.document,
+    finalInput.options,
     draft.identity,
   );
   const decision = await awaitFinalTextLayout({
     sessionId: draft.sessionId,
     draftRevision: draft.draftRevision,
     fingerprint: finalRevision.fingerprint,
-    document: draft.document,
-    options: finalOptions,
+    document: finalInput.document,
+    options: finalInput.options,
     identity: draft.identity,
     allowSafeAutoFit: true,
     signal: operation?.signal,

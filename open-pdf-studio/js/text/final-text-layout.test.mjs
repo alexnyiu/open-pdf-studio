@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  authoredFinalTextLayoutInput,
   createFinalTextLayoutBarrier,
   safeHorizontalAutoFit,
 } from './final-text-layout.js';
@@ -134,6 +135,87 @@ test('typing 0.05 PDF points past capacity auto-fits once and validates the new 
   assert.notEqual(fingerprints[0], fingerprints[1]);
   assert.equal(decision.requestedFingerprint, fingerprints[1]);
   assert.equal(decision.validatedFingerprint, fingerprints[1]);
+});
+
+test('an authored draft converts live substitution compensation into canonical auto-fit', async () => {
+  const sourceWidth = 100;
+  const requiredWidth = 100.393557;
+  const livePreview = draft('authored replacement');
+  livePreview.region = { ...livePreview.region, width: requiredWidth };
+  const input = authoredFinalTextLayoutInput({
+    document: livePreview,
+    options: {
+      width: sourceWidth,
+      contentWidth: sourceWidth,
+      sourceWidth,
+      effectiveContentWidth: requiredWidth,
+      substitutionWidthAllowance: 1,
+      pageBounds: { x: 0, y: 0, width: 612, height: 792 },
+      columnBounds: { left: 20, right: 140 },
+      manualLineBreaks: true,
+    },
+  });
+  assert.equal(input.document.region.width, sourceWidth);
+  assert.equal(input.options.effectiveContentWidth, sourceWidth);
+  assert.equal(input.options.substitutionWidthAllowance, 0);
+
+  let attempts = 0;
+  const barrier = createFinalTextLayoutBarrier({
+    requestLayout: async (document, options, fingerprint) => {
+      attempts += 1;
+      if (attempts === 1) {
+        assert.equal(document.region.width, sourceWidth);
+        assert.equal(options.width, sourceWidth);
+        return {
+          fingerprint,
+          result: {
+            valid: false,
+            document,
+            requiredWidth,
+            requiredHeight: 20,
+            effectiveContentWidth: sourceWidth,
+            paintedLineAdvances: [requiredWidth],
+            rejectionCode: 'TEXT_LAYOUT_WIDTH_CAPACITY',
+            rejectionCodes: ['TEXT_LAYOUT_WIDTH_CAPACITY'],
+            rejectionReasons: ['A line exceeds the text box width'],
+            overlapWarnings: [],
+            pageEdgeValid: true,
+            columnValid: true,
+          },
+        };
+      }
+      assert.equal(document.region.width, requiredWidth);
+      assert.equal(options.width, requiredWidth);
+      return {
+        fingerprint,
+        result: {
+          valid: true,
+          document,
+          requiredWidth,
+          requiredHeight: 20,
+          effectiveContentWidth: requiredWidth,
+          rejectionReasons: [],
+          overlapWarnings: [],
+          pageEdgeValid: true,
+          columnValid: true,
+        },
+      };
+    },
+  });
+  const firstRevision = 'authored-final-fingerprint';
+  const decision = await barrier.awaitFinalTextLayout({
+    sessionId: 'authored-substitution-session',
+    draftRevision: 8,
+    fingerprint: firstRevision,
+    document: input.document,
+    options: input.options,
+    timeoutMs: 100,
+  });
+  assert.equal(decision.status, 'auto-fitted');
+  assert.equal(decision.autoFit.priorBounds.width, sourceWidth);
+  assert.equal(decision.autoFit.nextBounds.width, requiredWidth);
+  assert.equal(decision.document.region.width, requiredWidth);
+  assert.equal(attempts, 2);
 });
 
 test('safe auto-fit applies canonical left, right, and center anchors on rotated pages', () => {

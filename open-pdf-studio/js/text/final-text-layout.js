@@ -257,6 +257,41 @@ function cacheKey({ sessionId, draftRevision, fingerprint }) {
   return `${String(sessionId)}|${Number(draftRevision) || 0}|${String(fingerprint)}`;
 }
 
+/**
+ * A live preview may temporarily widen a substituted native face by at most
+ * its provenance-backed reconciliation allowance. Once the user has authored
+ * a real change, that preview-only normalization must enter the ordinary
+ * canonical auto-fit policy instead of making the final barrier compare an
+ * already widened document with the original authored width.
+ */
+export function authoredFinalTextLayoutInput({ document, options = {} } = {}) {
+  const finalDocument = clone(document);
+  const finalOptions = {
+    ...(clone(options) || {}),
+    substitutionWidthAllowance: 0,
+  };
+  const authoredWidth = Number(options.width);
+  const liveWidth = Number(document?.region?.width);
+  const contentWidth = Number(options.contentWidth);
+  const effectiveContentWidth = Number(options.effectiveContentWidth);
+  const allowance = Math.max(0, Math.min(1, Number(options.substitutionWidthAllowance) || 0));
+  const geometryCompensation = liveWidth - authoredWidth;
+  const contentCompensation = effectiveContentWidth - contentWidth;
+  const boundedPreviewCompensation = allowance > 0
+    && [authoredWidth, liveWidth, contentWidth, effectiveContentWidth].every(Number.isFinite)
+    && geometryCompensation > WIDTH_EPSILON
+    && geometryCompensation <= allowance + WIDTH_EPSILON
+    && Math.abs(contentCompensation - geometryCompensation) <= WIDTH_EPSILON;
+  if (boundedPreviewCompensation) {
+    finalDocument.region = { ...finalDocument.region, width: authoredWidth };
+    finalOptions.effectiveContentWidth = contentWidth;
+  }
+  return {
+    document: deepFreeze(finalDocument),
+    options: deepFreeze(finalOptions),
+  };
+}
+
 export function createFinalTextLayoutBarrier({ requestLayout = requestLatestNativeLayout } = {}) {
   const validated = new Map();
   const active = new Map();
