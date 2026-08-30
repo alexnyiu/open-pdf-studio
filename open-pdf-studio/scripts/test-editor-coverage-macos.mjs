@@ -842,7 +842,11 @@ async function runCoverage(options) {
       }
     }
 
-    async function waitForSavedCoherence(description, afterContentRevision) {
+    async function waitForSavedCoherence(
+      description,
+      afterContentRevision,
+      { requireLiveProxy = false } = {},
+    ) {
       let latestViewport = null;
       try {
         return await waitUntil(description, async () => {
@@ -850,10 +854,15 @@ async function runCoverage(options) {
           latestViewport = viewport;
           const revision = viewport.documentSaveState;
           const page = String(viewport.doc?.currentPage || 1);
-          if (!revision || revision.saveState !== 'saved'
+          const durableState = ['saved', 'saved-refresh-pending'].includes(revision?.saveState);
+          if (!revision || !durableState
               || revision.contentRevision <= afterContentRevision
+              || revision.serializedRevision !== revision.contentRevision
               || revision.persistedRevision !== revision.contentRevision
-              || revision.livePdfRevision !== revision.contentRevision
+              || (requireLiveProxy && (
+                revision.saveState !== 'saved'
+                || revision.livePdfRevision !== revision.contentRevision
+              ))
               || revision.pageRenderReadyRevisions?.[page] !== revision.contentRevision
               || revision.pageSemanticReadyRevisions?.[page] !== revision.contentRevision
               || viewport.pageEditReadiness?.ready !== true) return null;
@@ -1311,6 +1320,7 @@ async function runCoverage(options) {
       await waitForSavedCoherence(
         `${adapter.id} paragraph formatting Undo save coherence`,
         Number(beforePropertiesUndo.documentSaveState?.contentRevision) || 0,
+        { requireLiveProxy: true },
       );
       await assertPersistedText(adapter, adapter.expected, 'original');
       await waitUntil(`${adapter.id} paragraph formatting single Undo`, async () => {

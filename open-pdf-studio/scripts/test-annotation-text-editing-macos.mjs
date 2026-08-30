@@ -314,10 +314,13 @@ async function runAcceptance(options) {
     const viewport = await waitUntil(`${label} automatic save`, async () => {
       const current = await callTool('app_get_viewport_state');
       const revisions = current.documentSaveState;
-      return revisions?.saveState === 'saved'
+      const page = String(current.doc?.currentPage || 1);
+      return ['saved', 'saved-refresh-pending'].includes(revisions?.saveState)
         && revisions.activeSaveRequestId == null
+        && revisions.serializedRevision === revisions.contentRevision
         && revisions.contentRevision === revisions.persistedRevision
-        && revisions.persistedRevision === revisions.livePdfRevision
+        && revisions.pageRenderReadyRevisions?.[page] === revisions.contentRevision
+        && revisions.pageSemanticReadyRevisions?.[page] === revisions.contentRevision
         && current.pageEditReadiness?.ready === true
         && current.renderPublicationDiagnostics?.activePdfJsTasks === 0
         ? current : null;

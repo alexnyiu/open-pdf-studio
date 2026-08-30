@@ -68,6 +68,13 @@ let stdoutLog;
 let stderrLog;
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const automaticSaveIsDurable = (viewport) => {
+  const revisions = viewport?.documentSaveState;
+  return ['saved', 'saved-refresh-pending'].includes(revisions?.saveState)
+    && revisions.activeSaveRequestId == null
+    && revisions.serializedRevision === revisions.contentRevision
+    && revisions.persistedRevision === revisions.contentRevision;
+};
 
 async function gitHead() {
   if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
@@ -458,9 +465,7 @@ try {
         viewport,
       };
       return latestInitialAutoSaveProbe.fileChanged
-        && viewport.documentSaveState?.saveState === 'saved'
-        && viewport.documentSaveState.persistedRevision
-          === viewport.documentSaveState.contentRevision ? viewport : null;
+        && automaticSaveIsDurable(viewport) ? viewport : null;
     }, 60_000);
   } catch (error) {
     const consoleLog = await callTool('app_get_recent_console').catch(() => null);
@@ -505,9 +510,7 @@ try {
       callTool('app_get_viewport_state'),
     ]);
     return currentSha256 !== beforeInteriorSha256
-      && viewport.documentSaveState?.saveState === 'saved'
-      && viewport.documentSaveState.persistedRevision
-        === viewport.documentSaveState.contentRevision
+      && automaticSaveIsDurable(viewport)
       && viewport.editorSession === null ? viewport : null;
   }, 60_000);
   const interiorManifest = await ownedManifestIdentity(workingPdf);
@@ -907,9 +910,7 @@ try {
             viewport,
           };
           return latestAutoSaveProbe.fileChanged
-            && viewport.documentSaveState?.saveState === 'saved'
-            && viewport.documentSaveState.persistedRevision
-              === viewport.documentSaveState.contentRevision
+            && automaticSaveIsDurable(viewport)
             ? viewport : null;
         },
         realAutoSaveTimeoutMs,

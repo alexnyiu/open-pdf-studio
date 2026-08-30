@@ -450,15 +450,13 @@ export async function runSaveContinueEditing(options) {
       recordViewport('edit-a-auto-save', viewport);
       const revision = viewport.documentSaveState;
       const page = String(viewport.doc?.currentPage || 1);
-      return revision?.saveState === 'saved'
+      return ['saved', 'saved-refresh-pending'].includes(revision?.saveState)
         && revision.contentRevision > initialRevision
         && revision.serializedRevision === revision.contentRevision
         && revision.persistedRevision === revision.contentRevision
-        && revision.livePdfRevision === revision.contentRevision
-        && revision.visibleRenderRevision === revision.contentRevision
-        && revision.visibleSemanticRevision === revision.contentRevision
         && revision.pageRenderReadyRevisions?.[page] === revision.contentRevision
         && revision.pageSemanticReadyRevisions?.[page] === revision.contentRevision
+        && viewport.pageEditReadiness?.ready === true
         && revision.activeSaveRequestId === null
         && viewport.renderPublicationDiagnostics?.activePdfJsTasks === 0
         && staleSurfaceCount(viewport) === 0 ? viewport : null;
