@@ -17,7 +17,10 @@ import {
   cancelTextEditingForDocument,
   isTextEditingDirtyForDocument,
 } from '../../text/text-edit-session.js';
-import { replaceDocumentPdfProxy } from '../../core/document-lifecycle.js';
+import {
+  LIFECYCLE_TRANSITION_POLICIES,
+  replaceDocumentPdfProxy,
+} from '../../core/document-lifecycle.js';
 import { authorizeDocumentClose } from './document-close-authorization.js';
 import { showUnsavedClosePrompt } from './unsaved-close-prompt.js';
 import { restoreDocumentScrollPosition } from '../../pdf/document-scroll-position.js';
@@ -280,7 +283,7 @@ async function closeDocumentTab(doc, force) {
   clearEditableMetadataPreload(doc);
   const { cancelWholePdfPreload } = await import('../../pdf/whole-pdf-preload.js');
   cancelWholePdfPreload(doc, { release: true, reason: 'close' });
-  replaceDocumentPdfProxy(doc, null, 'document-close');
+  replaceDocumentPdfProxy(doc, null, LIFECYCLE_TRANSITION_POLICIES.DOCUMENT_CLOSE);
   try {
     await closedPdfDocument?.destroy?.();
   } catch (error) {

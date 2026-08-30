@@ -279,7 +279,10 @@ async function removeAttachment(activeDoc, key) {
 
 // Reload the pdf.js document from new bytes
 async function reloadDocumentFromBytes(activeDoc, bytes) {
-  const { replaceDocumentPdfProxy } = await import('../../core/document-lifecycle.js');
+  const {
+    LIFECYCLE_TRANSITION_POLICIES,
+    replaceDocumentPdfProxy,
+  } = await import('../../core/document-lifecycle.js');
   const pdfjsLib = await import('pdfjs-dist');
   const newDoc = await pdfjsLib.getDocument({
     data: bytes,
@@ -289,7 +292,11 @@ async function reloadDocumentFromBytes(activeDoc, bytes) {
     isEvalSupported: false,
     verbosity: 0,
   }).promise;
-  const previousPdfDocument = replaceDocumentPdfProxy(activeDoc, newDoc, 'attachment-reload');
+  const previousPdfDocument = replaceDocumentPdfProxy(
+    activeDoc,
+    newDoc,
+    LIFECYCLE_TRANSITION_POLICIES.CONTENT_REPLACEMENT,
+  );
   try { await previousPdfDocument?.destroy?.(); } catch (_) {}
 }
 

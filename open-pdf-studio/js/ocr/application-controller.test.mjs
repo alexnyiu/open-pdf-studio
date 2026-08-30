@@ -42,7 +42,10 @@ const {
   removeApplicationOwnedOcr,
 } = await vite.ssrLoadModule('/js/ocr/undo-commands.js');
 const { state } = await vite.ssrLoadModule('/js/core/state.js');
-const { replaceDocumentPdfProxy } = await vite.ssrLoadModule('/js/core/document-lifecycle.js');
+const {
+  LIFECYCLE_TRANSITION_POLICIES,
+  replaceDocumentPdfProxy,
+} = await vite.ssrLoadModule('/js/core/document-lifecycle.js');
 const { redo, undo } = await vite.ssrLoadModule('/js/core/undo-manager.js');
 const {
   textCacheSnapshot,
@@ -490,7 +493,11 @@ test('save/reload proxy replacement synchronously cancels an active OCR owner be
   const job = startJob(controller, document, fixtures);
   await nativeStarted.promise;
 
-  const previous = replaceDocumentPdfProxy(document, replacementPdfDocument, 'validated-save-install');
+  const previous = replaceDocumentPdfProxy(
+    document,
+    replacementPdfDocument,
+    LIFECYCLE_TRANSITION_POLICIES.VALIDATED_SAVE_ADOPTION,
+  );
   const summary = await job.completion;
 
   assert.equal(previous, originalPdfDocument);
@@ -498,7 +505,7 @@ test('save/reload proxy replacement synchronously cancels an active OCR owner be
   assert.equal(document.lifecycleGeneration, 1);
   assert.equal(cancelCalls, 1);
   assert.equal(summary.status, 'cancelled');
-  assert.equal(summary.cancellationReason, 'validated-save-install');
+  assert.equal(summary.cancellationReason, 'validated-save-adoption');
   assert.deepEqual(summary.appliedPageNumbers, []);
   assert.equal(document.ocr.pages[1]?.recognition.result ?? null, null);
   controller.dispose();

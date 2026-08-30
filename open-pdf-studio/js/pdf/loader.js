@@ -17,7 +17,10 @@ import { addRecentFile, getRecentFiles } from '../mobile/recent-files.js';
 import { extractFileName } from '../core/platform.js';
 import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
-import { replaceDocumentPdfProxy } from '../core/document-lifecycle.js';
+import {
+  LIFECYCLE_TRANSITION_POLICIES,
+  replaceDocumentPdfProxy,
+} from '../core/document-lifecycle.js';
 import { restoreDocumentScrollPosition } from './document-scroll-position.js';
 import {
   clearPageReadiness,
@@ -142,7 +145,11 @@ export async function reloadDocumentFromBytes(doc, bytes) {
     try { await reloadedPdfDocument.destroy(); } catch {}
     throw error;
   }
-  const previousPdfDocument = replaceDocumentPdfProxy(doc, reloadedPdfDocument, 'reload-from-bytes');
+  const previousPdfDocument = replaceDocumentPdfProxy(
+    doc,
+    reloadedPdfDocument,
+    LIFECYCLE_TRANSITION_POLICIES.CONTENT_REPLACEMENT,
+  );
   try { await previousPdfDocument?.destroy?.(); } catch (_) {}
 
   noteDocumentMutation(doc, { structural: true, reason: 'reload-from-bytes' });
@@ -162,7 +169,11 @@ export async function installValidatedSavedPdfDocument(doc, filePath, bytes, pre
   const previousPdfJsDocument = doc.pdfDoc;
   doc._sharedPdfLibDoc = null;
   doc._sharedPdfLibDocPromise = null;
-  replaceDocumentPdfProxy(doc, preparedPdfJsDocument, 'validated-save-install');
+  replaceDocumentPdfProxy(
+    doc,
+    preparedPdfJsDocument,
+    LIFECYCLE_TRANSITION_POLICIES.VALIDATED_SAVE_ADOPTION,
+  );
   cacheValidatedSavedPdfBytes(filePath, bytes);
   _attachPdfDocGetPageRecovery(doc, filePath);
   try {
@@ -242,7 +253,11 @@ function _attachPdfDocGetPageRecovery(doc, filePath) {
           try { await fresh.destroy(); } catch {}
           throw error;
         }
-        const previousPdfDocument = replaceDocumentPdfProxy(doc, fresh, 'pdfjs-page-recovery');
+        const previousPdfDocument = replaceDocumentPdfProxy(
+          doc,
+          fresh,
+          LIFECYCLE_TRANSITION_POLICIES.PROXY_RECOVERY,
+        );
         try { await previousPdfDocument?.destroy?.(); } catch (_) {}
         _attachPdfDocGetPageRecovery(doc, filePath); // protect future calls
         return await doc.pdfDoc.getPage(pageNum);
@@ -475,7 +490,11 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
       isEvalSupported: false,
       verbosity: 0,
     }).promise;
-    const previousPdfDocument = replaceDocumentPdfProxy(doc, openedPdfDocument, 'document-load');
+    const previousPdfDocument = replaceDocumentPdfProxy(
+      doc,
+      openedPdfDocument,
+      LIFECYCLE_TRANSITION_POLICIES.DOCUMENT_LOAD,
+    );
     loadOwner = captureDocumentLifecycleOwner(getDocumentById(loadOwner.id) || doc);
     if (recoveryRevision !== null) {
       const restoredRevision = Number(recoveryRevision);
@@ -722,7 +741,11 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
     doc._loadErrorMessage = error?.message || String(error) || 'Unknown PDF load failure';
     const failedPdfDocument = doc.pdfDoc;
     try { await failedPdfDocument?.destroy?.(); } catch {}
-    replaceDocumentPdfProxy(doc, null, 'document-load-failed');
+    replaceDocumentPdfProxy(
+      doc,
+      null,
+      LIFECYCLE_TRANSITION_POLICIES.DOCUMENT_LOAD_FAILURE,
+    );
     if (recoveryRevision !== null) {
       markDocumentSaveState(doc, 'saved-refresh-failed', {
         requestId: null,
@@ -920,7 +943,11 @@ export async function createBlankPDF(widthPt, heightPt, numPages) {
       isEvalSupported: false,
       verbosity: 0,
     }).promise;
-    replaceDocumentPdfProxy(doc, blankPdfDocument, 'blank-document-load');
+    replaceDocumentPdfProxy(
+      doc,
+      blankPdfDocument,
+      LIFECYCLE_TRANSITION_POLICIES.DOCUMENT_LOAD,
+    );
 
     // Reset annotation storage and state
     resetAnnotationStorage();

@@ -13,7 +13,10 @@ import { resetAnnotationStorage } from './form-layer.js';
 import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
 import { resetDocumentOcrGeneration } from '../ocr/document-state.js';
-import { replaceDocumentPdfProxy } from '../core/document-lifecycle.js';
+import {
+  LIFECYCLE_TRANSITION_POLICIES,
+  replaceDocumentPdfProxy,
+} from '../core/document-lifecycle.js';
 
 // Page clipboard for cut/copy/paste
 let pageClipboard = null; // { bytes: Uint8Array, cut: boolean, sourcePageNum: number }
@@ -231,7 +234,11 @@ export async function reloadFromBytes(newBytes, annotations, rotations, targetPa
     isEvalSupported: false,
     verbosity: 0,
   }).promise;
-  const previousPdfDocument = replaceDocumentPdfProxy(doc, replacementPdfDocument, 'page-structure-reload');
+  const previousPdfDocument = replaceDocumentPdfProxy(
+    doc,
+    replacementPdfDocument,
+    LIFECYCLE_TRANSITION_POLICIES.CONTENT_REPLACEMENT,
+  );
   try { await previousPdfDocument?.destroy?.(); } catch (_) {}
 
   // Page identities and geometry changed. Invalidate pending OCR atomically so
