@@ -93,8 +93,6 @@ async function observeCommittedTextPersistence(documentId, documentGeneration) {
   if (owner) owner.lastTextSaveResult = result;
   if (result?.status === 'failed') {
     showMessage(`Your text edit is still in the document, but saving failed: ${result.errorMessage}`);
-  } else if (result?.status === 'save-as-required') {
-    showMessage('Your text edit is ready. Use Save As to choose where to keep the PDF.');
   }
   return result;
 }

@@ -68,6 +68,7 @@ import {
   documentRevisionReadinessSatisfied,
   documentNeedsSynchronization,
   initializeDocumentRevisionState,
+  markDocumentSaveAsRequired,
   markDocumentSaveState,
   markRevisionPersisted,
   markRevisionSerialized,
@@ -597,6 +598,7 @@ export function scheduleCommittedTextEditSave(
       renderTemp: owner._renderTemp === true,
       pdfa: Boolean(owner.pdfaCompliance),
     });
+    markDocumentSaveAsRequired(owner);
     return Promise.resolve(ownerSaveResult(owner, 'save-as-required', {
       requestedRevision: initializeDocumentRevisionState(owner).contentRevision,
       recovery: { action: 'save-as' },

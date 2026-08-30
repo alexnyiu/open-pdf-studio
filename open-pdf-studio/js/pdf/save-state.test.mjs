@@ -191,6 +191,27 @@ test('click-away auto-save is limited to normal file-backed PDF owners', () => {
   }), false);
 });
 
+test('untitled click-away persistence restores nonblocking Save As status', async () => {
+  const [saverSource, overlaySource] = await Promise.all([
+    readFile(new URL('./saver.js', import.meta.url), 'utf8'),
+    readFile(new URL('../solid/components/PdfTextEditOverlay.jsx', import.meta.url), 'utf8'),
+  ]);
+  const scheduleSource = saverSource.slice(
+    saverSource.indexOf('export function scheduleCommittedTextEditSave'),
+    saverSource.indexOf('\n// Save PDF with annotations'),
+  );
+  const observerSource = overlaySource.slice(
+    overlaySource.indexOf('async function observeCommittedTextPersistence'),
+    overlaySource.indexOf('\nexport default function PdfTextEditOverlay'),
+  );
+
+  assert.match(scheduleSource, /markDocumentSaveAsRequired\(owner\)/u);
+  assert.match(scheduleSource, /ownerSaveResult\(owner, 'save-as-required'/u);
+  assert.match(observerSource, /result\?\.status === 'failed'/u);
+  assert.doesNotMatch(observerSource, /result\?\.status === 'save-as-required'/u,
+    'Save As guidance belongs in the document status UI, not a canvas-blocking modal');
+});
+
 test('automatic save admission defers while a page edit intent is awaiting readiness', async () => {
   const source = await readFile(new URL('./saver.js', import.meta.url), 'utf8');
   assert.match(source, /pageEditIntentPendingForDocument\(documentId\)/u);

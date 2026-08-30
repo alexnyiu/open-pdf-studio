@@ -112,6 +112,22 @@ test('Save-As-required state stays dirty without creating persistence or readine
   });
 });
 
+test('Save-As-required can be restored after a real mutation without fabricating another revision', () => {
+  const doc = createDocument();
+  markDocumentSaveAsRequired(doc);
+  noteDocumentMutation(doc, { pages: [1], reason: 'text-edit:apply' });
+  const before = documentRevisionDebugSnapshot(doc);
+
+  assert.equal(before.saveState, 'pending');
+  assert.equal(markDocumentSaveAsRequired(doc), 'save-as-required');
+  assert.equal(doc.modified, true);
+  assert.equal(doc.savedUndoStackLength, -1);
+  assert.deepEqual(documentRevisionDebugSnapshot(doc), {
+    ...before,
+    saveState: 'save-as-required',
+  });
+});
+
 test('one committed mutation advances content and only affected page identity', () => {
   const doc = createDocument();
   doc.pageEditReadiness = { 1: { ready: true }, 2: { ready: true } };
