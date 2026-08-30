@@ -250,6 +250,50 @@ test('PDF-number round-trip noise stays clean while authored geometry changes re
   assert.equal(textEditGeometryChanged(78.50439146800511, 78.50539146800511), true);
 });
 
+test('textbox record geometry ignores only PDF-number round-trip noise', () => {
+  const richText = richTextFixture();
+  const record = {
+    id: 'textbox-round-trip',
+    type: 'textbox',
+    x: richText.region.x,
+    y: richText.region.y,
+    width: richText.region.width,
+    height: richText.region.height,
+    richText,
+  };
+  const baseline = createTextEditDirtyBaseline({
+    text: 'First line\nSecond line',
+    richText,
+    record,
+  });
+  const roundTripped = clone(record);
+  roundTripped.x += 1e-12;
+  roundTripped.y -= 1e-12;
+  roundTripped.width += 1e-12;
+  roundTripped.height -= 1e-12;
+  roundTripped.richText.region.x = roundTripped.x;
+  roundTripped.richText.region.y = roundTripped.y;
+  roundTripped.richText.region.width = roundTripped.width;
+  roundTripped.richText.region.height = roundTripped.height;
+
+  assert.equal(textEditDraftIsDirty(baseline, {
+    text: 'First line\nSecond line',
+    richText: roundTripped.richText,
+    record: roundTripped,
+  }), false);
+  assert.equal(textEditRecordContentChanged(record, roundTripped), false);
+
+  const authoredMove = clone(roundTripped);
+  authoredMove.x += 0.001;
+  authoredMove.richText.region.x = authoredMove.x;
+  assert.equal(textEditDraftIsDirty(baseline, {
+    text: 'First line\nSecond line',
+    richText: authoredMove.richText,
+    record: authoredMove,
+  }), true);
+  assert.equal(textEditRecordContentChanged(record, authoredMove), true);
+});
+
 test('record-only geometry and legacy-style mutations make the draft dirty', () => {
   const record = {
     id: 'owned-1',

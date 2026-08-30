@@ -11,6 +11,16 @@ const PERSISTED_RUN_STYLE_KEYS = Object.freeze([
   'direction',
 ]);
 const PDF_LAYOUT_EPSILON = 1e-7;
+const PERSISTED_RECORD_LAYOUT_NUMBER_KEYS = new Set([
+  'x',
+  'y',
+  'width',
+  'height',
+  'pdfX',
+  'pdfY',
+  'pdfWidth',
+  'pdfHeight',
+]);
 
 function stableLayoutNumber(value) {
   const number = Number(value);
@@ -121,6 +131,10 @@ function semanticTextEditRecord(record) {
     if (key === 'revision' || TRANSIENT_RECORD_KEYS.has(key)) continue;
     if (key === 'richText' || key === 'original') {
       result[key] = semanticRichTextForRecord(record[key]);
+      continue;
+    }
+    if (PERSISTED_RECORD_LAYOUT_NUMBER_KEYS.has(key)) {
+      result[key] = stableLayoutNumber(record[key]);
       continue;
     }
     result[key] = stableObject(record[key]);
