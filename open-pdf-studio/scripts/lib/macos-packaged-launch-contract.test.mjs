@@ -43,9 +43,10 @@ test('all packaged matrix producers share the packaged-app launcher', async () =
 });
 
 test('trusted insertion re-queries, clicks, verifies focus ownership, then emits keys', async () => {
-  const [producer, swiftHelper] = await Promise.all([
+  const [producer, swiftHelper, tauriConfiguration] = await Promise.all([
     source('../test-native-paragraph-editing-macos.mjs'),
     source('../macos-real-text-edit.swift'),
+    source('../../src-tauri/tauri.conf.json'),
   ]);
   const interaction = producer.slice(
     producer.indexOf('async function realTextEditorInteraction'),
@@ -61,4 +62,10 @@ test('trusted insertion re-queries, clicks, verifies focus ownership, then emits
   assert.match(insertion, /frontmostApplication\?\.processIdentifier == pid/u);
   assert.match(swiftHelper, /focusedAccessibilityRole/u);
   assert.match(swiftHelper, /eventSequence/u);
+  assert.equal(JSON.parse(tauriConfiguration).app.windows[0].decorations, false);
+  assert.match(
+    swiftHelper,
+    /\?\? CGPoint\(x: windowBounds\.minX, y: windowBounds\.minY\)/u,
+  );
+  assert.doesNotMatch(swiftHelper, /windowBounds\.minY\s*\+/u);
 });

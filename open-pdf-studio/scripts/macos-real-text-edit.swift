@@ -143,10 +143,10 @@ let accessibilityApplication = AXUIElementCreateApplication(pid)
 let accessibilityWindow = axChildren(accessibilityApplication, kAXWindowsAttribute as CFString).first
 let webArea = accessibilityWindow.flatMap(findWebArea)
 let interactionOrigin = webArea.flatMap { axPoint($0, kAXPositionAttribute as CFString) }
-    // Tauri's client coordinates start below the standard macOS title bar.
-    // CGWindow bounds include that title bar when WebKit does not publish an
-    // AXWebArea, so retain the horizontal origin and add the native inset.
-    ?? CGPoint(x: windowBounds.minX, y: windowBounds.minY + 28)
+    // The packaged main window is borderless (`decorations: false`), so its
+    // WebView client origin is the CGWindow origin when WebKit does not expose
+    // an AXWebArea. Adding a native title-bar inset clicks below short editors.
+    ?? CGPoint(x: windowBounds.minX, y: windowBounds.minY)
 let point = CGPoint(
     x: interactionOrigin.x + number(3, "x"),
     y: interactionOrigin.y + number(4, "y")
