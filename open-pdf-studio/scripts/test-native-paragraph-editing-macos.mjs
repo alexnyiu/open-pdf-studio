@@ -146,7 +146,20 @@ async function waitUi(selector, predicate = (value) => value.found && value.visi
 }
 
 async function click(selector) {
-  await waitUi(selector, (value) => value.found && value.visible && !value.disabled, 60_000);
+  try {
+    await waitUi(selector, (value) => value.found && value.visible && !value.disabled, 60_000);
+  } catch (error) {
+    const [selectorState, textLayer, viewport, tabs, consoleLog] = await Promise.all([
+      ui(selector).catch(() => null),
+      ui('.textLayer').catch(() => null),
+      callTool('app_get_viewport_state').catch(() => null),
+      callTool('app_list_tabs').catch(() => null),
+      callTool('app_get_recent_console', { tail: 100 }).catch(() => null),
+    ]);
+    throw new Error(`click target did not become ready: ${JSON.stringify({
+      selector, selectorState, textLayer, viewport, tabs, consoleLog,
+    })}`, { cause: error });
+  }
   const result = await callTool('app_click_element', { selector, searchTabs: false });
   assert.equal(result.ok, true, result.error);
   assert.equal(result.clicked, true, `${selector} was not clicked`);
@@ -234,7 +247,10 @@ async function openPdf(pdfPath) {
   assert.equal(result.ok, true, result.error);
   await waitUntil(`open PDF ${pdfPath}`, async () => {
     const viewport = await callTool('app_get_viewport_state');
-    return viewport.doc?.filePath === pdfPath ? viewport : null;
+    return viewport.doc?.filePath === pdfPath
+      && viewport.documentLoadState?.loading === false
+      && viewport.documentLoadState?.rejected === false
+      && viewport.pageEditReadiness?.ready === true ? viewport : null;
   }, 60_000);
 }
 
