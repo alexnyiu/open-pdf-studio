@@ -80,7 +80,7 @@ function registerTextLayerPageSurface(documentState, pageNum, container, textLay
     && (Number(viewport.documentLifecycleGeneration) || 0)
       === (Number(documentState.lifecycleGeneration) || 0)
     && Number(viewport.pageNum) === Number(pageNum);
-  return registerPageSurface({
+  const input = {
     documentState,
     pageNum,
     surfaceKind: authoritativePreview
@@ -90,16 +90,25 @@ function registerTextLayerPageSurface(documentState, pageNum, container, textLay
       : documentState.viewMode === 'continuous' || documentState.viewMode === 'book'
         ? 'continuous-canvas' : 'single-page-canvas',
     container,
-    baseSurface: authoritativePreview || rasterImage || baseCanvas,
-    geometryCanvas,
-    overlayCanvas: container.querySelector?.('canvas.annotation-canvas, #annotation-canvas') || null,
     textLayer,
     canonicalPageDimensions: width > 0 && height > 0 ? { width, height } : null,
     cssScale: viewportOwnsPage
       ? Number(viewport.zoom) || 1
       : Number(documentState.scale) || 1,
     dpr: Number(globalThis.window?.devicePixelRatio) || 1,
-  });
+  };
+  const baseSurface = authoritativePreview || rasterImage || baseCanvas;
+  const overlayCanvas = container.querySelector?.(
+    'canvas.annotation-canvas, #annotation-canvas',
+  ) || null;
+  // Text-layer publication owns only the semantic layer. Preserve render-owned
+  // fields when this DOM pass cannot see them (notably the shared single-page
+  // #pdf-canvas, which is registered by pdf-viewport without a .pdf-canvas
+  // class). Passing an explicit null here would erase the exact live surface.
+  if (baseSurface) input.baseSurface = baseSurface;
+  if (geometryCanvas) input.geometryCanvas = geometryCanvas;
+  if (overlayCanvas) input.overlayCanvas = overlayCanvas;
+  return registerPageSurface(input);
 }
 
 function textLayerRequestIsCurrent(request) {

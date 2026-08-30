@@ -19,11 +19,12 @@ test('editor and save boundaries no longer normalize legacy boolean results', as
 });
 
 test('page consumers resolve owned surfaces without arbitrary text-layer fallbacks', async () => {
-  const [undo, findBar, renderer, tabs] = await Promise.all([
+  const [undo, findBar, renderer, tabs, textLayer] = await Promise.all([
     source('../core/undo-manager.js'),
     source('../search/find-bar.js'),
     source('./renderer.js'),
     source('../ui/chrome/tabs.js'),
+    source('../text/text-layer.js'),
   ]);
   assert.doesNotMatch(undo, /document\.querySelector\([^\n]*\.textLayer|document\.getElementById\?\.\('pdf-canvas'\)/u);
   assert.doesNotMatch(findBar, /document\.querySelector\([^\n]*\.textLayer|wrapper\?\.querySelector\('\.textLayer'\)/u);
@@ -33,6 +34,12 @@ test('page consumers resolve owned surfaces without arbitrary text-layer fallbac
   assert.match(findBar, /resolvePageSurface\(doc, pageNum\)/u);
   assert.match(renderer, /resolvePageSurface\(doc, pageNum\)\?\.textLayer/u);
   assert.match(tabs, /clearActiveDocumentTextLayers\(\)/u);
+  assert.match(textLayer, /if \(baseSurface\) input\.baseSurface = baseSurface/u);
+  assert.match(textLayer, /if \(geometryCanvas\) input\.geometryCanvas = geometryCanvas/u);
+  assert.doesNotMatch(
+    textLayer,
+    /baseSurface:\s*authoritativePreview\s*\|\|\s*rasterImage\s*\|\|\s*baseCanvas/u,
+  );
 });
 
 test('retired publication, lifecycle, anchor, and preview compatibility paths stay absent', async () => {
