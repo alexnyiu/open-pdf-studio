@@ -84,6 +84,7 @@ import {
 } from '../../text/text-edit-click-away-intent.js';
 import { acquirePageLease, releasePageLease } from '../../pdf/page-lease-registry.js';
 import { showMessage } from '../../bridge.js';
+import { committedTextSaveFailureMayNotify } from '../../pdf/save-state.js';
 
 async function observeCommittedTextPersistence(documentId, documentGeneration) {
   const [{ scheduleCommittedTextEditSave }, stateModule] = await Promise.all([
@@ -93,7 +94,11 @@ async function observeCommittedTextPersistence(documentId, documentGeneration) {
   const result = await scheduleCommittedTextEditSave(documentId, documentGeneration);
   const owner = stateModule.getDocumentById(documentId);
   if (owner) owner.lastTextSaveResult = result;
-  if (result?.status === 'failed') {
+  if (committedTextSaveFailureMayNotify(
+    { id: documentId, lifecycleGeneration: documentGeneration },
+    stateModule.getActiveDocument(),
+    result,
+  )) {
     showMessage(`Your text edit is still in the document, but saving failed: ${result.errorMessage}`);
   }
   return result;

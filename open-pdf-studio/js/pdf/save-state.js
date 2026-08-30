@@ -83,6 +83,16 @@ export function documentLifecycleOwnerMatches(ownerDocument, currentDocument) {
       === (Number(ownerDocument.lifecycleGeneration) || 0);
 }
 
+/**
+ * A background text-save result remains attached to its document after a tab
+ * change, but only the current lifecycle owner may raise a global blocking
+ * failure message.
+ */
+export function committedTextSaveFailureMayNotify(ownerDocument, activeDocument, result) {
+  return result?.status === 'failed'
+    && documentLifecycleOwnerMatches(ownerDocument, activeDocument);
+}
+
 const OUTLOOK_TEMP_PATH = /[\\/]INetCache[\\/]Content\.Outlook[\\/]|Microsoft\.OutlookForWindows/i;
 
 /**

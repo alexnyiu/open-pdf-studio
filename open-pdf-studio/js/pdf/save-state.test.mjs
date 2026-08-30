@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   canAutoSaveCommittedTextEdit,
   canSkipUnmodifiedSamePathSave,
+  committedTextSaveFailureMayNotify,
   documentHasPendingPersistence,
   documentLifecycleOwnerMatches,
   textEditCommitAllowsSave,
@@ -165,6 +166,23 @@ test('save ownership survives a reactive proxy change but rejects stale lifecycl
   assert.equal(documentLifecycleOwnerMatches(owner, null), false);
 });
 
+test('background text-save failure notifies only its current document lifecycle owner', () => {
+  const owner = { id: 'doc-a', lifecycleGeneration: 7 };
+  const failure = { status: 'failed', errorMessage: 'disk full' };
+  assert.equal(committedTextSaveFailureMayNotify(owner, { ...owner }, failure), true);
+  assert.equal(committedTextSaveFailureMayNotify(
+    owner,
+    { id: 'doc-b', lifecycleGeneration: 7 },
+    failure,
+  ), false, 'a stale document must not block the current editor with its save failure');
+  assert.equal(committedTextSaveFailureMayNotify(
+    owner,
+    { id: 'doc-a', lifecycleGeneration: 8 },
+    failure,
+  ), false, 'a stale lifecycle must not block its replacement');
+  assert.equal(committedTextSaveFailureMayNotify(owner, { ...owner }, { status: 'saved' }), false);
+});
+
 test('click-away auto-save is limited to normal file-backed PDF owners', () => {
   const fileBacked = {
     id: 'doc-a',
@@ -207,9 +225,25 @@ test('untitled click-away persistence restores nonblocking Save As status', asyn
 
   assert.match(scheduleSource, /markDocumentSaveAsRequired\(owner\)/u);
   assert.match(scheduleSource, /ownerSaveResult\(owner, 'save-as-required'/u);
-  assert.match(observerSource, /result\?\.status === 'failed'/u);
+  assert.match(observerSource, /committedTextSaveFailureMayNotify/u);
   assert.doesNotMatch(observerSource, /result\?\.status === 'save-as-required'/u,
     'Save As guidance belongs in the document status UI, not a canvas-blocking modal');
+});
+
+test('asynchronous save failures cannot publish blocking UI for a stale document owner', async () => {
+  const source = await readFile(new URL('./saver.js', import.meta.url), 'utf8');
+  const refreshMessage = 'The PDF was saved, but the in-app document refresh failed:';
+  const refreshMessageIndex = source.indexOf(refreshMessage);
+  assert.notEqual(refreshMessageIndex, -1);
+  const guardedRefreshMessage = source.slice(refreshMessageIndex - 180, refreshMessageIndex + 180);
+  assert.match(guardedRefreshMessage,
+    /documentLifecycleOwnerMatches\(activeDoc, getActiveDocument\(\)\)/u);
+
+  const coordinatedFailureIndex = source.indexOf("console.warn('[saver] Coordinated save failed:'");
+  assert.notEqual(coordinatedFailureIndex, -1);
+  const guardedCoordinatorFailure = source.slice(coordinatedFailureIndex, coordinatedFailureIndex + 420);
+  assert.match(guardedCoordinatorFailure,
+    /documentLifecycleOwnerMatches\(owner, getActiveDocument\(\)\)/u);
 });
 
 test('automatic save admission defers while a page edit intent is awaiting readiness', async () => {
