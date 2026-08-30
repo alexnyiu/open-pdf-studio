@@ -59,6 +59,9 @@ test('initial document revision state is coherent and aliases page content ident
     saveState: 'idle',
     activeSaveRequestId: null,
     lastSaveError: null,
+    lastSaveErrorCode: null,
+    lastSaveWarnings: [],
+    lastSaveRecovery: null,
     lastSynchronizationError: null,
   });
 });

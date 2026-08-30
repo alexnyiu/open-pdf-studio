@@ -2,6 +2,11 @@ import {
   initializeDocumentRevisionState,
   markDocumentSaveState,
 } from '../core/document-revision-state.runtime.js';
+import {
+  createSaveResult,
+  isSaveResult,
+  saveResultIsDurable,
+} from './save-result.js';
 
 const DEFAULT_EDITOR_DEADLINE_MS = 15_000;
 const DEFAULT_AUTOMATIC_RETRY_MS = 50;
@@ -52,6 +57,85 @@ function immutableRequestSnapshot(request) {
     requestedRevision: request.requestedRevision,
     kind: request.kind,
     saveAsPath: request.saveAsPath,
+  });
+}
+
+function resultRevisions(owner, request) {
+  const state = owner ? initializeDocumentRevisionState(owner) : null;
+  const requestedRevision = request.requestedRevision;
+  const serializedRevision = Math.min(requestedRevision, state?.serializedRevision ?? 0);
+  const persistedRevision = Math.min(serializedRevision, state?.persistedRevision ?? 0);
+  const proxyRevision = Math.min(persistedRevision, state?.livePdfRevision ?? 0);
+  return { requestedRevision, serializedRevision, persistedRevision, proxyRevision };
+}
+
+function supersededResult(request, owner = null, stage = 'superseded') {
+  return createSaveResult({
+    status: 'superseded',
+    documentId: request.documentId,
+    ...resultRevisions(owner, request),
+    errorCode: 'SAVE_REQUEST_SUPERSEDED',
+    errorMessage: `Save request lost ownership at ${stage}`,
+  });
+}
+
+function failedResult(request, owner, error) {
+  return createSaveResult({
+    status: 'failed',
+    documentId: request.documentId,
+    ...resultRevisions(owner, request),
+    errorCode: error?.code || 'SAVE_FAILED',
+    errorMessage: error instanceof Error ? error.message : String(error),
+  });
+}
+
+// P5 migration adapter. Public coordinator callers always receive SaveResult;
+// internal serializers are migrated phase-by-phase and this adapter is
+// removed in P11 after every execute callback returns the typed contract.
+function normalizeExecutionResult(rawResult, request, owner, ownsPublication) {
+  if (isSaveResult(rawResult)) {
+    if (rawResult.documentId !== request.documentId
+        || rawResult.requestedRevision !== request.requestedRevision) {
+      throw new TypeError('SaveResult ownership does not match its request');
+    }
+    return rawResult;
+  }
+  const saved = rawResult === true || rawResult?.saved === true;
+  if (!saved) {
+    return failedResult(request, owner, new Error('Save execution reported failure'));
+  }
+  const warnings = Array.isArray(rawResult?.warnings) ? rawResult.warnings : [];
+  const proxyAdopted = ownsPublication && rawResult?.followUpNeeded !== true;
+  return createSaveResult({
+    status: warnings.length > 0
+      ? 'saved-with-warning'
+      : proxyAdopted ? 'saved' : 'saved-refresh-pending',
+    documentId: request.documentId,
+    requestedRevision: request.requestedRevision,
+    serializedRevision: request.requestedRevision,
+    persistedRevision: request.requestedRevision,
+    proxyRevision: proxyAdopted ? request.requestedRevision : Math.min(
+      request.requestedRevision,
+      initializeDocumentRevisionState(owner).livePdfRevision,
+    ),
+    bytesPersisted: true,
+    proxyAdopted,
+    candidateBytes: Number.isSafeInteger(rawResult?.candidateBytes)
+      ? rawResult.candidateBytes : null,
+    warnings,
+  });
+}
+
+function publishTerminalState(owner, request, result) {
+  if (!owner) return;
+  markDocumentSaveState(owner, result.status, {
+    requestId: null,
+    saveError: result.status === 'failed' ? result.errorMessage : null,
+    saveErrorCode: result.errorCode,
+    warnings: result.warnings,
+    recovery: result.recovery,
+    synchronizationError: result.status === 'saved-refresh-failed'
+      ? result.errorMessage : null,
   });
 }
 
@@ -121,14 +205,18 @@ export function createSaveCoordinator({
   const hasNewerWork = (record, request) => Boolean(record.pending
     && record.pending.requestedRevision > request.requestedRevision);
 
-  const ownsBoundary = (record, request, stage) => {
+  const ownsPersistenceBoundary = (record, request) => {
     if (record.active !== request || !requestOwnerMatches(request)) return false;
     if (record.cancelledGeneration === request.documentGeneration) return false;
     const owner = resolveDocumentById(request.documentId);
     const currentRevision = initializeDocumentRevisionState(owner).contentRevision;
-    if (stage === 'before-replacement') {
-      return currentRevision === request.requestedRevision && !hasNewerWork(record, request);
-    }
+    return currentRevision >= request.requestedRevision;
+  };
+
+  const ownsPublicationBoundary = (record, request) => {
+    if (!ownsPersistenceBoundary(record, request)) return false;
+    const owner = resolveDocumentById(request.documentId);
+    const currentRevision = initializeDocumentRevisionState(owner).contentRevision;
     return currentRevision === request.requestedRevision && !hasNewerWork(record, request);
   };
 
@@ -222,7 +310,7 @@ export function createSaveCoordinator({
     const ownerAtStart = resolveDocumentById(request.documentId);
     if (!ownerAtStart || !requestOwnerMatches(request)) {
       emit('superseded', request, { stage: 'before-editor' });
-      resolveWaiters(request, false);
+      resolveWaiters(request, supersededResult(request, ownerAtStart, 'before-editor'));
       record.active = null;
       if (record.pending) scheduleRun(record);
       return;
@@ -252,13 +340,13 @@ export function createSaveCoordinator({
           emit(event, request, details);
         },
         assertPersistenceOwnership() {
-          if (!ownsBoundary(record, request, 'before-replacement')) {
+          if (!ownsPersistenceBoundary(record, request)) {
             throw new SaveRequestSupersededError('before-replacement');
           }
           return true;
         },
         ownsPublication() {
-          return ownsBoundary(record, request, 'after-replacement');
+          return ownsPublicationBoundary(record, request);
         },
         adoptDocumentGeneration(nextGeneration) {
           const generation = Number(nextGeneration) || 0;
@@ -281,7 +369,7 @@ export function createSaveCoordinator({
           return true;
         },
         assertSynchronizationOwnership(stage = 'synchronization') {
-          if (!ownsBoundary(record, request, stage)) {
+          if (!ownsPublicationBoundary(record, request)) {
             throw new SaveRequestSupersededError(stage);
           }
           return true;
@@ -297,32 +385,50 @@ export function createSaveCoordinator({
       });
       serializationStartedAt = now();
       emit('serializing', request);
-      const result = await request.execute(context);
-      const saved = result === true || result?.saved === true;
+      const rawResult = await request.execute(context);
+      const result = normalizeExecutionResult(
+        rawResult,
+        request,
+        resolveDocumentById(request.documentId),
+        context.ownsPublication(),
+      );
+      const saved = saveResultIsDurable(result);
       const durationMs = Math.max(0, now() - serializationStartedAt);
-      const candidateBytes = Number.isSafeInteger(result?.candidateBytes)
+      const candidateBytes = Number.isSafeInteger(result.candidateBytes)
         ? result.candidateBytes : null;
-      emit('completed', request, { saved, durationMs, candidateBytes });
-      const needsFollowUp = result?.followUpNeeded === true || !context.ownsPublication();
+      emit('completed', request, {
+        saved,
+        status: result.status,
+        durationMs,
+        candidateBytes,
+      });
+      const resultOwner = resolveDocumentById(request.documentId);
+      publishTerminalState(resultOwner, request, result);
+      const currentRevision = resultOwner
+        ? initializeDocumentRevisionState(resultOwner).contentRevision
+        : request.requestedRevision;
+      const needsFollowUp = rawResult?.followUpNeeded === true
+        || (saved && Number(result.persistedRevision) < currentRevision);
       if (saved && needsFollowUp && record.pending) {
         emit('superseded', request, { stage: 'after-replacement' });
         transferWaiters(request, record.pending);
       } else {
-        resolveWaiters(request, saved);
+        resolveWaiters(request, result);
       }
     } catch (error) {
       if (error instanceof SaveRequestSupersededError) {
         emit('superseded', request, { stage: error.stage });
         if (record.pending) transferWaiters(request, record.pending);
-        else resolveWaiters(request, false);
+        else {
+          const owner = resolveDocumentById(request.documentId);
+          const result = supersededResult(request, owner, error.stage);
+          publishTerminalState(owner, request, result);
+          resolveWaiters(request, result);
+        }
       } else {
         const owner = resolveDocumentById(request.documentId);
-        if (owner && requestOwnerMatches(request)) {
-          markDocumentSaveState(owner, 'failed', {
-            requestId: request.requestId,
-            saveError: error instanceof Error ? error.message : String(error),
-          });
-        }
+        const result = failedResult(request, owner, error);
+        if (owner && requestOwnerMatches(request)) publishTerminalState(owner, request, result);
         emit('failed', request, {
           code: error?.code || null,
           error: error instanceof Error ? error.message : String(error),
@@ -330,11 +436,23 @@ export function createSaveCoordinator({
             ? null : Math.max(0, now() - serializationStartedAt),
           candidateBytes: null,
         });
-        rejectWaiters(request, error);
+        resolveWaiters(request, result);
       }
     } finally {
       if (record.active === request) record.active = null;
-      if (record.pending) scheduleRun(record);
+      const terminalOwner = resolveDocumentById(request.documentId);
+      if (terminalOwner) {
+        const revisionState = initializeDocumentRevisionState(terminalOwner);
+        if (revisionState.activeSaveRequestId === request.requestId) {
+          markDocumentSaveState(terminalOwner, revisionState.saveState, { requestId: null });
+        }
+      }
+      if (record.pending) {
+        if (terminalOwner && requestOwnerMatches(record.pending)) {
+          markDocumentSaveState(terminalOwner, 'pending', { requestId: null });
+        }
+        scheduleRun(record);
+      }
       else if (!record.active && !record.timer) records.delete(record.documentId);
     }
   };
@@ -350,7 +468,8 @@ export function createSaveCoordinator({
       execute,
     }) {
       const id = String(documentId || '');
-      if (!id || typeof execute !== 'function') return Promise.resolve(false);
+      if (!id) return Promise.reject(new TypeError('A documentId is required'));
+      if (typeof execute !== 'function') return Promise.reject(new TypeError('A save execute callback is required'));
       const generation = Number(documentGeneration) || 0;
       const owner = resolveDocumentById(id);
       const revision = Number.isSafeInteger(requestedRevision)
@@ -428,7 +547,10 @@ export function createSaveCoordinator({
       }
       if (record.pending) {
         emit('superseded', record.pending, { stage: reason });
-        resolveWaiters(record.pending, false);
+        const owner = resolveDocumentById(id);
+        const result = supersededResult(record.pending, owner, reason);
+        publishTerminalState(owner, record.pending, result);
+        resolveWaiters(record.pending, result);
         record.pending = null;
       }
       if (!record.active) records.delete(id);

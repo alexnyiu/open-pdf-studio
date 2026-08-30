@@ -88,8 +88,13 @@ export type DocumentSaveState =
   | 'persisted'
   | 'synchronizing'
   | 'saved'
+  | 'saved-with-warning'
+  | 'saved-refresh-pending'
   | 'failed'
-  | 'saved-refresh-failed';
+  | 'saved-refresh-failed'
+  | 'save-as-required'
+  | 'deferred'
+  | 'superseded';
 
 export interface DocumentRevisionState {
   contentRevision: number;
@@ -109,6 +114,9 @@ export interface DocumentRevisionState {
   activeSaveRequestId: string | null;
   lastPersistedPath: string | null;
   lastSaveError: string | null;
+  lastSaveErrorCode: string | null;
+  lastSaveWarnings: Array<Record<string, unknown>>;
+  lastSaveRecovery: Record<string, unknown> | null;
   lastSynchronizationError: string | null;
 }
 

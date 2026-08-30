@@ -5,8 +5,13 @@ const SAVE_STATES = /* @__PURE__ */ new Set([
   "persisted",
   "synchronizing",
   "saved",
+  "saved-with-warning",
+  "saved-refresh-pending",
   "failed",
-  "saved-refresh-failed"
+  "saved-refresh-failed",
+  "save-as-required",
+  "deferred",
+  "superseded"
 ]);
 function revision(value, name) {
   const normalized = Number(value);
@@ -54,6 +59,9 @@ function createInitialDocumentRevisionState() {
     activeSaveRequestId: null,
     lastPersistedPath: null,
     lastSaveError: null,
+    lastSaveErrorCode: null,
+    lastSaveWarnings: [],
+    lastSaveRecovery: null,
     lastSynchronizationError: null
   };
 }
@@ -98,6 +106,11 @@ function initializeDocumentRevisionState(documentState) {
       activeSaveRequestId: existing.activeSaveRequestId == null ? null : String(existing.activeSaveRequestId),
       lastPersistedPath: existing.lastPersistedPath == null ? null : String(existing.lastPersistedPath),
       lastSaveError: existing.lastSaveError == null ? null : String(existing.lastSaveError),
+      lastSaveErrorCode: existing.lastSaveErrorCode == null ? null : String(existing.lastSaveErrorCode),
+      lastSaveWarnings: Array.isArray(existing.lastSaveWarnings)
+        ? existing.lastSaveWarnings.map((warning) => ({ ...warning })) : [],
+      lastSaveRecovery: existing.lastSaveRecovery && typeof existing.lastSaveRecovery === "object"
+        ? { ...existing.lastSaveRecovery } : null,
       lastSynchronizationError: existing.lastSynchronizationError == null ? null : String(existing.lastSynchronizationError)
     };
     Object.assign(existing, normalized);
@@ -315,6 +328,9 @@ function markPageSemanticReady(documentState, page, requestedRevision) {
 function markDocumentSaveState(documentState, saveState, {
   requestId,
   saveError,
+  saveErrorCode,
+  warnings,
+  recovery,
   synchronizationError
 } = {}) {
   const state = initializeDocumentRevisionState(documentState);
@@ -322,6 +338,16 @@ function markDocumentSaveState(documentState, saveState, {
   state.saveState = saveState;
   if (requestId !== void 0) state.activeSaveRequestId = requestId == null ? null : String(requestId);
   if (saveError !== void 0) state.lastSaveError = saveError == null ? null : String(saveError);
+  if (saveErrorCode !== void 0) {
+    state.lastSaveErrorCode = saveErrorCode == null ? null : String(saveErrorCode);
+  }
+  if (warnings !== void 0) {
+    state.lastSaveWarnings = Array.isArray(warnings)
+      ? warnings.map((warning) => ({ ...warning })) : [];
+  }
+  if (recovery !== void 0) {
+    state.lastSaveRecovery = recovery && typeof recovery === "object" ? { ...recovery } : null;
+  }
   if (synchronizationError !== void 0) {
     state.lastSynchronizationError = synchronizationError == null ? null : String(synchronizationError);
   }
@@ -342,7 +368,7 @@ function documentProxyRevisionSynchronized(documentState) {
 function documentNeedsSynchronization(documentState) {
   const state = initializeDocumentRevisionState(documentState);
   if (!documentProxyRevisionSynchronized(documentState)) return true;
-  if (state.saveState === "saved-refresh-failed" || state.saveState === "synchronizing") return true;
+  if (state.saveState === "saved-refresh-pending" || state.saveState === "saved-refresh-failed" || state.saveState === "synchronizing") return true;
   if (state.activeSaveRequestId || state.saveState === "saving" || state.saveState === "persisted") return true;
   if (state.visibleRequiredPages.length === 0) return false;
   return state.visibleRequiredPages.some((page) => {
@@ -383,6 +409,9 @@ function documentRevisionDebugSnapshot(documentState) {
     saveState: state.saveState,
     activeSaveRequestId: state.activeSaveRequestId,
     lastSaveError: state.lastSaveError,
+    lastSaveErrorCode: state.lastSaveErrorCode,
+    lastSaveWarnings: state.lastSaveWarnings.map((warning) => ({ ...warning })),
+    lastSaveRecovery: state.lastSaveRecovery ? { ...state.lastSaveRecovery } : null,
     lastSynchronizationError: state.lastSynchronizationError
   });
 }
