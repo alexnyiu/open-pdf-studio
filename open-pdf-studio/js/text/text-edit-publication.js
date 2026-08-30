@@ -144,6 +144,14 @@ export function createTextEditPublicationCoordinator({
 } = {}) {
   const pending = new Map();
 
+  const clearPending = (key) => {
+    const entry = pending.get(key);
+    if (!entry) return false;
+    entry.unsubscribe?.();
+    pending.delete(key);
+    return true;
+  };
+
   const matches = (surface, documentState, pageNum, revision) => Boolean(surface
     && surface.documentId === String(documentState.id)
     && Number(surface.lifecycleGeneration) === (Number(documentState.lifecycleGeneration) || 0)
@@ -194,11 +202,9 @@ export function createTextEditPublicationCoordinator({
             input.pageNum,
             token.publishedPageRevision,
           )) return;
-      entry.unsubscribe?.();
-      entry.unsubscribe = null;
       // Remove before retry so another legitimate defer can install a fresh
       // listener instead of leaving a listener-free pending entry behind.
-      pending.delete(key);
+      clearPending(key);
       void publish(entry.input);
     });
     pending.set(key, entry);
@@ -315,7 +321,7 @@ export function createTextEditPublicationCoordinator({
     }
     markRenderReady(documentState, pageNum, revision);
     markSemanticReady(documentState, pageNum, revision);
-    pending.delete(pendingKey(documentState, pageNum, revision));
+    clearPending(pendingKey(documentState, pageNum, revision));
     return resultFor(token, 'published', {
       visiblePublished: true,
       semanticPublished: true,
@@ -335,9 +341,21 @@ export function createTextEditPublicationCoordinator({
         pageRevision: entry.token.publishedPageRevision,
       })));
     },
+    cancelDocument(documentId, lifecycleGeneration = null) {
+      const id = String(documentId || '');
+      const generation = lifecycleGeneration == null
+        ? null : Number(lifecycleGeneration) || 0;
+      let cancelled = 0;
+      for (const [key, entry] of pending) {
+        if (entry.token.documentId !== id
+            || (generation !== null && entry.token.lifecycleGeneration !== generation)) continue;
+        clearPending(key);
+        cancelled += 1;
+      }
+      return cancelled;
+    },
     dispose() {
-      for (const entry of pending.values()) entry.unsubscribe?.();
-      pending.clear();
+      for (const key of [...pending.keys()]) clearPending(key);
     },
   });
 }
@@ -350,4 +368,11 @@ export function publishCommittedTextEdit(input) {
 
 export function pendingCommittedTextPublicationSnapshot() {
   return committedTextPublicationCoordinator.pendingSnapshot();
+}
+
+export function cancelCommittedTextPublicationsForDocument(
+  documentId,
+  lifecycleGeneration = null,
+) {
+  return committedTextPublicationCoordinator.cancelDocument(documentId, lifecycleGeneration);
 }

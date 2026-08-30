@@ -1,6 +1,7 @@
 import { cancelTextEditingForDocument } from '../text/text-edit-session.js';
 import { cancelApplicationOcrDocumentSync } from '../ocr/application-controller.js';
 import { cancelCoordinatedDocumentSaves } from '../pdf/save-coordinator.js';
+import { cancelCommittedTextPublicationsForDocument } from '../text/text-edit-publication.js';
 import {
   LIFECYCLE_TRANSITION_POLICIES,
   advanceDocumentLifecycleState,
@@ -8,6 +9,7 @@ import {
 } from './document-lifecycle-state.js';
 
 function cancelTransientDocumentWork(documentId, policy) {
+  cancelCommittedTextPublicationsForDocument(documentId);
   if (policy.cancelTextEditing) cancelTextEditingForDocument(documentId, policy.id);
   if (policy.cancelOcr) cancelApplicationOcrDocumentSync(documentId, policy.id);
   if (policy.cancelSaves) cancelCoordinatedDocumentSaves(documentId, null, policy.id);

@@ -19,7 +19,9 @@ const repoDir = path.resolve(projectDir, '..');
 const defaultBundle = path.join(
   repoDir, 'target', 'aarch64-apple-darwin', 'release', 'bundle', 'macos', 'Open PDF Studio.app',
 );
-const defaultPdf = '/Users/alexander/Downloads/Market_Screen_50_Stock_CANSLIM_Analysis_Competitive_Deep_Dive.pdf';
+const defaultPdf = path.join(
+  projectDir, 'test-artifacts', 'generated-large-pdf-fixtures', 'lightweight-500.pdf',
+);
 
 function parseArguments(argv) {
   const options = {

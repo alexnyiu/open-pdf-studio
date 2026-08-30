@@ -13,6 +13,7 @@ import {
   setFindBarSearching as setSearching,
 } from '../bridge.js';
 import { noteDocumentViewMutation } from '../pdf/view-state-transaction.js';
+import { resolvePageSurface } from '../pdf/page-surface-registry.js';
 
 function noteSearchMutation() {
   noteDocumentViewMutation(getActiveDocument(), ['search']);
@@ -428,15 +429,9 @@ function highlightMatch(result, isCurrent) {
   const pageNum = result.pageNum;
   const doc = getActiveDocument();
 
-  // Get the text layer for this page
-  let textLayer;
-  if (doc?.viewMode === 'continuous') {
-    const wrapper = document.querySelector(`.page-wrapper[data-page="${pageNum}"]`);
-    textLayer = wrapper?.querySelector('.textLayer');
-  } else {
-    if (doc && doc.currentPage !== pageNum) return;
-    textLayer = document.querySelector('.textLayer');
-  }
+  // Resolve only the mounted layer owned by this document lifecycle and page.
+  if (doc?.viewMode !== 'continuous' && doc?.currentPage !== pageNum) return;
+  const textLayer = resolvePageSurface(doc, pageNum)?.textLayer || null;
   if (!textLayer) return;
 
   // Layer-local px per PDF point. Every layer builder sets

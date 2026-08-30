@@ -777,7 +777,7 @@ export async function reopenPersistedDocument(documentId, documentGeneration) {
   if (!doc.filePath || revisionState.contentRevision !== revisionState.persistedRevision
       || revisionState.saveState !== 'saved-refresh-failed') return false;
   const { clearSavedDocumentSynchronization } = await import('./saved-document-transition.js');
-  clearSavedDocumentSynchronization(doc.id);
+  await clearSavedDocumentSynchronization(doc.id);
   await loadPDF(doc.filePath, docIndex, null, {
     recoveryRevision: revisionState.persistedRevision,
   });

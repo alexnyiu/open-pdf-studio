@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   SavedDocumentSynchronizationError,
   captureSavedDocumentViewState,
+  clearSavedDocumentSynchronization,
   decidePersistedProxyAdoption,
   hasRecoverableSavedDocumentSynchronization,
   invalidateSavedDocumentDerivedState,
@@ -602,6 +603,29 @@ test('proxy-install failure preserves the saved revision and exposes recovery', 
   assert.equal(document.revisionState.livePdfRevision, 0);
   assert.equal(document.revisionState.saveState, 'saved-refresh-failed');
   assert.equal(hasRecoverableSavedDocumentSynchronization(document.id), true);
+  await clearSavedDocumentSynchronization(document.id);
+});
+
+test('clearing pre-install recovery destroys the retained candidate document exactly once', async () => {
+  const document = persistedDocument();
+  let destroyCalls = 0;
+  const prepared = {
+    numPages: 3,
+    id: 'prepared-for-cleanup',
+    async destroy() { destroyCalls += 1; },
+  };
+  await assert.rejects(
+    synchronizeSavedDocument(transitionInput(document, {
+      preparedPdfJsDocument: prepared,
+      installProxy: async () => { throw new Error('forced pre-install failure'); },
+    })),
+    SavedDocumentSynchronizationError,
+  );
+  assert.equal(await clearSavedDocumentSynchronization(document.id), true);
+  assert.equal(destroyCalls, 1);
+  assert.equal(hasRecoverableSavedDocumentSynchronization(document.id), false);
+  assert.equal(await clearSavedDocumentSynchronization(document.id), false);
+  assert.equal(destroyCalls, 1);
 });
 
 test('retry synchronization reuses saved bytes and candidate without replacing the file', async () => {

@@ -142,6 +142,42 @@ test('an unmounted non-visible page defers, while a missing active page fails vi
   assert.equal(failed.errorCode, 'PAGE_SURFACE_MISSING');
 });
 
+test('document lifecycle cancellation releases deferred publication listeners', async () => {
+  const documentState = owner();
+  let unsubscribeCalls = 0;
+  const { coordinator } = harness({
+    resolveSurface: () => null,
+    subscribeSurface: () => () => { unsubscribeCalls += 1; },
+  });
+  await coordinator.publish({
+    documentState,
+    pageNum: 50,
+    expectedVisible: false,
+  });
+  assert.equal(coordinator.pendingSnapshot().length, 1);
+  assert.equal(coordinator.cancelDocument(documentState.id, documentState.lifecycleGeneration), 1);
+  assert.equal(unsubscribeCalls, 1);
+  assert.equal(coordinator.pendingSnapshot().length, 0);
+  assert.equal(coordinator.cancelDocument(documentState.id), 0);
+});
+
+test('an explicit successful retry also releases its prior deferred listener', async () => {
+  const documentState = owner();
+  let currentSurface = null;
+  let unsubscribeCalls = 0;
+  const { coordinator, surface } = harness({
+    resolveSurface: () => currentSurface,
+    subscribeSurface: () => () => { unsubscribeCalls += 1; },
+  });
+  await coordinator.publish({ documentState, pageNum: 50, expectedVisible: false });
+  currentSurface = surface;
+  assert.equal((await coordinator.publish({
+    documentState, pageNum: 50, expectedVisible: true,
+  })).status, 'published');
+  assert.equal(unsubscribeCalls, 1);
+  assert.equal(coordinator.pendingSnapshot().length, 0);
+});
+
 test('a deferred unmounted publication applies automatically on the next exact mount', async () => {
   const documentState = owner();
   let current = null;

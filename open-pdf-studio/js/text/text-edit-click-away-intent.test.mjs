@@ -9,7 +9,16 @@ import {
   markTextEditClickAwayIntentDelivered,
   replayTextEditClickAwayIntent,
 } from './text-edit-click-away-intent.js';
+import { createTextApplyResult } from './text-apply-result.js';
 import { createTextEditTargetIdentity } from './text-edit-target-identity.js';
+
+const COMPLETED_APPLY_RESULT = createTextApplyResult({
+  status: 'noop', documentId: 'doc-a', pageNum: 1,
+});
+const REJECTED_APPLY_RESULT = createTextApplyResult({
+  status: 'rejected', documentId: 'doc-a', pageNum: 1,
+  rejectionCode: 'TEXT_LAYOUT_BLOCKED', recoveryActions: ['keep-editing'],
+});
 
 function element({
   selectors = [], parent = null, dataset = {}, text = '', id = '',
@@ -74,11 +83,11 @@ function pointerEvent(target, overrides = {}) {
 test('a normal toolbar click commits and activates the captured action exactly once', async () => {
   const button = element({ selectors: ['button'], id: 'toolbar-action' });
   const intent = captureTextEditClickAwayIntent({ event: pointerEvent(button), session: session() });
-  const result = await replayTextEditClickAwayIntent(intent, { commitSucceeded: true });
+  const result = await replayTextEditClickAwayIntent(intent, { applyResult: COMPLETED_APPLY_RESULT });
   assert.deepEqual(result, { status: 'replayed', actionKind: 'semantic-command', error: null });
   assert.equal(button.focusCalls, 1);
   assert.equal(button.clickCalls, 1);
-  assert.deepEqual(await replayTextEditClickAwayIntent(intent, { commitSucceeded: true }), {
+  assert.deepEqual(await replayTextEditClickAwayIntent(intent, { applyResult: COMPLETED_APPLY_RESULT }), {
     status: 'not-needed', actionKind: null, error: null,
   });
   assert.equal(button.clickCalls, 1);
@@ -94,8 +103,11 @@ test('another text region commits and opens at the captured point after readines
   const intent = captureTextEditClickAwayIntent({ event: pointerEvent(span), session: session() });
   const calls = [];
   const result = await replayTextEditClickAwayIntent(intent, {
-    commitSucceeded: true,
-    beginTextEdit: async (captured) => { calls.push(captured); return true; },
+    applyResult: COMPLETED_APPLY_RESULT,
+    beginTextEdit: async (captured) => {
+      calls.push(captured);
+      return { activated: true, reason: null };
+    },
   });
   assert.deepEqual(result, { status: 'replayed', actionKind: 'text-edit', error: null });
   assert.equal(calls.length, 1);
@@ -110,7 +122,7 @@ test('blank text-layer space closes without capturing a text replay target', asy
   const intent = captureTextEditClickAwayIntent({ event: pointerEvent(layer), session: session() });
   let beginCalls = 0;
   const result = await replayTextEditClickAwayIntent(intent, {
-    commitSucceeded: true,
+    applyResult: COMPLETED_APPLY_RESULT,
     beginTextEdit: async () => { beginCalls += 1; },
   });
   assert.equal(intent.kind, 'none');
@@ -131,7 +143,7 @@ test('same owned paragraph replay is suppressed across different rendered lines'
   });
   let beginCalls = 0;
   assert.deepEqual(await replayTextEditClickAwayIntent(intent, {
-    commitSucceeded: true,
+    applyResult: COMPLETED_APPLY_RESULT,
     beginTextEdit: async () => { beginCalls += 1; },
   }), { status: 'not-needed', actionKind: 'text-edit', error: null });
   assert.equal(beginCalls, 0);
@@ -151,7 +163,7 @@ test('same native paragraph replay is suppressed when the clicked marker belongs
   });
   let beginCalls = 0;
   assert.deepEqual(await replayTextEditClickAwayIntent(intent, {
-    commitSucceeded: true,
+    applyResult: COMPLETED_APPLY_RESULT,
     beginTextEdit: async () => { beginCalls += 1; },
   }), { status: 'not-needed', actionKind: 'text-edit', error: null });
   assert.equal(beginCalls, 0);
@@ -171,8 +183,8 @@ test('a different native paragraph still opens in the committing gesture', async
   });
   let beginCalls = 0;
   assert.deepEqual(await replayTextEditClickAwayIntent(intent, {
-    commitSucceeded: true,
-    beginTextEdit: async () => { beginCalls += 1; return true; },
+    applyResult: COMPLETED_APPLY_RESULT,
+    beginTextEdit: async () => { beginCalls += 1; return { activated: true }; },
   }), { status: 'replayed', actionKind: 'text-edit', error: null });
   assert.equal(beginCalls, 1);
 });
@@ -180,7 +192,7 @@ test('a different native paragraph still opens in the committing gesture', async
 test('a failed commit never activates the captured target', async () => {
   const button = element({ selectors: ['button'], id: 'commit-failure-action' });
   const intent = captureTextEditClickAwayIntent({ event: pointerEvent(button), session: session() });
-  assert.deepEqual(await replayTextEditClickAwayIntent(intent, { commitSucceeded: false }), {
+  assert.deepEqual(await replayTextEditClickAwayIntent(intent, { applyResult: REJECTED_APPLY_RESULT }), {
     status: 'not-needed', actionKind: null, error: null,
   });
   assert.equal(button.focusCalls || 0, 0);
@@ -202,7 +214,7 @@ test('a failed commit retains the original session and never replays a text targ
   });
   let beginCalls = 0;
   assert.deepEqual(await replayTextEditClickAwayIntent(intent, {
-    commitSucceeded: false,
+    applyResult: REJECTED_APPLY_RESULT,
     beginTextEdit: async () => { beginCalls += 1; },
   }), { status: 'not-needed', actionKind: null, error: null });
   assert.equal(beginCalls, 0);
@@ -214,7 +226,7 @@ test('destructive actions are not replayed and visibly require a second click', 
   const intent = captureTextEditClickAwayIntent({ event: pointerEvent(button), session: session() });
   let notices = 0;
   assert.deepEqual(await replayTextEditClickAwayIntent(intent, {
-    commitSucceeded: true,
+    applyResult: COMPLETED_APPLY_RESULT,
     indicateUnsafe: () => { notices += 1; },
   }), {
     status: 'unsafe',
@@ -229,7 +241,7 @@ test('an activation already delivered by the browser is never replayed', async (
   const button = element({ selectors: ['button'], id: 'browser-delivered-action' });
   const intent = captureTextEditClickAwayIntent({ event: pointerEvent(button), session: session() });
   markTextEditClickAwayIntentDelivered(intent);
-  assert.deepEqual(await replayTextEditClickAwayIntent(intent, { commitSucceeded: true }), {
+  assert.deepEqual(await replayTextEditClickAwayIntent(intent, { applyResult: COMPLETED_APPLY_RESULT }), {
     status: 'not-needed', actionKind: null, error: null,
   });
   assert.equal(button.clickCalls || 0, 0);
@@ -258,8 +270,8 @@ test('OCR identity suppresses another line in the same region and opens a differ
   });
   let opens = 0;
   assert.deepEqual(await replayTextEditClickAwayIntent(sameIntent, {
-    commitSucceeded: true,
-    beginTextEdit: async () => { opens += 1; return true; },
+    applyResult: COMPLETED_APPLY_RESULT,
+    beginTextEdit: async () => { opens += 1; return { activated: true }; },
   }), { status: 'not-needed', actionKind: 'text-edit', error: null });
   assert.equal(opens, 0);
 
@@ -278,24 +290,47 @@ test('OCR identity suppresses another line in the same region and opens a differ
     session: session({ targetIdentity: sourceIdentity }),
   });
   assert.deepEqual(await replayTextEditClickAwayIntent(differentIntent, {
-    commitSucceeded: true,
-    beginTextEdit: async () => { opens += 1; return true; },
+    applyResult: COMPLETED_APPLY_RESULT,
+    beginTextEdit: async () => { opens += 1; return { activated: true }; },
   }), { status: 'replayed', actionKind: 'text-edit', error: null });
   assert.equal(opens, 1);
 });
 
-test('a text activation that returns false truthfully reports not-opened', async () => {
+test('a structured unavailable text activation truthfully reports not-opened', async () => {
   const layer = element({ selectors: ['.textLayer'], dataset: { page: '2' } });
   const span = element({ selectors: ['span'], parent: layer, dataset: { editId: 'missing' } });
   const intent = captureTextEditClickAwayIntent({ event: pointerEvent(span), session: session() });
   assert.deepEqual(await replayTextEditClickAwayIntent(intent, {
-    commitSucceeded: true,
-    beginTextEdit: async () => false,
+    applyResult: COMPLETED_APPLY_RESULT,
+    beginTextEdit: async () => ({ activated: false, reason: 'not-opened' }),
   }), {
     status: 'not-opened', actionKind: 'text-edit',
     error: 'The captured text target did not open',
   });
   assert.equal(intent.replayed, false);
+});
+
+test('legacy boolean replay and activation results cannot cross typed boundaries', async () => {
+  const layer = element({ selectors: ['.textLayer'], dataset: { page: '2' } });
+  const span = element({ selectors: ['span'], parent: layer, dataset: { editId: 'typed-only' } });
+  const legacyApplyIntent = captureTextEditClickAwayIntent({
+    event: pointerEvent(span), session: session(),
+  });
+  assert.deepEqual(await replayTextEditClickAwayIntent(legacyApplyIntent, {
+    commitSucceeded: true,
+    beginTextEdit: async () => ({ activated: true }),
+  }), { status: 'not-needed', actionKind: null, error: null });
+
+  const legacyActivationIntent = captureTextEditClickAwayIntent({
+    event: pointerEvent(span), session: session(),
+  });
+  assert.deepEqual(await replayTextEditClickAwayIntent(legacyActivationIntent, {
+    applyResult: COMPLETED_APPLY_RESULT,
+    beginTextEdit: async () => true,
+  }), {
+    status: 'not-opened', actionKind: 'text-edit',
+    error: 'The captured text target did not open',
+  });
 });
 
 test('a stable semantic command resolves a replacement control after commit', async () => {
@@ -305,7 +340,7 @@ test('a stable semantic command resolves a replacement control after commit', as
   original.isConnected = false;
   const documentRoot = { getElementById: (id) => id === replacement.id ? replacement : null };
   const result = await replayTextEditClickAwayIntent(intent, {
-    commitSucceeded: true,
+    applyResult: COMPLETED_APPLY_RESULT,
     executeSemanticCommand: (command) => executeTextEditSemanticCommand(command, { documentRoot }),
   });
   assert.deepEqual(result, { status: 'replayed', actionKind: 'semantic-command', error: null });
@@ -322,7 +357,7 @@ test('checkbox, radio, menu, tool, and focus handoffs use bounded command kinds'
   });
   assert.equal(checkboxIntent.semanticCommand.type, 'toggle-option');
   assert.deepEqual(await replayTextEditClickAwayIntent(checkboxIntent, {
-    commitSucceeded: true,
+    applyResult: COMPLETED_APPLY_RESULT,
   }), { status: 'replayed', actionKind: 'semantic-command', error: null });
 
   const radio = element({
@@ -331,7 +366,9 @@ test('checkbox, radio, menu, tool, and focus handoffs use bounded command kinds'
   const menu = element({ selectors: ['[role="menuitem"]'], id: 'menu-properties' });
   for (const control of [radio, menu]) {
     const intent = captureTextEditClickAwayIntent({ event: pointerEvent(control), session: session() });
-    const result = await replayTextEditClickAwayIntent(intent, { commitSucceeded: true });
+    const result = await replayTextEditClickAwayIntent(intent, {
+      applyResult: COMPLETED_APPLY_RESULT,
+    });
     assert.equal(result.status, 'replayed');
     assert.equal(result.actionKind, 'semantic-command');
     assert.equal(control.clickCalls, 1);
@@ -344,14 +381,16 @@ test('checkbox, radio, menu, tool, and focus handoffs use bounded command kinds'
   const toolIntent = captureTextEditClickAwayIntent({ event: pointerEvent(tool), session: session() });
   const commands = [];
   assert.deepEqual(await replayTextEditClickAwayIntent(toolIntent, {
-    commitSucceeded: true,
+    applyResult: COMPLETED_APPLY_RESULT,
     executeSemanticCommand: async (command) => { commands.push(command); return true; },
   }), { status: 'replayed', actionKind: 'semantic-command', error: null });
   assert.deepEqual(commands, [{ type: 'set-tool', tool: 'select' }]);
 
   const focus = element({ selectors: ['input:not([type="hidden"])'] });
   const focusIntent = captureTextEditClickAwayIntent({ event: pointerEvent(focus), session: session() });
-  assert.deepEqual(await replayTextEditClickAwayIntent(focusIntent, { commitSucceeded: true }), {
+  assert.deepEqual(await replayTextEditClickAwayIntent(focusIntent, {
+    applyResult: COMPLETED_APPLY_RESULT,
+  }), {
     status: 'replayed', actionKind: 'focus', error: null,
   });
   assert.equal(focus.focusCalls, 1);

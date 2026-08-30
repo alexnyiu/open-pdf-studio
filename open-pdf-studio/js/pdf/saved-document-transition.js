@@ -768,8 +768,18 @@ export function hasRecoverableSavedDocumentSynchronization(documentId) {
   return recoverableSynchronizations.has(String(documentId || ''));
 }
 
-export function clearSavedDocumentSynchronization(documentId) {
+export async function clearSavedDocumentSynchronization(documentId) {
   const id = String(documentId || '');
-  activeSynchronizations.delete(id);
-  return recoverableSynchronizations.delete(id);
+  const active = activeSynchronizations.get(id);
+  if (active) {
+    try { await active.promise; } catch {}
+    activeSynchronizations.delete(id);
+  }
+  const record = recoverableSynchronizations.get(id) || null;
+  const removed = recoverableSynchronizations.delete(id);
+  if (record && !record.proxyInstalled) {
+    try { await record.preparedPdfJsDocument?.destroy?.(); } catch {}
+    record.preparedPdfJsDocument = null;
+  }
+  return removed || Boolean(active);
 }

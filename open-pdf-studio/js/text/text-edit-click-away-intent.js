@@ -2,6 +2,7 @@ import {
   createTextEditTargetIdentity,
   sameTextEditTarget,
 } from './text-edit-target-identity.js';
+import { textApplyResultCompletesInteraction } from './text-apply-result.js';
 
 const SAFE_ACTION_SELECTOR = [
   'button',
@@ -339,15 +340,17 @@ export function guardTextEditClickAwayGesture(
 
 /** Replay one captured intent only after the initiating Apply is terminal. */
 export async function replayTextEditClickAwayIntent(intent, {
-  commitSucceeded = false,
+  applyResult = null,
   ownerIsCurrent = () => true,
-  beginTextEdit = async () => false,
+  beginTextEdit = async () => Object.freeze({ activated: false, reason: 'not-available' }),
   executeSemanticCommand = (command) => executeTextEditSemanticCommand(command, {
     fallbackTarget: intent?.actionTarget,
   }),
   indicateUnsafe = () => {},
 } = {}) {
-  if (!intent || commitSucceeded !== true) return replayResult('not-needed');
+  if (!intent || !textApplyResultCompletesInteraction(applyResult)) {
+    return replayResult('not-needed');
+  }
   if (intent.replayed || intent.browserDelivered) return replayResult('not-needed');
   if (!ownerIsCurrent(intent)) return replayResult('stale', null, 'Document owner changed');
   if (intent.destructive || intent.kind === 'unsafe-action') {
@@ -365,7 +368,7 @@ export async function replayTextEditClickAwayIntent(intent, {
     }
     try {
       const opened = await beginTextEdit(intent);
-      if (opened !== true && opened?.activated !== true) {
+      if (opened?.activated !== true) {
         return replayResult('not-opened', 'text-edit', 'The captured text target did not open');
       }
       intent.replayed = true;

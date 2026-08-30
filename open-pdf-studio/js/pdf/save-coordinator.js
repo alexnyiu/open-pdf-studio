@@ -91,41 +91,15 @@ function failedResult(request, owner, error) {
   });
 }
 
-// P5 migration adapter. Public coordinator callers always receive SaveResult;
-// internal serializers are migrated phase-by-phase and this adapter is
-// removed in P11 after every execute callback returns the typed contract.
-function normalizeExecutionResult(rawResult, request, owner, ownsPublication) {
-  if (isSaveResult(rawResult)) {
-    if (rawResult.documentId !== request.documentId
-        || rawResult.requestedRevision !== request.requestedRevision) {
-      throw new TypeError('SaveResult ownership does not match its request');
-    }
-    return rawResult;
+function assertExecutionResult(result, request) {
+  if (!isSaveResult(result)) {
+    throw new TypeError('Save execution callbacks must return SaveResult');
   }
-  const saved = rawResult === true || rawResult?.saved === true;
-  if (!saved) {
-    return failedResult(request, owner, new Error('Save execution reported failure'));
+  if (result.documentId !== request.documentId
+      || result.requestedRevision !== request.requestedRevision) {
+    throw new TypeError('SaveResult ownership does not match its request');
   }
-  const warnings = Array.isArray(rawResult?.warnings) ? rawResult.warnings : [];
-  const proxyAdopted = ownsPublication && rawResult?.followUpNeeded !== true;
-  return createSaveResult({
-    status: warnings.length > 0
-      ? 'saved-with-warning'
-      : proxyAdopted ? 'saved' : 'saved-refresh-pending',
-    documentId: request.documentId,
-    requestedRevision: request.requestedRevision,
-    serializedRevision: request.requestedRevision,
-    persistedRevision: request.requestedRevision,
-    proxyRevision: proxyAdopted ? request.requestedRevision : Math.min(
-      request.requestedRevision,
-      initializeDocumentRevisionState(owner).livePdfRevision,
-    ),
-    bytesPersisted: true,
-    proxyAdopted,
-    candidateBytes: Number.isSafeInteger(rawResult?.candidateBytes)
-      ? rawResult.candidateBytes : null,
-    warnings,
-  });
+  return result;
 }
 
 function publishTerminalState(owner, request, result) {
@@ -387,13 +361,7 @@ export function createSaveCoordinator({
       });
       serializationStartedAt = now();
       emit('serializing', request);
-      const rawResult = await request.execute(context);
-      const result = normalizeExecutionResult(
-        rawResult,
-        request,
-        resolveDocumentById(request.documentId),
-        context.ownsPublication(),
-      );
+      const result = assertExecutionResult(await request.execute(context), request);
       const saved = saveResultIsDurable(result);
       const durationMs = Math.max(0, now() - serializationStartedAt);
       const candidateBytes = Number.isSafeInteger(result.candidateBytes)
@@ -409,8 +377,7 @@ export function createSaveCoordinator({
       const currentRevision = resultOwner
         ? initializeDocumentRevisionState(resultOwner).contentRevision
         : request.requestedRevision;
-      const needsFollowUp = rawResult?.followUpNeeded === true
-        || (saved && Number(result.persistedRevision) < currentRevision);
+      const needsFollowUp = saved && Number(result.persistedRevision) < currentRevision;
       if (saved && needsFollowUp && record.pending) {
         emit('superseded', request, { stage: 'after-replacement' });
         transferWaiters(request, record.pending);

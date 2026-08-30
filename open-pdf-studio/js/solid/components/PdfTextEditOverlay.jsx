@@ -975,7 +975,7 @@ export default function PdfTextEditOverlay() {
           try {
             const stateModule = await import('../../core/state.js');
             const replayResult = await replayTextEditClickAwayIntent(capturedIntent, {
-              commitSucceeded: true,
+              applyResult: result,
               ownerIsCurrent: (intent) => {
                 const owner = stateModule.getDocumentById(intent.documentId);
                 return Boolean(owner

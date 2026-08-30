@@ -69,7 +69,7 @@ test('two automatic requests before serialization coalesce to the latest revisio
   });
   const execute = async (context) => {
     calls.push(context.requestedRevision);
-    return true;
+    return durableResult(context);
   };
   const first = coordinator.request({
     documentId: document.id,
@@ -156,7 +156,7 @@ test('a continuous editing session cannot leave automatic persistence pending fo
   });
   const execute = async (context) => {
     calls.push(context.requestedRevision);
-    return true;
+    return durableResult(context);
   };
   const saves = [coordinator.request({
     documentId: document.id,
@@ -211,9 +211,9 @@ test('automatic serialization waits while another document save is running', asy
     documentGeneration: 1,
     requestedRevision: 1,
     kind: 'manual',
-    execute: async () => {
+    execute: async (context) => {
       await firstSerialization.promise;
-      return true;
+      return durableResult(context);
     },
   });
   await waitUntil(() => coordinator.debugSnapshot('doc-a')?.active != null);
@@ -222,9 +222,9 @@ test('automatic serialization waits while another document save is running', asy
     documentGeneration: 1,
     requestedRevision: 1,
     kind: 'auto',
-    execute: async () => {
+    execute: async (context) => {
       automaticCalls += 1;
-      return true;
+      return durableResult(context);
     },
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -260,9 +260,9 @@ test('a live text session defers heavy serialization but wakes after the session
     requestedRevision: 1,
     kind: 'auto',
     delayMs: 10,
-    execute: async () => {
+    execute: async (context) => {
       calls += 1;
-      return true;
+      return durableResult(context);
     },
   });
   timers.findLast((timer) => !timer.cancelled).callback();
@@ -288,9 +288,9 @@ test('completion diagnostics record serialization duration and candidate size', 
     documentId: document.id,
     documentGeneration: 1,
     requestedRevision: 1,
-    execute: async () => {
+    execute: async (context) => {
       clock = 47;
-      return { saved: true, candidateBytes: 4096 };
+      return durableResult(context, { candidateBytes: 4096 });
     },
   });
   assert.equal((await save).status, 'saved');
@@ -306,7 +306,7 @@ test('manual Save flushes a pending automatic request at the latest revision', a
   const execute = async (context) => {
     calls += 1;
     assert.equal(context.requestedRevision, 2);
-    return true;
+    return durableResult(context);
   };
   const automatic = coordinator.request({
     documentId: document.id,
@@ -381,7 +381,7 @@ test('an old request cannot replace after lifecycle ownership changes', async ()
       await pause.promise;
       context.assertPersistenceOwnership();
       replaced = true;
-      return true;
+      return durableResult(context);
     },
   });
   await waitUntil(() => coordinator.debugSnapshot(document.id)?.active != null);
@@ -405,7 +405,11 @@ test('a superseded request that already persisted cannot install a proxy or mark
       context.assertPersistenceOwnership();
       await afterReplacement.promise;
       oldPublished = context.ownsPublication();
-      return { saved: true, followUpNeeded: !oldPublished };
+      return durableResult(context, {
+        status: oldPublished ? 'saved' : 'saved-refresh-pending',
+        proxyRevision: oldPublished ? context.requestedRevision : 0,
+        proxyAdopted: oldPublished,
+      });
     },
   });
   await waitUntil(() => coordinator.debugSnapshot(document.id)?.active != null);
@@ -418,7 +422,7 @@ test('a superseded request that already persisted cannot install a proxy or mark
     execute: async (context) => {
       context.assertPersistenceOwnership();
       followUpPublished = context.ownsPublication();
-      return true;
+      return durableResult(context);
     },
   });
   afterReplacement.resolve();
@@ -446,7 +450,7 @@ test('a tab switch cannot redirect immutable save ownership', async () => {
       activeTab = 'doc-b';
       context.assertPersistenceOwnership();
       savedOwner = context.owner().id;
-      return true;
+      return durableResult(context);
     },
   });
   assert.equal((await save).status, 'saved');
@@ -467,7 +471,7 @@ test('document close cancels pre-persistence work and prevents publication', asy
       await pause.promise;
       context.assertPersistenceOwnership();
       published = context.ownsPublication();
-      return true;
+      return durableResult(context);
     },
   });
   await waitUntil(() => coordinator.debugSnapshot(document.id)?.active != null);
@@ -495,7 +499,7 @@ test('document close after proxy installation cancels the adopted generation pub
       await continueSynchronization.promise;
       context.assertSynchronizationOwnership('after-required-page-rebuild');
       published = true;
-      return true;
+      return durableResult(context);
     },
   });
   await proxyInstalled.promise;
@@ -519,9 +523,9 @@ test('editor wait resolves from its completion promise before serialization', as
     documentId: document.id,
     documentGeneration: 1,
     requestedRevision: 1,
-    execute: async () => {
+    execute: async (context) => {
       serialized = true;
-      return true;
+      return durableResult(context);
     },
   });
   await new Promise((resolve) => setImmediate(resolve));
@@ -542,7 +546,7 @@ test('a stuck editor produces a bounded visible failure state', async () => {
     documentId: document.id,
     documentGeneration: 1,
     requestedRevision: 1,
-    execute: async () => true,
+    execute: async (context) => durableResult(context),
   });
   const result = await save;
   assert.equal(result.status, 'failed');
@@ -567,7 +571,7 @@ test('Save As retains the requested path and untitled transition owner', async (
       context.assertPersistenceOwnership();
       context.owner().filePath = context.saveAsPath;
       context.owner().isUntitled = false;
-      return true;
+      return durableResult(context);
     },
   });
   assert.equal(saved.status, 'saved');
@@ -579,6 +583,20 @@ test('superseded errors expose the transaction boundary', () => {
   const error = new SaveRequestSupersededError('before-replacement');
   assert.equal(error.code, 'SAVE_REQUEST_SUPERSEDED');
   assert.equal(error.stage, 'before-replacement');
+});
+
+test('legacy boolean save execution results are rejected at the coordinator boundary', async () => {
+  const document = owner();
+  const coordinator = createSaveCoordinator({ resolveDocumentById: () => document });
+  const result = await coordinator.request({
+    documentId: document.id,
+    documentGeneration: document.lifecycleGeneration,
+    requestedRevision: document.revisionState.contentRevision,
+    execute: async () => true,
+  });
+  assert.equal(result.status, 'failed');
+  assert.equal(result.errorCode, 'SAVE_FAILED');
+  assert.match(result.errorMessage, /must return SaveResult/u);
 });
 
 test('every terminal result clears activeSaveRequestId and preserves its status', async () => {

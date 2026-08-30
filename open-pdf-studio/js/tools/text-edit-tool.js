@@ -144,6 +144,22 @@ function reportQueuedEditFailure(error) {
   if (error?.name !== 'AbortError') console.warn('[text-edit] Queued page edit failed:', error);
 }
 
+function textEditActivationResult({
+  activated = false,
+  reason = null,
+  errorCode = null,
+  message = null,
+  action = null,
+} = {}) {
+  return Object.freeze({
+    activated: activated === true,
+    reason: reason == null ? null : String(reason),
+    errorCode: errorCode == null ? null : String(errorCode),
+    message: message == null ? null : String(message),
+    action: action == null ? null : String(action),
+  });
+}
+
 function queueCurrentPageEditIntent({ documentState, pageNum, point = null, activate }) {
   return runPageEditIntent({
     documentState,
@@ -1847,7 +1863,7 @@ export async function startTextLayerEditAtClientPointWhenReady({
   stagedLineIds = [],
 }) {
   const ownerDocument = getActiveDocument();
-  if (!ownerDocument) return false;
+  if (!ownerDocument) return textEditActivationResult({ reason: 'no-document' });
   const activate = async ({ documentState, pageNum: readyPage, point }) => {
     if (getActiveDocument() !== documentState) return false;
     const layer = livePageTextLayer(readyPage);
@@ -1890,7 +1906,11 @@ export async function startTextLayerEditAtClientPointWhenReady({
   };
   const point = { x: clientX, y: clientY };
   if (!ownerDocument.pdfDoc || pageEditReadinessSatisfied(ownerDocument, pageNum)) {
-    return activate({ documentState: ownerDocument, pageNum, point });
+    const activated = await activate({ documentState: ownerDocument, pageNum, point });
+    return textEditActivationResult({
+      activated: activated === true,
+      reason: activated === true ? null : 'target-unavailable',
+    });
   }
   try {
     const queued = await queueCurrentPageEditIntent({
@@ -1899,10 +1919,26 @@ export async function startTextLayerEditAtClientPointWhenReady({
       point,
       activate,
     });
-    return queued?.activated === true && queued.value === true;
+    if (queued?.activated !== true) {
+      return textEditActivationResult({
+        reason: queued?.reason || 'readiness-failed',
+        errorCode: queued?.errorCode || null,
+        message: queued?.message || null,
+        action: queued?.action || null,
+      });
+    }
+    return textEditActivationResult({
+      activated: queued.value === true,
+      reason: queued.value === true ? null : 'target-unavailable',
+    });
   } catch (error) {
     reportQueuedEditFailure(error);
-    return false;
+    return textEditActivationResult({
+      reason: 'activation-failed',
+      errorCode: error?.code || 'TEXT_EDIT_ACTIVATION_FAILED',
+      message: error instanceof Error ? error.message : String(error),
+      action: 'retry-page-edit',
+    });
   }
 }
 

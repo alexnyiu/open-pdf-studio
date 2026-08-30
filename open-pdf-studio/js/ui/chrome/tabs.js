@@ -1,5 +1,11 @@
 import { state, createDocument, getActiveDocument, findDocumentByPath, clearSelection } from '../../core/state.js';
-import { renderPage, renderContinuous, clearPdfView, clearBitmapJSCacheForFile } from '../../pdf/renderer.js';
+import {
+  renderPage,
+  renderContinuous,
+  clearPdfView,
+  clearBitmapJSCacheForFile,
+  clearActiveDocumentTextLayers,
+} from '../../pdf/renderer.js';
 import { hideFormFieldsBar } from '../../pdf/form-layer.js';
 import { redrawAnnotations, redrawContinuous, updateQuickAccessButtons } from '../../annotations/rendering.js';
 import { updateAllStatus } from './status-bar.js';
@@ -142,11 +148,8 @@ export function switchToTab(index) {
     const _anx = _ann.getContext('2d');
     if (_anx) _anx.clearRect(0, 0, _ann.width, _ann.height);
   }
-  // Also clear stale text-layer DOM (text-layer is per-page, contains spans
-  // from the previous doc that would be visible until the new page's text
-  // layer overwrites them).
-  const _tl = document.querySelector('.textLayer');
-  if (_tl) _tl.remove();
+  // Retire every registered semantic surface owned by the previous document.
+  clearActiveDocumentTextLayers();
 
   // Render the new active document
   const newDoc = getActiveDocument();
@@ -286,6 +289,8 @@ async function closeDocumentTab(doc, force) {
   clearEditableMetadataPreload(doc);
   const { cancelWholePdfPreload } = await import('../../pdf/whole-pdf-preload.js');
   cancelWholePdfPreload(doc, { release: true, reason: 'close' });
+  const { clearSavedDocumentSynchronization } = await import('../../pdf/saved-document-transition.js');
+  await clearSavedDocumentSynchronization(doc.id);
   replaceDocumentPdfProxy(doc, null, LIFECYCLE_TRANSITION_POLICIES.DOCUMENT_CLOSE);
   try {
     await closedPdfDocument?.destroy?.();

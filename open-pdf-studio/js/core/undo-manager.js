@@ -7,6 +7,7 @@ import {
   documentHasRevisionPersistenceDebt,
   noteDocumentMutation,
 } from './document-revision-state.runtime.js';
+import { resolvePageSurface } from '../pdf/page-surface-registry.js';
 const MAX_UNDO_STACK = 100;
 const DOCUMENT_STATE_COMMAND_TYPES = new Set([
   'ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned', 'scannedTextEdit',
@@ -265,18 +266,20 @@ async function refreshTextEditLayerProjections(cmd, direction) {
   const { injectSyntheticTextSpans } = await import('../text/text-layer.js');
   const dpr = globalThis.window?.devicePixelRatio || 1;
   for (const pageNum of pages) {
-    const layers = document.querySelectorAll(`.textLayer[data-page="${pageNum}"]`);
-    for (const textLayer of layers) {
-      const canvas = textLayer.parentElement?.querySelector?.('canvas.pdf-canvas')
-        || document.getElementById?.('pdf-canvas');
-      const stored = doc.pageDims?.[pageNum];
-      const scale = Number(doc.scale) || 1;
-      const pageWidth = Number(stored?.widthPt)
-        || (Number(canvas?.width) > 0 ? Number(canvas.width) / (scale * dpr) : textLayer.clientWidth);
-      const pageHeight = Number(stored?.heightPt)
-        || (Number(canvas?.height) > 0 ? Number(canvas.height) / (scale * dpr) : textLayer.clientHeight);
-      injectSyntheticTextSpans(textLayer, pageNum, pageWidth, pageHeight);
-    }
+    const surface = resolvePageSurface(doc, pageNum);
+    const textLayer = surface?.textLayer;
+    if (!textLayer) continue;
+    const canvas = surface.geometryCanvas
+      || (surface.baseSurface?.tagName === 'CANVAS' ? surface.baseSurface : null);
+    const stored = doc.pageDims?.[pageNum];
+    const scale = Number(surface.cssScale) || Number(doc.scale) || 1;
+    const pageWidth = Number(stored?.widthPt)
+      || Number(surface.canonicalPageDimensions?.width)
+      || (Number(canvas?.width) > 0 ? Number(canvas.width) / (scale * dpr) : textLayer.clientWidth);
+    const pageHeight = Number(stored?.heightPt)
+      || Number(surface.canonicalPageDimensions?.height)
+      || (Number(canvas?.height) > 0 ? Number(canvas.height) / (scale * dpr) : textLayer.clientHeight);
+    injectSyntheticTextSpans(textLayer, pageNum, pageWidth, pageHeight);
   }
   if (typeof globalThis.CustomEvent === 'function') {
     globalThis.window?.dispatchEvent?.(
@@ -581,8 +584,7 @@ function applyUndo(cmd) {
       // Restore original span text in the text layer
       if (cmd.textEdit.originalSpanTexts) {
         const pageNum = cmd.textEdit.page;
-        const textLayer = document.querySelector(`.textLayer[data-page="${pageNum}"]`)
-          || document.querySelector('.textLayer');
+        const textLayer = resolvePageSurface(doc, pageNum)?.textLayer || null;
         if (textLayer) {
           const spans = Array.from(textLayer.querySelectorAll('span[data-pdf-transform]'));
           // Find spans matching the edit's PDF position

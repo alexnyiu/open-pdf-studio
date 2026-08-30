@@ -105,6 +105,7 @@ import {
 import {
   adoptPageSurfacesForDocumentLifecycle,
   registerPageSurface,
+  resolvePageSurface,
   unregisterPageSurface,
 } from './page-surface-registry.js';
 import {
@@ -875,7 +876,7 @@ async function _renderPageImpl(pageNum, { requireEditReady = false, fitPolicy = 
 
   // Ensure annotations for this page are loaded (on-demand if background hasn't reached it yet)
   // Skip heavy operations during vector zoom (only needed on first load / page change)
-  if (requireEditReady || !_skipBitmapRender || !document.querySelector('.textLayer')
+  if (requireEditReady || !_skipBitmapRender || !resolvePageSurface(doc, pageNum)?.textLayer
       || !doc._loadedAnnotationPages.has(pageNum)) {
     console.log(`[PERF] renderPage(${pageNum}) ensureAnnotations START: ${(performance.now() - _rp0).toFixed(0)}ms`);
     await ensureAnnotationsForPage(pageNum);
@@ -4615,6 +4616,12 @@ export function clearPdfView() {
 
   // Update status bar (derives from reactive state)
   updateAllStatus();
+}
+
+/** Remove semantic text surfaces before handing the shared viewport to another document. */
+export function clearActiveDocumentTextLayers() {
+  clearSinglePageTextLayer();
+  clearTextLayers();
 }
 
 // ─── Self-test: call from DevTools console with window.__testRender() ──────
