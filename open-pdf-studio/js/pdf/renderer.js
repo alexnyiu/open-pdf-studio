@@ -80,6 +80,7 @@ import { singlePageOverlaySurfaceDimensions } from './canvas-dpr.js';
 import { applyContinuousPageSurfaceLayout } from './continuous-page-surface-layout.js';
 import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
 import { publishPageModelRevision } from '../text/text-edit-publication.js';
+import { publishPendingOcrReadiness } from './pending-ocr-readiness-publication.js';
 import {
   cancelPdfJsRenderTasksForDocument,
   cancelStalePdfJsRenderTasks,
@@ -133,6 +134,19 @@ function failRendererReadiness(doc, pageNum, error, publicationToken) {
     error instanceof Error ? error.message : String(error || 'page render failed'),
     publicationToken,
   );
+}
+
+async function reconcilePendingOcrReadiness(doc, pageNum, publicationToken, completedLayers) {
+  const outcome = await publishPendingOcrReadiness({
+    documentState: doc,
+    pageNum,
+    publicationToken,
+    completedLayers,
+  });
+  if (outcome.terminalFailure) {
+    failRendererReadiness(doc, pageNum, outcome.error, publicationToken);
+  }
+  return outcome;
 }
 
 function canonicalSurfaceDimensions(doc, pageNum, fallback = null) {
@@ -746,6 +760,12 @@ async function _renderPageImpl(pageNum, { requireEditReady = false, fitPolicy = 
               return;
             }
             markLayer('raster');
+            void reconcilePendingOcrReadiness(
+              doc,
+              pageNum,
+              publicationToken,
+              completedLayers,
+            );
           }).catch((error) => {
             _rasterPublicationPending = false;
             failReadiness(error);
@@ -955,6 +975,16 @@ async function _renderPageImpl(pageNum, { requireEditReady = false, fitPolicy = 
     elapsedMs: performance.now() - _rp0,
     surfaceBytes: Math.ceil(viewport.width) * Math.ceil(viewport.height) * 4,
   });
+  const pendingOcrPublication = await reconcilePendingOcrReadiness(
+    doc,
+    pageNum,
+    publicationToken,
+    completedLayers,
+  );
+  if (pendingOcrPublication.status === 'superseded'
+      || pendingOcrPublication.terminalFailure) {
+    return { pageNum, ready: false };
+  }
   console.log(`[PERF] renderPage(${pageNum}) TOTAL: ${(performance.now() - _rp0).toFixed(0)}ms`);
   return {
     pageNum,
@@ -2074,7 +2104,10 @@ async function _renderContinuousPageNow(
   const doc = state.documents[state.activeDocumentIndex];
   if (!doc || !doc.pdfDoc) throw new Error(`Required page ${pageNum} lost its document owner`);
   const publicationToken = captureRenderPublicationToken(doc, pageNum, 'continuous-page');
-  const markLayer = (layer) => markRendererLayerReady(doc, pageNum, layer, publicationToken);
+  const completedLayers = new Set();
+  const markLayer = (layer) => {
+    if (markRendererLayerReady(doc, pageNum, layer, publicationToken)) completedLayers.add(layer);
+  };
   const failReadiness = (error) => failRendererReadiness(doc, pageNum, error, publicationToken);
   const expectedScale = doc.scale;
   const startedAt = performance.now();
@@ -2470,6 +2503,16 @@ async function _renderContinuousPageNow(
     completedAt - startedAt,
   );
   recordPerformanceSample('pageInteractiveReadyMs', completedAt - startedAt);
+  const pendingOcrPublication = await reconcilePendingOcrReadiness(
+    doc,
+    pageNum,
+    publicationToken,
+    completedLayers,
+  );
+  if (pendingOcrPublication.status === 'superseded'
+      || pendingOcrPublication.terminalFailure) {
+    return { pageNum, ready: false };
+  }
   return {
     pageNum,
     ready: pageEditReadinessSatisfied(doc, pageNum, {

@@ -301,6 +301,20 @@ test('the first rendered page hydrates annotations even after its text layer exi
   assert.match(annotationReadiness, /await ensureAnnotationsForPage\(pageNum\)/u);
 });
 
+test('single and continuous render completion reconcile pending OCR at its model revision', async () => {
+  const source = await readFile(new URL('./renderer.js', import.meta.url), 'utf8');
+  const singleStart = source.indexOf('async function _renderPageImpl');
+  const singleEnd = source.indexOf('// Render page offscreen', singleStart);
+  const continuousStart = source.indexOf('async function _renderContinuousPageNow');
+  const continuousEnd = source.indexOf('function _continuousLayout', continuousStart);
+  const single = source.slice(singleStart, singleEnd);
+  const continuous = source.slice(continuousStart, continuousEnd);
+
+  assert.match(single, /reconcilePendingOcrReadiness\(\s*doc,\s*pageNum,\s*publicationToken,\s*completedLayers/u);
+  assert.match(continuous, /const completedLayers = new Set\(\)/u);
+  assert.match(continuous, /reconcilePendingOcrReadiness\(\s*doc,\s*pageNum,\s*publicationToken,\s*completedLayers/u);
+});
+
 test('first-page FreeText hydration waits for exact ownership and callout metadata', async () => {
   const source = await readFile(new URL('./loader.js', import.meta.url), 'utf8');
   const singlePageStart = source.indexOf('async function loadAnnotationsForSinglePage');

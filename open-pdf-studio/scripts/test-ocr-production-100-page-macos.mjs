@@ -318,11 +318,17 @@ async function copyVisibleText(app, controls, expectedText) {
   await app.callTool('app_set_tool', { tool: 'select' });
   let stableSpanKey = null;
   let stableSpanSamples = 0;
+  let observed = null;
   const span = await waitUntil('settled current OCR text span', async () => {
     const viewport = await app.callTool('app_get_viewport_state');
+    const value = await controls.ui('#canvas-container .textLayer span');
+    const owned = await controls.ui(
+      '#canvas-container .textLayer[data-page="1"] span[data-ocr-owner="open-pdf-studio"]',
+    );
+    const layer = await controls.ui('#canvas-container .textLayer[data-page="1"]');
+    observed = { viewport, value, owned, layer };
     if (viewport.pageEditReadiness?.ready !== true
         || viewport.renderPublicationDiagnostics?.activePdfJsTasks !== 0) return null;
-    const value = await controls.ui('#canvas-container .textLayer span');
     if (!value.found || !value.visible || value.rect?.width <= 5 || value.rect?.height <= 5
         || !normalize(value.text).includes(normalize(expectedText).split(' ')[0])) return null;
     const key = [value.rect.left, value.rect.top, value.rect.width, value.rect.height]
@@ -330,7 +336,9 @@ async function copyVisibleText(app, controls, expectedText) {
     stableSpanSamples = key === stableSpanKey ? stableSpanSamples + 1 : 1;
     stableSpanKey = key;
     return stableSpanSamples >= 3 ? value : null;
-  }, 60_000, 100);
+  }, 60_000, 100).catch((error) => {
+    throw new Error(`${error.message}; observed=${JSON.stringify(observed)}`);
+  });
   const rect = span.rect;
   const startX = rect.left + Math.max(1, Math.min(3, rect.width * 0.05));
   const endX = rect.right - Math.max(1, Math.min(3, rect.width * 0.05));
