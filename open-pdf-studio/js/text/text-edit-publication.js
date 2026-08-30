@@ -119,13 +119,22 @@ async function defaultBasePublisher(context) {
 
 async function defaultSemanticPublisher(context) {
   const { publishOwnerAwareTextProjections } = await import('./text-layer.js');
-  return publishOwnerAwareTextProjections({
+  const publication = await publishOwnerAwareTextProjections({
     documentState: context.documentState,
     pageNum: context.pageNum,
     revision: context.revision,
     editRevision: context.editRevision,
     textLayer: context.surface?.textLayer || null,
   });
+  if (publication?.status === 'published') {
+    const { rebindActiveTextEditorSourceProjection } = await import('../tools/text-edit-tool.js');
+    rebindActiveTextEditorSourceProjection({
+      documentState: context.documentState,
+      pageNum: context.pageNum,
+      textLayer: context.surface?.textLayer || null,
+    });
+  }
+  return publication;
 }
 
 /** Build one publication coordinator with injectable boundaries for race tests. */
@@ -218,13 +227,21 @@ export function createTextEditPublicationCoordinator({
     editRevision = null,
     expectedVisible = true,
     nativeAuthoritative = false,
+    expectedPageRevision = null,
+    publicationSource = 'committed-text-edit',
   } = {}) => {
     if (!documentState?.id) throw new TypeError('Committed text publication requires a document owner');
     const revision = pageRevision(documentState, pageNum);
-    const token = captureToken(documentState, pageNum, 'committed-text-edit', {
+    const token = captureToken(documentState, pageNum, publicationSource, {
       revisionAuthority: 'model',
       publishedPageRevision: revision,
     });
+    if (expectedPageRevision != null && Number(expectedPageRevision) !== revision) {
+      return resultFor(token, 'superseded', {
+        errorCode: 'EXPECTED_PAGE_REVISION_SUPERSEDED',
+        error: 'The page revision changed before model publication started',
+      });
+    }
     if (!tokenIsCurrent(token, documentState)) {
       return resultFor(token, 'superseded', {
         errorCode: 'PUBLICATION_TOKEN_STALE_BEFORE_START',
@@ -239,6 +256,8 @@ export function createTextEditPublicationCoordinator({
       editRevision,
       expectedVisible,
       nativeAuthoritative,
+      expectedPageRevision,
+      publicationSource,
     };
     if (!surface) {
       queuePending(input, token);
@@ -402,6 +421,17 @@ const committedTextPublicationCoordinator = createTextEditPublicationCoordinator
 
 export function publishCommittedTextEdit(input) {
   return committedTextPublicationCoordinator.publish(input);
+}
+
+/** A non-serialized page mutation whose installed surface is model-authoritative. */
+export function publishPageModelRevision(input) {
+  return committedTextPublicationCoordinator.publish({
+    ...input,
+    editId: null,
+    editRevision: null,
+    nativeAuthoritative: false,
+    publicationSource: input?.publicationSource || 'page-model-mutation',
+  });
 }
 
 export function pendingCommittedTextPublicationSnapshot() {

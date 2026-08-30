@@ -289,6 +289,20 @@ test('superseded ownership cannot publish either surface', async () => {
   assert.deepEqual(calls, []);
 });
 
+test('a model mutation cannot acknowledge a page revision newer than its render', async () => {
+  const documentState = owner();
+  const { coordinator, calls } = harness();
+  const result = await coordinator.publish({
+    documentState,
+    pageNum: 50,
+    expectedPageRevision: 8,
+    publicationSource: 'page-rotation',
+  });
+  assert.equal(result.status, 'superseded');
+  assert.equal(result.errorCode, 'EXPECTED_PAGE_REVISION_SUPERSEDED');
+  assert.deepEqual(calls, []);
+});
+
 test('surface replacement before acknowledgement has an exact supersession code', async () => {
   const documentState = owner();
   const { coordinator, calls } = harness({ markSurface: () => false });
@@ -308,4 +322,13 @@ test('every production text owner commit crosses the shared publication boundary
   assert.doesNotMatch(editTool, /document\.getElementById\(['"]pdf-canvas/u);
   assert.doesNotMatch(editTool, /document\.querySelector\(['"]\.textLayer['"]\)/u);
   assert.doesNotMatch(rendering, /coverNativeSourceForLivePreview|dominantBackgroundColor/u);
+});
+
+test('model publication rebinds an active native source editor to its replacement layer', () => {
+  const publication = readFileSync(new URL('./text-edit-publication.js', import.meta.url), 'utf8');
+  const editTool = readFileSync(new URL('../tools/text-edit-tool.js', import.meta.url), 'utf8');
+  assert.match(publication, /rebindActiveTextEditorSourceProjection\(\{/u);
+  assert.match(editTool, /export function rebindActiveTextEditorSourceProjection/u);
+  assert.match(editTool, /span\.style\.visibility = 'hidden'/u);
+  assert.match(editTool, /activeEditor\.block = \{ \.\.\.activeEditor\.block, spans \}/u);
 });

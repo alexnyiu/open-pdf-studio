@@ -439,6 +439,31 @@ function publishPdfTextEditState(editor) {
   state.pdfTextEditState = editor ? { kind: editor.kind, pageNum: editor.pageNum } : null;
 }
 
+/** Rebind a native-source editor to the replacement text layer after a view render. */
+export function rebindActiveTextEditorSourceProjection({
+  documentState,
+  pageNum,
+  textLayer,
+} = {}) {
+  if (!activeEditor?.block?.spans || activeEditor.kind !== 'existingText'
+      || activeEditor.ownerDocument !== documentState
+      || Number(activeEditor.pageNum) !== Number(pageNum)
+      || !textLayer?.querySelectorAll) return false;
+  const markerIds = new Set((activeEditor.sourceProvenance || [])
+    .map((source) => String(source?.markerId || ''))
+    .filter(Boolean));
+  if (!markerIds.size) return false;
+  const spans = [...textLayer.querySelectorAll(
+    'span[data-native-text-marker-ids], span[data-native-text-provenance]',
+  )].filter((span) => String(span.dataset?.nativeTextMarkerIds || '')
+    .split(/[\s,]+/u)
+    .some((markerId) => markerIds.has(markerId)));
+  if (!spans.length) return false;
+  for (const span of spans) span.style.visibility = 'hidden';
+  activeEditor.block = { ...activeEditor.block, spans };
+  return true;
+}
+
 function cleanupEditorRuntime(editor, { restoreNativeSpans = false } = {}) {
   const cleanupSteps = [
     () => hidePdfTextEditor(),

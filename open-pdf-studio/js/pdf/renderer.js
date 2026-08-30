@@ -78,6 +78,7 @@ import {
 import { planVisiblePageTiles } from './page-tile-plan.js';
 import { singlePageOverlaySurfaceDimensions } from './canvas-dpr.js';
 import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
+import { publishPageModelRevision } from '../text/text-edit-publication.js';
 import {
   cancelPdfJsRenderTasksForDocument,
   cancelStalePdfJsRenderTasks,
@@ -4552,7 +4553,9 @@ export async function rotatePage(delta, targetPage) {
   // a document-structural mutation erased the just-built index and invalidated
   // every page, leaving an active editor detached while no current host could
   // be resolved.
-  noteDocumentMutation(doc, { pages: [pageNum], reason: 'page:rotate' });
+  const rotationRevision = noteDocumentMutation(
+    doc, { pages: [pageNum], reason: 'page:rotate' },
+  );
   rebuildDocumentPageGeometryIndex(doc);
 
   // Re-render
@@ -4562,7 +4565,21 @@ export async function rotatePage(delta, targetPage) {
       requiredPages: [pageNum],
     });
   } else {
-    await renderPage(pageNum);
+    await renderPage(pageNum, { requireEditReady: true });
+  }
+  if (getActiveDocument() !== doc) return;
+  const publication = await publishPageModelRevision({
+    documentState: doc,
+    pageNum,
+    expectedPageRevision: rotationRevision,
+    expectedVisible: true,
+    publicationSource: 'page-rotation',
+  });
+  if (publication.status === 'superseded') return;
+  if (publication.status !== 'published') {
+    const error = new Error(publication.error || 'Rotated page publication failed');
+    error.code = publication.errorCode || 'PAGE_ROTATION_PUBLICATION_FAILED';
+    throw error;
   }
   // Continuous rendering rebuilds every page wrapper. Publish only after the
   // replacement host exists so an active owner-scoped editor can reattach its

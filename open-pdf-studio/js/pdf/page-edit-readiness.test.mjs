@@ -343,7 +343,7 @@ test('rotation recording does not publish the already-rendered mutation twice', 
   const rotation = rendererSource.slice(rotationStart, rotationEnd);
   assert.match(
     rotation,
-    /noteDocumentMutation\(doc, \{ pages: \[pageNum\], reason: 'page:rotate' \}\)/u,
+    /noteDocumentMutation\(\s*doc, \{ pages: \[pageNum\], reason: 'page:rotate' \},?\s*\)/u,
     'rotation must invalidate only its owning page',
   );
   assert.doesNotMatch(rotation, /structural: true/u);
@@ -356,6 +356,16 @@ test('rotation recording does not publish the already-rendered mutation twice', 
     rotation,
     /renderContinuous\(true, \{\s*synchronization: true,\s*requiredPages: \[pageNum\],\s*\}\)/u,
     'continuous rotation must suppress competing scheduler work until its current page is ready',
+  );
+  assert.match(
+    rotation,
+    /renderPage\(pageNum, \{ requireEditReady: true \}\)/u,
+    'single-page rotation must rebuild the complete editable surface',
+  );
+  assert.match(
+    rotation,
+    /publishPageModelRevision\(\{[\s\S]*expectedPageRevision: rotationRevision/u,
+    'rotation must acknowledge only the exact model revision it rendered',
   );
 
   const undoStart = undoSource.indexOf('export async function undo()');
