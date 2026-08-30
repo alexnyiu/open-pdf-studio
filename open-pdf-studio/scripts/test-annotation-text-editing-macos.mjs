@@ -260,11 +260,41 @@ async function runAcceptance(options) {
   }
 
   async function applyEditor() {
-    await clickVisible('.status-page-input');
-    await waitUntil('editor click-away cleanup', async () => {
-      const editor = await ui('.pdf-text-editor');
-      return !editor.found ? true : null;
-    }, 60_000);
+    const statusInput = await waitUi(
+      '.status-page-input',
+      (value) => value.found && value.visible && !value.disabled,
+      60_000,
+    );
+    const clickPoint = center(statusInput.rect);
+    const clickAway = await callTool('app_mouse_click', clickPoint);
+    assert.equal(clickAway.ok, true, clickAway.error);
+    assert.equal(
+      clickAway.target?.classes?.includes('status-page-input'),
+      true,
+      'annotation click-away did not hit the visible page-status input',
+    );
+    report.lastClickAwayPointer = { point: clickPoint, target: clickAway.target };
+    try {
+      await waitUntil('editor click-away cleanup', async () => {
+        const editor = await ui('.pdf-text-editor');
+        return !editor.found ? true : null;
+      }, 60_000);
+    } catch (error) {
+      const [viewport, editor] = await Promise.all([
+        callTool('app_get_viewport_state').catch(() => null),
+        ui('.pdf-text-editor').catch(() => null),
+      ]);
+      report.lastClickAwayFailure = {
+        editor,
+        editorSession: viewport?.editorSession ?? null,
+        lastTextApplyResult: viewport?.lastTextApplyResult ?? null,
+        lastTextPublicationResult: viewport?.lastTextPublicationResult ?? null,
+        documentSaveState: viewport?.documentSaveState ?? null,
+        pageEditReadiness: viewport?.pageEditReadiness ?? null,
+      };
+      error.message += `; click-away=${JSON.stringify(report.lastClickAwayFailure)}`;
+      throw error;
+    }
     report.checks.clickAwayCommit = 'PASS';
   }
 

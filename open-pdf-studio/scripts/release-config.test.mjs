@@ -382,7 +382,7 @@ test('release-hardening scripts and machine evidence are wired without committin
     "createAnnotationText('callout'",
     "callTool('app_mouse_click'",
     "callTool('app_mouse_drag'",
-    "clickVisible('.status-page-input')",
+    "clickAway.target?.classes?.includes('status-page-input')",
     "callTool('app_key', { key: 'Escape' })",
     "callTool('app_save_pdf'",
     "callTool('app_open_pdf'",
