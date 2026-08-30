@@ -378,10 +378,17 @@ export async function retryDocumentRefresh(documentId, documentGeneration) {
 
 function productionSavedTransitionCallbacks(outputPath, savedBytes) {
   return {
-    captureViewState: (owner) => captureSavedDocumentViewState(owner, {
-      appState: state,
-      scrollContainer: document.getElementById('pdf-container'),
-    }),
+    captureViewState: async (owner) => {
+      const ownerActive = getActiveDocument() === owner;
+      const renderer = await import('./renderer.js');
+      const rendererState = await renderer.captureRendererViewState(owner);
+      return captureSavedDocumentViewState(owner, {
+        appState: state,
+        scrollContainer: ownerActive ? document.getElementById('pdf-container') : null,
+        rendererState,
+        ownerActive,
+      });
+    },
     installProxy: async ({ documentState: owner, preparedPdfJsDocument: candidate }) => {
       return installValidatedSavedPdfDocument(owner, outputPath, savedBytes, candidate);
     },
@@ -399,7 +406,10 @@ function productionSavedTransitionCallbacks(outputPath, savedBytes) {
         });
       }
       const page = requiredPages[0] || owner.currentPage || 1;
-      const rendered = await renderer.renderPage(page, { requireEditReady: true });
+      const rendered = await renderer.renderPage(page, {
+        requireEditReady: true,
+        fitPolicy: 'preserve',
+      });
       if (getActiveDocument() !== owner) {
         return {
           requiredPages: [],
@@ -417,10 +427,29 @@ function productionSavedTransitionCallbacks(outputPath, savedBytes) {
       };
     },
     restoreViewState: async (owner, snapshot) => {
-      restoreSavedDocumentViewState(owner, snapshot, {
+      const ownerActive = getActiveDocument() === owner;
+      const conflicts = [];
+      const report = restoreSavedDocumentViewState(owner, snapshot, {
         appState: state,
-        scrollContainer: document.getElementById('pdf-container'),
+        ownerActive,
+        diagnostic: (_event, conflict) => conflicts.push(conflict),
       });
+      const renderer = await import('./renderer.js');
+      const rendererResult = report.rendererState
+        ? await renderer.restoreRendererViewState(
+          owner,
+          report.rendererState,
+          report.rendererPolicy,
+        )
+        : null;
+      if (typeof window !== 'undefined') {
+        window.__saveViewRestoreDiagnostics = Object.freeze({
+          documentId: String(owner.id),
+          conflicts: Object.freeze(conflicts),
+          rendererStatus: rendererResult?.status || null,
+        });
+      }
+      return report;
     },
     waitForEditReadiness: async ({ documentState: owner, requiredPages }) => {
       const { awaitPageEditReady } = await import('./page-edit-readiness.js');

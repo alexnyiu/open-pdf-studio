@@ -24,6 +24,7 @@ import {
 import { authorizeDocumentClose } from './document-close-authorization.js';
 import { showUnsavedClosePrompt } from './unsaved-close-prompt.js';
 import { restoreDocumentScrollPosition } from '../../pdf/document-scroll-position.js';
+import { noteDocumentViewActivation } from '../../pdf/view-state-transaction.js';
 import {
   documentHasRevisionPersistenceDebt,
   initializeDocumentRevisionState,
@@ -97,6 +98,7 @@ export function switchToTab(index) {
   // Clear any selected annotation (panel stays open per user preference)
   const curDoc = getActiveDocument();
   if (curDoc) {
+    noteDocumentViewActivation(curDoc);
     curDoc.selectedAnnotation = null;
     curDoc.selectedAnnotations = [];
   }
@@ -148,6 +150,7 @@ export function switchToTab(index) {
 
   // Render the new active document
   const newDoc = getActiveDocument();
+  if (newDoc && newDoc !== curDoc) noteDocumentViewActivation(newDoc);
   const placeholder = document.getElementById('placeholder');
   const pdfContainer = document.getElementById('pdf-container');
 

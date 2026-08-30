@@ -9,6 +9,11 @@ import {
 } from '../core/document-revision-state.runtime.js';
 import { throwIfSaveFaultInjected } from './save-fault-injection.js';
 import { clearPageEditReadiness } from './page-edit-readiness.js';
+import {
+  captureSharedUiLease,
+  captureViewStateTransaction,
+  mergeViewStateTransaction,
+} from './view-state-transaction.js';
 
 const activeSynchronizations = new Map();
 const recoverableSynchronizations = new Map();
@@ -292,32 +297,51 @@ export function captureSavedDocumentViewState(documentState, {
   appState = null,
   scrollContainer = null,
   panelState = null,
+  rendererState = null,
+  ownerActive = null,
 } = {}) {
   if (!documentState) throw new TypeError('A document is required to capture saved view state');
-  const scale = Number(documentState.scale) || 1;
+  const active = ownerActive === null
+    ? (appState?.documents
+      ? appState.documents[appState.activeDocumentIndex] === documentState
+      : true)
+    : ownerActive === true;
+  const scale = Math.max(0.05,
+    Number(rendererState?.zoom ?? rendererState?.scale ?? documentState.scale) || 1);
   const pageNumber = Math.max(1, Number(documentState.currentPage) || 1);
-  let anchor = {
-    pageNumber,
-    point: {
-      x: Math.max(0, Number(scrollContainer?.scrollLeft) || 0) / scale,
-      y: Math.max(0, Number(scrollContainer?.scrollTop) || 0) / scale,
-    },
+  const scrollPosition = Object.freeze({
+    x: Math.max(0, Number(active
+      ? scrollContainer?.scrollLeft ?? documentState.scrollPosition?.x
+      : documentState.scrollPosition?.x) || 0),
+    y: Math.max(0, Number(active
+      ? scrollContainer?.scrollTop ?? documentState.scrollPosition?.y
+      : documentState.scrollPosition?.y) || 0),
+  });
+  const selectedAnnotationIds = Object.freeze(
+    (documentState.selectedAnnotations || []).map((annotation) => String(annotation.id)),
+  );
+  const values = {
+    page: pageNumber,
+    mode: documentState.viewMode || 'single',
+    spread: Object.freeze({
+      bookSpread: documentState.bookSpread === true,
+      facingSpread: documentState.facingSpread === true,
+    }),
+    zoom: scale,
+    rotation: Object.freeze({ ...(documentState.pageRotations || {}) }),
   };
-  const wrappers = scrollContainer?.querySelectorAll?.('.page-wrapper[data-page]') || [];
-  for (const wrapper of wrappers) {
-    const top = Number(wrapper.offsetTop) || 0;
-    const height = Number(wrapper.offsetHeight) || 0;
-    const scrollTop = Number(scrollContainer.scrollTop) || 0;
-    if (scrollTop < top || scrollTop >= top + Math.max(1, height)) continue;
-    anchor = {
-      pageNumber: Math.max(1, Number(wrapper.dataset?.page) || pageNumber),
-      point: {
-        x: Math.max(0, (Number(scrollContainer.scrollLeft) || 0) - (Number(wrapper.offsetLeft) || 0)) / scale,
-        y: Math.max(0, scrollTop - top) / scale,
-      },
-    };
-    break;
+  if (active) {
+    values.pan = rendererState?.kind === 'single-viewport' ? rendererState : null;
+    values.scroll = rendererState?.kind === 'continuous-renderer'
+      ? rendererState : scrollPosition;
+    values.tool = appState?.currentTool || null;
+    values.selection = selectedAnnotationIds;
+    values.panels = panelState;
+    values.search = cloneSearchState(appState?.search);
   }
+  const transaction = captureViewStateTransaction(documentState, values, {
+    sharedUiLease: active ? captureSharedUiLease(documentState) : null,
+  });
   return Object.freeze({
     pageNumber,
     viewMode: documentState.viewMode || 'single',
@@ -325,67 +349,99 @@ export function captureSavedDocumentViewState(documentState, {
     facingSpread: documentState.facingSpread === true,
     scale,
     pageRotations: Object.freeze({ ...(documentState.pageRotations || {}) }),
-    scrollPosition: Object.freeze({
-      x: Math.max(0, Number(scrollContainer?.scrollLeft ?? documentState.scrollPosition?.x) || 0),
-      y: Math.max(0, Number(scrollContainer?.scrollTop ?? documentState.scrollPosition?.y) || 0),
-    }),
-    anchor: Object.freeze({
-      pageNumber: anchor.pageNumber,
-      point: Object.freeze({ ...anchor.point }),
-    }),
-    activeTool: appState?.currentTool || null,
-    selectedAnnotationIds: Object.freeze(
-      (documentState.selectedAnnotations || []).map((annotation) => String(annotation.id)),
-    ),
-    panelState,
-    search: cloneSearchState(appState?.search),
+    scrollPosition,
+    activeTool: active ? appState?.currentTool || null : null,
+    selectedAnnotationIds,
+    panelState: active ? panelState : null,
+    search: active ? cloneSearchState(appState?.search) : null,
+    rendererState,
+    transaction,
+    ownerActiveAtCapture: active,
   });
 }
 
 export function restoreSavedDocumentViewState(documentState, snapshot, {
   appState = null,
-  scrollContainer = null,
   restorePanelState = null,
+  ownerActive = null,
+  sharedUiLease = null,
+  diagnostic = null,
 } = {}) {
   if (!documentState || !snapshot) return false;
+  const active = ownerActive === null
+    ? (appState?.documents
+      ? appState.documents[appState.activeDocumentIndex] === documentState
+      : true)
+    : ownerActive === true;
   const pageCount = Math.max(1, Number(documentState.pdfDoc?.numPages) || 1);
-  documentState.currentPage = Math.min(pageCount, Math.max(1, Number(snapshot.pageNumber) || 1));
-  documentState.viewMode = snapshot.viewMode === 'continuous' ? 'continuous' : 'single';
-  documentState.bookSpread = snapshot.bookSpread === true;
-  documentState.facingSpread = snapshot.facingSpread === true;
-  documentState.scale = Math.max(0.05, Number(snapshot.scale) || 1);
-  documentState.pageRotations = { ...(snapshot.pageRotations || {}) };
-  const byId = new Map((documentState.annotations || []).map((annotation) => [String(annotation.id), annotation]));
-  documentState.selectedAnnotations = (snapshot.selectedAnnotationIds || [])
-    .map((id) => byId.get(String(id)))
-    .filter(Boolean);
-  documentState.selectedAnnotation = documentState.selectedAnnotations[0] || null;
-  documentState.scrollPosition = { ...snapshot.scrollPosition };
-  if (appState && snapshot.activeTool) appState.currentTool = snapshot.activeTool;
-  if (appState?.search && snapshot.search) {
-    Object.assign(appState.search, snapshot.search, {
-      results: [],
-      currentIndex: -1,
-      totalMatches: 0,
-      isSearching: false,
-    });
-  }
-  if (typeof restorePanelState === 'function') restorePanelState(snapshot.panelState);
-  if (scrollContainer) {
-    const wrapper = scrollContainer.querySelector?.(
-      `.page-wrapper[data-page="${snapshot.anchor?.pageNumber}"]`,
-    );
-    if (wrapper) {
-      scrollContainer.scrollLeft = Math.max(0,
-        (Number(wrapper.offsetLeft) || 0) + (Number(snapshot.anchor.point.x) || 0) * documentState.scale);
-      scrollContainer.scrollTop = Math.max(0,
-        (Number(wrapper.offsetTop) || 0) + (Number(snapshot.anchor.point.y) || 0) * documentState.scale);
-    } else {
-      scrollContainer.scrollLeft = snapshot.scrollPosition.x;
-      scrollContainer.scrollTop = snapshot.scrollPosition.y;
-    }
-  }
-  return true;
+  const transaction = snapshot.transaction || captureViewStateTransaction(documentState, {
+    page: snapshot.pageNumber,
+    mode: snapshot.viewMode,
+    spread: {
+      bookSpread: snapshot.bookSpread === true,
+      facingSpread: snapshot.facingSpread === true,
+    },
+    zoom: snapshot.scale,
+    rotation: snapshot.pageRotations || {},
+    ...(active ? {
+      pan: snapshot.rendererState?.kind === 'single-viewport' ? snapshot.rendererState : null,
+      scroll: snapshot.rendererState?.kind === 'continuous-renderer'
+        ? snapshot.rendererState : snapshot.scrollPosition,
+      tool: snapshot.activeTool,
+      selection: snapshot.selectedAnnotationIds || [],
+      panels: snapshot.panelState,
+      search: snapshot.search,
+    } : {}),
+  }, { sharedUiLease: snapshot.ownerActiveAtCapture ? snapshot.transaction?.sharedUiLease : null });
+  const currentLease = active
+    ? sharedUiLease || captureSharedUiLease(documentState) : null;
+  const report = mergeViewStateTransaction(documentState, transaction, {
+    ownerActive: active,
+    sharedUiLease: currentLease,
+    onConflict: (conflict) => diagnostic?.('view-restore-conflict', conflict),
+    apply(field, value) {
+      if (field === 'page') {
+        documentState.currentPage = Math.min(pageCount, Math.max(1, Number(value) || 1));
+      } else if (field === 'mode') {
+        documentState.viewMode = value === 'continuous' ? 'continuous' : 'single';
+      } else if (field === 'spread') {
+        documentState.bookSpread = value?.bookSpread === true;
+        documentState.facingSpread = value?.facingSpread === true;
+      } else if (field === 'zoom') {
+        documentState.scale = Math.max(0.05, Number(value) || 1);
+      } else if (field === 'rotation') {
+        documentState.pageRotations = { ...(value || {}) };
+      } else if (field === 'selection') {
+        const byId = new Map((documentState.annotations || [])
+          .map((annotation) => [String(annotation.id), annotation]));
+        documentState.selectedAnnotations = (value || [])
+          .map((id) => byId.get(String(id))).filter(Boolean);
+        documentState.selectedAnnotation = documentState.selectedAnnotations[0] || null;
+      } else if (field === 'tool' && appState && value) {
+        appState.currentTool = value;
+      } else if (field === 'search' && appState?.search && value) {
+        Object.assign(appState.search, value, {
+          results: [], currentIndex: -1, totalMatches: 0, isSearching: false,
+        });
+      } else if (field === 'panels' && typeof restorePanelState === 'function') {
+        restorePanelState(value);
+      } else if (field === 'scroll' && value?.kind !== 'continuous-renderer') {
+        documentState.scrollPosition = {
+          x: Math.max(0, Number(value?.x) || 0),
+          y: Math.max(0, Number(value?.y) || 0),
+        };
+      }
+    },
+  });
+  return Object.freeze({
+    ...report,
+    rendererState: snapshot.rendererState || null,
+    rendererPolicy: Object.freeze({
+      restoreZoom: report.restored.includes('zoom'),
+      restorePan: report.restored.includes('pan'),
+      restoreScroll: report.restored.includes('scroll'),
+    }),
+  });
 }
 
 async function runSynchronization(record, { retry = false } = {}) {
@@ -415,7 +471,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       assertSynchronizationOwnership(stage);
     }
   };
-  const viewState = record.viewState || captureViewState(documentState);
+  const viewState = record.viewState || await captureViewState(documentState);
   record.viewState = viewState;
   markDocumentSaveState(documentState, 'synchronizing', {
     requestId,
@@ -446,6 +502,12 @@ async function runSynchronization(record, { retry = false } = {}) {
       markLivePdfRevision(documentState, requestedRevision);
     }
     throwIfSaveFaultInjected('after-proxy-install-before-view-restore');
+    if (!record.viewRestored) {
+      throwIfSaveFaultInjected('before-view-restore');
+      await restoreViewState(documentState, viewState);
+      assertOwned('after-view-state-restore');
+      record.viewRestored = true;
+    }
     if (!record.semanticInvalidated) {
       await invalidateSemanticState({
         documentState,
@@ -510,9 +572,6 @@ async function runSynchronization(record, { retry = false } = {}) {
       changedPages,
     });
     assertOwned('after-semantic-preload-restart');
-    throwIfSaveFaultInjected('before-view-restore');
-    await restoreViewState(documentState, viewState);
-    assertOwned('after-view-state-restore');
     throwIfSaveFaultInjected('render-readiness');
     const ready = await waitForEditReadiness({
       documentState,
@@ -583,6 +642,7 @@ export async function synchronizeSavedDocument(input) {
     proxyInstalled: false,
     installResult: null,
     viewState: null,
+    viewRestored: false,
     semanticInvalidated: false,
     changedPages: input.changedPages !== undefined
       ? (input.changedPages === null ? null : positivePages(input.changedPages))

@@ -24,6 +24,10 @@ import {
   markPageEditLayerReady,
   pageEditReadinessSatisfied,
 } from './page-edit-readiness.js';
+import {
+  captureSharedUiLease,
+  noteDocumentViewMutation,
+} from './view-state-transaction.js';
 
 let documentSequence = 0;
 
@@ -437,6 +441,73 @@ test('Save As transition preserves path-owned view, selection, rotations, and se
   assert.equal(appState.currentTool, 'editText');
   assert.equal(appState.search.query, 'coherence');
   assert.deepEqual(appState.search.results, []);
+});
+
+test('saved view merge preserves newer zoom and search while restoring untouched fields', () => {
+  const document = persistedDocument();
+  const appState = {
+    documents: [document],
+    activeDocumentIndex: 0,
+    currentTool: 'editText',
+    search: { isOpen: true, query: 'captured', results: [] },
+  };
+  const snapshot = captureSavedDocumentViewState(document, {
+    appState,
+    ownerActive: true,
+    rendererState: Object.freeze({
+      kind: 'single-viewport',
+      documentId: document.id,
+      pageNum: 2,
+      zoom: 1.5,
+    }),
+  });
+  document.currentPage = 1;
+  document.scale = 4;
+  appState.search.query = 'newer';
+  noteDocumentViewMutation(document, ['zoom', 'search']);
+  const report = restoreSavedDocumentViewState(document, snapshot, {
+    appState,
+    ownerActive: true,
+    sharedUiLease: captureSharedUiLease(document),
+  });
+  assert.equal(document.currentPage, 2);
+  assert.equal(document.scale, 4);
+  assert.equal(appState.search.query, 'newer');
+  assert.deepEqual(report.skipped.map((entry) => entry.field), ['zoom', 'search']);
+  assert.equal(report.rendererPolicy.restoreZoom, false);
+  assert.equal(report.rendererPolicy.restorePan, true);
+});
+
+test('inactive save capture and restore never read or write active shared UI', () => {
+  const documentA = persistedDocument();
+  const documentB = persistedDocument();
+  const appState = {
+    documents: [documentA, documentB],
+    activeDocumentIndex: 1,
+    currentTool: 'hand',
+    search: { isOpen: true, query: 'document-b', results: [1] },
+  };
+  let sharedScrollReads = 0;
+  const scrollContainer = {
+    get scrollLeft() { sharedScrollReads += 1; return 999; },
+    get scrollTop() { sharedScrollReads += 1; return 999; },
+  };
+  const snapshot = captureSavedDocumentViewState(documentA, {
+    appState,
+    scrollContainer,
+    ownerActive: false,
+  });
+  assert.equal(sharedScrollReads, 0);
+  assert.equal(snapshot.activeTool, null);
+  assert.equal(snapshot.search, null);
+
+  const beforeB = structuredClone({ currentTool: appState.currentTool, search: appState.search });
+  const report = restoreSavedDocumentViewState(documentA, snapshot, {
+    appState,
+    ownerActive: false,
+  });
+  assert.deepEqual({ currentTool: appState.currentTool, search: appState.search }, beforeB);
+  assert.deepEqual([...report.restored].sort(), ['mode', 'page', 'rotation', 'spread', 'zoom']);
 });
 
 test('proxy-install failure preserves the saved revision and exposes recovery', async () => {

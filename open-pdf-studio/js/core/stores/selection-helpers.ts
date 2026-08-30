@@ -3,10 +3,14 @@ import { state, getActiveDocument } from '../state.js';
 import { buildStavenreeks } from '../../annotations/stavenreeks.js';
 import { stavenreeksPxPerMm } from '../../annotations/stavenreeks-scale.js';
 import { betonbalkHalfWidthPx } from '../../annotations/betonbalk-scale.js';
+import { noteDocumentViewMutation } from '../../pdf/view-state-transaction.js';
 
 export function clearSelection(): void {
   const doc = getActiveDocument();
   if (doc) {
+    if (doc.selectedAnnotation || doc.selectedAnnotations.length > 0) {
+      noteDocumentViewMutation(doc, ['selection']);
+    }
     doc.selectedAnnotation = null;
     doc.selectedAnnotations = [];
   }
@@ -17,19 +21,24 @@ export function clearSelection(): void {
 export function addToSelection(annotation: Annotation): void {
   const doc = state.documents[state.activeDocumentIndex];
   if (!doc) return;
+  const changed = !doc.selectedAnnotations.includes(annotation)
+    || doc.selectedAnnotation !== annotation;
   if (!doc.selectedAnnotations.includes(annotation)) {
     doc.selectedAnnotations.push(annotation);
   }
   doc.selectedAnnotation = annotation;
+  if (changed) noteDocumentViewMutation(doc, ['selection']);
 }
 
 export function removeFromSelection(annotation: Annotation): void {
   const doc = state.documents[state.activeDocumentIndex];
   if (!doc) return;
+  const changed = doc.selectedAnnotations.includes(annotation);
   doc.selectedAnnotations = doc.selectedAnnotations.filter(a => a !== annotation);
   doc.selectedAnnotation = doc.selectedAnnotations.length > 0
     ? doc.selectedAnnotations[doc.selectedAnnotations.length - 1]
     : null;
+  if (changed) noteDocumentViewMutation(doc, ['selection']);
 }
 
 export function isSelected(annotation: Annotation): boolean {
@@ -40,6 +49,7 @@ export function isSelected(annotation: Annotation): boolean {
 export function selectAllOnPage(): void {
   const doc = state.documents[state.activeDocumentIndex];
   if (!doc) return;
+  noteDocumentViewMutation(doc, ['selection']);
   const pageAnnotations = doc.annotations.filter(a => a.page === doc.currentPage);
   doc.selectedAnnotations = pageAnnotations;
   doc.selectedAnnotation = pageAnnotations.length > 0 ? pageAnnotations[0] : null;

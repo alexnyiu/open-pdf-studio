@@ -33,6 +33,7 @@ import {
   unregisterRenderResource,
 } from '../../pdf/render-resource-budget.js';
 import { recordPerformancePeak } from '../../pdf/performance-metrics.js';
+import { noteDocumentViewMutation } from '../../pdf/view-state-transaction.js';
 import {
   captureRenderPublicationToken,
   recordRejectedRenderPublication,
@@ -260,6 +261,7 @@ function updateVisiblePriorities() {
 
 // Switch between tabs
 export function switchLeftPanelTab(panelId) {
+  if (activeTab() !== panelId) noteDocumentViewMutation(getActiveDocument(), ['panels']);
   switchToLeftPanelTab(panelId);
   refreshTabContent(panelId);
 }
@@ -303,6 +305,7 @@ function refreshTabContent(panelId) {
 
 // Toggle panel collapse/expand
 export function toggleLeftPanel() {
+  noteDocumentViewMutation(getActiveDocument(), ['panels']);
   toggleLeftPanelCollapsed();
 }
 

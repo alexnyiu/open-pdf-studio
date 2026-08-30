@@ -12,6 +12,11 @@ import {
   setFindBarNavDisabled as setNavDisabled,
   setFindBarSearching as setSearching,
 } from '../bridge.js';
+import { noteDocumentViewMutation } from '../pdf/view-state-transaction.js';
+
+function noteSearchMutation() {
+  noteDocumentViewMutation(getActiveDocument(), ['search']);
+}
 
 // Debounce timer for search input
 let searchDebounceTimer = null;
@@ -31,6 +36,7 @@ export function initFindBar() {
  * Open the find bar
  */
 export function openFindBar() {
+  if (!state.search.isOpen) noteSearchMutation();
   setVisible(true);
   state.search.isOpen = true;
 
@@ -44,6 +50,7 @@ export function openFindBar() {
  * Close the find bar
  */
 export function closeFindBar() {
+  if (state.search.isOpen) noteSearchMutation();
   setVisible(false);
   state.search.isOpen = false;
 
@@ -75,6 +82,7 @@ export function toggleFindBar() {
  */
 export function handleSearchInput(value) {
   const query = value;
+  if (state.search.query !== query) noteSearchMutation();
   state.search.query = query;
 
   // Cancel any in-progress search
@@ -166,6 +174,8 @@ export async function onFindPrevious() {
  * @param {{ matchCase: boolean, wholeWord: boolean }} options
  */
 export function onOptionsChange(options) {
+  if (state.search.matchCase !== options.matchCase
+      || state.search.wholeWord !== options.wholeWord) noteSearchMutation();
   state.search.matchCase = options.matchCase;
   state.search.wholeWord = options.wholeWord;
 
@@ -189,6 +199,7 @@ export function onOptionsChange(options) {
  * @param {boolean} highlightAll
  */
 export function onHighlightChange(highlightAll) {
+  if (state.search.highlightAll !== highlightAll) noteSearchMutation();
   state.search.highlightAll = highlightAll;
   highlightResults();
 }
@@ -300,7 +311,10 @@ async function navigateToResult(result) {
   const doc = getActiveDocument();
   const docPage = doc ? doc.currentPage : 1;
   if (result.pageNum !== docPage) {
-    if (doc) doc.currentPage = result.pageNum;
+    if (doc) {
+      noteDocumentViewMutation(doc, ['page', ...(doc.viewMode === 'continuous' ? ['scroll'] : [])]);
+      doc.currentPage = result.pageNum;
+    }
 
     if (getActiveDocument()?.viewMode === 'continuous') {
       // Scroll to page in continuous mode
@@ -573,5 +587,6 @@ export async function onReplaceAll() {
 }
 
 export function handleReplaceInput(value) {
+  if (state.search.replaceQuery !== value) noteSearchMutation();
   state.search.replaceQuery = value;
 }

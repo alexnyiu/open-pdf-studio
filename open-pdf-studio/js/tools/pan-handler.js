@@ -1,4 +1,5 @@
-import { state } from '../core/state.js';
+import { state, getActiveDocument } from '../core/state.js';
+import { noteDocumentViewMutation } from '../pdf/view-state-transaction.js';
 
 // Pan handler — manages legacy (non-viewport) scroll-based panning.
 // Cursor is reactive: it follows state.isPanning + state.isMiddleButtonPanning
@@ -39,6 +40,7 @@ export function handleMiddleButtonPanEnd(e) {
 
 export function startPan(e, isMiddleButton) {
   const scrollContainer = getScrollContainer();
+  noteDocumentViewMutation(getActiveDocument(), ['pan']);
   state.isPanning = true;
   if (isMiddleButton) state.isMiddleButtonPanning = true;
   state.panStartX = e.clientX;
@@ -52,6 +54,7 @@ export function startPan(e, isMiddleButton) {
 
 export function startContinuousPan(e, isMiddleButton) {
   const scrollContainer = getScrollContainer();
+  noteDocumentViewMutation(getActiveDocument(), ['scroll', 'page']);
   state.isPanning = true;
   if (isMiddleButton) state.isMiddleButtonPanning = true;
   state.panStartX = e.clientX;

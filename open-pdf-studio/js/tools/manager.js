@@ -10,6 +10,7 @@ import { findAnnotationAt } from '../annotations/geometry.js';
 import { findHandleAt } from '../annotations/handles.js';
 import { cancelParametricSymbolInput } from './parametric-symbol-editing.js';
 import { getActiveTextEditSession } from '../text/text-edit-session.js';
+import { noteDocumentViewMutation } from '../pdf/view-state-transaction.js';
 
 // Tools that are always allowed (view-only, non-modifying)
 const READONLY_ALLOWED_TOOLS = new Set(['select', 'hand']);
@@ -252,6 +253,8 @@ export function setTool(tool) {
     import('./text-edit-tool.js').then(m => m.deactivateEditTextTool());
   }
 
+  const owner = getActiveDocument();
+  if (state.currentTool !== tool) noteDocumentViewMutation(owner, ['tool']);
   state.currentTool = tool;
   const defaultsRequest = ++toolDefaultsRequestToken;
   const isCurrentDefaultsRequest = () =>

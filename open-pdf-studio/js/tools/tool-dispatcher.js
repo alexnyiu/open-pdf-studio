@@ -28,6 +28,7 @@ import { getAnnotationType } from '../plugins/annotation-type-registry.js';
 import { hideMenu } from '../bridge.js';
 import { syncDocScale } from '../annotations/scale-bar.js';
 import { recalculateAllMeasurements } from '../annotations/measurement.js';
+import { noteDocumentViewMutation } from '../pdf/view-state-transaction.js';
 
 function redraw() {
   if (getActiveDocument()?.viewMode === 'continuous') redrawContinuous();
@@ -43,6 +44,13 @@ export function handlePointerDown(e) {
 
   // Dismiss context menu on any canvas click (left or right)
   hideMenu();
+  if (e.button === 0) {
+    const owner = getActiveDocument();
+    noteDocumentViewMutation(owner, [
+      'selection',
+      ...(owner?.viewMode === 'continuous' ? ['page'] : []),
+    ]);
+  }
 
   // Reclaim focus from a non-canvas text input (assistant chat, a properties
   // field, the OpenAEC controls, etc.) when the user clicks the page. Without

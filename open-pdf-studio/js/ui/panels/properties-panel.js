@@ -13,6 +13,7 @@ import {
   setPropertiesPanelCollapsed as setPanelCollapsed,
   propertiesPanelCollapsed as panelCollapsed,
 } from '../../bridge.js';
+import { noteDocumentViewMutation } from '../../pdf/view-state-transaction.js';
 
 function redraw() {
   if (getActiveDocument()?.viewMode === 'continuous') {
@@ -43,11 +44,13 @@ export function hideProperties() {
 
 // Collapse the properties panel (keeps the vertical strip visible)
 export function closePropertiesPanel() {
+  if (!panelCollapsed()) noteDocumentViewMutation(getActiveDocument(), ['panels']);
   setPanelCollapsed(true);
 }
 
 // Toggle properties panel expanded/collapsed (for keyboard shortcut F12 and ribbon button)
 export function togglePropertiesPanel() {
+  noteDocumentViewMutation(getActiveDocument(), ['panels']);
   if (!panelVisible()) {
     setPanelVisible(true);
     setPanelCollapsed(false);
