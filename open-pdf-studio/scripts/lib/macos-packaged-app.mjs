@@ -24,13 +24,26 @@ function waitForExit(child) {
   return new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
 }
 
-async function rpc(endpoint, id, method, params = {}) {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
-    signal: AbortSignal.timeout(1_000),
-  });
+export async function callMcpRpc(endpoint, id, method, params = {}, { timeoutMs = 30_000 } = {}) {
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    if (error?.name === 'TimeoutError') {
+      const timeoutError = new Error(`MCP ${method} timed out after ${timeoutMs}ms`, { cause: error });
+      timeoutError.name = 'McpRpcTimeoutError';
+      timeoutError.code = 'MCP_RPC_TIMEOUT';
+      timeoutError.method = method;
+      timeoutError.timeoutMs = timeoutMs;
+      throw timeoutError;
+    }
+    throw error;
+  }
   if (!response.ok) throw new Error(`MCP HTTP ${response.status}`);
   const body = await response.json();
   if (body.error) throw new Error(`MCP ${body.error.code}: ${body.error.message}`);
@@ -197,7 +210,7 @@ export async function startPackagedApp({
   });
 
   const readiness = await awaitPackagedReadiness({
-    initialize: () => rpc(endpoint, 1, 'initialize'),
+    initialize: () => callMcpRpc(endpoint, 1, 'initialize', {}, { timeoutMs: 1_000 }),
     launchOutcome,
     timeoutMs: startupTimeoutMs,
   });
@@ -259,7 +272,13 @@ export async function startPackagedApp({
       return logs.join('').slice(mark);
     },
     async callTool(name, arguments_ = {}) {
-      const result = await rpc(endpoint, ++requestId, 'tools/call', { name, arguments: arguments_ });
+      const result = await callMcpRpc(
+        endpoint,
+        ++requestId,
+        'tools/call',
+        { name, arguments: arguments_ },
+        { timeoutMs: 30_000 },
+      );
       syncAppLogs();
       const text = result?.content?.find((item) => item.type === 'text')?.text;
       if (typeof text !== 'string') throw new Error(`${name} returned no JSON text payload`);

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import test from 'node:test';
 
-import { awaitPackagedReadiness } from './macos-packaged-app.mjs';
+import { awaitPackagedReadiness, callMcpRpc } from './macos-packaged-app.mjs';
 
 function deferred() {
   let resolve;
@@ -71,4 +72,31 @@ test('packaged launch succeeds only after WebView readiness', async () => {
   assert.equal(result.status, 'ready');
   assert.equal(result.stage, 'webview-ready');
   assert.equal(result.initialized, initialized);
+});
+
+test('runtime MCP calls use an independent bounded timeout', async (context) => {
+  const server = http.createServer((_request, response) => {
+    setTimeout(() => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { ok: true } }));
+    }, 25);
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  context.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  const endpoint = `http://127.0.0.1:${address.port}/mcp`;
+
+  await assert.rejects(
+    callMcpRpc(endpoint, 1, 'tools/call', {}, { timeoutMs: 5 }),
+    (error) => error.code === 'MCP_RPC_TIMEOUT'
+      && error.method === 'tools/call'
+      && error.timeoutMs === 5,
+  );
+  assert.deepEqual(
+    await callMcpRpc(endpoint, 2, 'tools/call', {}, { timeoutMs: 100 }),
+    { ok: true },
+  );
 });
