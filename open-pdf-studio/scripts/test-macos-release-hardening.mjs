@@ -211,7 +211,7 @@ async function signAdHocRuntime(target, entitlements = null) {
   await requiredCommand('/usr/bin/codesign', args);
 }
 
-async function verifyHardenedRuntimeApp(appPath, tempRoot) {
+async function verifyHardenedRuntimeApp(appPath, tempRoot, artifactDir) {
   const copyRoot = path.join(tempRoot, 'hardened-app');
   const copiedApp = path.join(copyRoot, 'Open PDF Studio.app');
   await mkdir(copyRoot, { recursive: true });
@@ -245,6 +245,8 @@ async function verifyHardenedRuntimeApp(appPath, tempRoot) {
       OPS_TEST_SESSION_PATH: path.join(tempRoot, 'hardened-session.json'),
       OPS_TEST_OCR_CACHE_DIR: path.join(tempRoot, 'hardened-cache'),
     },
+    artifactDir,
+    launchLabel: 'ocr-release-hardening',
   });
   try {
     const tabs = await app.callTool('app_list_tabs');
@@ -369,7 +371,11 @@ async function main() {
     return { source, built, packagedLoadProof: 'covered by the packaged OCR workflow suite' };
   });
 
-  await check('hardenedRuntimeCompatibility', () => verifyHardenedRuntimeApp(appPath, tempRoot));
+  await check('hardenedRuntimeCompatibility', () => verifyHardenedRuntimeApp(
+    appPath,
+    tempRoot,
+    path.join(path.dirname(options.outputPath), 'launch-logs'),
+  ));
 
   let signatureDisplay = '';
   await check('codeSigningValidation', async () => {

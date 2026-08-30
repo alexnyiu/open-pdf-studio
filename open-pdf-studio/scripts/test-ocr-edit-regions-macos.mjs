@@ -8,7 +8,6 @@ import {
   readFile,
   writeFile,
 } from 'node:fs/promises';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -19,6 +18,7 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import { inspectOwnedScannedTextRepairLayer } from '../js/ocr/editing/pdf-repair-layer.js';
 import { inspectOwnedInvisibleOcrLayer } from '../js/ocr/pdf-writer-proof.js';
+import { startPackagedApp } from './lib/macos-packaged-app.mjs';
 
 const reflowMode = process.env.OPDS_OCR_EDIT_ACCEPTANCE_MODE === 'reflow';
 assert.equal(process.platform, 'darwin', `${reflowMode ? 'paragraph reflow' : 'fixed-region'} OCR editing acceptance is macOS-only`);
@@ -45,8 +45,6 @@ const workingPdf = path.join(runDir, reflowMode ? 'reflow-working.pdf' : 'fixed-
 const firstSavedPdf = path.join(runDir, reflowMode ? 'reflow-first-save.pdf' : 'fixed-region-first-save.pdf');
 const sessionPath = path.join(runDir, 'session.json');
 const copyHelper = path.join(runDir, 'macos-real-text-copy');
-const stdoutPath = path.join(runDir, 'packaged-app.stdout.log');
-const stderrPath = path.join(runDir, 'packaged-app.stderr.log');
 const reportPath = path.join(evidenceDir, 'acceptance.json');
 const replacementLines = reflowMode
   ? ['Café Ελληνικά Привет reflows safely']
@@ -55,45 +53,16 @@ const replacementText = replacementLines.join('\n');
 const replacementTokens = reflowMode
   ? ['Café', 'Ελληνικά', 'Привет', 'reflows', 'safely']
   : replacementLines;
-const logs = [];
-let requestId = 0;
-let endpoint;
 let application;
 let applicationPid;
-let applicationState;
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const normalize = (value) => String(value || '').normalize('NFKC').replace(/\s+/gu, ' ').trim();
 const occurrences = (text, token) => text.split(token).length - 1;
 
-async function availablePort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return typeof address === 'object' && address ? address.port : 0;
-}
-
-async function rpc(method, params = {}) {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method, params }),
-  });
-  if (!response.ok) throw new Error(`MCP HTTP ${response.status}`);
-  const body = await response.json();
-  if (body.error) throw new Error(`MCP ${body.error.code}: ${body.error.message}`);
-  return body.result;
-}
-
 async function callTool(name, arguments_ = {}) {
-  const result = await rpc('tools/call', { name, arguments: arguments_ });
-  const payload = result?.content?.find((entry) => entry.type === 'text')?.text;
-  if (typeof payload !== 'string') throw new Error(`${name} returned no JSON payload`);
-  return JSON.parse(payload);
+  if (!application) throw new Error('packaged application is not ready');
+  return application.callTool(name, arguments_);
 }
 
 async function waitUntil(description, probe, timeoutMs = 30_000, intervalMs = 75) {
@@ -111,19 +80,6 @@ async function waitUntil(description, probe, timeoutMs = 30_000, intervalMs = 75
     await delay(intervalMs);
   }
   throw new Error(`timed out waiting for ${description}${latestError ? `: ${latestError.message}` : `: ${JSON.stringify(latest)}`}`);
-}
-
-async function waitForMcp() {
-  return waitUntil('packaged app MCP', async () => {
-    if (applicationState?.exited) throw new Error(`app exited\n${logs.join('')}`);
-    try {
-      const result = await rpc('initialize');
-      applicationPid = result?._meta?.openPdfStudio?.processId ?? applicationPid;
-      return result?._meta?.openPdfStudio?.webviewReady ? result : null;
-    } catch {
-      return null;
-    }
-  }, 90_000, 200);
 }
 
 const ui = (selector) => callTool('app_ui_state', { selector, searchTabs: false });
@@ -365,21 +321,8 @@ async function chromeCopy(pdfPath) {
   }
 }
 
-function waitForExit(child) {
-  if (applicationState?.exited) return Promise.resolve(applicationState);
-  return new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
-}
-
 async function terminateApplication() {
-  if (!application || applicationState?.exited) return;
-  try {
-    if (applicationPid) process.kill(applicationPid, 'SIGTERM');
-    else process.kill(-application.pid, 'SIGTERM');
-  } catch { try { application.kill('SIGTERM'); } catch {} }
-  await Promise.race([waitForExit(application), delay(2000)]);
-  if (!applicationState.exited) {
-    try { process.kill(applicationPid || application.pid, 'SIGKILL'); } catch {}
-  }
+  await application?.stop?.();
 }
 
 await Promise.all([
@@ -414,28 +357,15 @@ const evidence = {
 };
 
 try {
-  const port = await availablePort();
-  endpoint = `http://127.0.0.1:${port}/mcp`;
-  application = spawn('/usr/bin/open', [
-    '-n', '-W', '--stdout', stdoutPath, '--stderr', stderrPath,
-    '--env', 'OPS_ENABLE_MCP=1',
-    '--env', 'OPDS_DETACHED=1',
-    '--env', `OPS_TEST_SESSION_PATH=${sessionPath}`,
-    appBundlePath,
-    '--args', '--mcp-server', '--mcp-port', String(port),
-  ], {
+  application = await startPackagedApp({
+    appBundle: appBundlePath,
     cwd: projectDir,
-    env: process.env,
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { OPS_TEST_SESSION_PATH: sessionPath },
+    artifactDir: path.join(evidenceDir, 'launch-logs'),
+    launchLabel: reflowMode ? 'ocr-reflow' : 'ocr-edit-regions',
+    startupTimeoutMs: 90_000,
   });
-  applicationState = { exited: false, code: null, signal: null };
-  application.stdout.on('data', (chunk) => logs.push(chunk.toString()));
-  application.stderr.on('data', (chunk) => logs.push(chunk.toString()));
-  application.once('exit', (code, signal) => {
-    applicationState = { exited: true, code, signal };
-  });
-  await waitForMcp();
+  applicationPid = application.processId;
   await callTool('app_set_window_size', { width: 1320, height: 900 });
   await openPdf(workingPdf);
 
@@ -609,8 +539,8 @@ try {
 } catch (error) {
   evidence.status = 'fail';
   evidence.error = error instanceof Error ? error.stack || error.message : String(error);
-  evidence.logs = logs.join('').slice(-20_000);
-  if (endpoint && !applicationState?.exited) {
+  evidence.logs = application?.logsAfter?.(0).slice(-20_000) || '';
+  if (application && !application.state.exited) {
     evidence.runtimeDiagnostics = await Promise.all([
       ui('.pdf-text-editor').catch(() => null),
       ui('.message-dialog').catch(() => null),

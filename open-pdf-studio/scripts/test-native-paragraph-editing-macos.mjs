@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
 import { access, copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +10,7 @@ import { promisify } from 'node:util';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PDFDocument } from 'pdf-lib';
 import { readOwnedTextEditManifest } from '../js/text/owned-edit-manifest.js';
+import { startPackagedApp } from './lib/macos-packaged-app.mjs';
 
 assert.equal(process.platform, 'darwin', 'native paragraph packaged acceptance is macOS-only');
 
@@ -57,15 +56,8 @@ const colorSaveAsPdf = path.join(runDir, 'native-side-by-side-save-as.pdf');
 const widthSaveAsPdf = path.join(runDir, 'native-width-compensation-save-as.pdf');
 const realWorkingPdf = path.join(runDir, 'native-real-pdf-page-3-working.pdf');
 const sessionPath = path.join(runDir, 'session.json');
-const stdoutPath = path.join(runDir, 'app.stdout.log');
-const stderrPath = path.join(runDir, 'app.stderr.log');
-let endpoint;
-let requestId = 0;
 let application;
 let applicationPid;
-let exited = false;
-let stdoutLog;
-let stderrLog;
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const automaticSaveIsDurable = (viewport) => {
@@ -111,33 +103,9 @@ async function ownedManifestIdentity(pdfPath) {
   };
 }
 
-async function availablePort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return address.port;
-}
-
-async function rpc(method, params = {}) {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method, params }),
-  });
-  const body = await response.json();
-  if (body.error) throw new Error(`MCP ${body.error.code}: ${body.error.message}`);
-  return body.result;
-}
-
 async function callTool(name, arguments_ = {}) {
-  const result = await rpc('tools/call', { name, arguments: arguments_ });
-  const payload = result?.content?.find((entry) => entry.type === 'text')?.text;
-  if (typeof payload !== 'string') throw new Error(`${name} returned no JSON payload`);
-  return JSON.parse(payload);
+  if (!application) throw new Error('packaged application is not ready');
+  return application.callTool(name, arguments_);
 }
 
 async function waitUntil(description, probe, timeoutMs = 30_000) {
@@ -215,16 +183,43 @@ async function blankPagePointerClick() {
   return { clickResult, textLayer, viewport };
 }
 
-async function realTextEditorInteraction(mode, ...arguments_) {
+async function realTextEditorInteraction(mode, offset, insertedText) {
+  assert.equal(mode, 'insert', 'trusted editor helper only accepts deterministic insertion mode');
+  const editorBefore = await waitUi('.pdf-text-editor', (value) => (
+    value.found && value.visible && value.focused
+      && value.rect?.width > 2 && value.rect?.height > 2
+      && value.pageTextEditHost?.editorMountGeneration != null
+  ), 5_000);
+  const beforeText = String(editorBefore.value ?? editorBefore.text ?? '');
+  const mountGeneration = String(editorBefore.pageTextEditHost.editorMountGeneration);
+  const x = editorBefore.rect.x + Math.min(editorBefore.rect.width / 2, 120);
+  const y = editorBefore.rect.y + Math.min(editorBefore.rect.height / 4, 12);
   const { stdout } = await execFileAsync(realTextEditHelper, [
-    String(applicationPid), mode, ...arguments_.map(String),
+    String(applicationPid), mode, String(x), String(y), String(offset), String(insertedText),
   ], { maxBuffer: 1024 * 1024 });
   const result = JSON.parse(stdout);
   assert.equal(result.authorization?.accessibilityTrusted, true,
     'trusted editor interaction requires macOS Accessibility permission');
   assert.equal(result.authorization?.postEventTrusted, true,
     'trusted editor interaction requires macOS Input Monitoring permission');
-  return result;
+  const editorAfter = await ui('.pdf-text-editor');
+  const afterText = String(editorAfter.value ?? editorAfter.text ?? '');
+  const expectedText = `${beforeText.slice(0, offset)}${insertedText}${beforeText.slice(offset)}`;
+  const deliveryEvidence = {
+    targetPid: applicationPid,
+    mountGeneration,
+    coordinateOrigin: result.coordinateSpace,
+    editorBefore,
+    helper: result,
+    editorAfter,
+    expectedText,
+  };
+  if (!editorAfter.found || !editorAfter.focused
+      || String(editorAfter.pageTextEditHost?.editorMountGeneration) !== mountGeneration
+      || afterText === beforeText || afterText !== expectedText) {
+    throw new Error(`trusted input delivery failed: ${JSON.stringify(deliveryEvidence)}`);
+  }
+  return deliveryEvidence;
 }
 
 async function openPdf(pdfPath) {
@@ -374,32 +369,17 @@ try {
     },
     maxBuffer: 1024 * 1024,
   });
-  const port = await availablePort();
-  endpoint = `http://127.0.0.1:${port}/mcp`;
-  stdoutLog = createWriteStream(stdoutPath, { flags: 'w' });
-  stderrLog = createWriteStream(stderrPath, { flags: 'w' });
-  application = spawn(appExecutable, ['--mcp-server', '--mcp-port', String(port)], {
+  application = await startPackagedApp({
+    appBinary: appExecutable,
     cwd: projectDir,
     env: {
-      ...process.env,
-      OPS_ENABLE_MCP: '1',
-      OPDS_DETACHED: '1',
       OPS_TEST_SESSION_PATH: sessionPath,
     },
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    artifactDir: path.join(artifactRoot, 'launch-logs'),
+    launchLabel: 'native-text-editing',
+    startupTimeoutMs: 90_000,
   });
-  applicationPid = application.pid;
-  application.stdout.pipe(stdoutLog);
-  application.stderr.pipe(stderrLog);
-  application.once('exit', () => { exited = true; });
-  const initialized = await waitUntil('packaged app MCP', async () => {
-    if (exited) throw new Error('packaged app exited');
-    const result = await rpc('initialize');
-    applicationPid = result?._meta?.openPdfStudio?.processId || applicationPid;
-    return result?._meta?.openPdfStudio?.webviewReady ? result : null;
-  }, 90_000);
-  assert.ok(initialized);
+  applicationPid = application.processId;
   await callTool('app_set_window_size', { width: 1320, height: 900 });
   await openPdf(workingPdf);
   await setEditTool();
@@ -485,12 +465,10 @@ try {
   }
 
   const ownedSelector = '.textLayer span[data-owned-text-edit-hit="true"]';
-  const interiorEditor = await openEditor(ownedSelector, 'Packaged first line');
+  await openEditor(ownedSelector, 'Packaged first line');
   const beforeInteriorSha256 = await sha256(workingPdf);
   const physicalInsert = await realTextEditorInteraction(
     'insert',
-    interiorEditor.rect.x + Math.min(interiorEditor.rect.width / 2, 120),
-    interiorEditor.rect.y + Math.min(interiorEditor.rect.height / 4, 12),
     4,
     'MID',
   );
@@ -1055,12 +1033,5 @@ try {
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   throw error;
 } finally {
-  if (application && !exited) {
-    try { process.kill(-application.pid, 'SIGTERM'); } catch {
-      try { process.kill(applicationPid || application.pid, 'SIGTERM'); } catch {}
-    }
-    await delay(500);
-  }
-  stdoutLog?.end();
-  stderrLog?.end();
+  await application?.stop?.();
 }

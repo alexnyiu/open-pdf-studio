@@ -102,13 +102,24 @@ guard let application = NSRunningApplication(processIdentifier: pid) else {
     fail("application process \(pid) is not running")
 }
 var activated = application.isActive
-for _ in 0..<10 where !activated {
+for _ in 0..<20 where !activated {
     _ = application.unhide()
     activated = application.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         || application.isActive
     if !activated { usleep(100_000) }
 }
 guard activated else { fail("could not activate application process \(pid)") }
+var frontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+for _ in 0..<20 where frontmostPid != pid {
+    _ = application.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+    usleep(100_000)
+    frontmostPid = NSWorkspace.shared.frontmostApplication?.processIdentifier
+}
+guard frontmostPid == pid else {
+    fail("application process \(pid) did not become frontmost; frontmost=\(frontmostPid ?? -1)")
+}
+guard AXIsProcessTrusted() else { fail("macOS Accessibility permission is unavailable") }
+guard CGPreflightPostEventAccess() else { fail("macOS Input Monitoring permission is unavailable") }
 usleep(200_000)
 
 guard let rawWindows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID)
@@ -143,6 +154,8 @@ let point = CGPoint(
 
 var payload: [String: Any] = [
     "mode": mode,
+    "targetPid": pid,
+    "frontmostPid": frontmostPid ?? -1,
     "point": ["x": point.x, "y": point.y],
     "authorization": [
         "accessibilityTrusted": AXIsProcessTrusted(),
@@ -160,25 +173,50 @@ var payload: [String: Any] = [
         "height": windowBounds.height,
     ],
 ]
+var eventSequence: [String] = []
+
+func focusedRole() -> String? {
+    guard let rawFocused = axAttribute(
+        accessibilityApplication,
+        kAXFocusedUIElementAttribute as CFString
+    ), CFGetTypeID(rawFocused) == AXUIElementGetTypeID() else { return nil }
+    let focused = rawFocused as! AXUIElement
+    return axString(focused, kAXRoleAttribute as CFString)
+}
 
 if mode == "insert" {
     guard CommandLine.arguments.count == 7 else { fail("insert requires x y offset text") }
     let offset = Int(number(5, "offset"))
     guard offset >= 0 else { fail("offset must be non-negative") }
     let text = CommandLine.arguments[6]
+    postMouseClick(point)
+    eventSequence.append("physical-click-editor-point")
+    usleep(100_000)
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+        fail("target application lost frontmost status after editor click")
+    }
+    payload["focusedAccessibilityRole"] = focusedRole() ?? NSNull()
     postKey(0, flags: .maskCommand) // Command+A selects the current editor.
+    eventSequence.append("command-a")
     postKey(123) // Left collapses the selection to the start.
+    eventSequence.append("left-to-selection-start")
     for _ in 0..<offset { postKey(124) } // Right advances to the interior caret.
+    eventSequence.append("right-by-\(offset)")
     postUnicode(text)
+    eventSequence.append("unicode-insert")
     payload["offset"] = offset
     payload["text"] = text
 } else if mode == "click" {
     postMouseClick(point)
+    eventSequence.append("physical-click")
 } else {
     fail("unsupported mode: \(mode)")
 }
 
 usleep(250_000)
+payload["frontmostPidAfterEvents"] = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1
+payload["focusedAccessibilityRoleAfterEvents"] = focusedRole() ?? NSNull()
+payload["eventSequence"] = eventSequence
 let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
 FileHandle.standardOutput.write(data)
 FileHandle.standardOutput.write(Data("\n".utf8))

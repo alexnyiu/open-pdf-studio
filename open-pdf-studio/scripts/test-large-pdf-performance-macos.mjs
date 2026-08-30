@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
-import { closeSync, openSync } from 'node:fs';
-import { access, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
-import net from 'node:net';
+import { execFile } from 'node:child_process';
+import { access, copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
 import { evaluateLargePdfPerformanceReport } from './verify-large-pdf-performance-report.mjs';
+import { startPackagedApp } from './lib/macos-packaged-app.mjs';
 
 assert.equal(process.platform, 'darwin', 'large-PDF packaged performance acceptance is macOS-only');
 
@@ -66,17 +65,6 @@ async function pixelDifferencePercent(leftPng, rightPng) {
     if (differs) differingPixels += 1;
   }
   return (differingPixels / (left.info.width * left.info.height)) * 100;
-}
-
-async function availablePort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return address.port;
 }
 
 async function gitHead() {
@@ -191,38 +179,12 @@ async function runOnce(options) {
     writeFile(stdoutPath, ''),
     writeFile(stderrPath, ''),
   ]);
-  const port = await availablePort();
-  const endpoint = `http://127.0.0.1:${port}/mcp`;
-  let requestId = 0;
+  let application = null;
   let applicationPid = null;
-  let exited = false;
-  const stdoutFd = openSync(stdoutPath, 'a');
-  const stderrFd = openSync(stderrPath, 'a');
-  const application = spawn(executablePath, [
-    '--mcp-server', '--mcp-port', String(port),
-  ], {
-    cwd: projectDir,
-    env: { ...process.env, OPS_ENABLE_MCP: '1', OPDS_DETACHED: '1' },
-    stdio: ['ignore', stdoutFd, stderrFd],
-  });
-  application.once('exit', () => { exited = true; });
-
-  async function rpc(method, params = {}) {
-    const response = await fetch(endpoint, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method, params }),
-    });
-    if (!response.ok) throw new Error(`MCP HTTP ${response.status}`);
-    const body = await response.json();
-    if (body.error) throw new Error(`MCP ${body.error.code}: ${body.error.message}`);
-    return body.result;
-  }
 
   async function callTool(name, arguments_ = {}) {
-    const result = await rpc('tools/call', { name, arguments: arguments_ });
-    const payload = result?.content?.find((entry) => entry.type === 'text')?.text;
-    if (typeof payload !== 'string') throw new Error(`${name} returned no JSON payload`);
-    return JSON.parse(payload);
+    if (!application) throw new Error('packaged application is not ready');
+    return application.callTool(name, arguments_);
   }
 
   async function waitUntil(description, probe, timeoutMs = 60_000) {
@@ -252,13 +214,14 @@ async function runOnce(options) {
   };
 
   try {
-    const initialized = await waitUntil('packaged app MCP', async () => {
-      if (exited) throw new Error('packaged app exited before MCP initialization');
-      const value = await rpc('initialize');
-      applicationPid = value?._meta?.openPdfStudio?.processId || applicationPid;
-      return value?._meta?.openPdfStudio?.webviewReady ? value : null;
-    }, 90_000);
-    assert.ok(initialized);
+    application = await startPackagedApp({
+      appBundle: options.appBundle,
+      cwd: projectDir,
+      artifactDir: path.join(outputDir, 'launch-logs'),
+      launchLabel: 'large-pdf-performance',
+      startupTimeoutMs: 90_000,
+    });
+    applicationPid = application.processId;
     await callTool('app_set_window_size', { width: 1440, height: 960, keepVisible: true });
     await callTool('app_clear_caches');
     const processStartRssBytes = await sampleRss('process-start');
@@ -685,14 +648,13 @@ async function runOnce(options) {
     await writeFile(options.outputPath, `${JSON.stringify(report, null, 2)}\n`);
     throw error;
   } finally {
-    if (applicationPid) {
-      try { process.kill(applicationPid, 'SIGTERM'); } catch {}
-    } else if (!exited) {
-      try { application.kill('SIGTERM'); } catch {}
+    if (application) {
+      await Promise.all([
+        copyFile(application.appStdoutPath, stdoutPath).catch(() => {}),
+        copyFile(application.appStderrPath, stderrPath).catch(() => {}),
+      ]);
     }
-    await delay(250);
-    try { closeSync(stdoutFd); } catch {}
-    try { closeSync(stderrFd); } catch {}
+    await application?.stop?.();
   }
 }
 

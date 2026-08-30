@@ -217,6 +217,8 @@ async function runCoverage(options) {
       appBinary: options.appBinary,
       cwd: projectDir,
       env: { OPS_TEST_SESSION_PATH: path.join(runDir, 'session.json') },
+      artifactDir: path.join(manifestDir, 'launch-logs'),
+      launchLabel: 'editor-coverage',
     });
     const call = (name, args = {}) => app.callTool(name, args);
 

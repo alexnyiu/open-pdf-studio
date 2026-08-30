@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   access,
@@ -13,11 +13,11 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { startPackagedApp } from './lib/macos-packaged-app.mjs';
 
 assert.equal(process.platform, 'darwin', 'packaged safe-save gate is macOS-only');
 
@@ -32,66 +32,6 @@ const evidenceDir = path.join(projectDir, 'output', 'ocr-safe-save-packaged');
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
-}
-
-async function availablePort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
-  await new Promise((resolve) => server.close(resolve));
-  return port;
-}
-
-function waitForExit(child) {
-  return new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
-}
-
-async function terminateProcessTree(child, childState) {
-  if (childState.exited) return;
-  try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch {} }
-  await Promise.race([waitForExit(child), new Promise((resolve) => setTimeout(resolve, 1500))]);
-  if (!childState.exited) {
-    try { process.kill(-child.pid, 'SIGKILL'); } catch {}
-  }
-}
-
-async function rpc(endpoint, id, method, params = {}) {
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
-  });
-  if (!response.ok) throw new Error(`MCP HTTP ${response.status}`);
-  const body = await response.json();
-  if (body.error) throw new Error(`MCP ${body.error.code}: ${body.error.message}`);
-  return body.result;
-}
-
-async function waitForMcp(endpoint, childState, logs) {
-  const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) {
-    if (childState.exited) throw new Error(`packaged app exited before MCP startup\n${logs.join('')}`);
-    try {
-      const result = await rpc(endpoint, 1, 'initialize');
-      if (result?._meta?.openPdfStudio?.webviewReady === true) return;
-    } catch (_) {}
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(`timed out waiting for packaged app MCP\n${logs.join('')}`);
-}
-
-function toolCaller(endpoint) {
-  let id = 1;
-  return async (name, arguments_ = {}) => {
-    const result = await rpc(endpoint, ++id, 'tools/call', { name, arguments: arguments_ });
-    const text = result?.content?.find((item) => item.type === 'text')?.text;
-    if (typeof text !== 'string') throw new Error(`${name} returned no JSON text payload`);
-    return JSON.parse(text);
-  };
 }
 
 async function extractedPages(pdfPath) {
@@ -142,27 +82,16 @@ await Promise.all([
 await chmod(inPlacePath, 0o640);
 await execFileAsync('/usr/bin/xattr', ['-w', 'com.openpdfstudio.safe-save-test', 'preserve-me', inPlacePath]);
 
-const port = await availablePort();
-const endpoint = `http://127.0.0.1:${port}/mcp`;
-const child = spawn(appPath, ['--mcp-server', '--mcp-port', String(port)], {
+const application = await startPackagedApp({
+  appBinary: appPath,
   cwd: projectDir,
-  env: { ...process.env, OPS_ENABLE_MCP: '1' },
-  detached: true,
-  stdio: ['ignore', 'pipe', 'pipe'],
+  artifactDir: path.join(evidenceDir, 'launch-logs'),
+  launchLabel: 'ocr-safe-save',
+  startupTimeoutMs: 90_000,
 });
-const childState = { exited: false };
-const logs = [];
-const capture = (chunk) => {
-  logs.push(chunk.toString());
-  while (logs.join('').length > 256 * 1024) logs.shift();
-};
-child.stdout.on('data', capture);
-child.stderr.on('data', capture);
-child.on('exit', () => { childState.exited = true; });
 
 try {
-  await waitForMcp(endpoint, childState, logs);
-  const callTool = toolCaller(endpoint);
+  const callTool = (name, arguments_ = {}) => application.callTool(name, arguments_);
   const opened = await callTool('app_open_pdf', { path: inPlacePath });
   assert.equal(opened.ok, true, opened.error);
   const saved = await callTool('app_save_pdf');
@@ -240,8 +169,9 @@ try {
   await writeFile(path.join(evidenceDir, 'latest.json'), `${JSON.stringify(result, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 } catch (error) {
-  if (logs.length) error.message += `\nPackaged app output:\n${logs.join('')}`;
+  const logs = application.logsAfter(0);
+  if (logs) error.message += `\nPackaged app output:\n${logs}`;
   throw error;
 } finally {
-  await terminateProcessTree(child, childState);
+  await application.stop();
 }

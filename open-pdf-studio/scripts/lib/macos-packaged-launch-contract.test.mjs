@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+const source = (relativePath) => readFile(new URL(relativePath, import.meta.url), 'utf8');
+
+test('packaged launcher uses Launch Services and retains structured failure logs', async () => {
+  const launcher = await source('./macos-packaged-app.mjs');
+  assert.match(launcher, /spawn\('\/usr\/bin\/open', openArguments/u);
+  assert.match(launcher, /const openArguments = \['-n', '-W'/u);
+  assert.match(launcher, /status: readiness\.status,[\s\S]*code:[\s\S]*signal:/u);
+  assert.match(launcher, /stdoutPath: appStdoutPath,[\s\S]*stderrPath: appStderrPath/u);
+  assert.match(launcher, /writeFile\(failureEvidencePath/u);
+  const failureBranch = launcher.slice(
+    launcher.indexOf("if (readiness.status !== 'ready')"),
+    launcher.indexOf('\n  let requestId = 1;'),
+  );
+  assert.doesNotMatch(failureBranch, /rm\(launchRoot/u);
+});
+
+test('all packaged matrix producers share the packaged-app launcher', async () => {
+  const producers = [
+    '../test-native-paragraph-editing-macos.mjs',
+    '../test-annotation-text-editing-macos.mjs',
+    '../test-editor-coverage-macos.mjs',
+    '../test-save-continue-editing-macos.mjs',
+    '../test-editor-performance-macos.mjs',
+    '../test-large-pdf-performance-macos.mjs',
+    '../test-macos-safe-ocr-save-packaged.mjs',
+    '../test-ocr-edit-single-line-macos.mjs',
+    '../test-ocr-edit-regions-macos.mjs',
+    '../test-macos-release-hardening.mjs',
+  ];
+  for (const producer of producers) {
+    const value = await source(producer);
+    assert.match(value, /startPackagedApp/u, `${producer} does not use the shared launcher`);
+    assert.doesNotMatch(
+      value,
+      /spawn\((?:appPath|appExecutable|executablePath),\s*\[[\s\S]{0,100}--mcp-server/u,
+      `${producer} directly executes the Tauri binary`,
+    );
+  }
+});
+
+test('trusted insertion re-queries, clicks, verifies focus ownership, then emits keys', async () => {
+  const [producer, swiftHelper] = await Promise.all([
+    source('../test-native-paragraph-editing-macos.mjs'),
+    source('../macos-real-text-edit.swift'),
+  ]);
+  const interaction = producer.slice(
+    producer.indexOf('async function realTextEditorInteraction'),
+    producer.indexOf('\nasync function openPdf'),
+  );
+  assert.match(interaction, /await waitUi\('\.pdf-text-editor'/u);
+  assert.match(interaction, /pageTextEditHost\?\.editorMountGeneration/u);
+  assert.match(interaction, /afterText === beforeText/u);
+  assert.match(interaction, /trusted input delivery failed/u);
+
+  const insertion = swiftHelper.slice(swiftHelper.indexOf('if mode == "insert"'));
+  assert.ok(insertion.indexOf('postMouseClick(point)') < insertion.indexOf('postKey(0, flags: .maskCommand)'));
+  assert.match(insertion, /frontmostApplication\?\.processIdentifier == pid/u);
+  assert.match(swiftHelper, /focusedAccessibilityRole/u);
+  assert.match(swiftHelper, /eventSequence/u);
+});

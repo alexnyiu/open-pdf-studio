@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import {
   access,
   copyFile,
@@ -9,12 +9,12 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { evaluateEditorPerformanceReport } from './verify-editor-performance-report.mjs';
+import { startPackagedApp } from './lib/macos-packaged-app.mjs';
 
 assert.equal(process.platform, 'darwin', 'editor performance acceptance is macOS-only');
 
@@ -54,17 +54,6 @@ function parseArguments(argv) {
 }
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function availablePort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return address.port;
-}
 
 async function gitHead() {
   if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
@@ -179,36 +168,11 @@ async function runPerformance(options) {
   };
   await writeFile(options.outputPath, `${JSON.stringify(reportBase, null, 2)}\n`);
 
-  const port = await availablePort();
-  const endpoint = `http://127.0.0.1:${port}/mcp`;
-  let requestId = 0;
-  let applicationPid = null;
-  let exited = false;
-  const application = spawn('/usr/bin/open', [
-    '-n', '-W', '--stdout', stdoutPath, '--stderr', stderrPath,
-    '--env', 'OPS_ENABLE_MCP=1', '--env', 'OPDS_DETACHED=1',
-    '--env', `OPS_TEST_SESSION_PATH=${sessionPath}`,
-    options.appBundle, '--args', '--mcp-server', '--mcp-port', String(port),
-  ], { cwd: projectDir, env: process.env, stdio: 'ignore' });
-  application.once('exit', () => { exited = true; });
-
-  async function rpc(method, params = {}) {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method, params }),
-    });
-    if (!response.ok) throw new Error(`MCP HTTP ${response.status}`);
-    const body = await response.json();
-    if (body.error) throw new Error(`MCP ${body.error.code}: ${body.error.message}`);
-    return body.result;
-  }
+  let application = null;
 
   async function callTool(name, arguments_ = {}) {
-    const result = await rpc('tools/call', { name, arguments: arguments_ });
-    const payload = result?.content?.find((entry) => entry.type === 'text')?.text;
-    if (typeof payload !== 'string') throw new Error(`${name} returned no JSON payload`);
-    return JSON.parse(payload);
+    if (!application) throw new Error('packaged application is not ready');
+    return application.callTool(name, arguments_);
   }
 
   async function waitUntil(description, probe, timeoutMs = 30_000) {
@@ -227,13 +191,14 @@ async function runPerformance(options) {
   }
 
   try {
-    const initialized = await waitUntil('packaged app MCP', async () => {
-      if (exited) throw new Error('packaged app exited before MCP initialization');
-      const value = await rpc('initialize');
-      applicationPid = value?._meta?.openPdfStudio?.processId || applicationPid;
-      return value?._meta?.openPdfStudio?.webviewReady ? value : null;
-    }, 90_000);
-    assert.ok(initialized);
+    application = await startPackagedApp({
+      appBundle: options.appBundle,
+      cwd: projectDir,
+      env: { OPS_TEST_SESSION_PATH: sessionPath },
+      artifactDir: path.join(outputDir, 'launch-logs'),
+      launchLabel: 'editor-performance',
+      startupTimeoutMs: 90_000,
+    });
     await callTool('app_set_window_size', { width: 1320, height: 900 });
     const opened = await callTool('app_open_pdf', { path: workingPdf });
     assert.equal(opened.ok, true, opened.error);
@@ -401,12 +366,13 @@ async function runPerformance(options) {
     await writeFile(options.outputPath, `${JSON.stringify(report, null, 2)}\n`);
     throw error;
   } finally {
-    if (applicationPid) {
-      try { process.kill(applicationPid, 'SIGTERM'); } catch {}
-    } else if (!exited) {
-      try { application.kill('SIGTERM'); } catch {}
+    if (application) {
+      await Promise.all([
+        copyFile(application.appStdoutPath, stdoutPath).catch(() => {}),
+        copyFile(application.appStderrPath, stderrPath).catch(() => {}),
+      ]);
     }
-    await delay(250);
+    await application?.stop?.();
   }
 }
 

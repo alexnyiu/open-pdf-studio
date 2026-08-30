@@ -303,6 +303,8 @@ export async function runSaveContinueEditing(options) {
       appBinary,
       cwd: projectDir,
       env: { OPS_TEST_SESSION_PATH: path.join(runDirectory, 'session.json') },
+      artifactDir: path.join(outputDirectory, 'launch-logs'),
+      launchLabel: 'save-render-coherence',
     });
     const call = async (name, arguments_ = {}) => {
       const result = await app.callTool(name, arguments_);
