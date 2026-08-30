@@ -196,6 +196,18 @@ test('clean annotation Apply distinguishes authored flush changes from layout no
     'annotation Apply must retain both pre-flush and authored-flush dirty state');
   assert.ok(preFlushDirty < flush,
     'clean state must be captured before DOM sealing can normalize layout geometry');
+
+  const overlay = await readFile(
+    new URL('../solid/components/PdfTextEditOverlay.jsx', import.meta.url),
+    'utf8',
+  );
+  const sync = overlay.slice(
+    overlay.indexOf('const syncRichDocument = () => {'),
+    overlay.indexOf('const captureRichBeforeInput ='),
+  );
+  assert.match(sync,
+    /semanticRichTextSignature\(draft\)\s*!==\s*semanticRichTextSignature\(current\)/u,
+    'DOM sealing must compare authored semantics without reflow-owned geometry');
 });
 
 test('keyed portal handoff clears stale editor refs before replacement sizing', async () => {

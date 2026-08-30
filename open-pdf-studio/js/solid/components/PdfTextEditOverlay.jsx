@@ -28,7 +28,6 @@ import {
   recordValidatedFinalTextLayout,
 } from '../../text/final-text-layout.js';
 import { textApplyResultSchedulesPersistence } from '../../text/text-apply-result.js';
-import { textEditRichTextContentChanged } from '../../text/text-edit-dirty-state.js';
 import { throwIfSaveFaultInjected } from '../../pdf/save-fault-injection.js';
 import {
   applyActiveTextEditing,
@@ -1757,7 +1756,7 @@ export default function PdfTextEditOverlay() {
       : next;
     let authoredChanged = true;
     try {
-      authoredChanged = textEditRichTextContentChanged(current, draft);
+      authoredChanged = semanticRichTextSignature(draft) !== semanticRichTextSignature(current);
     } catch {
       authoredChanged = true;
     }
