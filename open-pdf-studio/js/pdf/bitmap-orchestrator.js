@@ -44,6 +44,7 @@ import {
     recordRejectedRenderPublication,
     renderPublicationTokenIsCurrent,
 } from './render-publication-token.js';
+import { createViewportBitmapResult } from './viewport-bitmap-result.js';
 
 
 // PDFium / browser canvas axis limit. Above this, we cap the whole-page
@@ -68,7 +69,10 @@ function rasterOwnerContext(quality, targetRasterScale) {
         documentId: viewport.documentId || documentState?.id || viewport.filePath,
         lifecycleGeneration: Number(viewport.documentLifecycleGeneration) || 0,
         contentRevision: Number(documentState?.revisionState?.contentRevision) || 0,
-        pageRevision: Number(documentState?.pageRenderRevisions?.[viewport.pageNum]) || 0,
+        livePdfRevision: Number(documentState?.revisionState?.livePdfRevision) || 0,
+        pageRevision: publicationToken?.pageRevision
+            ?? (Number(documentState?.pageRenderRevisions?.[viewport.pageNum]) || 0),
+        publishedPageRevision: publicationToken?.publishedPageRevision ?? 0,
         cssScale: viewport.zoom,
         devicePixelRatio: window.devicePixelRatio || 1,
         quality,
@@ -100,102 +104,150 @@ function viewportPublicationIsCurrent(publication) {
 }
 
 export async function ensureBitmapForCurrentView() {
-    if (!viewport.active || !viewport.filePath || viewport.pageType !== 'raster') {
-        viewport.currentBitmap = null;
-        viewport.dirty = true;
-        return;
-    }
-    const foregroundPublication = viewportPublication('viewport-raster');
-    if (!viewportPublicationIsCurrent(foregroundPublication)) return;
+    let foregroundPublication = null;
+    try {
+        if (!viewport.active || !viewport.filePath || viewport.pageType !== 'raster') {
+            viewport.currentBitmap = null;
+            viewport.dirty = true;
+            return createViewportBitmapResult('superseded', { reason: 'inactive-raster-viewport' });
+        }
+        foregroundPublication = viewportPublication('viewport-raster');
+        if (!viewportPublicationIsCurrent(foregroundPublication)) {
+            return createViewportBitmapResult('superseded', { reason: 'publication-owner-changed' });
+        }
 
-    // Additief pad: een ZWARE raster-pagina (grote content-stream) met de voorkeur
-    // aan, vullen we progressief tegel-voor-tegel in i.p.v. één trage whole-page
-    // render. Niet-zware pagina's of voorkeur uit → exact het bestaande pad hieronder.
-    const dpr = window.devicePixelRatio || 1;
-    const targetScale = viewport.zoom * dpr;
-    const maxAxisPt = Math.max(viewport.pageW, viewport.pageH);
-    if (maxAxisPt <= 0) {
-        viewport.currentBitmap = null;
-        viewport.dirty = true;
-        return;
-    }
-    const capScale = MAX_BITMAP_AXIS_PX / maxAxisPt;
+        // Additief pad: een ZWARE raster-pagina (grote content-stream) met de voorkeur
+        // aan, vullen we progressief tegel-voor-tegel in i.p.v. één trage whole-page
+        // render. Niet-zware pagina's of voorkeur uit → exact het bestaande pad hieronder.
+        const dpr = window.devicePixelRatio || 1;
+        const targetScale = viewport.zoom * dpr;
+        const maxAxisPt = Math.max(viewport.pageW, viewport.pageH);
+        if (maxAxisPt <= 0) {
+            viewport.currentBitmap = null;
+            viewport.dirty = true;
+            return createViewportBitmapResult('failed', {
+                reason: 'invalid-page-dimensions',
+                error: new Error('The raster viewport has invalid page dimensions'),
+            });
+        }
+        const capScale = MAX_BITMAP_AXIS_PX / maxAxisPt;
 
-    const _prefOn = !!(state.preferences && state.preferences.progressiveRender);
-    const _heavy = _prefOn ? await isHeavyPage(viewport.filePath, viewport.pageNum) : false;
-    if (!viewportPublicationIsCurrent(foregroundPublication)) return;
-    const _extreme = _heavy ? await isExtremePage(viewport.filePath, viewport.pageNum) : false;
-    if (!viewportPublicationIsCurrent(foregroundPublication)) return;
-    if (_prefOn && _heavy && (!_extreme || !needsVisibleTile(viewport.zoom, dpr, capScale))) {
-        console.log(`[prog-guard] zware pagina p${viewport.pageNum} → progressief pad`);
-        _bitmapGen++; // maak een eventuele in-flight gewone render stale
-        return ensureProgressiveBitmapForCurrentView();
-    }
+        const _prefOn = !!(state.preferences && state.preferences.progressiveRender);
+        const _heavy = _prefOn ? await isHeavyPage(viewport.filePath, viewport.pageNum) : false;
+        if (!viewportPublicationIsCurrent(foregroundPublication)) {
+            return createViewportBitmapResult('superseded', { reason: 'publication-owner-changed' });
+        }
+        const _extreme = _heavy ? await isExtremePage(viewport.filePath, viewport.pageNum) : false;
+        if (!viewportPublicationIsCurrent(foregroundPublication)) {
+            return createViewportBitmapResult('superseded', { reason: 'publication-owner-changed' });
+        }
+        if (_prefOn && _heavy && (!_extreme || !needsVisibleTile(viewport.zoom, dpr, capScale))) {
+            console.log(`[prog-guard] zware pagina p${viewport.pageNum} → progressief pad`);
+            _bitmapGen++; // maak een eventuele in-flight gewone render stale
+            await ensureProgressiveBitmapForCurrentView();
+            if (!viewportPublicationIsCurrent(foregroundPublication)) {
+                return createViewportBitmapResult('superseded', {
+                    reason: 'progressive-publication-superseded',
+                });
+            }
+            return viewport.currentBitmap
+                ? createViewportBitmapResult('published', { reason: 'progressive-bitmap-installed' })
+                : createViewportBitmapResult('superseded', { reason: 'progressive-publication-pending' });
+        }
 
-    if (_prefOn && _extreme) {
-        _bitmapGen++;
+        if (_prefOn && _extreme) {
+            _bitmapGen++;
+            const fallback = getBestAvailableBitmap(
+                viewport.filePath,
+                viewport.pageNum,
+                viewport.rotation,
+                computeCappedWholePageScale(capScale, capScale),
+                rasterOwnerContext(RasterQuality.PREVIEW, capScale),
+            );
+            if (fallback?.bitmap) {
+                viewport.currentBitmap = fallback.bitmap;
+                viewport.dirty = true;
+                return createViewportBitmapResult('published', {
+                    reason: 'extreme-page-preview-installed',
+                });
+            }
+            return createViewportBitmapResult('failed', {
+                reason: 'extreme-page-preview-unavailable',
+                error: new Error('The raster viewport has no compatible extreme-page preview'),
+            });
+        }
+
+        const myGen = ++_bitmapGen;
+        const ownerDocumentId = viewport.documentId;
+        const ownerGeneration = Number(viewport.documentLifecycleGeneration) || 0;
+
+        // Cap so PDFium never has to render above the 4096 px axis limit.
+        // Clamp after power-of-two quantization. Clamping the input first can turn
+        // a safe scale=5 into bucket=8, exceeding both the 4096 px axis contract
+        // and the worker's 64 MB shared-memory transport.
+        const useBucket = computeCappedWholePageScale(targetScale, capScale);
+        const quality = useBucket + 0.01 >= targetScale
+            ? RasterQuality.FINAL
+            : RasterQuality.PREVIEW;
+        const context = rasterOwnerContext(quality, useBucket);
+
+        // Synchronous: show the best already-cached bitmap immediately. Handles
+        // the "zoom-in while async render is in flight" case — we never blank
+        // out the page while we wait for the higher bucket.
         const fallback = getBestAvailableBitmap(
             viewport.filePath,
             viewport.pageNum,
             viewport.rotation,
-            computeCappedWholePageScale(capScale, capScale),
-            rasterOwnerContext(RasterQuality.PREVIEW, capScale),
+            useBucket,
+            context,
         );
         if (fallback) {
             viewport.currentBitmap = fallback.bitmap;
             viewport.dirty = true;
         }
-        return;
-    }
 
-    const myGen = ++_bitmapGen;
-    const ownerDocumentId = viewport.documentId;
-    const ownerGeneration = Number(viewport.documentLifecycleGeneration) || 0;
-
-    // Cap so PDFium never has to render above the 4096 px axis limit.
-    // Clamp after power-of-two quantization. Clamping the input first can turn
-    // a safe scale=5 into bucket=8, exceeding both the 4096 px axis contract
-    // and the worker's 64 MB shared-memory transport.
-    const useBucket = computeCappedWholePageScale(targetScale, capScale);
-    const quality = useBucket + 0.01 >= targetScale
-        ? RasterQuality.FINAL
-        : RasterQuality.PREVIEW;
-    const context = rasterOwnerContext(quality, useBucket);
-
-    // Synchronous: show the best already-cached bitmap immediately. Handles
-    // the "zoom-in while async render is in flight" case — we never blank
-    // out the page while we wait for the higher bucket.
-    const fallback = getBestAvailableBitmap(
-        viewport.filePath,
-        viewport.pageNum,
-        viewport.rotation,
-        useBucket,
-        context,
-    );
-    if (fallback) {
-        viewport.currentBitmap = fallback.bitmap;
-        viewport.dirty = true;
-    }
-
-    // Async: fetch the exact bucket. ensureBitmap dedups concurrent calls.
-    const entry = await ensureBitmap(
-        viewport.filePath,
-        viewport.pageNum,
-        viewport.rotation,
-        useBucket,
-        context,
-    );
-    const contextPublication = {
-        documentState: context.publicationDocument,
-        token: context.publicationToken,
-    };
-    if (myGen !== _bitmapGen
-        || viewport.documentId !== ownerDocumentId
-        || (Number(viewport.documentLifecycleGeneration) || 0) !== ownerGeneration
-        || !viewportPublicationIsCurrent(contextPublication)) return;
-    if (entry && entry.bitmap) {
-        viewport.currentBitmap = entry.bitmap;
-        viewport.dirty = true;
+        // Async: fetch the exact bucket. Only an equivalent publication owner
+        // may coalesce with this request; cache reuse remains page-compatible.
+        const entry = await ensureBitmap(
+            viewport.filePath,
+            viewport.pageNum,
+            viewport.rotation,
+            useBucket,
+            context,
+        );
+        const contextPublication = {
+            documentState: context.publicationDocument,
+            token: context.publicationToken,
+        };
+        if (myGen !== _bitmapGen
+            || viewport.documentId !== ownerDocumentId
+            || (Number(viewport.documentLifecycleGeneration) || 0) !== ownerGeneration
+            || !viewportPublicationIsCurrent(contextPublication)) {
+            return createViewportBitmapResult('superseded', {
+                reason: 'newer-viewport-publication-won',
+            });
+        }
+        if (entry?.bitmap) {
+            viewport.currentBitmap = entry.bitmap;
+            viewport.dirty = true;
+            return createViewportBitmapResult('published', {
+                reason: 'whole-page-bitmap-installed',
+            });
+        }
+        return createViewportBitmapResult('failed', {
+            reason: 'whole-page-bitmap-unavailable',
+            error: new Error('The raster viewport could not produce current pixels'),
+        });
+    } catch (error) {
+        if (!viewportPublicationIsCurrent(foregroundPublication)) {
+            return createViewportBitmapResult('superseded', {
+                reason: 'publication-owner-changed-after-error',
+            });
+        }
+        return createViewportBitmapResult('failed', {
+            reason: 'bitmap-publication-error',
+            error: error instanceof Error ? error : new Error(String(error)),
+        });
     }
 }
 

@@ -99,6 +99,10 @@ import {
   pageEditReadinessSatisfied,
 } from './page-edit-readiness.js';
 import {
+  viewportBitmapResultFailsCurrentReadiness,
+  viewportBitmapResultPublished,
+} from './viewport-bitmap-result.js';
+import {
   awaitRequiredPageRenders,
   planPostRestoreRequiredPages,
 } from './visible-page-render-barrier.js';
@@ -704,8 +708,17 @@ async function _renderPageImpl(pageNum, { requireEditReady = false, fitPolicy = 
         const _orch = await import('./bitmap-orchestrator.js');
         const rasterPromise = _orch.ensureBitmapForCurrentView();
         if (requireEditReady) {
-          await rasterPromise;
+          const rasterResult = await rasterPromise;
           if (_isStaleDoc(doc, publicationToken)) return { ready: false };
+          if (rasterResult?.status === 'superseded') return { ready: false };
+          if (viewportBitmapResultFailsCurrentReadiness(rasterResult, true)) {
+            failReadiness(rasterResult.error || new Error('The synchronized raster viewport failed'));
+            return { ready: false };
+          }
+          if (!viewportBitmapResultPublished(rasterResult)) {
+            failReadiness(new Error('The synchronized raster viewport returned an invalid publication result'));
+            return { ready: false };
+          }
           if (!renderViewportNow()) {
             const error = new Error('The synchronized raster viewport did not publish current pixels');
             failReadiness(error);
@@ -714,9 +727,18 @@ async function _renderPageImpl(pageNum, { requireEditReady = false, fitPolicy = 
           markLayer('raster');
         } else {
           _rasterPublicationPending = true;
-          void Promise.resolve(rasterPromise).then(() => {
+          void Promise.resolve(rasterPromise).then((rasterResult) => {
             _rasterPublicationPending = false;
             if (_isStaleDoc(doc, publicationToken)) return;
+            if (rasterResult?.status === 'superseded') return;
+            if (viewportBitmapResultFailsCurrentReadiness(rasterResult, true)) {
+              failReadiness(rasterResult.error || new Error('The raster viewport failed'));
+              return;
+            }
+            if (!viewportBitmapResultPublished(rasterResult)) {
+              failReadiness(new Error('The raster viewport returned an invalid publication result'));
+              return;
+            }
             if (!renderViewportNow()) {
               failReadiness(new Error('The raster viewport did not publish current pixels'));
               return;

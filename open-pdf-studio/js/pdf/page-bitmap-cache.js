@@ -11,8 +11,9 @@
  * The cache is keyed by logical document/page revision, path, rotation,
  * density, and quality. Proxy lifecycle and document-wide content revisions
  * deliberately do not participate: an adopted proxy may reuse an unchanged
- * page. Strict publication tokens still own every in-flight render.
- * memory growth and limit re-renders to actually-different scales.
+ * page. Strict publication tokens own every in-flight render independently
+ * from the reusable bitmap identity, limiting both stale joins and memory
+ * growth while retaining cache reuse across compatible proxy states.
  */
 
 import { isTauri, invoke } from '../core/platform.js';
@@ -43,8 +44,8 @@ import {
 // Map<key, { bitmap: ImageBitmap, w, h, scale }>
 const _cache = new Map();
 
-// In-flight renders so we don't double-fire for the same key
-const _pending = new Map(); // key -> Promise
+// In-flight renders coalesce only for one exact publication owner.
+const _pending = new Map(); // publication key -> Promise
 const _pendingOwners = new Map();
 const _fileOwners = new Map();
 const _fileOwnerGenerations = new Map();
@@ -113,6 +114,24 @@ function _rasterRequest(filePath, pageNum, rotation, targetRasterScale, context 
 
 function _rasterCacheKey(request) {
   return `raster:${serializePageRasterKey(request.key)}`;
+}
+
+function _pendingOwnerRevision(value) {
+  const normalized = Number(value);
+  return Number.isSafeInteger(normalized) && normalized >= 0 ? normalized : 0;
+}
+
+export function rasterPendingPublicationKey(cacheIdentity, publicationToken = null, context = null) {
+  const owner = publicationToken || context || {};
+  return JSON.stringify([
+    String(cacheIdentity || ''),
+    String(owner.documentId ?? context?.documentId ?? ''),
+    _pendingOwnerRevision(owner.lifecycleGeneration ?? context?.lifecycleGeneration),
+    _pendingOwnerRevision(owner.contentRevision ?? context?.contentRevision),
+    _pendingOwnerRevision(owner.livePdfRevision ?? context?.livePdfRevision),
+    _pendingOwnerRevision(owner.pageRevision ?? context?.pageRevision),
+    _pendingOwnerRevision(owner.publishedPageRevision ?? context?.publishedPageRevision),
+  ]);
 }
 
 function _entryMatchesPage(entry, filePath, pageNum, rotation) {
@@ -493,8 +512,11 @@ function _ensureBitmapAtScale(filePath, pageNum, rotation, cacheBucket, renderSc
     ? getCachedBitmap(filePath, pageNum, rotation, cacheBucket, context)
     : _cache.get(key);
   if (cached) return Promise.resolve(cached);
-  if (_pending.has(key)) {
-    const owner = _pendingOwners.get(key);
+  const publicationToken = context?.publicationToken || null;
+  const publicationDocument = context?.publicationDocument || null;
+  const pendingKey = rasterPendingPublicationKey(key, publicationToken, context);
+  if (_pending.has(pendingKey)) {
+    const owner = _pendingOwners.get(pendingKey);
     if (owner) owner.consumers = (Number(owner.consumers) || 1) + 1;
     incrementPerformanceCounter('rasterCoalesced');
     recordPerformanceEvent('raster:coalesced', {
@@ -505,7 +527,7 @@ function _ensureBitmapAtScale(filePath, pageNum, rotation, cacheBucket, renderSc
       ownerGeneration: request?.key.lifecycleGeneration || 0,
       rasterKey: request ? serializePageRasterKey(request.key) : key,
     });
-    return _pending.get(key);
+    return _pending.get(pendingKey);
   }
   if (!isTauri() || !filePath) return Promise.resolve(null);
   const expectedGlobalGeneration = _globalGeneration;
@@ -514,8 +536,6 @@ function _ensureBitmapAtScale(filePath, pageNum, rotation, cacheBucket, renderSc
     ? Number(context.lifecycleGeneration) : null;
   const expectedPageRevision = request?.key.pageRevision ?? null;
   const pageRevisionReader = _filePageRevisionReaders.get(filePath);
-  const publicationToken = context?.publicationToken || null;
-  const publicationDocument = context?.publicationDocument || null;
   const stillCurrent = () => expectedGlobalGeneration === _globalGeneration
     && expectedFileGeneration === (_fileGenerations.get(filePath) || 0)
     && (expectedOwnerGeneration == null
@@ -579,20 +599,20 @@ function _ensureBitmapAtScale(filePath, pageNum, rotation, cacheBucket, renderSc
           actualRasterScale: renderScale,
         } : null,
       );
-      entry.coalescedConsumers = Number(_pendingOwners.get(key)?.consumers) || 1;
+      entry.coalescedConsumers = Number(_pendingOwners.get(pendingKey)?.consumers) || 1;
       return entry;
     } catch (e) {
       console.warn('[page-bitmap-cache] render failed', e);
       return null;
     } finally {
-      if (_pending.get(key) === p) {
-        _pending.delete(key);
-        _pendingOwners.delete(key);
+      if (_pending.get(pendingKey) === p) {
+        _pending.delete(pendingKey);
+        _pendingOwners.delete(pendingKey);
       }
     }
   })();
-  _pending.set(key, p);
-  _pendingOwners.set(key, { filePath, pageNum, consumers: 1 });
+  _pending.set(pendingKey, p);
+  _pendingOwners.set(pendingKey, { filePath, pageNum, consumers: 1 });
   return p;
 }
 

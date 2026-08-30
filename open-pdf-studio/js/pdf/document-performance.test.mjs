@@ -4,6 +4,7 @@ import test from 'node:test';
 import { createInitialDocumentRevisionState } from '../core/document-revision-state.runtime.js';
 import {
   clearDocumentPerformance,
+  effectiveDocumentPageRevision,
   ensureDocumentPageGeometryIndex,
   initializeDocumentPerformance,
 } from './document-performance.js';
@@ -16,6 +17,19 @@ test.afterEach(() => {
   else globalThis.window = priorWindow;
   if (priorCustomEvent === undefined) delete globalThis.CustomEvent;
   else globalThis.CustomEvent = priorCustomEvent;
+});
+
+test('document-wide mutations use the content revision as the effective page revision', () => {
+  const documentState = {
+    pageRenderRevisions: { 2: 3 },
+    revisionState: {
+      contentRevision: 7,
+      pageContentRevisions: { 2: 3 },
+    },
+  };
+
+  assert.equal(effectiveDocumentPageRevision(documentState, 1), 7);
+  assert.equal(effectiveDocumentPageRevision(documentState, 2), 3);
 });
 
 test('structural proxy replacement rebuilds geometry under the new saved revision identity', async () => {

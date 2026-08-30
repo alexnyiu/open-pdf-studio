@@ -9,6 +9,14 @@ function contentRevision(documentState) {
   return Number(documentState?.revisionState?.contentRevision) || 0;
 }
 
+export function effectiveDocumentPageRevision(documentState, pageNum) {
+  return Number(
+    documentState?.pageRenderRevisions?.[pageNum]
+      ?? documentState?.revisionState?.pageContentRevisions?.[pageNum]
+      ?? documentState?.revisionState?.contentRevision,
+  ) || 0;
+}
+
 function ownerMatches(documentState, generation, pdfDocument, expectedContentRevision) {
   return documentState?.pdfDoc === pdfDocument
     && (Number(documentState.lifecycleGeneration) || 0) === generation
@@ -122,7 +130,7 @@ export async function registerDocumentRenderCacheOwners(documentState) {
     import('./page-type-cache.js'),
   ]);
   const readContentRevision = () => contentRevision(documentState);
-  const readPageRevision = (pageNum) => Number(documentState.pageRenderRevisions?.[pageNum]) || 0;
+  const readPageRevision = (pageNum) => effectiveDocumentPageRevision(documentState, pageNum);
   bitmaps.registerPageBitmapCacheOwner(
     documentState.filePath,
     documentState.id,

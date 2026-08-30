@@ -9,16 +9,70 @@ import {
   computeZoomBucket,
   getCachedBitmap,
   registerPageBitmapCacheOwner,
+  rasterPendingPublicationKey,
   releaseCachedBitmapAfterPublication,
   setCachedBitmapEntry,
   trimIdlePageBitmaps,
 } from './page-bitmap-cache.js';
 import { setActiveRenderDocument } from './render-resource-budget.js';
+import {
+  createViewportBitmapResult,
+  viewportBitmapResultFailsCurrentReadiness,
+  viewportBitmapResultPublished,
+} from './viewport-bitmap-result.js';
 
 const context = (overrides = {}) => ({
   documentId: 'doc-raster', lifecycleGeneration: 2, pageRevision: 1,
   cssScale: 1, devicePixelRatio: 2, quality: 'final', targetRasterScale: 2,
   ...overrides,
+});
+
+test('pending raster work coalesces only for one exact publication owner', () => {
+  const cacheIdentity = 'raster:shared-compatible-bitmap';
+  const owner = {
+    requestId: 'render-a',
+    source: 'first-caller',
+    documentId: 'doc-raster',
+    lifecycleGeneration: 2,
+    contentRevision: 5,
+    livePdfRevision: 4,
+    pageRevision: 5,
+    publishedPageRevision: 4,
+  };
+  const equivalentCaller = {
+    ...owner,
+    requestId: 'render-b',
+    source: 'second-caller',
+  };
+  const baseKey = rasterPendingPublicationKey(cacheIdentity, owner);
+
+  assert.equal(rasterPendingPublicationKey(cacheIdentity, equivalentCaller), baseKey);
+  for (const [field, value] of [
+    ['documentId', 'other-document'],
+    ['lifecycleGeneration', 3],
+    ['contentRevision', 6],
+    ['livePdfRevision', 5],
+    ['pageRevision', 6],
+    ['publishedPageRevision', 5],
+  ]) {
+    assert.notEqual(
+      rasterPendingPublicationKey(cacheIdentity, { ...owner, [field]: value }),
+      baseKey,
+      `${field} must isolate in-flight publication work`,
+    );
+  }
+  assert.notEqual(rasterPendingPublicationKey(`${cacheIdentity}:other`, owner), baseKey);
+});
+
+test('superseded raster completion cannot poison current page readiness', () => {
+  const published = createViewportBitmapResult('published');
+  const superseded = createViewportBitmapResult('superseded', { reason: 'newer-owner-won' });
+  const failed = createViewportBitmapResult('failed', { error: new Error('terminal failure') });
+
+  assert.equal(viewportBitmapResultPublished(published), true);
+  assert.equal(viewportBitmapResultFailsCurrentReadiness(superseded, true), false);
+  assert.equal(viewportBitmapResultFailsCurrentReadiness(failed, false), false);
+  assert.equal(viewportBitmapResultFailsCurrentReadiness(failed, true), true);
 });
 
 test('whole-page zoom quantization never rounds back above the bitmap axis cap', () => {
