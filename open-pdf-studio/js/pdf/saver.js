@@ -306,9 +306,10 @@ const saveCoordinator = createSaveCoordinator({
     }
     return null;
   },
-  waitForEditor: ({ documentId, kind }) => commitTextEditingForDocument(
-    documentId,
+  waitForEditor: ({ documentId, kind }) => textEditCommitAllowsSave(
+    getDocumentById(documentId),
     kind === 'auto' ? 'automatic-save' : 'save',
+    commitTextEditingForDocument,
   ),
   onDiagnostic(event) {
     saveDiagnosticHistory.push(event);
