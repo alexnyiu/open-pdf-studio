@@ -59,3 +59,32 @@ test('production scroll velocity feeds adaptive look-ahead and pauses only backg
   assert.match(scroll, /_continuousRenderScheduler\.noteInteraction/u);
   assert.match(scroll, /preserveVisible/u);
 });
+
+test('initial continuous readiness pages are protected before the virtual window is mounted', () => {
+  const start = source.indexOf('export async function renderContinuous');
+  const end = source.indexOf('\n// Setup pointer events for continuous mode pages', start);
+  const render = source.slice(start, end);
+  const requiredPlan = render.indexOf('const initialMountRequiredPages = planPostRestoreRequiredPages');
+  const protectedOwner = render.indexOf('synchronizationPages: new Set(initialMountRequiredPages)');
+  const firstWindowUpdate = render.indexOf('_updateContinuousVirtualWindow({', protectedOwner);
+
+  assert.ok(requiredPlan >= 0);
+  assert.ok(protectedOwner > requiredPlan);
+  assert.ok(firstWindowUpdate > protectedOwner);
+  assert.match(render, /visiblePages: \[doc\.currentPage\]/u);
+  assert.match(render, /_continuousWindow\.synchronizationPages\.clear\(\)/u);
+  const protectedStart = source.indexOf('function _protectedContinuousPages');
+  const protectedEnd = source.indexOf('\nfunction _teardownContinuousWindow', protectedStart);
+  const protectedPages = source.slice(protectedStart, protectedEnd);
+  assert.match(protectedPages, /pages\.add\(currentPage\)/u);
+});
+
+test('a virtualized page retiring before its render starts is superseded, not a readiness failure', () => {
+  const start = source.indexOf('async function _renderContinuousPageNow');
+  const end = source.indexOf('\nfunction _continuousLayout', start);
+  const renderNow = source.slice(start, end);
+
+  assert.doesNotMatch(renderNow, /if \(!pageWrapper\) throw/u);
+  assert.match(renderNow, /reason: 'page-unmounted'/u);
+  assert.match(renderNow, /superseded: true/u);
+});

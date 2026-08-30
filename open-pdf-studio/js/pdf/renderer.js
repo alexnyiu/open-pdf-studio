@@ -31,6 +31,7 @@ import { shouldPreloadEntireDocument, shouldPreloadNearby } from './preload-poli
 import { ensureDocumentPageGeometryIndex, rebuildDocumentPageGeometryIndex } from './document-performance.js';
 import {
   resolveContinuousHorizontalAnchor,
+  resolveContinuousHorizontalScrollSpace,
   resolveContinuousVerticalAnchor,
 } from './continuous-zoom-anchor.js';
 import { createRenderWorkScheduler } from './render-work-scheduler.js';
@@ -2057,7 +2058,14 @@ async function _renderContinuousPageNow(
   registerBackendCancellation = () => {},
 ) {
   const pageWrapper = document.querySelector(`#continuous-container .page-wrapper[data-page="${pageNum}"]`);
-  if (!pageWrapper) throw new Error(`Required page ${pageNum} is not mounted`);
+  if (!pageWrapper) {
+    return {
+      pageNum,
+      ready: false,
+      superseded: true,
+      reason: 'page-unmounted',
+    };
+  }
 
   const canvasContainer = pageWrapper.querySelector('.canvas-container-cont');
   if (!canvasContainer) throw new Error(`Required page ${pageNum} has no canvas container`);
@@ -2535,11 +2543,29 @@ function _positionContinuousWrapper(wrapper, rect, scale) {
 
 function _continuousRectWithOffset(rect, continuousState = _continuousWindow) {
   if (!rect) return null;
+  const horizontalOffsetPx = Number(continuousState?.horizontalOffsetPx) || 0;
+  const horizontalSpace = resolveContinuousHorizontalScrollSpace({
+    pageOffsetX: horizontalOffsetPx,
+  });
   return {
     ...rect,
-    x: rect.x + (Number(continuousState?.horizontalOffsetPx) || 0),
+    x: rect.x + horizontalSpace.pageTranslationX,
     y: rect.y + (Number(continuousState?.verticalOffsetPx) || 0),
   };
+}
+
+function _continuousHorizontalSpace(
+  baseContentWidth,
+  scrollContainer,
+  continuousState = _continuousWindow,
+  logicalScrollLeft = 0,
+) {
+  return resolveContinuousHorizontalScrollSpace({
+    baseContentWidth,
+    viewportWidth: scrollContainer?.clientWidth,
+    pageOffsetX: Number(continuousState?.horizontalOffsetPx) || 0,
+    logicalScrollLeft,
+  });
 }
 
 function _createContinuousWrapper(doc, pageNum, rect) {
@@ -2745,6 +2771,8 @@ function _protectedContinuousPages(doc) {
     doc?.id,
     Number(doc?.lifecycleGeneration) || 0,
   ));
+  const currentPage = Number(doc?.currentPage);
+  if (Number.isSafeInteger(currentPage) && currentPage > 0) pages.add(currentPage);
   const editorPage = _activeEditorPageForDocument(doc);
   if (editorPage) pages.add(editorPage);
   for (const pageNum of _continuousWindow?.synchronizationPages || []) pages.add(pageNum);
@@ -2783,8 +2811,13 @@ function _updateContinuousVirtualWindow({
   const stateForWindow = _continuousWindow;
   if (!doc || !_continuousWindowMatches(doc) || doc.facingSpread) return;
   const { index, container, scrollContainer, mounted, layout } = stateForWindow;
-  const contentWidth = index.contentWidth(doc.scale, layout, scrollContainer.clientWidth);
-  container.style.width = `${contentWidth}px`;
+  const baseContentWidth = index.contentWidth(doc.scale, layout, scrollContainer.clientWidth);
+  const horizontalSpace = _continuousHorizontalSpace(
+    baseContentWidth,
+    scrollContainer,
+    stateForWindow,
+  );
+  container.style.width = `${horizontalSpace.contentWidth}px`;
   container.style.height = `${index.totalHeight(doc.scale, layout)}px`;
   const protectedPages = _protectedContinuousPages(doc);
   const centerPage = index.pageAtOffset(
@@ -2795,7 +2828,7 @@ function _updateContinuousVirtualWindow({
   const centerRect = index.pageRect(centerPage, {
     scale: doc.scale,
     layout,
-    contentWidth,
+    contentWidth: baseContentWidth,
   });
   const overscan = planContinuousRenderOverscan({
     direction,
@@ -2851,7 +2884,7 @@ function _updateContinuousVirtualWindow({
   });
   for (const pageNum of renderOrder) {
     const rect = _continuousRectWithOffset(
-      index.pageRect(pageNum, { scale: doc.scale, layout, contentWidth }),
+      index.pageRect(pageNum, { scale: doc.scale, layout, contentWidth: baseContentWidth }),
       stateForWindow,
     );
     if (!rect) continue;
@@ -3070,7 +3103,7 @@ export async function captureRendererViewState(doc = getActiveDocument()) {
     viewportWidth: scrollContainer.clientWidth,
     viewportHeight: scrollContainer.clientHeight,
     horizontalOffsetPx: _continuousWindowMatches(doc)
-      ? _continuousWindow.horizontalOffsetPx : 0,
+      ? _continuousHorizontalSpace(contentWidth, scrollContainer).pageTranslationX : 0,
     verticalOffsetPx: _continuousWindowMatches(doc)
       ? _continuousWindow.verticalOffsetPx : 0,
     viewportRevision: doc.viewportRevision,
@@ -3092,7 +3125,11 @@ function applyContinuousRendererRestore(doc, snapshot, options = {}) {
   const restored = restoreContinuousRendererState(snapshot, {
     pageRect,
     scale: doc.scale,
-    horizontalOffsetPx: _continuousWindow.horizontalOffsetPx,
+    horizontalOffsetPx: _continuousHorizontalSpace(
+      contentWidth,
+      scrollContainer,
+      _continuousWindow,
+    ).pageTranslationX,
     verticalOffsetPx: _continuousWindow.verticalOffsetPx,
     restoreZoom,
     restoreScroll,
@@ -3235,7 +3272,6 @@ function _applyContinuousZoomInstant(oldScale, anchorInput = null) {
       ? input.pdfY
       : (container.scrollTop + localY - (oldRect?.y || 0)) / oldScale;
     const newContentWidth = index.contentWidth(newScale, layout, container.clientWidth);
-    cont.style.width = `${newContentWidth}px`;
     cont.style.height = `${index.totalHeight(newScale, layout)}px`;
     const nextBaseRect = index.pageRect(pageNum, {
       scale: newScale,
@@ -3251,13 +3287,18 @@ function _applyContinuousZoomInstant(oldScale, anchorInput = null) {
       localX,
       maximumScrollLeft,
     });
-    container.scrollLeft = horizontalAnchor.scrollLeft;
-    // If the page still fits horizontally, scrollLeft cannot represent the
-    // negative residual required to keep the PDF point under the fingers.
-    // Carry that residual in page-layout space so cursor anchoring remains
-    // exact without widening the scroll area or introducing blank margins.
-    _continuousWindow.horizontalOffsetPx = horizontalAnchor.pageOffsetX
-      + (container.scrollLeft - horizontalAnchor.scrollLeft);
+    _continuousWindow.horizontalOffsetPx = horizontalAnchor.pageOffsetX;
+    const horizontalSpace = _continuousHorizontalSpace(
+      newContentWidth,
+      container,
+      _continuousWindow,
+      horizontalAnchor.scrollLeft,
+    );
+    // Cursor anchoring can require a negative residual while the page still
+    // fits. Materialize that residual as leading/trailing scroll space so the
+    // page remains anchored now and both edges remain reachable after zooming.
+    cont.style.width = `${horizontalSpace.contentWidth}px`;
+    container.scrollLeft = horizontalSpace.scrollLeft;
     const maximumScrollTop = Math.max(
       0,
       index.totalHeight(newScale, layout) - container.clientHeight,
@@ -3649,6 +3690,11 @@ export async function renderContinuous(forceRebuild = false, {
   const requestedPages = [...new Set((requestedRequiredPages || []).map(Number)
     .filter((pageNum) => Number.isSafeInteger(pageNum)
       && pageNum > 0 && pageNum <= pdfDoc.numPages))];
+  const initialMountRequiredPages = planPostRestoreRequiredPages({
+    visiblePages: [doc.currentPage],
+    changedPages: requestedPages,
+    pageCount: pdfDoc.numPages,
+  });
   if (synchronization && !doc.facingSpread && _continuousWindowOwnsLogicalDocument(doc)
       && _continuousWindow.layout === _continuousLayout(doc)) {
     const synchronized = await _synchronizeExistingContinuousWindow(doc, requestedPages);
@@ -3731,6 +3777,7 @@ export async function renderContinuous(forceRebuild = false, {
       scrollVelocityPxPerMs: 0,
       recentPreviewLatencyMs: 150,
       synchronizing: synchronization,
+      synchronizationPages: new Set(initialMountRequiredPages),
     };
     applyPendingContinuousRendererRestore(doc);
     _renderedPagesScale = doc.scale;
@@ -3783,11 +3830,18 @@ export async function renderContinuous(forceRebuild = false, {
     requiredPages.push(...(synchronization ? visiblePages : [doc.currentPage]));
   }
 
-  requiredPages.push(...requestedRequiredPages);
+  requiredPages.push(...requestedPages);
   const normalizedRequiredPages = [...new Set(requiredPages.map(Number)
     .filter((pageNum) => Number.isInteger(pageNum)
       && pageNum > 0
       && pageNum <= pdfDoc.numPages))];
+  if (_continuousWindowMatches(doc)) {
+    _continuousWindow.synchronizationPages = new Set(normalizedRequiredPages);
+    _updateContinuousVirtualWindow({
+      interactionSettled: true,
+      scheduleRenders: false,
+    });
+  }
   const barrier = await awaitRequiredPageRenders(normalizedRequiredPages, (pageNum) => (
     renderContinuousPage(pageNum, 2_000, 'foreground')
   ));
@@ -3801,6 +3855,7 @@ export async function renderContinuous(forceRebuild = false, {
     };
   }
   if (_continuousWindowMatches(doc)) {
+    _continuousWindow.synchronizationPages.clear();
     _continuousWindow.synchronizing = false;
     requestAnimationFrame(() => _updateContinuousVirtualWindow({ interactionSettled: true }));
   }

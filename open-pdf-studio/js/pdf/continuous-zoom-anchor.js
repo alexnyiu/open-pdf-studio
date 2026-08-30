@@ -31,6 +31,44 @@ export function resolveContinuousHorizontalAnchor({
   });
 }
 
+/** Give a residual horizontal zoom offset real scrollable space.
+ *
+ * A negative residual would otherwise place the page to the left of the
+ * scroll origin, making those pixels permanently unreachable. Leading and
+ * trailing padding carry the residual into native scroll geometry while the
+ * translated page point remains at the exact same client coordinate. */
+export function resolveContinuousHorizontalScrollSpace({
+  baseContentWidth,
+  viewportWidth,
+  pageOffsetX = 0,
+  logicalScrollLeft = 0,
+} = {}) {
+  const viewport = Math.max(0, numberOrZero(viewportWidth));
+  const baseWidth = Math.max(viewport, numberOrZero(baseContentWidth));
+  const offset = numberOrZero(pageOffsetX);
+  const leadingPaddingPx = Math.max(0, -offset);
+  const trailingPaddingPx = Math.max(0, offset);
+  const contentWidth = baseWidth + leadingPaddingPx + trailingPaddingPx;
+  const maximumLogicalScrollLeft = Math.max(0, baseWidth - viewport);
+  const logical = Math.max(
+    0,
+    Math.min(maximumLogicalScrollLeft, numberOrZero(logicalScrollLeft)),
+  );
+  const maximumScrollLeft = Math.max(0, contentWidth - viewport);
+  const scrollLeft = Math.max(
+    0,
+    Math.min(maximumScrollLeft, logical + leadingPaddingPx),
+  );
+  return Object.freeze({
+    leadingPaddingPx,
+    trailingPaddingPx,
+    contentWidth,
+    scrollLeft,
+    pageTranslationX: offset + leadingPaddingPx,
+    maximumScrollLeft,
+  });
+}
+
 /** Resolve the vertical part of a continuous-view zoom anchor.
  *
  * WebKit may quantize scrollTop even when the requested value is fractional.

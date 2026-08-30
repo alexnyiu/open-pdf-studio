@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   resolveContinuousHorizontalAnchor,
+  resolveContinuousHorizontalScrollSpace,
   resolveContinuousVerticalAnchor,
 } from './continuous-zoom-anchor.js';
 
@@ -32,6 +33,63 @@ test('continuous zoom uses native scroll range before adding a residual offset',
   assert.equal(result.scrollLeft, 908);
   assert.equal(result.pageOffsetX, -12);
   assert.equal(result.driftPx, 0);
+});
+
+test('negative zoom residual receives leading scroll space so the left page edge stays reachable', () => {
+  const result = resolveContinuousHorizontalScrollSpace({
+    baseContentWidth: 1_000,
+    viewportWidth: 800,
+    pageOffsetX: -150,
+    logicalScrollLeft: 200,
+  });
+
+  assert.deepEqual(result, {
+    leadingPaddingPx: 150,
+    trailingPaddingPx: 0,
+    contentWidth: 1_150,
+    scrollLeft: 350,
+    pageTranslationX: 0,
+    maximumScrollLeft: 350,
+  });
+  const pageLeft = 20 + result.pageTranslationX;
+  const pageRight = pageLeft + 960;
+  assert.ok(pageLeft >= 0);
+  assert.ok(pageRight - result.maximumScrollLeft <= 800);
+});
+
+test('horizontal scroll space preserves the zoom anchor while making both edges reachable', () => {
+  const basePageX = 20;
+  const pageOffsetX = -150;
+  const logicalScrollLeft = 120;
+  const pdfPointX = 440;
+  const scale = 1.5;
+  const result = resolveContinuousHorizontalScrollSpace({
+    baseContentWidth: 1_000,
+    viewportWidth: 800,
+    pageOffsetX,
+    logicalScrollLeft,
+  });
+  const before = basePageX + pageOffsetX + pdfPointX * scale - logicalScrollLeft;
+  const after = basePageX + result.pageTranslationX + pdfPointX * scale - result.scrollLeft;
+
+  assert.equal(after, before);
+  assert.equal(result.scrollLeft - result.leadingPaddingPx, logicalScrollLeft);
+});
+
+test('positive zoom residual receives trailing scroll space so the right page edge stays reachable', () => {
+  const result = resolveContinuousHorizontalScrollSpace({
+    baseContentWidth: 1_000,
+    viewportWidth: 800,
+    pageOffsetX: 150,
+    logicalScrollLeft: 0,
+  });
+
+  assert.equal(result.leadingPaddingPx, 0);
+  assert.equal(result.trailingPaddingPx, 150);
+  assert.equal(result.contentWidth, 1_150);
+  assert.equal(result.pageTranslationX, 150);
+  const pageRight = 20 + result.pageTranslationX + 960;
+  assert.ok(pageRight - result.maximumScrollLeft <= 800);
 });
 
 test('continuous zoom carries WebKit scroll quantization in page-layout space', () => {
