@@ -41,6 +41,40 @@ let richTextHistoryIndex = 0;
 let richTextHistoryApproxBytes = 0;
 let editorSessionGeneration = 0;
 let editorDraftFlushHandler = null;
+let activeMountOwner = null;
+const EDITOR_LIFECYCLE_HISTORY_LIMIT = 64;
+const editorLifecycleHistory = [];
+
+function immutableMountOwner(value) {
+  const mountGeneration = Number(value?.mountGeneration);
+  if (!Number.isInteger(mountGeneration) || mountGeneration <= 0) return null;
+  return Object.freeze({
+    mountGeneration,
+    sessionId: value?.sessionId ? String(value.sessionId) : null,
+    documentId: value?.documentId ? String(value.documentId) : null,
+    documentGeneration: Number(value?.documentGeneration) || 0,
+  });
+}
+
+function recordEditorLifecycle(event) {
+  const portalConnected = [...(globalThis.document
+    ?.querySelectorAll?.('.pdf-text-edit-portal') || [])]
+    .some((portal) => portal?.isConnected !== false);
+  const value = Object.freeze({
+    at: Math.round(globalThis.performance?.now?.() || Date.now()),
+    portalConnected,
+    ...event,
+  });
+  editorLifecycleHistory.push(value);
+  if (editorLifecycleHistory.length > EDITOR_LIFECYCLE_HISTORY_LIMIT) {
+    editorLifecycleHistory.splice(0, editorLifecycleHistory.length - EDITOR_LIFECYCLE_HISTORY_LIMIT);
+  }
+  return value;
+}
+
+export function pdfTextEditorLifecycleDiagnostics() {
+  return Object.freeze(editorLifecycleHistory.map((entry) => Object.freeze({ ...entry })));
+}
 
 export function setEditorStatus(value, kind = 'info') {
   const message = String(value || '');
@@ -346,11 +380,56 @@ export function showPdfTextEditor(style, initialText, handlers) {
   // Key the Solid subtree independently from active(). A fast close/re-open
   // can be batched as true -> false -> true, which otherwise preserves the
   // externally reparented portal from the previous editor session.
-  setEditorMountGeneration((generation) => generation + 1);
+  const runtimeOwner = handlers.runtimeOwner || {};
+  const mountOwner = Object.freeze({
+    mountGeneration: editorMountGeneration() + 1,
+    sessionId: runtimeOwner.sessionId ? String(runtimeOwner.sessionId) : null,
+    documentId: runtimeOwner.documentId ? String(runtimeOwner.documentId) : null,
+    documentGeneration: Number(runtimeOwner.documentGeneration) || 0,
+  });
+  activeMountOwner = mountOwner;
+  setEditorMountGeneration(mountOwner.mountGeneration);
   setActive(true);
+  recordEditorLifecycle({
+    event: 'opened',
+    result: 'active',
+    mountGeneration: mountOwner.mountGeneration,
+    sessionId: mountOwner.sessionId,
+    documentId: mountOwner.documentId ?? placement?.documentId ?? null,
+    documentGeneration: mountOwner.documentGeneration || Number(placement?.generation) || 0,
+    pageNum: Number(placement?.pageNum) || null,
+  });
+  return mountOwner;
 }
 
-export function hidePdfTextEditor() {
+export function hidePdfTextEditor(owner, reason = 'unspecified') {
+  const requestedOwner = immutableMountOwner(owner);
+  const currentMountGeneration = activeMountOwner?.mountGeneration ?? null;
+  const requestedMountGeneration = requestedOwner?.mountGeneration ?? null;
+  if (!active()) {
+    const result = Object.freeze({
+      status: 'inactive',
+      reason,
+      requestedMountGeneration,
+      activeMountGeneration: currentMountGeneration,
+      requestedSessionId: requestedOwner?.sessionId ?? null,
+      activeSessionId: activeMountOwner?.sessionId ?? null,
+    });
+    recordEditorLifecycle({ event: 'close', result: result.status, ...result });
+    return result;
+  }
+  if (!requestedOwner || requestedMountGeneration !== currentMountGeneration) {
+    const result = Object.freeze({
+      status: 'superseded',
+      reason,
+      requestedMountGeneration,
+      activeMountGeneration: currentMountGeneration,
+      requestedSessionId: requestedOwner?.sessionId ?? null,
+      activeSessionId: activeMountOwner?.sessionId ?? null,
+    });
+    recordEditorLifecycle({ event: 'close', result: result.status, ...result });
+    return result;
+  }
   // PdfTextEditOverlay reparents its portal into the active page so placement
   // shares the canvas coordinate system. Remove that moved subtree before
   // toggling Solid state: the original <Show> anchor cannot detach a node that
@@ -363,6 +442,7 @@ export function hidePdfTextEditor() {
       host.remove();
     }
   }
+  activeMountOwner = null;
   setActive(false);
   setEditorPlacement(null);
   setSelectOnFocus(false);
@@ -378,6 +458,16 @@ export function hidePdfTextEditor() {
   richTextHistory = [];
   richTextHistoryIndex = 0;
   richTextHistoryApproxBytes = 0;
+  const result = Object.freeze({
+    status: 'closed',
+    reason,
+    requestedMountGeneration,
+    activeMountGeneration: currentMountGeneration,
+    requestedSessionId: requestedOwner.sessionId,
+    activeSessionId: activeMountOwner?.sessionId ?? requestedOwner.sessionId,
+  });
+  recordEditorLifecycle({ event: 'close', result: result.status, ...result });
+  return result;
 }
 
 export function getEditorText() {

@@ -266,11 +266,8 @@ export async function startTextEditing(annotation, {
   // isolated draft; Apply emits one owner-scoped modify operation and Cancel
   // simply drops it. New annotations are already detached drafts.
   annotation = isolateTextAnnotationDraft(sourceAnnotation, { isNew, clone: cloneAnnotation });
-  state.isEditingText = true;
-  state.editingAnnotation = annotation;
-  state._textEditSnapshot = cloneAnnotation(sourceAnnotation);
-  state._textEditSubstitution = substitution;
-  state._textEditIsNew = isNew;
+  const originalSnapshot = cloneAnnotation(sourceAnnotation);
+  const editorIsNew = isNew;
 
   // Get canvas position
   const canvasRect = canvas.getBoundingClientRect();
@@ -438,16 +435,31 @@ export async function startTextEditing(annotation, {
   });
 
   let session = null;
+  let mountOwner = null;
   let draftHeight = height;
-  const resetEditingState = () => {
+  const runtimeOwnsSharedState = () => (
+    state.isEditingText === true && state.editingAnnotation === annotation
+  );
+  const completeOwnedSession = () => {
     disposeFinalTextLayoutSession(session?.sessionId);
     completeTextEditSession(session?.sessionId);
+  };
+  const resetEditingState = () => {
+    if (!runtimeOwnsSharedState()) return false;
     state.isEditingText = false;
     state.editingAnnotation = null;
     state.textEditElement = null;
     state._textEditSnapshot = null;
     state._textEditSubstitution = null;
     state._textEditIsNew = false;
+    return true;
+  };
+  const closeEditingState = (reason) => {
+    completeOwnedSession();
+    const closeResult = hidePdfTextEditor(mountOwner, reason);
+    if (closeResult.status === 'superseded') return closeResult;
+    resetEditingState();
+    return closeResult;
   };
   const redrawOwnerIfVisible = () => {
     if (getActiveDocument() !== ownerDocument) return;
@@ -459,7 +471,7 @@ export async function startTextEditing(annotation, {
 
   // Commit function: update only the immutable owner document.
   const commitFn = async (operation) => {
-    if (!state.isEditingText || !state.editingAnnotation) {
+    if (!runtimeOwnsSharedState()) {
       return annotationApplyResult(
         ownerDocument, ownerGeneration, sourceAnnotation, 'superseded',
       );
@@ -473,7 +485,7 @@ export async function startTextEditing(annotation, {
       );
     }
 
-    const ann = state.editingAnnotation;
+    const ann = annotation;
     const wasDirtyBeforeFlush = session?.isDirty?.() === true;
     const snapshot = flushPdfEditorDraftForCommit({
       sessionId: session?.sessionId,
@@ -492,11 +504,13 @@ export async function startTextEditing(annotation, {
     // A clean existing annotation closes before exact shaping can normalize
     // transient layout caches or turn a source mismatch into a false reject.
     if (cleanTextAnnotationApplyIsNoop({
-      isNew: state._textEditIsNew,
+      isNew: editorIsNew,
       isDirty: wasDirtyBeforeFlush || snapshot.authoredChangedByFlush === true,
     })) {
-      hidePdfTextEditor();
-      resetEditingState();
+      const closed = closeEditingState('noop');
+      if (closed.status === 'superseded') {
+        return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'superseded');
+      }
       redrawOwnerIfVisible();
       return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'noop');
     }
@@ -540,7 +554,7 @@ export async function startTextEditing(annotation, {
     ann.modifiedAt = new Date().toISOString();
 
     // Apply auto-grown height back to annotation
-    if (state._textEditIsNew) {
+    if (editorIsNew) {
       const applied = runOwnerScopedTextCommit({
         ownerDocument,
         attempt: () => applyTextAnnotationDraft({
@@ -568,7 +582,7 @@ export async function startTextEditing(annotation, {
           recoveryActions: ['keep-editing'],
         });
       }
-    } else if (state._textEditSnapshot && ann.id) {
+    } else if (originalSnapshot && ann.id) {
       const applied = runOwnerScopedTextCommit({
         ownerDocument,
         attempt: () => applyExistingTextAnnotationDraft({
@@ -602,8 +616,15 @@ export async function startTextEditing(annotation, {
       });
     }
     const publication = await publishAnnotationCommit(ownerDocument, ann);
-    hidePdfTextEditor();
-    resetEditingState();
+    const closed = closeEditingState('published');
+    if (closed.status === 'superseded') {
+      return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'superseded', {
+        ownerCommitted: true,
+        publicationError: publication.status === 'failed'
+          ? publication.error || publication.errorCode || 'Page publication failed'
+          : null,
+      });
+    }
     if (publication.status !== 'published') redrawOwnerIfVisible();
     const adjustment = layoutDecision.status === 'auto-fitted'
       ? {
@@ -635,11 +656,9 @@ export async function startTextEditing(annotation, {
 
   // Cancel function: restore original text, reset state, refresh display
   const cancelFn = () => {
-    if (!state.isEditingText || !state.editingAnnotation) return;
-
-    const ann = state.editingAnnotation;
-    const snapshot = state._textEditSnapshot;
-    const wasNew = state._textEditIsNew;
+    const ann = annotation;
+    const snapshot = originalSnapshot;
+    const wasNew = editorIsNew;
     const owner = getDocumentById(ownerDocument.id);
     if (wasNew) {
       discardTextAnnotationDraft(owner, ann);
@@ -650,10 +669,9 @@ export async function startTextEditing(annotation, {
       Object.assign(ann, cloneAnnotation(snapshot));
     }
 
-    hidePdfTextEditor();
-    resetEditingState();
-    redrawOwnerIfVisible();
-    return true;
+    const closed = closeEditingState('cancel');
+    if (closed.status !== 'superseded') redrawOwnerIfVisible();
+    return closed.status !== 'superseded';
   };
 
   const keyDown = (event) => {
@@ -714,14 +732,25 @@ export async function startTextEditing(annotation, {
     cancel: cancelFn,
   });
   if (!session) {
-    hidePdfTextEditor();
-    resetEditingState();
     discardTextAnnotationDraft(ownerDocument, annotation);
     return false;
   }
-  showPdfTextEditor(styleObj, initialText, {
+  // Registering this session synchronously cancels the previous owner. Publish
+  // shared annotation state only after that cancellation has finished, so the
+  // old owner's cleanup cannot clear the new draft before it mounts.
+  state.isEditingText = true;
+  state.editingAnnotation = annotation;
+  state._textEditSnapshot = originalSnapshot;
+  state._textEditSubstitution = substitution;
+  state._textEditIsNew = editorIsNew;
+  mountOwner = showPdfTextEditor(styleObj, initialText, {
     onKeyDown: keyDown,
     onBlur: blur,
+    runtimeOwner: {
+      sessionId: session.sessionId,
+      documentId: ownerDocument.id,
+      documentGeneration: ownerGeneration,
+    },
     options: {
       richTextDocument,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,

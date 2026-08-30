@@ -524,7 +524,7 @@ test('a record refresh exception cannot bypass editor cleanup', async () => {
     source.indexOf('const cancelEditing = () => {', source.indexOf('export function startTextEditEditing')),
     source.indexOf('\n\n  activeEditor = {', source.indexOf('const cancelEditing = () => {', source.indexOf('export function startTextEditEditing'))),
   );
-  assert.match(recordCancel, /try \{[\s\S]*reRenderAddedText\(pageNum\);[\s\S]*\} finally \{[\s\S]*cleanupEditorRuntime\(editor\)/u);
+  assert.match(recordCancel, /try \{[\s\S]*reRenderAddedText\(pageNum\);[\s\S]*\} finally \{[\s\S]*cleanupEditorRuntime\(editor,/u);
   const genericCancel = source.slice(
     source.indexOf('function cancelPdfTextEditing'),
     source.indexOf('\n/**', source.indexOf('function cancelPdfTextEditing')),

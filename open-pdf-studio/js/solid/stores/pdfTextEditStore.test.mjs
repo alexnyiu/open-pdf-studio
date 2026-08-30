@@ -1,14 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  active,
   applyRichTextDraftParagraphFormat,
   adoptFinalTextLayoutDecision,
   flushEditorDraftForCommit,
+  getEditorText,
   getEditorRichText,
   hidePdfTextEditor,
+  pdfTextEditorLifecycleDiagnostics,
   editorMountGeneration,
   editorOptions,
   editorPlacement,
+  editorStatus,
   recordEditorGeometryHistory,
   redoRichTextDraft,
   richTextDraftRevision,
@@ -16,6 +20,7 @@ import {
   showPdfTextEditor,
   shiftEditorPosition,
   setEditorDraftFlushHandler,
+  setEditorStatus,
   undoRichTextDraft,
   updateEditorGeometry,
   updateEditorStyle,
@@ -47,24 +52,119 @@ function documentWithText(value) {
   ], { x: 0, y: 0, width: 100, height: 20 });
 }
 
-function open(value = 'a') {
-  showPdfTextEditor({}, value, {
-    options: { richTextDocument: documentWithText(value) },
+let currentMountOwner = null;
+
+function mount(...args) {
+  currentMountOwner = showPdfTextEditor(...args);
+  return currentMountOwner;
+}
+
+function close(owner = currentMountOwner, reason = 'test-cleanup') {
+  const result = hidePdfTextEditor(owner, reason);
+  if (result.status === 'closed' && owner === currentMountOwner) currentMountOwner = null;
+  return result;
+}
+
+function open(value = 'a', runtimeOwner = {}, options = {}) {
+  return mount({}, value, {
+    runtimeOwner,
+    options: { richTextDocument: documentWithText(value), ...options },
     onCommit() {},
     onCancel() {},
   });
 }
 
+test('obsolete mount owners cannot close or mutate the current editor', () => {
+  const first = open('first', {
+    sessionId: 'session-a', documentId: 'document-a', documentGeneration: 1,
+  });
+  const secondPlacement = {
+    documentId: 'document-b', pageNum: 2, generation: 2,
+    canonicalBounds: { x: 10, y: 20, width: 90, height: 18 },
+  };
+  const second = open('second', {
+    sessionId: 'session-b', documentId: 'document-b', documentGeneration: 2,
+  }, { placement: secondPlacement });
+  setEditorStatus('current draft intact', 'info');
+
+  const staleClose = close(first, 'delayed-publication');
+  assert.equal(staleClose.status, 'superseded');
+  assert.equal(active(), true);
+  assert.equal(getEditorText(), 'second');
+  assert.equal(richTextToPlainText(editorOptions().richTextDocument), 'second');
+  assert.equal(editorPlacement().documentId, 'document-b');
+  assert.equal(editorStatus(), 'current draft intact');
+
+  const winningClose = close(second, 'current-publication');
+  assert.equal(winningClose.status, 'closed');
+  assert.equal(active(), false);
+  const events = pdfTextEditorLifecycleDiagnostics();
+  assert.equal(events.at(-2).result, 'superseded');
+  assert.equal(events.at(-1).result, 'closed');
+  currentMountOwner = null;
+});
+
+test('the current mount owner closes exactly once', () => {
+  const owner = open('once', {
+    sessionId: 'session-once', documentId: 'document-once', documentGeneration: 3,
+  });
+  assert.equal(close(owner, 'apply').status, 'closed');
+  assert.equal(close(owner, 'duplicate-apply').status, 'inactive');
+  assert.equal(active(), false);
+  currentMountOwner = null;
+});
+
+test('superseded cleanup leaves the winning portal connected and current cleanup removes its empty host', () => {
+  const previousDocument = globalThis.document;
+  let queryCount = 0;
+  let portalRemoved = 0;
+  let hostRemoved = 0;
+  const host = {
+    childElementCount: 0,
+    classList: { contains: (value) => value === 'pdf-text-edit-layer' },
+    remove() { hostRemoved += 1; },
+  };
+  const portal = {
+    parentElement: host,
+    remove() { portalRemoved += 1; },
+  };
+  globalThis.document = {
+    querySelectorAll(selector) {
+      queryCount += 1;
+      assert.equal(selector, '.pdf-text-edit-portal');
+      return [portal];
+    },
+  };
+  try {
+    const obsolete = open('obsolete');
+    const current = open('current');
+    const queriesBeforeStaleClose = queryCount;
+    assert.equal(close(obsolete, 'delayed-publication').status, 'superseded');
+    assert.equal(queryCount, queriesBeforeStaleClose + 1);
+    assert.equal(portalRemoved, 0);
+    assert.equal(hostRemoved, 0);
+    assert.equal(getEditorText(), 'current');
+
+    assert.equal(close(current, 'current-publication').status, 'closed');
+    assert.equal(queryCount, queriesBeforeStaleClose + 3);
+    assert.equal(portalRemoved, 1);
+    assert.equal(hostRemoved, 1);
+    currentMountOwner = null;
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
 test('every editor open receives a distinct Solid mount generation', () => {
   const before = editorMountGeneration();
   open('first');
   const first = editorMountGeneration();
-  hidePdfTextEditor();
+  close();
   open('second');
   const second = editorMountGeneration();
   assert.ok(first > before);
   assert.ok(second > first);
-  hidePdfTextEditor();
+  close();
 });
 
 test('typing patches coalesce into one reversible 350 ms undo unit', () => {
@@ -76,7 +176,7 @@ test('typing patches coalesce into one reversible 350 ms undo unit', () => {
   assert.equal(richTextToPlainText(getEditorRichText()), 'a');
   assert.equal(redoRichTextDraft(), true);
   assert.equal(richTextToPlainText(getEditorRichText()), 'abc');
-  hidePdfTextEditor();
+  close();
 });
 
 test('draft revision invalidates cached line grapheme offsets on every content lifecycle change', () => {
@@ -87,7 +187,7 @@ test('draft revision invalidates cached line grapheme offsets on every content l
   updateRichTextDraft(documentWithText('cache updated'));
   const afterUpdate = richTextDraftRevision();
   assert.ok(afterUpdate > afterOpen);
-  hidePdfTextEditor();
+  close();
   assert.ok(richTextDraftRevision() > afterUpdate);
 });
 
@@ -100,7 +200,7 @@ test('typing at a non-adjacent caret starts a separate undo unit', () => {
   assert.equal(richTextToPlainText(getEditorRichText()), 'abcde');
   assert.equal(undoRichTextDraft(), true);
   assert.equal(richTextToPlainText(getEditorRichText()), 'abcd');
-  hidePdfTextEditor();
+  close();
 });
 
 test('coalesced typing replaces intermediate identity churn with one bounded patch', () => {
@@ -121,7 +221,7 @@ test('coalesced typing replaces intermediate identity churn with one bounded pat
   assert.equal(richTextToPlainText(getEditorRichText()), 'source');
   assert.equal(redoRichTextDraft(), true);
   assert.equal(richTextToPlainText(getEditorRichText()), 'x'.repeat(500));
-  hidePdfTextEditor();
+  close();
 });
 
 test('history evicts complete oldest units at 100 entries and stays within 12 MB', () => {
@@ -132,7 +232,7 @@ test('history evicts complete oldest units at 100 entries and stays within 12 MB
   const metrics = richTextHistoryMetrics();
   assert.equal(metrics.entries, 100);
   assert.ok(metrics.approximateBytes <= metrics.maxBytes);
-  hidePdfTextEditor();
+  close();
 });
 
 test('large canonical insertion is retained as one compact undoable range patch', () => {
@@ -144,7 +244,7 @@ test('large canonical insertion is retained as one compact undoable range patch'
   assert.ok(richTextHistoryMetrics().approximateBytes < 12 * 1024 * 1024);
   undoRichTextDraft();
   assert.equal(richTextToPlainText(getEditorRichText()), 'prefix');
-  hidePdfTextEditor();
+  close();
 });
 
 test('an oversized paste remains undoable without exceeding the hard history budget', () => {
@@ -158,7 +258,7 @@ test('an oversized paste remains undoable without exceeding the hard history bud
   assert.equal(undoRichTextDraft(), true);
   assert.equal(richTextToPlainText(getEditorRichText()), 'prefix');
   assert.equal(redoRichTextDraft(), false);
-  hidePdfTextEditor();
+  close();
 });
 
 test('line-spacing multiplier uses each selected line maximum run size', () => {
@@ -171,7 +271,7 @@ test('line-spacing multiplier uses each selected line maximum run size', () => {
       createTextRun('second', { ...style, size: 10 }, { id: 'run-c' }),
     ], { id: 'line-b', baseline: 22, baselineAdvance: 15, alignment: 'left' }),
   ], { x: 0, y: 0, width: 100, height: 40 });
-  showPdfTextEditor({}, 'smalllargesecond', {
+  mount({}, 'smalllargesecond', {
     options: { richTextDocument: document }, onCommit() {}, onCancel() {},
   });
   applyRichTextDraftParagraphFormat('lineSpacingMultiplier', 1.5);
@@ -179,7 +279,7 @@ test('line-spacing multiplier uses each selected line maximum run size', () => {
   assert.equal(updated.lines[0].baselineAdvance, 30);
   assert.equal(updated.lines[1].baselineAdvance, 15);
   assert.equal(updated.lines[1].baseline, 10);
-  hidePdfTextEditor();
+  close();
 });
 
 test('a completed geometry gesture is one reversible document and placement unit', () => {
@@ -198,7 +298,7 @@ test('a completed geometry gesture is one reversible document and placement unit
     },
     canonicalBounds: { x: 10, y: 20, width: 100, height: 20 },
   };
-  showPdfTextEditor({}, 'move me', {
+  mount({}, 'move me', {
     options: {
       richTextDocument: beforeDocument,
       placement,
@@ -250,7 +350,7 @@ test('a completed geometry gesture is one reversible document and placement unit
   assert.equal(redoRichTextDraft(), true);
   assert.equal(getEditorRichText().region.x, 25);
   assert.equal(editorPlacement().canonicalBounds.x, 25);
-  hidePdfTextEditor();
+  close();
 });
 
 test('live style updates merge an explicit canonical patch instead of parsing CSS', () => {
@@ -265,7 +365,7 @@ test('live style updates merge an explicit canonical patch instead of parsing CS
     },
     canonicalBounds: { x: 10, y: 20, width: 100, height: 20 },
   };
-  showPdfTextEditor({}, 'style me', {
+  mount({}, 'style me', {
     options: { placement }, onCommit() {}, onCancel() {},
   });
   updateEditorStyle({ color: '#ff0000', filter: 'url(untrusted)' }, {
@@ -274,7 +374,7 @@ test('live style updates merge an explicit canonical patch instead of parsing CS
   assert.equal(editorPlacement().canonicalStyle.typography.color, '#ff0000');
   assert.equal(editorPlacement().canonicalStyle.typography.fontWeight, 'bold');
   assert.equal(Object.hasOwn(editorPlacement().canonicalStyle, 'filter'), false);
-  hidePdfTextEditor();
+  close();
 });
 
 test('keyboard shifts mutate canonical bounds through source rotation', () => {
@@ -287,13 +387,13 @@ test('keyboard shifts mutate canonical bounds through source rotation', () => {
     },
     canonicalBounds: { x: 10, y: 20, width: 100, height: 20 },
   };
-  showPdfTextEditor({ left: '20px', top: '40px' }, 'move me', {
+  mount({ left: '20px', top: '40px' }, 'move me', {
     options: { placement }, onCommit() {}, onCancel() {},
   });
   shiftEditorPosition(20, 10);
   assert.equal(editorPlacement().canonicalBounds.x, 15);
   assert.equal(editorPlacement().canonicalBounds.y, 10);
-  hidePdfTextEditor();
+  close();
 });
 
 test('final commit flush returns an immutable session and draft-revision snapshot', () => {
@@ -306,7 +406,7 @@ test('final commit flush returns an immutable session and draft-revision snapsho
     },
     canonicalBounds: { x: 10, y: 20, width: 100, height: 20 },
   };
-  showPdfTextEditor({}, 'before', {
+  mount({}, 'before', {
     options: {
       placement,
       richTextDocument: documentWithText('before'),
@@ -340,7 +440,7 @@ test('final commit flush returns an immutable session and draft-revision snapsho
   updateRichTextDraft(documentWithText('newer mutable draft'));
   assert.equal(snapshot.plainText, 'final draft');
   assert.equal(richTextToPlainText(snapshot.document), 'final draft');
-  hidePdfTextEditor();
+  close();
 });
 
 test('adopting an exact auto-fit layout does not create a second draft revision', () => {
@@ -354,7 +454,7 @@ test('adopting an exact auto-fit layout does not create a second draft revision'
     canonicalBounds: { x: 10, y: 20, width: 100, height: 20 },
   };
   const document = documentWithText('fit me');
-  showPdfTextEditor({}, 'fit me', {
+  mount({}, 'fit me', {
     options: {
       placement, richTextDocument: document,
       expandableRegion: {
@@ -377,5 +477,5 @@ test('adopting an exact auto-fit layout does not create a second draft revision'
   assert.equal(getEditorRichText().region.width, 110);
   assert.equal(editorOptions().expandableRegion.width, 110);
   assert.equal(editorOptions().expandableRegion.effectiveContentWidth, 110);
-  hidePdfTextEditor();
+  close();
 });

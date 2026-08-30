@@ -1099,6 +1099,7 @@ async function handleGetViewportState() {
         ? { ...window.__pdfTextEditPlacementDebug }
         : null,
       history: historyModule.richTextHistoryMetrics(),
+      lifecycle: historyModule.pdfTextEditorLifecycleDiagnostics?.() || [],
       exactLayout: layoutModule.exactLayoutSchedulerState(),
       layoutState: (() => {
         const layout = historyModule.getEditorLayoutState?.();
@@ -2720,6 +2721,7 @@ async function handleUiState(params) {
     } catch { /* keep rect-based answer */ }
   }
   const pageTextEditLayer = el.closest?.('.pdf-text-edit-layer') || null;
+  const pageTextEditPortal = el.closest?.('.pdf-text-edit-portal') || null;
   const closestTextLayer = el.closest?.('.textLayer') || null;
   const closestTextLayerRect = closestTextLayer?.getBoundingClientRect?.() || null;
   let editableValue = typeof el.value === 'string' ? el.value : null;
@@ -2760,6 +2762,7 @@ async function handleUiState(params) {
     },
     pageTextEditHost: {
       attached: Boolean(pageTextEditLayer),
+      editorMountGeneration: pageTextEditPortal?.dataset?.editorMountGeneration ?? null,
       documentId: pageTextEditLayer?.dataset?.documentId ?? null,
       page: pageTextEditLayer?.dataset?.page ?? null,
       parentId: pageTextEditLayer?.parentElement?.id || null,

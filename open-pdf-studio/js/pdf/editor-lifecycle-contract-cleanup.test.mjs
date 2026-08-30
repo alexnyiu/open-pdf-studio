@@ -58,3 +58,37 @@ test('retired publication, lifecycle, anchor, and preview compatibility paths st
   assert.doesNotMatch(renderer, /_lowResPreloadGeneration/u);
   assert.match(renderer, /continuousRenderJobKey/u);
 });
+
+test('every production text editor mounts and closes through an immutable runtime owner', async () => {
+  const [textTool, annotationEditor, store] = await Promise.all([
+    source('../tools/text-edit-tool.js'),
+    source('../tools/text-editing.js'),
+    source('../solid/stores/pdfTextEditStore.js'),
+  ]);
+
+  assert.doesNotMatch(textTool, /hidePdfTextEditor\(\)/u);
+  assert.doesNotMatch(annotationEditor, /hidePdfTextEditor\(\)/u);
+  assert.equal(
+    [...textTool.matchAll(/\.mountOwner\s*=\s*showPdfTextEditor\(/gu)].length,
+    3,
+    'scanned, native-source, and owned/inserted editors retain their mount owner',
+  );
+  assert.match(annotationEditor, /mountOwner\s*=\s*showPdfTextEditor\(/u);
+  assert.match(textTool, /hidePdfTextEditor\(editor\?\.mountOwner, reason\)/u);
+  assert.match(textTool, /if \(closeResult\.status === 'superseded'\) return false/u);
+  assert.match(annotationEditor, /hidePdfTextEditor\(mountOwner, reason\)/u);
+  assert.match(annotationEditor, /if \(closeResult\.status === 'superseded'\) return closeResult/u);
+  assert.match(store, /return Object\.freeze\(\{[\s\S]*mountGeneration/u);
+  assert.match(store, /status: 'superseded'/u);
+});
+
+test('annotation registration cancels the old owner before publishing the new shared draft', async () => {
+  const sourceText = await source('../tools/text-editing.js');
+  const registration = sourceText.indexOf('session = registerTextEditSession({');
+  const sharedDraft = sourceText.indexOf('state.isEditingText = true;', registration);
+  const mount = sourceText.indexOf('mountOwner = showPdfTextEditor(', sharedDraft);
+  assert.ok(registration >= 0 && registration < sharedDraft);
+  assert.ok(sharedDraft < mount);
+  assert.match(sourceText, /const ann = annotation;/u);
+  assert.match(sourceText, /const closed = closeEditingState\('published'\);[\s\S]*closed\.status === 'superseded'/u);
+});

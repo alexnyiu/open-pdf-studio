@@ -464,9 +464,13 @@ export function rebindActiveTextEditorSourceProjection({
   return true;
 }
 
-function cleanupEditorRuntime(editor, { restoreNativeSpans = false } = {}) {
+function cleanupEditorRuntime(editor, {
+  restoreNativeSpans = false,
+  reason = 'runtime-cleanup',
+} = {}) {
+  let closeResult = { status: 'inactive' };
   const cleanupSteps = [
-    () => hidePdfTextEditor(),
+    () => { closeResult = hidePdfTextEditor(editor?.mountOwner, reason); },
     () => {
       if (!restoreNativeSpans) return;
       for (const span of editor?.block?.spans || []) span.style.visibility = '';
@@ -479,6 +483,7 @@ function cleanupEditorRuntime(editor, { restoreNativeSpans = false } = {}) {
       console.warn('[text-edit] Editor cleanup step failed:', error);
     }
   }
+  if (closeResult.status === 'superseded') return false;
   if (activeEditor === editor) activeEditor = null;
   if (!activeEditor) {
     state.pdfTextEditState = null;
@@ -2764,14 +2769,13 @@ async function startScannedTextEditing(
     lineIds: Object.freeze([...(identityRegion?.lineIds || selection.target.lineIds || [lineId])]),
   });
 
-  const cleanup = () => {
+  const cleanup = (reason = 'scanned-runtime-cleanup') => {
     editor.commitOperationId = null;
-    if (activeEditor !== editor) return false;
-    return cleanupEditorRuntime(editor);
+    return cleanupEditorRuntime(editor, { reason });
   };
   const cancel = () => {
     editor.committing = false;
-    return cleanup();
+    return cleanup('cancel');
   };
   const finish = async (operation) => {
     if (editor.committing) {
@@ -2786,7 +2790,7 @@ async function startScannedTextEditing(
     }
     const replacementText = getEditorText();
     if (replacementText === editor.originalText && editor.styleTouchedKeys.size === 0) {
-      cleanup();
+      cleanup('noop');
       return textApplyResultFor(editor, 'noop', { editId: editor.selectionId });
     }
     editor.committing = true;
@@ -2816,7 +2820,7 @@ async function startScannedTextEditing(
         ? SCANNED_TEXT_REFLOW_LAYOUT_MODE
         : null;
       if (!editorApplyOperationIsCurrent(editor, operation)) {
-        cleanup();
+        cleanup('superseded-before-owner-commit');
         return textApplyResultFor(editor, 'superseded', { editId: editor.selectionId });
       }
       if (editor.existingOwnedEdit) {
@@ -2841,7 +2845,7 @@ async function startScannedTextEditing(
         });
       }
       if (!editorApplyOperationIsCurrent(editor, operation)) {
-        cleanup();
+        cleanup('superseded-after-owner-commit');
         return textApplyResultFor(editor, 'superseded', { editId: editor.selectionId });
       }
       const committedSelection = doc.scannedTextEdits?.pages
@@ -2854,8 +2858,8 @@ async function startScannedTextEditing(
         editRevision: committedSelection?.revision ?? null,
         nativeAuthoritative: false,
       });
-      cleanup();
-      if (published.publication.status === 'superseded') {
+      const closed = cleanup('published');
+      if (!closed || published.publication.status === 'superseded') {
         return textApplyResultFor(editor, 'superseded', {
           ownerCommitted: true,
           editId: editor.selectionId,
@@ -2877,7 +2881,7 @@ async function startScannedTextEditing(
       editor.commitOperationId = null;
       if (error?.code === 'SCANNED_TEXT_EDIT_OPERATION_INVALIDATED'
           || !editorApplyOperationIsCurrent(editor, operation)) {
-        cleanup();
+        cleanup('superseded-after-publication-error');
         return textApplyResultFor(editor, 'superseded', { editId: editor.selectionId });
       }
       console.warn('[scanned-text-edit] Apply failed:', error);
@@ -2949,11 +2953,16 @@ async function startScannedTextEditing(
     }
   };
   const handleBlur = () => {};
-  showPdfTextEditor(styleObj, initialText, {
+  editor.mountOwner = showPdfTextEditor(styleObj, initialText, {
     onCommit: finish,
     onCancel: cancel,
     onKeyDown: handleKeyDown,
     onBlur: handleBlur,
+    runtimeOwner: {
+      sessionId: editor.sessionId,
+      documentId: editor.ownerDocument?.id,
+      documentGeneration: editor.ownerDocumentGeneration,
+    },
     options: {
       // Paragraph reflow keeps soft wrapping in the fixed box; representing
       // those visual wraps as editable hard lines would change the paragraph.
@@ -3311,11 +3320,16 @@ async function startPdfTextEditing(
 
   const handleBlur = () => {};
 
-  showPdfTextEditor(styleObj, combinedText, {
+  activeEditor.mountOwner = showPdfTextEditor(styleObj, combinedText, {
     onCommit: null,
     onCancel: null,
     onKeyDown: handleKeyDown,
     onBlur: handleBlur,
+    runtimeOwner: {
+      sessionId: activeEditor.sessionId,
+      documentId: activeEditor.ownerDocument?.id,
+      documentGeneration: activeEditor.ownerDocumentGeneration,
+    },
     options: {
       richTextDocument: originalRichText,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
@@ -3384,7 +3398,7 @@ async function finishPdfTextEditing(operation) {
     transientStyleChanged: styleChanged,
   });
   if (!nativeChanged) {
-    cleanupEditorRuntime(editor, { restoreNativeSpans: true });
+    cleanupEditorRuntime(editor, { restoreNativeSpans: true, reason: 'noop' });
     return textApplyResultFor(editor, 'noop', { editId: null, editRevision: null });
   }
   if (!editor.sourceProvenance) {
@@ -3501,8 +3515,11 @@ async function finishPdfTextEditing(operation) {
       nativeAuthoritative: true,
     });
 
-    cleanupEditorRuntime(editor, { restoreNativeSpans: true });
-    if (published.publication.status === 'superseded') {
+    const closed = cleanupEditorRuntime(editor, {
+      restoreNativeSpans: true,
+      reason: 'published',
+    });
+    if (!closed || published.publication.status === 'superseded') {
       return textApplyResultFor(editor, 'superseded', {
         ownerCommitted: true,
         editId: editRecord.id,
@@ -3528,7 +3545,7 @@ function cancelPdfTextEditing() {
   try {
     return editor._cancelEditing ? editor._cancelEditing() !== false : true;
   } finally {
-    cleanupEditorRuntime(editor, { restoreNativeSpans: true });
+    cleanupEditorRuntime(editor, { restoreNativeSpans: true, reason: 'cancel' });
   }
 }
 
@@ -3841,9 +3858,9 @@ export function startTextEditEditing(
     if (!editorApplyOperationIsCurrent(editor, operation)) {
       return textApplyResultFor(editor, 'superseded');
     }
-    const closeEditor = () => {
-      cleanupEditorRuntime(editor);
-    };
+    const closeEditor = (reason = 'record-runtime-cleanup') => (
+      cleanupEditorRuntime(editor, { reason })
+    );
     const finalDraft = finalEditorDraft(editor);
     const newText = finalDraft.plainText;
     const richTextDraft = finalDraft.document;
@@ -3852,7 +3869,7 @@ export function startTextEditEditing(
     // how the user removes inserted text (issue #264).
     if (isAddedText && newText === '') {
       if (transaction) {
-        closeEditor();
+        closeEditor('noop');
         return textApplyResultFor(editor, 'noop');
       }
       if (!removeTextEditRecord(sourceTextEdit, editDoc)) {
@@ -3869,8 +3886,8 @@ export function startTextEditEditing(
         editRevision: null,
         nativeAuthoritative: false,
       });
-      closeEditor();
-      if (published.publication.status === 'superseded') {
+      const closed = closeEditor('published-delete');
+      if (!closed || published.publication.status === 'superseded') {
         return textApplyResultFor(editor, 'superseded', {
           ownerCommitted: true,
           editId: null,
@@ -3904,7 +3921,7 @@ export function startTextEditEditing(
       newRecord: transaction?.draftOnly === true,
     });
     if (!prepared.changed) {
-      closeEditor();
+      closeEditor('noop');
       return textApplyResultFor(editor, 'noop', {
         editId: oldTextEdit.id,
         editRevision: oldTextEdit.revision ?? null,
@@ -3989,8 +4006,8 @@ export function startTextEditEditing(
         committedCandidate.original && committedCandidate.sourceProvenance,
       ),
     });
-    closeEditor();
-    if (published.publication.status === 'superseded') {
+    const closed = closeEditor('published');
+    if (!closed || published.publication.status === 'superseded') {
       return textApplyResultFor(editor, 'superseded', {
         ownerCommitted: true,
         editId: committedCandidate.id ?? null,
@@ -4014,7 +4031,7 @@ export function startTextEditEditing(
     try {
       reRenderAddedText(pageNum);
     } finally {
-      cleanupEditorRuntime(editor);
+      cleanupEditorRuntime(editor, { reason: 'cancel' });
     }
     return true;
   };
@@ -4108,11 +4125,16 @@ export function startTextEditEditing(
 
   const handleBlur = () => {};
 
-  showPdfTextEditor(styleObj, view.newText, {
+  activeEditor.mountOwner = showPdfTextEditor(styleObj, view.newText, {
     onCommit: null,
     onCancel: null,
     onKeyDown: handleKeyDown,
     onBlur: handleBlur,
+    runtimeOwner: {
+      sessionId: activeEditor.sessionId,
+      documentId: activeEditor.ownerDocument?.id,
+      documentGeneration: activeEditor.ownerDocumentGeneration,
+    },
     options: {
       richTextDocument: view.richText,
       capabilities: DEFAULT_TEXT_FORMAT_CAPABILITIES,
@@ -4292,13 +4314,8 @@ export async function deleteActiveTextEdit() {
         return;
       }
     }
-    completeEditorSession(editor);
-    editor.preview?.remove();
-    hidePdfTextEditor();
-    activeEditor = null;
-    state.pdfTextEditState = null;
-    hideProperties();
-    enableTextLayerHover();
+    const closed = cleanupEditorRuntime(editor, { reason: 'delete' });
+    if (closed) enableTextLayerHover();
     return;
   }
   if (activeEditor._transaction?.draftOnly) {
@@ -4306,14 +4323,9 @@ export async function deleteActiveTextEdit() {
     return;
   }
   const editor = activeEditor;
-  hidePdfTextEditor();
-  // Restore any spans the existing-text session hid.
-  if (activeEditor.block && activeEditor.block.spans) {
-    for (const s of activeEditor.block.spans) s.style.visibility = '';
-  }
-  if (activeEditor._recordRef) {
+  if (editor._recordRef) {
     // Inserted text / existing edit record → drop the record.
-    const sourceRecord = activeEditor._sourceRecordRef || activeEditor._recordRef;
+    const sourceRecord = editor._sourceRecordRef || editor._recordRef;
     if (!removeTextEditRecord(sourceRecord)) return;
     await publishEditorCommit(editor, {
       ownerDocument: editor.ownerDocument,
@@ -4322,15 +4334,12 @@ export async function deleteActiveTextEdit() {
       editRevision: null,
       nativeAuthoritative: Boolean(sourceRecord.original && sourceRecord.sourceProvenance),
     });
-  } else if (activeEditor.kind === 'existingText' && activeEditor.originalText) {
+  } else if (editor.kind === 'existingText' && editor.originalText) {
     // Native source text may be removed only through exact operator ownership;
     // page-colour cover rectangles are not a safe deletion mechanism.
     showMessage(hardeningText('textEditor.status.nativeDeleteUnavailable'));
   }
-  completeEditorSession(editor);
-  activeEditor = null;
-  state.pdfTextEditState = null;
-  hideProperties();
+  cleanupEditorRuntime(editor, { restoreNativeSpans: true, reason: 'delete' });
 }
 
 // Move the active text edit by a PDF-unit delta (Alt+Arrow keys).
