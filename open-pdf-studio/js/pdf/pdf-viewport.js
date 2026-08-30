@@ -21,6 +21,7 @@ import {
 } from './render-resource-budget.js';
 import { recordPerformancePeak } from './performance-metrics.js';
 import { releaseCanvasBackingStores } from './viewport-backing-store.js';
+import { viewportOwnsDocumentZoom } from './viewport-zoom-ownership.js';
 import { registerPageSurface, unregisterPageSurface } from './page-surface-registry.js';
 import {
   captureSinglePageViewportState,
@@ -1118,9 +1119,12 @@ function _render() {
     }
     annCanvas.style.width = `${vpW}px`;
     annCanvas.style.height = `${vpH}px`;
-    // Sync doc.scale so legacy code that reads it gets viewport zoom
+    // The single-page viewport owns zoom only for its exact document lifecycle.
+    // A cold-open preview can briefly activate this singleton while a continuous
+    // document is still hidden. Its released 1x1 backing store must never replace
+    // the continuous document's scale with that transient fit value.
     const doc = state.documents?.[state.activeDocumentIndex];
-    if (doc) doc.scale = viewport.zoom;
+    if (viewportOwnsDocumentZoom(doc, viewport)) doc.scale = viewport.zoom;
   }
   // Keep the text-highlight canvas perfectly mirrored to the annotation canvas
   const hlCanvas = document.getElementById('text-highlight-canvas');
