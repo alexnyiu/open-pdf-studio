@@ -60,7 +60,8 @@ export function renderPublicationTokenIsCurrent(token, documentState) {
     && nonNegativeRevision(documentState.revisionState?.livePdfRevision) === token.livePdfRevision
     && nonNegativeRevision(
       documentState.revisionState?.pageContentRevisions?.[token.pageNum]
-      ?? documentState.pageRenderRevisions?.[token.pageNum],
+      ?? documentState.pageRenderRevisions?.[token.pageNum]
+      ?? documentState.revisionState?.contentRevision,
     ) === token.pageRevision;
 }
 

@@ -48,6 +48,17 @@ test('a complete render publication token accepts only its exact owner revision'
   assert.equal(token.revisionAuthority, 'proxy');
 });
 
+test('a document-wide mutation without page keys publishes at contentRevision', () => {
+  const document = documentOwner();
+  document.revisionState.contentRevision = 2;
+  document.revisionState.pageContentRevisions = {};
+  document.pageRenderRevisions = document.revisionState.pageContentRevisions;
+  const token = captureRenderPublicationToken(document, 1, 'blank-document');
+  assert.equal(token.pageRevision, 2);
+  assert.equal(token.publishedPageRevision, 1);
+  assert.equal(renderPublicationTokenIsCurrent(token, document), true);
+});
+
 test('model publication explicitly owns a page revision newer than the live proxy', () => {
   const document = documentOwner();
   document.revisionState.contentRevision = 2;
