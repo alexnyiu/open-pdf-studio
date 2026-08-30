@@ -28,6 +28,11 @@ import {
   portableArtifactPath,
   validateEditorCoverageManifest,
 } from './ocr-release-hardening-policy.mjs';
+import {
+  BROWSER_EDITOR_ACCEPTANCE_CONTRACT,
+  BROWSER_EDITOR_ACCEPTANCE_SCHEMA_VERSION,
+  validateBrowserEditorAcceptanceManifest,
+} from './browser-editor-acceptance-manifest.mjs';
 import { evaluateEditorPerformanceReport } from './verify-editor-performance-report.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -457,13 +462,18 @@ function validateGateSource(gateId, report, expectedHead, expectedRepository = '
       ),
     ));
     const browser = report?.browserAcceptance;
-    if (browser?.contract !== 'open-pdf-studio.browser-editor-acceptance'
-        || browser?.schemaVersion !== 1 || browser?.required !== true) {
+    if (browser?.contract !== BROWSER_EDITOR_ACCEPTANCE_CONTRACT
+        || browser?.schemaVersion !== BROWSER_EDITOR_ACCEPTANCE_SCHEMA_VERSION
+        || browser?.required !== true) {
       issues.push('required supplemental browser acceptance contract is missing or invalid');
     }
-    if (browser?.status !== 'PASS' || browser?.outcome !== 'success') {
+    if (browser?.status !== 'PASS') {
       issues.push('required supplemental browser acceptance did not pass');
     }
+    issues.push(...validateBrowserEditorAcceptanceManifest(
+      browser?.manifest,
+      { expectedHead },
+    ));
     const browserSuites = namedEntries(
       browser?.suites,
       REQUIRED_BROWSER_ACCEPTANCE_SUITES,

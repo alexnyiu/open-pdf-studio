@@ -6,10 +6,14 @@ import { fileURLToPath } from 'node:url';
 
 import {
   PACKAGED_EDITOR_REQUIRED_SUITES,
-  REQUIRED_BROWSER_ACCEPTANCE_SUITES,
   portableArtifactPath,
   validateEditorCoverageManifest,
 } from './ocr-release-hardening-policy.mjs';
+import {
+  BROWSER_EDITOR_ACCEPTANCE_CONTRACT,
+  BROWSER_EDITOR_ACCEPTANCE_SCHEMA_VERSION,
+  validateBrowserEditorAcceptanceManifest,
+} from './browser-editor-acceptance-manifest.mjs';
 import { verifySaveRenderCoherenceReport } from './verify-save-render-coherence-report.mjs';
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -40,7 +44,9 @@ function parseArguments(argv) {
       process.env.OPEN_PDF_STUDIO_EDITOR_ACCEPTANCE_REPORT
         || path.join(projectDir, 'test-artifacts', 'packaged-editor', 'acceptance.json'),
     ),
-    browserOutcome: process.env.OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME || 'unavailable',
+    browserReportPath: process.env.OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_REPORT
+      ? path.resolve(process.env.OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_REPORT)
+      : null,
     coverageManifestPath: process.env.OPEN_PDF_STUDIO_EDITOR_COVERAGE_MANIFEST
       ? path.resolve(process.env.OPEN_PDF_STUDIO_EDITOR_COVERAGE_MANIFEST)
       : null,
@@ -49,7 +55,7 @@ function parseArguments(argv) {
     const value = argv[index];
     if (value === '--app') options.appBundle = path.resolve(argv[++index]);
     else if (value === '--output') options.outputPath = path.resolve(argv[++index]);
-    else if (value === '--browser-outcome') options.browserOutcome = argv[++index] || 'unavailable';
+    else if (value === '--browser-report') options.browserReportPath = path.resolve(argv[++index]);
     else if (value === '--coverage-manifest') options.coverageManifestPath = path.resolve(argv[++index]);
     else throw new Error(`unknown argument: ${value}`);
   }
@@ -59,6 +65,14 @@ function parseArguments(argv) {
       '..',
       'browser-ui',
       'editor-coverage-manifest.json',
+    );
+  }
+  if (!options.browserReportPath) {
+    options.browserReportPath = path.resolve(
+      path.dirname(options.outputPath),
+      '..',
+      'browser-ui',
+      'browser-acceptance.json',
     );
   }
   return options;
@@ -270,18 +284,29 @@ async function validateAnnotationEvidence(outputDir, expectedHead) {
   return { path: relativePath, status: issues.length === 0 ? 'PASS' : 'FAIL', issues };
 }
 
-function browserAcceptanceEvidence(outcome) {
-  const status = outcome === 'success' ? 'PASS' : 'FAIL';
+async function browserAcceptanceEvidence(reportPath, expectedHead) {
+  let manifest = null;
+  const issues = [];
+  try {
+    manifest = JSON.parse(await readFile(reportPath, 'utf8'));
+  } catch (error) {
+    issues.push(`required browser acceptance manifest could not be read: ${error.message || error}`);
+  }
+  if (manifest) {
+    issues.push(...validateBrowserEditorAcceptanceManifest(manifest, { expectedHead }));
+  }
   return {
-    contract: 'open-pdf-studio.browser-editor-acceptance',
-    schemaVersion: 1,
+    contract: BROWSER_EDITOR_ACCEPTANCE_CONTRACT,
+    schemaVersion: BROWSER_EDITOR_ACCEPTANCE_SCHEMA_VERSION,
     required: true,
-    status,
-    outcome,
-    suites: REQUIRED_BROWSER_ACCEPTANCE_SUITES.map((name) => ({
-      name,
-      status: status === 'PASS' ? 'PASS' : 'UNVERIFIED',
-    })),
+    status: issues.length === 0 ? 'PASS' : 'FAIL',
+    reportPath,
+    issues,
+    head: manifest?.head ?? null,
+    startedAt: manifest?.startedAt ?? null,
+    completedAt: manifest?.completedAt ?? null,
+    suites: Array.isArray(manifest?.suites) ? manifest.suites : [],
+    manifest,
   };
 }
 
@@ -320,7 +345,7 @@ export async function runEditorAcceptance(options) {
   const outputDir = path.dirname(options.outputPath);
   await mkdir(path.join(outputDir, 'logs'), { recursive: true });
   const head = await gitHead();
-  const browserAcceptance = browserAcceptanceEvidence(options.browserOutcome);
+  const browserAcceptance = await browserAcceptanceEvidence(options.browserReportPath, head);
   const editorCoverage = await editorCoverageEvidence(options.coverageManifestPath, head);
   const environment = {
     ...process.env,
@@ -355,7 +380,7 @@ export async function runEditorAcceptance(options) {
     editorCoverage,
     testCommands: [
       'npm run test:editor-coverage:macos',
-      ...REQUIRED_BROWSER_ACCEPTANCE_SUITES.map((name) => `npm run ${name}`),
+      'npm run test:browser-acceptance:manifest',
       ...suites.map((name) => `npm run ${name}`),
     ],
     suites: [],
@@ -412,7 +437,7 @@ export async function runEditorAcceptance(options) {
     )),
     ...(browserAcceptance.status === 'PASS'
       ? []
-      : [`required supplemental browser acceptance outcome was ${browserAcceptance.outcome}`]),
+      : browserAcceptance.issues),
     ...editorCoverage.issues,
   ];
   await writeFile(options.outputPath, `${JSON.stringify(report, null, 2)}\n`);

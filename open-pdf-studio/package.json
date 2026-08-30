@@ -30,6 +30,8 @@
     "proof:ocr-writer": "node scripts/run-ocr-pdf-writer-proof.mjs",
     "test:ocr-ui": "npm run test:ocr-ui:macos",
     "test:ocr-ui:browser:macos": "node scripts/test-ocr-searchable-layer-macos.mjs && node scripts/test-ocr-recognition-dialog-macos.mjs && node scripts/test-ocr-progress-macos.mjs && node scripts/test-ocr-review-macos.mjs",
+    "test:browser-acceptance:manifest": "node scripts/run-browser-editor-acceptance.mjs",
+    "verify:browser-acceptance:manifest": "node scripts/verify-browser-editor-acceptance.mjs",
     "test:ocr-ui:macos": "npm run test:ocr-ui:browser:macos && npm run test:ocr-workflow:macos",
     "test:ocr-workflow:macos": "node scripts/test-ocr-production-workflow-macos.mjs",
     "test:ocr-save:macos": "node scripts/test-macos-safe-ocr-save-packaged.mjs",

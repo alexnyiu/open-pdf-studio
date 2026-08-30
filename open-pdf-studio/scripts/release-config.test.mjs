@@ -202,9 +202,7 @@ test('CI makes every hardening branch and protected-main gate explicit', async (
     'git diff --check',
     'cargo test -p open-pdf-studio',
     'cargo test -p pdfium-worker',
-    'npm run test:native-text-editing:ui',
-    'npm run test:metadata-editing:ui',
-    'npm run test:modal-hardening:ui',
+    'npm run test:browser-acceptance:manifest',
     'npm run test:editor-coverage:macos',
     'npm run test:editor-acceptance:macos',
     'node scripts/verify-save-render-coherence-report.mjs',
@@ -217,7 +215,7 @@ test('CI makes every hardening branch and protected-main gate explicit', async (
     assert.match(workflow, new RegExp(gateId));
   }
   assert.match(workflow, /pattern: ocr-release-hardening-evidence-\*/);
-  assert.match(workflow, /OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME:.*browser_acceptance\.outcome/);
+  assert.match(workflow, /OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_REPORT:.*browser-acceptance\.json/);
   assert.match(workflow, /OPEN_PDF_STUDIO_EDITOR_COVERAGE_MANIFEST:.*editor-coverage-manifest\.json/);
   assert.match(workflow, /OPEN_PDF_STUDIO_OCR_100_PAGE_REPORT:.*ocr-production-100-page\.json/);
   assert.match(
@@ -328,6 +326,7 @@ test('release-hardening scripts and machine evidence are wired without committin
   assert.match(pkg.scripts['test:ocr-packaged:macos'], /OPEN_PDF_STUDIO_PACKAGED_APP=.*aarch64-apple-darwin/);
   assert.match(pkg.scripts['test:ocr-packaged:macos'], /OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE=.*aarch64-apple-darwin/);
   assert.equal(pkg.scripts['test:editor-acceptance:macos'], 'node scripts/run-editor-acceptance-macos.mjs');
+  assert.equal(pkg.scripts['test:browser-acceptance:manifest'], 'node scripts/run-browser-editor-acceptance.mjs');
   assert.equal(pkg.scripts['test:editor-coverage:macos'], 'node scripts/test-editor-coverage-macos.mjs');
   assert.equal(
     pkg.scripts['test:annotation-text-editing:macos'],
@@ -344,6 +343,8 @@ test('release-hardening scripts and machine evidence are wired without committin
   assert.match(packagedAggregate, /const failedSuites = report\.suites\.filter/);
   assert.match(packagedAggregate, /report\.failures = \[[\s\S]*failedSuites\.map/);
   assert.match(packagedAggregate, /browserAcceptance\.status === 'PASS'/);
+  assert.match(packagedAggregate, /validateBrowserEditorAcceptanceManifest/);
+  assert.doesNotMatch(packagedAggregate, /OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME|browser-outcome/u);
   assert.match(packagedAggregate, /validateEditorCoverageManifest/);
   assert.match(packagedAggregate, /validateAnnotationEvidence\(outputDir, report\.head\)/);
   assert.match(packagedAggregate, /validateCoherenceEvidence\(outputDir, report\.head\)/);
@@ -411,11 +412,11 @@ test('release-hardening scripts and machine evidence are wired without committin
   );
   assert.match(workflow, /test:editor-coverage:macos[\s\S]*editor-coverage-manifest\.json/);
   assert.match(workflow, /OPEN_PDF_STUDIO_TEST_ARTIFACT_DIR:.*test-artifacts\/browser-ui/);
-  assert.match(workflow, /test:ocr-ui:browser:macos.*tee.*test-artifacts\/browser-ui\/ocr-ui\.log/);
+  assert.match(workflow, /test:browser-acceptance:manifest[\s\S]*browser-acceptance\.json/);
   assert.match(workflow, /id: browser_acceptance\s+continue-on-error: true/);
-  assert.match(workflow, /browser_status=0[\s\S]*exit "\$browser_status"/);
   assert.match(workflow, /Run production packaged editor acceptance\s+if: always\(\)/);
-  assert.match(workflow, /steps\.browser_acceptance\.outcome != 'success'/);
+  assert.match(workflow, /Enforce supplemental browser acceptance manifest[\s\S]*verify:browser-acceptance:manifest/);
+  assert.doesNotMatch(workflow, /OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME/u);
   assert.match(workflow, /test:ocr-production-100-page:macos/);
   assert.match(workflow, /test:editor-performance:macos[\s\S]*test-artifacts\/editor-performance\/console\.log/);
   assert.match(workflow, /Evaluate authoritative PR or fail-closed diagnostic decision/);

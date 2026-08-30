@@ -417,43 +417,27 @@ jobs:
         continue-on-error: true
         env:
           OPEN_PDF_STUDIO_TEST_ARTIFACT_DIR: ${{ runner.temp }}/test-artifacts/browser-ui
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/test-artifacts/browser-ui"
-          ./node_modules/.bin/vite --host 127.0.0.1 --port 3041 --strictPort \
-            >"$RUNNER_TEMP/test-artifacts/browser-ui/vite-console.log" 2>&1 &
-          VITE_PID=$!
-          trap 'kill "$VITE_PID" 2>/dev/null || true' EXIT
-          for attempt in {1..60}; do
-            if curl --fail --silent http://127.0.0.1:3041/ >/dev/null; then break; fi
-            if ! kill -0 "$VITE_PID" 2>/dev/null; then
-              cat "$RUNNER_TEMP/test-artifacts/browser-ui/vite-console.log"
-              exit 1
-            fi
-            sleep 1
-          done
-          curl --fail --silent http://127.0.0.1:3041/ >/dev/null
-          browser_status=0
-          npm run test:native-text-editing:ui 2>&1 | tee "$RUNNER_TEMP/test-artifacts/browser-ui/native-text-editing.log" || browser_status=1
-          npm run test:metadata-editing:ui 2>&1 | tee "$RUNNER_TEMP/test-artifacts/browser-ui/metadata-editing.log" || browser_status=1
-          npm run test:modal-hardening:ui 2>&1 | tee "$RUNNER_TEMP/test-artifacts/browser-ui/modal-hardening.log" || browser_status=1
-          npm run test:ocr-ui:browser:macos 2>&1 | tee "$RUNNER_TEMP/test-artifacts/browser-ui/ocr-ui.log" || browser_status=1
-          exit "$browser_status"
+        run: >-
+          npm run test:browser-acceptance:manifest --
+          --output "$RUNNER_TEMP/test-artifacts/browser-ui/browser-acceptance.json"
 
       - name: Run production packaged editor acceptance
         if: always()
         env:
           OPEN_PDF_STUDIO_PACKAGED_APP_BUNDLE: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app
           OPEN_PDF_STUDIO_PACKAGED_APP: ${{ runner.temp }}/packaged-app/extracted/Open PDF Studio.app/Contents/MacOS/open-pdf-studio
-          OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME: ${{ steps.browser_acceptance.outcome }}
+          OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_REPORT: ${{ runner.temp }}/test-artifacts/browser-ui/browser-acceptance.json
           OPEN_PDF_STUDIO_EDITOR_COVERAGE_MANIFEST: ${{ runner.temp }}/test-artifacts/browser-ui/editor-coverage-manifest.json
         run: >-
           npm run test:editor-acceptance:macos --
           --output "$RUNNER_TEMP/test-artifacts/packaged-editor/acceptance.json"
 
-      - name: Enforce supplemental browser acceptance
-        if: always() && steps.browser_acceptance.outcome != 'success'
-        run: exit 1
+      - name: Enforce supplemental browser acceptance manifest
+        if: always()
+        run: >-
+          npm run verify:browser-acceptance:manifest --
+          --input "$RUNNER_TEMP/test-artifacts/browser-ui/browser-acceptance.json"
+          --head "$GITHUB_SHA"
 
       - name: Upload packaged editor artifacts
         if: always()

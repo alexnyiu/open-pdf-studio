@@ -39,6 +39,10 @@ import {
 } from './ocr-release-hardening-policy.mjs';
 import { evaluateEditorPerformanceReport } from './verify-editor-performance-report.mjs';
 import { writeGateEvidence } from './write-release-gate-evidence.mjs';
+import {
+  BROWSER_EDITOR_ACCEPTANCE_CONTRACT,
+  BROWSER_EDITOR_ACCEPTANCE_SCHEMA_VERSION,
+} from './browser-editor-acceptance-manifest.mjs';
 
 const HEAD = '1401961154d4e689a90f7ce8c76b91961ba80b0b';
 const CLEAN_WORKTREE = Object.freeze({ clean: true, dirtyPathCount: 0 });
@@ -340,12 +344,28 @@ function passingReports() {
     syntheticStateSeeding: false,
     testOnlyEntryPoint: false,
     browserAcceptance: {
-      contract: 'open-pdf-studio.browser-editor-acceptance',
-      schemaVersion: 1,
+      contract: BROWSER_EDITOR_ACCEPTANCE_CONTRACT,
+      schemaVersion: BROWSER_EDITOR_ACCEPTANCE_SCHEMA_VERSION,
       required: true,
       status: 'PASS',
-      outcome: 'success',
-      suites: REQUIRED_BROWSER_ACCEPTANCE_SUITES.map((name) => ({ name, status: 'PASS' })),
+      suites: REQUIRED_BROWSER_ACCEPTANCE_SUITES.map((name) => ({
+        name, command: `npm run ${name}`, code: 0, signal: null, status: 'PASS',
+        startedAt: '2026-08-30T12:00:00.000Z',
+        completedAt: '2026-08-30T12:00:10.000Z',
+      })),
+      manifest: {
+        contract: BROWSER_EDITOR_ACCEPTANCE_CONTRACT,
+        schemaVersion: BROWSER_EDITOR_ACCEPTANCE_SCHEMA_VERSION,
+        status: 'PASS',
+        head: HEAD,
+        startedAt: '2026-08-30T12:00:00.000Z',
+        completedAt: '2026-08-30T12:01:00.000Z',
+        suites: REQUIRED_BROWSER_ACCEPTANCE_SUITES.map((name) => ({
+          name, command: `npm run ${name}`, code: 0, signal: null, status: 'PASS',
+          startedAt: '2026-08-30T12:00:00.000Z',
+          completedAt: '2026-08-30T12:00:10.000Z',
+        })),
+      },
     },
     editorCoverage: {
       status: 'PASS',
@@ -779,8 +799,8 @@ test('failed browser acceptance and incomplete editor coverage cannot be reporte
     ({ value }) => value.gateId === 'packaged-macos-editor-acceptance',
   ).value;
   browserGate.browserAcceptance.status = 'FAIL';
-  browserGate.browserAcceptance.outcome = 'failure';
   browserGate.browserAcceptance.suites[0].status = 'FAIL';
+  browserGate.browserAcceptance.manifest.suites[0].status = 'FAIL';
   browserGate.status = 'PASS';
   const browserResult = evaluateReleaseHardening(browserReports, { expectedHead: HEAD });
   assert.equal(browserResult.decision, RELEASE_NO_GO);
