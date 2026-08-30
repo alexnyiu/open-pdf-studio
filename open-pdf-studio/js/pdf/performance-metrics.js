@@ -27,6 +27,8 @@ export const MACOS_HARDENING_COUNTER_METRICS = Object.freeze([
   'visibleColdRenderSuppressedCount',
   'previewUsefulCancellationCount',
   'retiredNativeWorkCount',
+  'retiredNativeStalePublicationCount',
+  'pageRenderFailureBlockedLaterPagesCount',
 ]);
 
 export const MACOS_HARDENING_SAMPLE_METRICS = Object.freeze([

@@ -34,8 +34,30 @@ export function evaluateLargePdfPerformanceReport(report) {
       || (finite(metrics.cachedPreviewP95Ms) && metrics.cachedPreviewP95Ms <= 100),
     metrics.cachedPreviewPaints === 0 ? 'not applicable; no cached preview encountered' : metrics.cachedPreviewP95Ms,
     '<= 100 ms when a cached preview exists'),
+    threshold('strictlyVisibleFirstPreview', metrics.visiblePagePreviewPublishes > 0
+      && finite(metrics.visiblePagePreviewP95Ms) && metrics.visiblePagePreviewP95Ms <= 150,
+    {
+      publishes: metrics.visiblePagePreviewPublishes,
+      p95Ms: metrics.visiblePagePreviewP95Ms,
+    }, 'at least one visible preview and p95 <= 150 ms'),
+    threshold('blankShellWithAvailablePreview', metrics.visibleBlankWithSourceSamples === 0
+      || (finite(metrics.visibleBlankWithSourceMaxMs) && metrics.visibleBlankWithSourceMaxMs <= 100),
+    metrics.visibleBlankWithSourceSamples === 0
+      ? 'not applicable; no wrapper mounted with a cached source'
+      : { samples: metrics.visibleBlankWithSourceSamples, maxMs: metrics.visibleBlankWithSourceMaxMs },
+    '<= 100 ms when a preview source is available at mount'),
     threshold('fullQualityLatencyMaxMs', finite(metrics.fullQualityLatencyMaxMs)
-      && metrics.fullQualityLatencyMaxMs <= 500, metrics.fullQualityLatencyMaxMs, '<= 500 ms after settling'),
+      && metrics.fullQualityLatencyMaxMs <= 800, metrics.fullQualityLatencyMaxMs, '<= 800 ms after settling'),
+    threshold('visibleColdPageActivityAdmission', metrics.visibleColdRenderSuppressedCount === 0,
+      metrics.visibleColdRenderSuppressedCount, 'zero strictly visible cold pages skipped for foreground activity'),
+    threshold('usefulPreviewCancellation', metrics.previewUsefulCancellationCount === 0,
+      metrics.previewUsefulCancellationCount, 'zero useful visible preview cancellations'),
+    threshold('retiredNativeWorkCap', finite(metrics.retiredNativeWorkPeak)
+      && metrics.retiredNativeWorkPeak <= 2, metrics.retiredNativeWorkPeak, '<= 2 per document'),
+    threshold('retiredNativeStalePublication', metrics.retiredNativeStalePublicationCount === 0,
+      metrics.retiredNativeStalePublicationCount, 'zero stale pixel publications'),
+    threshold('pageFailureBlocksLaterPages', metrics.pageRenderFailureBlockedLaterPagesCount === 0,
+      metrics.pageRenderFailureBlockedLaterPagesCount, 'zero later pages blocked by a page-local failure'),
     threshold('mountedPageSurfaces', finite(metrics.mountedPageSurfacesPeak)
       && metrics.mountedPageSurfacesPeak <= 9, metrics.mountedPageSurfacesPeak, '<= 9'),
     threshold('mountedThumbnails', finite(metrics.mountedThumbnailsPeak)

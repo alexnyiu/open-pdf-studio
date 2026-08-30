@@ -128,3 +128,85 @@ test('scheduler rejects a completion whose publication revision advanced while r
   release('late pixels');
   assert.equal((await result).status, 'cancelled');
 });
+
+test('retired native work stays counted and caps replacement launches per owner', async () => {
+  const scheduler = createRenderWorkScheduler({ maxRetiredPerOwner: 2 });
+  const releases = [];
+  const start = (key) => scheduler.schedule({
+    key,
+    ownerKey: 'large-document:1',
+    run: ({ signal }) => new Promise((resolve) => {
+      releases.push({ key, resolve, signal });
+    }),
+  });
+  const first = start('page-1');
+  scheduler.cancelOwner('large-document:1', 'fling-reprioritized');
+  assert.equal((await first).status, 'cancelled');
+  assert.equal(releases[0].signal.aborted, true);
+  const second = start('page-2');
+  scheduler.cancelOwner('large-document:1', 'fling-reprioritized');
+  assert.equal((await second).status, 'cancelled');
+  const third = start('page-3');
+  await Promise.resolve();
+  assert.equal(releases.length, 2, 'a third backend call must wait behind two retired calls');
+  assert.equal(scheduler.snapshot().actualRunning, 2);
+  releases[0].resolve('retired one finished');
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(releases.length, 3);
+  releases[1].resolve('retired two finished');
+  releases[2].resolve('current finished');
+  assert.equal((await third).status, 'complete');
+});
+
+test('a queued background page is promoted when it becomes strictly visible', async () => {
+  const scheduler = createRenderWorkScheduler();
+  let release;
+  const first = scheduler.schedule({
+    key: 'blocking',
+    run: () => new Promise((resolve) => { release = resolve; }),
+  });
+  const page = scheduler.schedule({
+    key: 'page-8-preview', ownerKey: 'doc:1', kind: 'background', priority: 10,
+    pageNum: 8, lane: 'directional-overscan', run: () => 'preview',
+  });
+  const promoted = scheduler.schedule({
+    key: 'page-8-preview', ownerKey: 'doc:1', kind: 'foreground', priority: 2_000,
+    pageNum: 8, lane: 'visible-preview', run: () => 'duplicate',
+  });
+  assert.equal(promoted, page);
+  assert.equal(scheduler.snapshot().queued[0].kind, 'foreground');
+  assert.equal(scheduler.snapshot().queued[0].lane, 'visible-preview');
+  release();
+  await first;
+  assert.equal((await page).status, 'complete');
+});
+
+test('foreground interaction preserves and promotes background work that became visible', async () => {
+  const scheduler = createRenderWorkScheduler();
+  let release;
+  const page = scheduler.schedule({
+    key: 'page-9-preview', ownerKey: 'doc:1', kind: 'background', pageNum: 9,
+    run: () => new Promise((resolve) => { release = resolve; }),
+  });
+  scheduler.noteInteraction(250, {
+    preserve: (entry) => entry.pageNum === 9,
+  });
+  assert.equal(scheduler.snapshot().running[0].kind, 'foreground');
+  assert.equal(scheduler.snapshot().retired.length, 0);
+  release('useful preview');
+  assert.equal((await page).status, 'complete');
+});
+
+test('a failed page does not block later queued pages', async () => {
+  const scheduler = createRenderWorkScheduler();
+  let release;
+  const first = scheduler.schedule({
+    key: 'page-1-failure',
+    run: () => new Promise((_, reject) => { release = () => reject(new Error('native page failed')); }),
+  });
+  const later = scheduler.schedule({ key: 'page-2', run: () => 'later pixels' });
+  release();
+  await assert.rejects(first, /native page failed/u);
+  assert.deepEqual(await later, { status: 'complete', value: 'later pixels' });
+});

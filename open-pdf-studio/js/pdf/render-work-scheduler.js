@@ -5,7 +5,11 @@ import {
 
 const clock = () => globalThis.performance?.now?.() ?? Date.now();
 
-export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 } = {}) {
+export function createRenderWorkScheduler({
+  concurrency = 1,
+  idleDelayMs = 250,
+  maxRetiredPerOwner = Number.POSITIVE_INFINITY,
+} = {}) {
   const queued = new Map();
   const running = new Map();
   const retired = new Map();
@@ -22,6 +26,8 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
   };
 
   const isBackgroundPaused = () => clock() < interactionUntil;
+  const retiredForOwner = (ownerKey) => [...retired.values()]
+    .filter((entry) => entry.ownerKey === ownerKey).length;
 
   const wake = () => {
     if (wakeTimer) clearTimeout(wakeTimer);
@@ -35,8 +41,10 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
   const settleCancelled = (entry, reason = 'cancelled') => {
     if (entry.settled) return false;
     entry.valid = false;
+    if (!entry.abortController.signal.aborted) entry.abortController.abort(reason);
     entry.settled = true;
     statistics.cancelled += 1;
+    try { entry.onCancel?.(reason, entry); } catch { /* cancellation must still settle */ }
     entry.resolve({ status: 'cancelled', reason });
     return true;
   };
@@ -52,6 +60,8 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
 
   const nextEntry = () => [...queued.values()]
     .filter((entry) => entry.kind !== 'background' || !isBackgroundPaused())
+    .filter((entry) => !Number.isFinite(maxRetiredPerOwner)
+      || retiredForOwner(entry.ownerKey) < maxRetiredPerOwner)
     .sort((left, right) => right.priority - left.priority || left.sequence - right.sequence)[0] || null;
 
   const entryIsCurrent = (entry) => entry.valid
@@ -75,6 +85,7 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
       statistics.maxRunning = Math.max(statistics.maxRunning, running.size);
       void Promise.resolve(entry.run({
         isCurrent: () => entryIsCurrent(entry) && running.get(entry.key) === entry,
+        signal: entry.abortController.signal,
       }))
         .then((value) => {
           if (entryIsCurrent(entry) && !entry.settled) {
@@ -108,20 +119,33 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
       publicationToken = null,
       publicationDocument = null,
       onRetire = null,
+      onCancel = null,
+      pageNum = null,
+      lane = null,
+      quality = null,
       run,
     }) {
       if (!key || typeof run !== 'function') throw new TypeError('Render work requires a key and run callback');
       const existing = queued.get(key) || running.get(key);
-      if (existing) return existing.promise;
+      if (existing) {
+        existing.priority = Math.max(existing.priority, Number(priority) || 0);
+        if (kind !== 'background') existing.kind = kind;
+        if (lane != null) existing.lane = lane;
+        if (quality != null) existing.quality = quality;
+        if (queued.has(key)) pump();
+        return existing.promise;
+      }
       let resolve;
       let reject;
       const promise = new Promise((resolveValue, rejectValue) => {
         resolve = resolveValue;
         reject = rejectValue;
       });
+      const abortController = new AbortController();
       queued.set(key, {
         key, ownerKey, priority: Number(priority) || 0, kind, run,
-        publicationToken, publicationDocument, onRetire,
+        publicationToken, publicationDocument, onRetire, onCancel,
+        pageNum: Number(pageNum) || null, lane, quality, abortController,
         sequence: ++sequence, valid: true, settled: false, resolve, reject, promise,
       });
       statistics.scheduled += 1;
@@ -129,10 +153,14 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
       pump();
       return promise;
     },
-    noteInteraction(durationMs = idleDelayMs) {
+    noteInteraction(durationMs = idleDelayMs, { preserve = null } = {}) {
       interactionUntil = Math.max(interactionUntil, clock() + Math.max(0, durationMs));
       for (const [key, entry] of queued) {
         if (entry.kind !== 'background') continue;
+        if (preserve?.(entry)) {
+          entry.kind = 'foreground';
+          continue;
+        }
         queued.delete(key);
         settleCancelled(entry, 'foreground-resumed');
       }
@@ -140,7 +168,12 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
       // can be retired immediately so it neither publishes nor occupies the
       // foreground slot while its underlying callback unwinds.
       for (const [key, entry] of [...running]) {
-        if (entry.kind === 'background') retireRunning(key, entry, 'foreground-resumed');
+        if (entry.kind !== 'background') continue;
+        if (preserve?.(entry)) {
+          entry.kind = 'foreground';
+          continue;
+        }
+        retireRunning(key, entry, 'foreground-resumed');
       }
       wake();
     },
@@ -168,9 +201,17 @@ export function createRenderWorkScheduler({ concurrency = 1, idleDelayMs = 250 }
     },
     snapshot() {
       return {
-        queued: [...queued.values()].map(({ key, ownerKey, priority, kind }) => ({ key, ownerKey, priority, kind })),
-        running: [...running.values()].map(({ key, ownerKey, priority, kind }) => ({ key, ownerKey, priority, kind })),
-        retired: [...retired.values()].map(({ key, ownerKey, priority, kind }) => ({ key, ownerKey, priority, kind })),
+        queued: [...queued.values()].map(({ key, ownerKey, priority, kind, pageNum, lane, quality }) => (
+          { key, ownerKey, priority, kind, pageNum, lane, quality }
+        )),
+        running: [...running.values()].map(({ key, ownerKey, priority, kind, pageNum, lane, quality }) => (
+          { key, ownerKey, priority, kind, pageNum, lane, quality }
+        )),
+        retired: [...retired.values()].map(({ key, ownerKey, priority, kind, pageNum, lane, quality }) => (
+          { key, ownerKey, priority, kind, pageNum, lane, quality }
+        )),
+        actualRunning: running.size + retired.size,
+        maxRetiredPerOwner,
         backgroundPaused: isBackgroundPaused(),
         statistics: { ...statistics },
       };

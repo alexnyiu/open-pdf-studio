@@ -17,7 +17,16 @@ function passingReport() {
       ordinaryMainThreadTaskMaxMs: 40,
       cachedPreviewPaints: 1,
       cachedPreviewP95Ms: 80,
+      visiblePagePreviewPublishes: 3,
+      visiblePagePreviewP95Ms: 150,
+      visibleBlankWithSourceSamples: 1,
+      visibleBlankWithSourceMaxMs: 100,
       fullQualityLatencyMaxMs: 400,
+      visibleColdRenderSuppressedCount: 0,
+      previewUsefulCancellationCount: 0,
+      retiredNativeWorkPeak: 2,
+      retiredNativeStalePublicationCount: 0,
+      pageRenderFailureBlockedLaterPagesCount: 0,
       mountedPageSurfacesPeak: 9,
       mountedThumbnailsPeak: 32,
       zoomInputToTransformP95Ms: 15,
@@ -54,4 +63,12 @@ test('large-PDF performance evaluator fails an excess mount count', () => {
   const result = evaluateLargePdfPerformanceReport(report);
   assert.equal(result.status, 'FAIL');
   assert.ok(result.failures.includes('mountedPageSurfaces'));
+});
+
+test('large-PDF performance evaluator fails a slow first visible preview', () => {
+  const report = passingReport();
+  report.metrics.visiblePagePreviewP95Ms = 151;
+  const result = evaluateLargePdfPerformanceReport(report);
+  assert.equal(result.status, 'FAIL');
+  assert.ok(result.failures.includes('strictlyVisibleFirstPreview'));
 });

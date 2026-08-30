@@ -569,10 +569,41 @@ async function runOnce(options) {
           && zoomMetric?.longTaskSupported === true,
         cachedPreviewPaints: scrollMetric?.counters?.cachedPreviewPaints || 0,
         cachedPreviewP95Ms: sample(scrollCapture, 'cachedPreviewLatencyMs'),
-        fullQualityLatencyMaxMs: maximum(
-          sample(scrollCapture, 'fullQualityLatencyMs', 'max'),
-          sample(finalCapture, 'fullQualityLatencyMs', 'max'),
+        visiblePagePreviewPublishes: (scrollMetric?.counters?.visiblePreviewPublishes || 0)
+          + (zoomMetric?.counters?.visiblePreviewPublishes || 0),
+        visiblePagePreviewP95Ms: maximum(
+          sample(scrollCapture, 'visiblePagePreviewLatencyMs'),
+          sample(finalCapture, 'visiblePagePreviewLatencyMs'),
         ),
+        visibleBlankWithSourceSamples:
+          (scrollMetric?.measurements?.visibleBlankWithSourceDurationMs?.count || 0)
+          + (zoomMetric?.measurements?.visibleBlankWithSourceDurationMs?.count || 0),
+        visibleBlankWithSourceMaxMs: maximum(
+          sample(scrollCapture, 'visibleBlankWithSourceDurationMs', 'max'),
+          sample(finalCapture, 'visibleBlankWithSourceDurationMs', 'max'),
+        ),
+        fullQualityLatencyMaxMs: maximum(
+          sample(scrollCapture, 'visiblePageFullRasterLatencyMs', 'max'),
+          sample(finalCapture, 'visiblePageFullRasterLatencyMs', 'max'),
+        ),
+        visibleColdRenderSuppressedCount:
+          (scrollMetric?.counters?.visibleColdRenderSuppressedCount || 0)
+          + (zoomMetric?.counters?.visibleColdRenderSuppressedCount || 0),
+        previewUsefulCancellationCount:
+          (scrollMetric?.counters?.previewUsefulCancellationCount || 0)
+          + (zoomMetric?.counters?.previewUsefulCancellationCount || 0),
+        retiredNativeWorkPeak: maximum(
+          scrollMetric?.peaks?.retiredNativeWork,
+          zoomMetric?.peaks?.retiredNativeWork,
+          scrollCapture.resources?.scheduled?.lanes?.full?.retired?.length,
+          finalCapture.resources?.scheduled?.lanes?.full?.retired?.length,
+        ),
+        retiredNativeStalePublicationCount:
+          (scrollMetric?.counters?.retiredNativeStalePublicationCount || 0)
+          + (zoomMetric?.counters?.retiredNativeStalePublicationCount || 0),
+        pageRenderFailureBlockedLaterPagesCount:
+          (scrollMetric?.counters?.pageRenderFailureBlockedLaterPagesCount || 0)
+          + (zoomMetric?.counters?.pageRenderFailureBlockedLaterPagesCount || 0),
         mountedPageSurfacesPeak: mountedPagePeak,
         mountedThumbnailsPeak: thumbnailPeak,
         zoomInputToTransformP95Ms: sample(finalCapture, 'zoomInputToTransformMs'),
@@ -664,7 +695,22 @@ function aggregateMetrics(reports) {
       metrics.longTaskInstrumentationAvailable === true),
     cachedPreviewPaints: values.reduce((sum, metrics) => sum + (metrics.cachedPreviewPaints || 0), 0),
     cachedPreviewP95Ms: maxField('cachedPreviewP95Ms'),
+    visiblePagePreviewPublishes: values.reduce((sum, metrics) =>
+      sum + (metrics.visiblePagePreviewPublishes || 0), 0),
+    visiblePagePreviewP95Ms: maxField('visiblePagePreviewP95Ms'),
+    visibleBlankWithSourceSamples: values.reduce((sum, metrics) =>
+      sum + (metrics.visibleBlankWithSourceSamples || 0), 0),
+    visibleBlankWithSourceMaxMs: maxField('visibleBlankWithSourceMaxMs'),
     fullQualityLatencyMaxMs: maxField('fullQualityLatencyMaxMs'),
+    visibleColdRenderSuppressedCount: values.reduce((sum, metrics) =>
+      sum + (metrics.visibleColdRenderSuppressedCount || 0), 0),
+    previewUsefulCancellationCount: values.reduce((sum, metrics) =>
+      sum + (metrics.previewUsefulCancellationCount || 0), 0),
+    retiredNativeWorkPeak: maxField('retiredNativeWorkPeak'),
+    retiredNativeStalePublicationCount: values.reduce((sum, metrics) =>
+      sum + (metrics.retiredNativeStalePublicationCount || 0), 0),
+    pageRenderFailureBlockedLaterPagesCount: values.reduce((sum, metrics) =>
+      sum + (metrics.pageRenderFailureBlockedLaterPagesCount || 0), 0),
     mountedPageSurfacesPeak: maxField('mountedPageSurfacesPeak'),
     mountedThumbnailsPeak: maxField('mountedThumbnailsPeak'),
     zoomInputToTransformP95Ms: maxField('zoomInputToTransformP95Ms'),

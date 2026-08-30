@@ -60,3 +60,19 @@ test('strict visibility stays correct across a mixed-size page boundary', () => 
   assert.deepEqual(pages, [1, 2]);
   assert.equal(index.pageAtOffset(second.y + 900), 2);
 });
+
+test('asymmetric overscan follows direction without mounting the same distance behind', () => {
+  const index = new PageGeometryIndex(pageGeometryEntries(
+    Array.from({ length: 20 }, () => [612, 792]),
+  ));
+  const pageTen = index.pageRect(10, { scale: 1 });
+  const pages = index.visiblePages({
+    scrollTop: pageTen.y,
+    viewportHeight: 792,
+    overscanBeforePx: 100,
+    overscanAfterPx: 1_700,
+    maxPages: 9,
+  });
+  assert.equal(pages.includes(8), false);
+  assert.equal(pages.includes(12), true);
+});

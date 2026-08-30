@@ -33,6 +33,11 @@ import {
   resolveContinuousVerticalAnchor,
 } from './continuous-zoom-anchor.js';
 import { createRenderWorkScheduler } from './render-work-scheduler.js';
+import {
+  CONTINUOUS_RENDER_LANES,
+  continuousRenderJobKey,
+  planContinuousRenderOverscan,
+} from './continuous-render-lanes.js';
 import { notePdfForegroundActivity, isPdfForegroundIdle } from './foreground-activity.js';
 import { getActiveTextEditSession } from '../text/text-edit-session.js';
 import { recordForegroundRenderSample } from './render-performance.js';
@@ -1041,7 +1046,16 @@ let _renderedPagesScale = null; // scale at which pages were rendered
 let _continuousObserver = null;
 let _continuousWindow = null;
 let _continuousSettleTimer = null;
-const _continuousRenderScheduler = createRenderWorkScheduler({ concurrency: 1, idleDelayMs: 250 });
+const _continuousPreviewScheduler = createRenderWorkScheduler({
+  concurrency: 2,
+  idleDelayMs: 250,
+  maxRetiredPerOwner: 2,
+});
+const _continuousRenderScheduler = createRenderWorkScheduler({
+  concurrency: 1,
+  idleDelayMs: 250,
+  maxRetiredPerOwner: 2,
+});
 const CONTINUOUS_MAX_AXIS_PX = 4096;
 const _renderedSurfaceStates = new Map();
 const _mountedCanvasByteSizes = new Map();
@@ -1344,13 +1358,10 @@ function _transferContinuousBitmapToFreshCanvas(
   return nextCanvas;
 }
 
-// Track active continuous page renders for cancellation
-const _continuousRenderTasks = new Map(); // pageNum -> RenderTask
-
 // Low-res preview cache for fast initial display
 const _lowResCache = new Map(); // `${filePath}|${pageNum}` -> { canvas, scale }
 const LOW_RES_SCALE = 0.5; // Render at 50% for fast preview
-let _lowResPreloadGeneration = 0;
+const LOW_RES_MAX_AXIS_PX = 1600;
 const _lowResResourceKey = (key) => `low-res:${key}`;
 
 // Cache-key MUST include the document — a bare pageNum key served page N of
@@ -1396,7 +1407,9 @@ function _storeLowResPreview(cacheKey, entry, doc, pageNum) {
 }
 
 // Render a quick low-res preview of a page (fast, <50ms per page)
-async function renderLowResPreview(doc, pdfDoc, pageNum, targetWidth, targetHeight) {
+async function renderLowResPreview(doc, pdfDoc, pageNum, _targetWidth, _targetHeight, {
+  signal = null,
+} = {}) {
   const publicationToken = captureRenderPublicationToken(doc, pageNum, 'low-resolution-preview');
   const cacheKey = _lowResKey(pageNum, doc);
   if (_lowResCache.has(cacheKey)) {
@@ -1414,11 +1427,17 @@ async function renderLowResPreview(doc, pdfDoc, pageNum, targetWidth, targetHeig
     if (shared?.src) return null; // wrapper reuses this source directly; do not clone it into another canvas cache
   } catch { /* fall back to a PDF.js low-resolution render */ }
 
+  if (signal?.aborted) return null;
   const page = await pdfDoc.getPage(pageNum);
-  if (_isStaleDoc(doc, publicationToken)) return null;
+  if (signal?.aborted || _isStaleDoc(doc, publicationToken)) return null;
   const extraRotation = Number(doc.pageRotations?.[pageNum]) || 0;
-  const vpOpts = { scale: LOW_RES_SCALE };
-  if (extraRotation) vpOpts.rotation = (page.rotate + extraRotation) % 360;
+  const rotation = extraRotation ? (page.rotate + extraRotation) % 360 : page.rotate;
+  const baseViewport = page.getViewport({ scale: 1, rotation });
+  const previewScale = Math.min(
+    LOW_RES_SCALE,
+    LOW_RES_MAX_AXIS_PX / Math.max(baseViewport.width, baseViewport.height),
+  );
+  const vpOpts = { scale: previewScale, rotation };
   const viewport = page.getViewport(vpOpts);
 
   const canvas = document.createElement('canvas');
@@ -1426,33 +1445,221 @@ async function renderLowResPreview(doc, pdfDoc, pageNum, targetWidth, targetHeig
   canvas.height = Math.ceil(viewport.height);
   const ctx = canvas.getContext('2d');
 
+  let renderTask = null;
+  const cancel = () => {
+    try { renderTask?.cancel(); } catch {}
+  };
   try {
-    const renderTask = trackPdfJsRenderTask(publicationToken, doc, page.render({
+    renderTask = trackPdfJsRenderTask(publicationToken, doc, page.render({
       canvasContext: ctx,
       viewport,
       annotationMode: 0,
     }));
+    signal?.addEventListener?.('abort', cancel, { once: true });
     await renderTask.promise;
   } catch (e) {
     canvas.width = 0;
     canvas.height = 0;
     if (e.name === 'RenderingCancelledException') return null;
     return null;
+  } finally {
+    signal?.removeEventListener?.('abort', cancel);
   }
 
-  if (_isStaleDoc(doc, publicationToken)) {
+  if (signal?.aborted || _isStaleDoc(doc, publicationToken)) {
     canvas.width = 0;
     canvas.height = 0;
     return null;
   }
   _storeLowResPreview(cacheKey, {
     canvas,
-    scale: LOW_RES_SCALE,
+    scale: previewScale,
     documentId: doc.id,
     pageNum,
     publicationToken,
   }, doc, pageNum);
   return canvas;
+}
+
+function _continuousPageStatus(pageWrapper, stateName, {
+  message = '',
+  error = null,
+  retry = null,
+} = {}) {
+  if (!pageWrapper) return;
+  pageWrapper.dataset.renderState = stateName;
+  let status = pageWrapper.querySelector('.page-render-status');
+  if (stateName === 'ready' || stateName === 'preview') {
+    status?.remove();
+    return;
+  }
+  if (!status) {
+    status = document.createElement('div');
+    status.className = 'page-render-status';
+    status.style.position = 'absolute';
+    status.style.inset = '0';
+    status.style.display = 'flex';
+    status.style.alignItems = 'center';
+    status.style.justifyContent = 'center';
+    status.style.gap = '8px';
+    status.style.pointerEvents = 'none';
+    status.style.zIndex = '4';
+    pageWrapper.appendChild(status);
+  }
+  status.replaceChildren();
+  const label = document.createElement('span');
+  label.textContent = message;
+  if (error) label.title = error instanceof Error ? error.message : String(error);
+  status.appendChild(label);
+  if (typeof retry === 'function') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Retry';
+    button.style.pointerEvents = 'auto';
+    button.addEventListener('click', retry, { once: true });
+    status.appendChild(button);
+  }
+}
+
+function _recordContinuousPreviewAvailable(doc, pageNum, pageWrapper, {
+  publishedAt = performance.now(),
+  source = 'preview',
+} = {}) {
+  const visibleAtText = pageWrapper?.dataset?.visibleAt;
+  const visibleAt = Number(visibleAtText);
+  if (!pageWrapper || pageWrapper.dataset.strictlyVisible !== 'true'
+      || !Number.isFinite(visibleAt)) return false;
+  if (pageWrapper.dataset.previewRecordedVisibleAt === visibleAtText) return false;
+  const latency = Math.max(0, publishedAt - visibleAt);
+  pageWrapper.dataset.previewRecordedVisibleAt = visibleAtText;
+  if (_continuousWindowMatches(doc)) _continuousWindow.recentPreviewLatencyMs = latency;
+  recordPerformanceSample('visiblePagePreviewLatencyMs', latency);
+  recordPerformanceSample('visiblePreviewLatencyMs', latency);
+  recordPerformanceSample('visibleBlankDurationMs', latency);
+  if (pageWrapper.dataset.previewSourceAvailableAtMount === 'true') {
+    recordPerformanceSample('visibleBlankWithSourceDurationMs', latency);
+  }
+  incrementPerformanceCounter('visiblePreviewPublishes');
+  recordPerformanceEvent('continuous:visible-preview', {
+    documentId: doc.id,
+    lifecycleGeneration: Number(doc.lifecycleGeneration) || 0,
+    contentRevision: Number(doc.revisionState?.contentRevision) || 0,
+    pageRevision: Number(doc.pageRenderRevisions?.[pageNum]) || 0,
+    pageNum,
+    activeOwner: getActiveDocument() === doc,
+    strictlyVisible: true,
+    latencyMs: latency,
+    source,
+  });
+  return true;
+}
+
+function _publishContinuousThumbnailPreview(doc, pageNum, src) {
+  if (!src || !_continuousWindowMatches(doc)) return false;
+  const wrapper = _continuousWindow.mounted.get(pageNum);
+  if (!wrapper?.isConnected || wrapper.dataset.rasterQuality === RasterQuality.FINAL) return false;
+  const container = wrapper.querySelector('.canvas-container-cont');
+  if (!container) return false;
+  let preview = container.querySelector('.page-preview-image');
+  if (!preview) {
+    preview = document.createElement('img');
+    preview.className = 'page-preview-image';
+    preview.alt = '';
+    preview.draggable = false;
+    preview.style.position = 'absolute';
+    preview.style.inset = '0';
+    preview.style.objectFit = 'fill';
+    preview.style.pointerEvents = 'none';
+    preview.style.zIndex = '0';
+    container.appendChild(preview);
+  }
+  preview.src = src;
+  _continuousPageStatus(wrapper, 'preview');
+  _recordContinuousPreviewAvailable(doc, pageNum, wrapper, {
+    publishedAt: performance.now(),
+    source: 'thumbnail',
+  });
+  registerContinuousPageSurface(doc, pageNum, wrapper, { baseSurface: preview });
+  return true;
+}
+
+function _publishContinuousPreview(doc, pageNum, canvas) {
+  if (!canvas || !_continuousWindowMatches(doc)) return false;
+  const wrapper = _continuousWindow.mounted.get(pageNum);
+  if (!wrapper?.isConnected || wrapper.dataset.rasterQuality === RasterQuality.FINAL) return false;
+  const container = wrapper.querySelector('.canvas-container-cont');
+  if (!container || container.querySelector('.page-preview-image')) return false;
+  const prior = container.querySelector('.page-preview-canvas');
+  if (prior && prior !== canvas) prior.remove();
+  canvas.classList.add('page-preview-canvas');
+  canvas.style.position = 'absolute';
+  canvas.style.inset = '0';
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.pointerEvents = 'none';
+  canvas.style.zIndex = '0';
+  if (canvas.parentElement !== container) container.appendChild(canvas);
+  _continuousPageStatus(wrapper, 'preview');
+  _recordContinuousPreviewAvailable(doc, pageNum, wrapper, {
+    publishedAt: performance.now(),
+    source: 'low-resolution',
+  });
+  registerContinuousPageSurface(doc, pageNum, wrapper, { baseSurface: canvas });
+  return true;
+}
+
+function scheduleContinuousPreview(doc, pageNum, priority = 2_000, kind = 'foreground') {
+  if (!doc?.pdfDoc) return Promise.resolve({ status: 'cancelled', reason: 'no-document' });
+  const pageRevision = Number(doc.pageRenderRevisions?.[pageNum]
+    ?? doc.revisionState?.pageContentRevisions?.[pageNum]) || 0;
+  const ownerKey = _continuousOwnerKey(doc);
+  const publicationToken = captureRenderPublicationToken(doc, pageNum, 'continuous-visible-preview');
+  const queuedAt = performance.now();
+  return _continuousPreviewScheduler.schedule({
+    key: continuousRenderJobKey({
+      documentId: doc.id,
+      lifecycleGeneration: doc.lifecycleGeneration,
+      pageNum,
+      pageRevision,
+      quality: CONTINUOUS_RENDER_LANES.VISIBLE_PREVIEW,
+    }),
+    ownerKey,
+    pageNum,
+    lane: CONTINUOUS_RENDER_LANES.VISIBLE_PREVIEW,
+    quality: RasterQuality.PREVIEW,
+    priority,
+    kind,
+    publicationToken,
+    publicationDocument: doc,
+    onCancel: (reason) => {
+      if (reason === 'foreground-resumed'
+          && _continuousEntryIsStrictlyVisible({ ownerKey, pageNum })) {
+        incrementPerformanceCounter('previewUsefulCancellationCount');
+      }
+    },
+    run: async ({ isCurrent, signal }) => {
+      recordPerformanceSample('renderQueueAgeMs', performance.now() - queuedAt);
+      const cachedThumbnail = getCachedThumbnailEntry(doc, pageNum);
+      if (cachedThumbnail?.src) {
+        return {
+          pageNum,
+          source: 'thumbnail',
+          published: _publishContinuousThumbnailPreview(
+            doc,
+            pageNum,
+            cachedThumbnail.src,
+          ),
+        };
+      }
+      const canvas = await renderLowResPreview(doc, doc.pdfDoc, pageNum, 0, 0, { signal });
+      if (!canvas || signal.aborted || !isCurrent()) return { pageNum, published: false };
+      return {
+        pageNum,
+        source: 'low-resolution',
+        published: _publishContinuousPreview(doc, pageNum, canvas),
+      };
+    },
+  });
 }
 
 function scheduleNearbyLowResPreviews(pdfDoc, centerPage, direction = 1) {
@@ -1463,18 +1670,22 @@ function scheduleNearbyLowResPreviews(pdfDoc, centerPage, direction = 1) {
     return;
   }
   if (!shouldPreloadNearby(state.preferences)) return;
-  const generation = ++_lowResPreloadGeneration;
   const forward = direction < 0 ? -1 : 1;
   const pages = [centerPage, centerPage + forward, centerPage + 2 * forward,
     centerPage + 3 * forward, centerPage - forward]
     .filter((page, index, values) => page >= 1 && page <= pdfDoc.numPages && values.indexOf(page) === index);
   void (async () => {
-    await new Promise((resolve) => setTimeout(resolve, 250));
     for (const page of pages) {
-      if (generation !== _lowResPreloadGeneration || !isPdfForegroundIdle()
-          || !backgroundRenderAdmissionAllowed()) return;
+      if (!isPdfForegroundIdle() || !backgroundRenderAdmissionAllowed()) return;
       if (_lowResCache.has(_lowResKey(page, doc))) continue;
-      try { await renderLowResPreview(doc, pdfDoc, page, 0, 0); } catch {}
+      try {
+        await scheduleContinuousPreview(
+          doc,
+          page,
+          100 - Math.abs(page - centerPage),
+          'background',
+        );
+      } catch {}
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
   })();
@@ -1482,6 +1693,7 @@ function scheduleNearbyLowResPreviews(pdfDoc, centerPage, direction = 1) {
 
 // Clear low-res cache (on document close)
 export function clearLowResCache() {
+  _continuousPreviewScheduler.cancelWhere(() => true, 'preview-cache-cleared');
   for (const [key, entry] of _lowResCache) {
     if (entry?.canvas) {
       entry.canvas.width = 0;
@@ -1495,7 +1707,11 @@ export function clearLowResCache() {
 export function clearLowResCacheForDocument(doc, pageNums = null) {
   if (!doc?.id) return;
   const pages = pageNums === null ? null : new Set((pageNums || []).map(Number));
-  _lowResPreloadGeneration += 1;
+  _continuousPreviewScheduler.cancelWhere(
+    (entry) => entry.ownerKey.startsWith(`${doc.id}:`)
+      && (pages === null || pages.has(Number(entry.pageNum))),
+    'preview-cache-invalidated',
+  );
   for (const [key, entry] of [..._lowResCache.entries()]) {
     if (entry?.documentId !== doc.id || (pages && !pages.has(Number(entry.pageNum)))) continue;
     if (entry.canvas) {
@@ -1513,7 +1729,14 @@ function _continuousOwnerKey(doc) {
 
 // Schedule one full-quality foreground render. A single scheduler is shared by
 // every continuous page so rapid scrolling cannot launch a PDFium render storm.
-function renderContinuousPage(pageNum, priority = 100, kind = 'foreground') {
+function renderContinuousPage(
+  pageNum,
+  priority = 100,
+  kind = 'foreground',
+  lane = kind === 'foreground'
+    ? CONTINUOUS_RENDER_LANES.VISIBLE_FULL
+    : CONTINUOUS_RENDER_LANES.DIRECTIONAL_OVERSCAN,
+) {
   const doc = getActiveDocument();
   if (!doc?.pdfDoc) return Promise.resolve();
   if (_renderedPages.has(pageNum)) {
@@ -1537,7 +1760,10 @@ function renderContinuousPage(pageNum, priority = 100, kind = 'foreground') {
   const densityRevision = Math.round(requestedRasterScale(doc.scale, getCanvasDPR()) * 10000);
   const pageRevision = Number(doc.pageRenderRevisions?.[pageNum]) || 0;
   const publicationToken = captureRenderPublicationToken(doc, pageNum, 'continuous-scheduler');
+  const queuedAt = performance.now();
+  let cancelBackend = () => {};
   let countedAsInFlight = false;
+  let retiredAt = null;
   const releaseInFlight = () => {
     if (!countedAsInFlight) return;
     countedAsInFlight = false;
@@ -1546,27 +1772,80 @@ function renderContinuousPage(pageNum, priority = 100, kind = 'foreground') {
     }
   };
   return _continuousRenderScheduler.schedule({
-    key: `${ownerKey}:${pageNum}:${pageRevision}:${scaleRevision}:${densityRevision}`,
+    key: continuousRenderJobKey({
+      documentId: doc.id,
+      lifecycleGeneration: doc.lifecycleGeneration,
+      pageNum,
+      pageRevision,
+      quality: 'full',
+      scaleRevision: scaleRevision * 100_000 + densityRevision,
+    }),
     ownerKey,
+    pageNum,
+    lane,
+    quality: RasterQuality.FINAL,
     priority,
     kind,
     publicationToken,
     publicationDocument: doc,
-    onRetire: releaseInFlight,
-    run: async ({ isCurrent }) => {
+    onRetire: (reason) => {
+      retiredAt = performance.now();
+      incrementPerformanceCounter('retiredNativeWorkCount');
+      recordPerformancePeak(
+        'retiredNativeWork',
+        _continuousRenderScheduler.snapshot().retired.length,
+      );
+      cancelBackend(reason);
+      releaseInFlight();
+    },
+    run: async ({ isCurrent, signal }) => {
+      recordPerformanceSample('renderQueueAgeMs', performance.now() - queuedAt);
       if (typeof window !== 'undefined') {
         countedAsInFlight = true;
         window.__pdfRenderInFlight = (window.__pdfRenderInFlight || 0) + 1;
       }
       try {
-        return await _renderContinuousPageNow(pageNum, isCurrent, kind);
+        return await _renderContinuousPageNow(
+          pageNum,
+          isCurrent,
+          kind,
+          signal,
+          (cancel) => { cancelBackend = cancel; },
+        );
       } finally {
         releaseInFlight();
+        if (retiredAt != null) {
+          recordPerformanceSample('retiredNativeWorkDurationMs', performance.now() - retiredAt);
+        }
       }
     },
   }).catch((error) => {
     console.warn(`[render-continuous] scheduled page ${pageNum} failed:`, error);
+    recordPerformanceEvent('continuous:page-render-failed', {
+      documentId: doc.id,
+      lifecycleGeneration: Number(doc.lifecycleGeneration) || 0,
+      contentRevision: Number(doc.revisionState?.contentRevision) || 0,
+      pageRevision,
+      pageNum,
+      activeOwner: getActiveDocument() === doc,
+      strictlyVisible: _continuousEntryIsStrictlyVisible({ ownerKey, pageNum }),
+      errorName: error?.name || 'Error',
+      errorCode: error?.code || null,
+    });
     failRendererReadiness(doc, pageNum, error, publicationToken);
+    const wrapper = _continuousWindowMatches(doc)
+      ? _continuousWindow.mounted.get(pageNum) : null;
+    if (wrapper?.isConnected) {
+      _continuousPageStatus(wrapper, 'error', {
+        message: 'Page render failed',
+        error,
+        retry: () => {
+          _renderedPages.delete(pageNum);
+          _continuousPageStatus(wrapper, 'loading', { message: 'Retrying page…' });
+          void renderContinuousPage(pageNum, 3_000, 'foreground');
+        },
+      });
+    }
     return { status: 'failed', reason: error?.message || String(error) };
   });
 }
@@ -1752,17 +2031,23 @@ async function _ensureContinuousSharpTiles({
 }
 
 // Render a single page inside its mounted wrapper.
-async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 'foreground') {
+async function _renderContinuousPageNow(
+  pageNum,
+  isCurrent = () => true,
+  kind = 'foreground',
+  signal = null,
+  registerBackendCancellation = () => {},
+) {
   const pageWrapper = document.querySelector(`#continuous-container .page-wrapper[data-page="${pageNum}"]`);
   if (!pageWrapper) throw new Error(`Required page ${pageNum} is not mounted`);
 
   const canvasContainer = pageWrapper.querySelector('.canvas-container-cont');
   if (!canvasContainer) throw new Error(`Required page ${pageNum} has no canvas container`);
-
-  // Cancel any in-progress render for this page
-  if (_continuousRenderTasks.has(pageNum)) {
-    try { _continuousRenderTasks.get(pageNum).cancel(); } catch {}
-    _continuousRenderTasks.delete(pageNum);
+  if (signal?.aborted) return { pageNum, ready: false, cancelled: true };
+  if (canvasContainer.querySelector('.page-preview-image, .page-preview-canvas')) {
+    _continuousPageStatus(pageWrapper, 'preview');
+  } else {
+    _continuousPageStatus(pageWrapper, 'loading', { message: 'Rendering page…' });
   }
 
   const doc = state.documents[state.activeDocumentIndex];
@@ -1799,7 +2084,10 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
     pdfCanvasEl.className = 'pdf-canvas';
     pdfCanvasEl.dataset.page = pageNum;
     pdfCanvasEl.style.display = 'block';
-    pdfCanvasEl.style.background = 'white';
+    // Keep any thumbnail/low-resolution surface visible underneath until the
+    // new raster publishes. An opaque blank canvas here creates a white flash
+    // and also destroys the degraded fallback when native rendering fails.
+    pdfCanvasEl.style.background = 'transparent';
     canvasContainer.appendChild(pdfCanvasEl);
 
     // Show a low-res preview immediately while the full render runs. Do not
@@ -1879,6 +2167,11 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   let rasterEntry = null;
   let directImageLease = null;
   let directRasterImage = null;
+  const cancelBackend = (reason = 'render-cancelled') => {
+    try { directImageLease?.cancel?.(reason); } catch {}
+  };
+  registerBackendCancellation(cancelBackend);
+  signal?.addEventListener?.('abort', () => cancelBackend('scheduler-aborted'), { once: true });
   // A large document's settled continuous surface owns the one-use native
   // stream directly. This avoids the otherwise redundant
   // fetch→Blob→ImageBitmap→canvas allocation chain. The shared bitmap
@@ -1911,7 +2204,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
         rasterKey,
         requestId: publicationToken.requestId,
       });
-      if (directImageLease) {
+      if (directImageLease && !signal?.aborted) {
         directRasterImage = await _loadContinuousRasterImage(directImageLease);
         rasterEntry = {
           image: directRasterImage,
@@ -1926,7 +2219,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
       console.warn(`[render-continuous] direct image stream failed for page ${pageNum}; using bitmap fallback:`, error);
     }
   }
-  if (!rasterEntry) {
+  if (!rasterEntry && !signal?.aborted) {
     try {
       rasterEntry = await ensureBitmap(
         doc.filePath,
@@ -1941,6 +2234,11 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
       _renderedPages.delete(pageNum);
       throw error;
     }
+  }
+  if (signal?.aborted) {
+    cancelBackend('scheduler-aborted');
+    _renderedPages.delete(pageNum);
+    return { pageNum, ready: false, cancelled: true };
   }
   if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected
       || doc.scale !== expectedScale || getCanvasDPR() !== devicePixelRatio) {
@@ -2051,20 +2349,26 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   markLayer('raster');
 
   const fullQualityPaintedAt = performance.now();
+  _recordContinuousPreviewAvailable(doc, pageNum, pageWrapper, {
+    publishedAt: fullQualityPaintedAt,
+    source: 'full-raster',
+  });
   pageWrapper.querySelectorAll('.page-preview-image, .page-preview-canvas')
     .forEach((preview) => preview.remove());
+  _continuousPageStatus(pageWrapper, 'ready');
+  const visibleForeground = kind === 'foreground'
+    || pageWrapper.dataset.strictlyVisible === 'true';
   recordPerformanceSample(
     visibleFinal
-      ? (kind === 'foreground' ? 'foregroundBitmapPaintMs' : 'backgroundBitmapPaintMs')
+      ? (visibleForeground ? 'foregroundBitmapPaintMs' : 'backgroundBitmapPaintMs')
       : 'previewBitmapPaintMs',
     fullQualityPaintedAt - startedAt,
   );
-  if (visibleFinal && kind === 'foreground'
+  if (visibleFinal && visibleForeground
       && Number.isFinite(Number(pageWrapper.dataset.visibleAt))) {
-    recordPerformanceSample(
-      'fullQualityLatencyMs',
-      fullQualityPaintedAt - Number(pageWrapper.dataset.visibleAt),
-    );
+    const visibleLatency = fullQualityPaintedAt - Number(pageWrapper.dataset.visibleAt);
+    recordPerformanceSample('fullQualityLatencyMs', visibleLatency);
+    recordPerformanceSample('visiblePageFullRasterLatencyMs', visibleLatency);
   }
   incrementPerformanceCounter(visibleFinal ? 'fullQualityPublishes' : 'previewPublishes');
 
@@ -2203,29 +2507,11 @@ function _continuousRectWithOffset(rect, continuousState = _continuousWindow) {
   };
 }
 
-function _hasReusableContinuousBitmap(doc, pageNum) {
-  const geometry = doc?.pageGeometryIndex?.byPage?.get(pageNum);
-  if (!doc?.filePath || !geometry) return false;
-  const dpr = getCanvasDPR();
-  const targetScale = requestedRasterScale(doc.scale, dpr);
-  const renderScale = Math.min(
-    targetScale,
-    CONTINUOUS_MAX_AXIS_PX / Math.max(geometry.widthPt, geometry.heightPt),
-  );
-  const quality = renderScale + 0.01 >= targetScale ? RasterQuality.FINAL : RasterQuality.PREVIEW;
-  return Boolean(getCachedBitmap(
-    doc.filePath,
-    pageNum,
-    getPageRotation(pageNum) || 0,
-    renderScale,
-    _continuousRasterContext(doc, pageNum, doc.scale, dpr, quality, renderScale),
-  ));
-}
-
 function _createContinuousWrapper(doc, pageNum, rect) {
   const pageWrapper = document.createElement('div');
   pageWrapper.className = 'page-wrapper';
   pageWrapper.dataset.page = String(pageNum);
+  pageWrapper.dataset.mountedAt = String(performance.now());
   pageWrapper.style.position = 'absolute';
   pageWrapper.style.margin = '0';
 
@@ -2242,6 +2528,8 @@ function _createContinuousWrapper(doc, pageNum, rect) {
   // a DOM image, not another retained canvas copy, and disappears atomically
   // when the current full-quality render publishes.
   const cachedPreview = getCachedThumbnailEntry(doc, pageNum);
+  const cachedLowResolution = _lowResCache.get(_lowResKey(pageNum))?.canvas || null;
+  pageWrapper.dataset.previewSourceAvailableAtMount = String(Boolean(cachedPreview?.src || cachedLowResolution));
   if (cachedPreview?.src) {
     const preview = document.createElement('img');
     preview.className = 'page-preview-image';
@@ -2255,8 +2543,9 @@ function _createContinuousWrapper(doc, pageNum, rect) {
     canvasContainer.appendChild(preview);
     incrementPerformanceCounter('cachedPreviewPaints');
     recordLatencySinceInteraction('cachedPreviewLatencyMs', ['continuous-scroll', 'page-jump']);
-  } else if (_lowResCache.get(_lowResKey(pageNum))?.canvas) {
-    const preview = _lowResCache.get(_lowResKey(pageNum)).canvas;
+    _continuousPageStatus(pageWrapper, 'preview');
+  } else if (cachedLowResolution) {
+    const preview = cachedLowResolution;
     preview.classList.add('page-preview-canvas');
     preview.style.position = 'absolute';
     preview.style.inset = '0';
@@ -2264,8 +2553,10 @@ function _createContinuousWrapper(doc, pageNum, rect) {
     canvasContainer.appendChild(preview);
     incrementPerformanceCounter('cachedPreviewPaints');
     recordLatencySinceInteraction('cachedPreviewLatencyMs', ['continuous-scroll', 'page-jump']);
+    _continuousPageStatus(pageWrapper, 'preview');
   } else {
     incrementPerformanceCounter('uncachedPageMounts');
+    _continuousPageStatus(pageWrapper, 'loading', { message: 'Loading page…' });
   }
   registerContinuousPageSurface(doc, pageNum, pageWrapper);
   return pageWrapper;
@@ -2300,7 +2591,12 @@ function _releaseContinuousWrapper(pageNum, wrapper) {
   }
   _continuousRenderScheduler.cancelWhere(
     (entry) => entry.ownerKey === _continuousWindow?.ownerKey
-      && entry.key.includes(`:${pageNum}:`),
+      && Number(entry.pageNum) === pageNum,
+    'page-unmounted',
+  );
+  _continuousPreviewScheduler.cancelWhere(
+    (entry) => entry.ownerKey === _continuousWindow?.ownerKey
+      && Number(entry.pageNum) === pageNum,
     'page-unmounted',
   );
 }
@@ -2321,6 +2617,26 @@ function _continuousWindowMatches(doc) {
     && _continuousWindow.container?.isConnected;
 }
 
+function _strictlyVisibleContinuousPageSet(doc = getActiveDocument()) {
+  const current = _continuousWindow;
+  if (!doc || !_continuousWindowMatches(doc) || doc.facingSpread) return new Set();
+  return new Set(current.index.visiblePages({
+    scrollTop: current.scrollContainer.scrollTop,
+    viewportHeight: current.scrollContainer.clientHeight,
+    scale: doc.scale,
+    layout: current.layout,
+    overscanPx: 0,
+    maxPages: 9,
+    protectedPages: [],
+  }));
+}
+
+function _continuousEntryIsStrictlyVisible(entry) {
+  const doc = getActiveDocument();
+  if (!_continuousWindowMatches(doc) || entry?.ownerKey !== _continuousWindow.ownerKey) return false;
+  return _strictlyVisibleContinuousPageSet(doc).has(Number(entry?.pageNum));
+}
+
 function _continuousWindowOwnsLogicalDocument(doc) {
   return Boolean(_continuousWindow
     && _continuousWindow.documentId === doc?.id
@@ -2335,6 +2651,7 @@ function _adoptContinuousWindowForSavedProxy(doc, changedPages = []) {
   const changed = new Set((changedPages || []).map(Number));
   if (previousGeneration !== nextGeneration) {
     _continuousRenderScheduler.cancelOwner(current.ownerKey, 'saved-proxy-adoption');
+    _continuousPreviewScheduler.cancelOwner(current.ownerKey, 'saved-proxy-adoption');
     const previousOwner = { id: doc.id, lifecycleGeneration: previousGeneration };
     for (const [pageNum, wrapper] of current.mounted) {
       _untrackMountedPageCanvases(previousOwner, pageNum, wrapper);
@@ -2401,6 +2718,7 @@ function _teardownContinuousWindow(reason = 'continuous-teardown') {
   if (_continuousSettleTimer) clearTimeout(_continuousSettleTimer);
   _continuousSettleTimer = null;
   _continuousRenderScheduler.cancelWhere(() => true, reason);
+  _continuousPreviewScheduler.cancelWhere(() => true, reason);
   const current = _continuousWindow;
   if (current?.mounted) {
     for (const [pageNum, wrapper] of current.mounted) {
@@ -2432,6 +2750,31 @@ function _updateContinuousVirtualWindow({
   container.style.width = `${contentWidth}px`;
   container.style.height = `${index.totalHeight(doc.scale, layout)}px`;
   const protectedPages = _protectedContinuousPages(doc);
+  const centerPage = index.pageAtOffset(
+    scrollContainer.scrollTop + scrollContainer.clientHeight / 2,
+    { scale: doc.scale, layout },
+  ) || doc.currentPage;
+  const direction = stateForWindow.direction || 1;
+  const centerRect = index.pageRect(centerPage, {
+    scale: doc.scale,
+    layout,
+    contentWidth,
+  });
+  const overscan = planContinuousRenderOverscan({
+    direction,
+    scrollVelocityPxPerMs: stateForWindow.scrollVelocityPxPerMs || 0,
+    recentPreviewLatencyMs: stateForWindow.recentPreviewLatencyMs || 150,
+    viewportHeight: scrollContainer.clientHeight,
+    pageExtentPx: (centerRect?.height || scrollContainer.clientHeight) + (index.pageGap || 0),
+    budgetAllowsOverscan: backgroundRenderAdmissionAllowed(),
+  });
+  const velocity = Math.abs(Number(stateForWindow.scrollVelocityPxPerMs) || 0);
+  recordPerformanceSample('scrollVelocityPxPerMs', velocity);
+  recordPerformanceSample('observerLeadDistancePx', overscan.lookAheadPx);
+  recordPerformanceSample(
+    'lookAheadCoverageMs',
+    velocity > 0 ? overscan.lookAheadPx / velocity : Math.max(150, stateForWindow.recentPreviewLatencyMs || 150),
+  );
   const wanted = index.visiblePages({
     scrollTop: scrollContainer.scrollTop,
     viewportHeight: scrollContainer.clientHeight,
@@ -2439,7 +2782,8 @@ function _updateContinuousVirtualWindow({
     layout,
     // Memory pressure first shrinks prefetch distance; it never changes the
     // resolution of a page that is actually visible.
-    overscanPx: backgroundRenderAdmissionAllowed() ? scrollContainer.clientHeight * 2 : 0,
+    overscanBeforePx: overscan.overscanBeforePx,
+    overscanAfterPx: overscan.overscanAfterPx,
     maxPages: Math.max(9, protectedPages.length + 9),
     protectedPages,
   });
@@ -2459,11 +2803,6 @@ function _updateContinuousVirtualWindow({
     _releaseContinuousWrapper(pageNum, wrapper);
     mounted.delete(pageNum);
   }
-  const centerPage = index.pageAtOffset(
-    scrollContainer.scrollTop + scrollContainer.clientHeight / 2,
-    { scale: doc.scale, layout },
-  ) || doc.currentPage;
-  const direction = stateForWindow.direction || 1;
   const renderOrder = [...wanted].sort((left, right) => {
     const leftVisible = strictlyVisible.has(left) || stateForWindow.intersecting?.has(left);
     const rightVisible = strictlyVisible.has(right) || stateForWindow.intersecting?.has(right);
@@ -2493,19 +2832,39 @@ function _updateContinuousVirtualWindow({
       wrapper.dataset.visibleAt = String(performance.now());
     }
     wrapper.dataset.strictlyVisible = String(isVisible);
+    if (isVisible && wrapper.querySelector('.page-preview-image, .page-preview-canvas')) {
+      _recordContinuousPreviewAvailable(doc, pageNum, wrapper, {
+        source: wrapper.querySelector('.page-preview-image') ? 'thumbnail' : 'low-resolution',
+      });
+    }
     if (force) _renderedPages.delete(pageNum);
   }
 
   if (scheduleRenders) {
-    const coldRenderAllowed = force || interactionSettled || isPdfForegroundIdle();
+    const protectedSet = new Set(protectedPages);
     for (const pageNum of renderOrder) {
-      if (!coldRenderAllowed && !_hasReusableContinuousBitmap(doc, pageNum)) continue;
-      void renderContinuousPage(
-        pageNum,
-        1000 - Math.abs(pageNum - centerPage),
-        (strictlyVisible.has(pageNum) || stateForWindow.intersecting?.has(pageNum))
-          ? 'foreground' : 'background',
-      );
+      const visible = strictlyVisible.has(pageNum) || stateForWindow.intersecting?.has(pageNum);
+      const editRequired = protectedSet.has(pageNum);
+      const priority = 1_000 - Math.abs(pageNum - centerPage);
+      if (visible || editRequired) {
+        // Strict visibility is never gated on generic foreground idle. Lane A
+        // publishes a bounded preview with concurrency two; Lane B renders
+        // center-first at full quality with concurrency one.
+        void scheduleContinuousPreview(doc, pageNum, 2_000 + priority, 'foreground');
+        void renderContinuousPage(
+          pageNum,
+          2_000 + priority,
+          'foreground',
+          editRequired && !visible
+            ? CONTINUOUS_RENDER_LANES.SEMANTIC
+            : CONTINUOUS_RENDER_LANES.VISIBLE_FULL,
+        );
+        continue;
+      }
+      if (!backgroundRenderAdmissionAllowed()
+          || (!interactionSettled && !isPdfForegroundIdle())) continue;
+      void scheduleContinuousPreview(doc, pageNum, priority, 'background');
+      void renderContinuousPage(pageNum, priority, 'background');
     }
   }
   if (typeof window !== 'undefined') {
@@ -2517,6 +2876,7 @@ function _updateContinuousVirtualWindow({
     wanted: Object.freeze([...wanted]),
     strictlyVisible: Object.freeze([...strictlyVisible]),
     centerPage,
+    overscan,
   });
 }
 
@@ -2524,10 +2884,33 @@ export function getContinuousRenderResourceStats() {
   const mountedPageSurfaces = _continuousWindow?.mounted?.size
     || (typeof document !== 'undefined'
       ? document.querySelectorAll('#continuous-container .page-wrapper').length : 0);
+  const previewSchedule = _continuousPreviewScheduler.snapshot();
+  const fullSchedule = _continuousRenderScheduler.snapshot();
+  const combinedStatistics = Object.fromEntries([
+    'scheduled',
+    'completed',
+    'cancelled',
+    'failed',
+  ].map((name) => [
+    name,
+    (Number(previewSchedule.statistics?.[name]) || 0)
+      + (Number(fullSchedule.statistics?.[name]) || 0),
+  ]));
+  combinedStatistics.maxQueued = (Number(previewSchedule.statistics?.maxQueued) || 0)
+    + (Number(fullSchedule.statistics?.maxQueued) || 0);
+  combinedStatistics.maxRunning = (Number(previewSchedule.statistics?.maxRunning) || 0)
+    + (Number(fullSchedule.statistics?.maxRunning) || 0);
   return Object.freeze({
     mountedPageSurfaces,
     renderedPages: _renderedPages.size,
-    scheduled: _continuousRenderScheduler.snapshot(),
+    scheduled: Object.freeze({
+      queued: Object.freeze([...previewSchedule.queued, ...fullSchedule.queued]),
+      running: Object.freeze([...previewSchedule.running, ...fullSchedule.running]),
+      retired: Object.freeze([...previewSchedule.retired, ...fullSchedule.retired]),
+      actualRunning: previewSchedule.actualRunning + fullSchedule.actualRunning,
+      statistics: Object.freeze(combinedStatistics),
+      lanes: Object.freeze({ preview: previewSchedule, full: fullSchedule }),
+    }),
     budget: renderResourceBudgetSnapshot(),
   });
 }
@@ -2979,6 +3362,7 @@ export function continuousZoomBy(factor, anchor = null, { origin = 'user' } = {}
   bumpDocumentViewportRevision(doc, 'continuous-zoom');
   notePdfForegroundActivity('continuous-zoom');
   _continuousRenderScheduler.noteInteraction(250);
+  _continuousPreviewScheduler.noteInteraction(250);
   _applyContinuousZoomInstant(old, anchor);
   updateAllStatus(); // zoom % tracks the gesture immediately
   if (_contRerenderTimer) clearTimeout(_contRerenderTimer);
@@ -3051,6 +3435,7 @@ function _bindContinuousScrollSync() {
   let pendingFrame = 0;
   let lastScrollTop = container.scrollTop;
   let lastScrollFrameAt = 0;
+  let lastVelocitySampleAt = performance.now();
   container.addEventListener('wheel', () => {
     const owner = getActiveDocument();
     if (owner?.viewMode === 'continuous') noteDocumentViewMutation(owner, ['scroll', 'page']);
@@ -3062,15 +3447,30 @@ function _bindContinuousScrollSync() {
     // (het spread-anker) niet naar de rechterpagina verschuiven, anders breekt
     // vorige/volgende. Daarom hier overslaan.
     if (!doc || doc.viewMode !== 'continuous' || doc.facingSpread) return;
-    const direction = container.scrollTop >= lastScrollTop ? 1 : -1;
+    const now = performance.now();
+    const deltaPx = container.scrollTop - lastScrollTop;
+    const direction = deltaPx >= 0 ? 1 : -1;
+    const elapsedMs = Math.max(1, now - lastVelocitySampleAt);
+    const instantaneousVelocity = Math.abs(deltaPx) / elapsedMs;
     lastScrollTop = container.scrollTop;
-    if (_continuousWindow) _continuousWindow.direction = direction;
+    lastVelocitySampleAt = now;
+    if (_continuousWindow) {
+      _continuousWindow.direction = direction;
+      _continuousWindow.scrollVelocityPxPerMs = (
+        (_continuousWindow.scrollVelocityPxPerMs || 0) * 0.65
+        + instantaneousVelocity * 0.35
+      );
+    }
     notePerformanceInteraction('continuous-scroll', handlerStartedAt);
     notePdfForegroundActivity('continuous-scroll');
-    _continuousRenderScheduler.noteInteraction(250);
+    const strictlyVisibleNow = _strictlyVisibleContinuousPageSet(doc);
+    const preserveVisible = (entry) => strictlyVisibleNow.has(Number(entry.pageNum));
+    _continuousRenderScheduler.noteInteraction(250, { preserve: preserveVisible });
+    _continuousPreviewScheduler.noteInteraction(250, { preserve: preserveVisible });
     if (_continuousSettleTimer) clearTimeout(_continuousSettleTimer);
     _continuousSettleTimer = setTimeout(() => {
       _continuousSettleTimer = null;
+      if (_continuousWindow) _continuousWindow.scrollVelocityPxPerMs = 0;
       _updateContinuousVirtualWindow({ interactionSettled: true });
       // requestAnimationFrame may be throttled while a packaged window is
       // unfocused or occluded. The scroll position and virtual window still
@@ -3285,6 +3685,9 @@ export async function renderContinuous(forceRebuild = false, {
       intersecting: new Set(),
       horizontalOffsetPx: 0,
       verticalOffsetPx: 0,
+      direction: 1,
+      scrollVelocityPxPerMs: 0,
+      recentPreviewLatencyMs: 150,
       synchronizing: synchronization,
     };
     applyPendingContinuousRendererRestore(doc);
@@ -3303,8 +3706,14 @@ export async function renderContinuous(forceRebuild = false, {
               entry.target.dataset.visibleAt = String(performance.now());
             }
             entry.target.dataset.strictlyVisible = 'true';
-            if (!current.synchronizing
-                && (isPdfForegroundIdle() || _hasReusableContinuousBitmap(doc, pageNum))) {
+            if (entry.target.querySelector('.page-preview-image, .page-preview-canvas')) {
+              _recordContinuousPreviewAvailable(doc, pageNum, entry.target, {
+                source: entry.target.querySelector('.page-preview-image')
+                  ? 'thumbnail' : 'low-resolution',
+              });
+            }
+            if (!current.synchronizing) {
+              void scheduleContinuousPreview(doc, pageNum, 3_000, 'foreground');
               void renderContinuousPage(pageNum, 2_000, 'foreground');
             }
           } else {
@@ -4162,7 +4571,6 @@ export function clearPdfView() {
 
   // Clear caches
   clearLowResCache();
-  _lowResPreloadGeneration += 1;
   clearEditableMetadataPreload(getActiveDocument());
   _renderedPages.clear();
   _renderedPagesScale = null;
