@@ -289,6 +289,7 @@ async function publishEditorCommit(editor, {
       pageRevision: Number(ownerDocument?.revisionState?.pageContentRevisions?.[pageNum]) || 0,
     });
   }
+  if (typeof window !== 'undefined') window.__lastTextPublicationResult = publication;
   const pendingOrFailed = publication.status === 'failed'
     || publication.status === 'deferred-unmounted';
   if (pendingOrFailed && ownerDocument) {
@@ -318,7 +319,8 @@ async function publishEditorCommit(editor, {
     publicationError: publication.status === 'failed'
       ? publication.error || publication.errorCode || 'Page publication failed'
       : publication.status === 'superseded'
-        ? 'Page publication was superseded by a newer document revision'
+        ? publication.error || publication.errorCode
+          || 'Page publication was superseded by a newer document revision'
         : null,
   });
 }

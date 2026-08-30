@@ -229,7 +229,18 @@ test('superseded ownership cannot publish either surface', async () => {
   const { coordinator, calls } = harness({ tokenIsCurrent: () => false });
   const result = await coordinator.publish({ documentState, pageNum: 50 });
   assert.equal(result.status, 'superseded');
+  assert.equal(result.errorCode, 'PUBLICATION_TOKEN_STALE_BEFORE_START');
   assert.deepEqual(calls, []);
+});
+
+test('surface replacement before acknowledgement has an exact supersession code', async () => {
+  const documentState = owner();
+  const { coordinator, calls } = harness({ markSurface: () => false });
+  const result = await coordinator.publish({ documentState, pageNum: 50 });
+  assert.equal(result.status, 'superseded');
+  assert.equal(result.errorCode, 'PAGE_SURFACE_CHANGED_BEFORE_ACKNOWLEDGEMENT');
+  assert.equal(calls.includes('render-ready'), false);
+  assert.equal(calls.includes('semantic-ready'), false);
 });
 
 test('every production text owner commit crosses the shared publication boundary', () => {

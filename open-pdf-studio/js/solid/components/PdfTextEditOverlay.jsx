@@ -970,6 +970,7 @@ export default function PdfTextEditOverlay() {
         // Keep ownership of the initiating pointer through its compatibility
         // click even when the successful Apply already unmounted this portal.
         await settleCapturedGesture();
+        window.__lastTextApplyResult = result;
         const interactionCompleted = result?.status === 'applied' || result?.status === 'noop';
         if (interactionCompleted && capturedIntent) {
           try {

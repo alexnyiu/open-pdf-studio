@@ -1180,6 +1180,12 @@ async function handleGetViewportState() {
     textSelection,
     editorMetrics,
     editorSession,
+    lastTextApplyResult: window.__lastTextApplyResult
+      ? { ...window.__lastTextApplyResult }
+      : null,
+    lastTextPublicationResult: window.__lastTextPublicationResult
+      ? { ...window.__lastTextPublicationResult }
+      : null,
     textEditAutoSave: window.__textEditAutoSaveDebug
       ? { ...window.__textEditAutoSaveDebug }
       : null,

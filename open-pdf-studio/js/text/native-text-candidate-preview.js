@@ -237,7 +237,11 @@ export function createNativeTextCandidatePreviewPublisher({
     try {
       const candidate = await getCandidate(context);
       if (!await isTokenCurrent(context.token, context.documentState)) {
-        return { status: 'superseded' };
+        return {
+          status: 'superseded',
+          errorCode: 'NATIVE_PREVIEW_TOKEN_STALE_AFTER_CANDIDATE',
+          error: 'The document revision changed while building the native text candidate',
+        };
       }
       candidateDocument = await openCandidateDocument(candidate);
       const page = await candidateDocument.getPage(context.pageNum);
@@ -259,13 +263,31 @@ export function createNativeTextCandidatePreviewPublisher({
       if (!canvasContext) throw new Error('Candidate preview canvas is unavailable');
       await page.render({ canvasContext, viewport: renderViewport, annotationMode: 0 }).promise;
       if (!await isTokenCurrent(context.token, context.documentState)) {
-        return { status: 'superseded' };
+        return {
+          status: 'superseded',
+          errorCode: 'NATIVE_PREVIEW_TOKEN_STALE_AFTER_RENDER',
+          error: 'The document revision changed while rendering the native text candidate',
+        };
       }
       const current = await resolvePage(context.documentState, context.pageNum, {
         targetRevision: context.revision,
       });
       if (!current) return { status: 'deferred-unmounted' };
-      if (!sameMountedSurface(current, context.surface)) return { status: 'superseded' };
+      if (!sameMountedSurface(current, context.surface)) {
+        return {
+          status: 'superseded',
+          errorCode: 'NATIVE_PREVIEW_SURFACE_CHANGED',
+          error: [
+            'The mounted page surface changed while rendering the native text candidate',
+            `before=${Number(context.surface?.mountGeneration) || 0}`,
+            `after=${Number(current.mountGeneration) || 0}`,
+            `beforeScale=${Number(context.surface?.cssScale) || 0}`,
+            `afterScale=${Number(current.cssScale) || 0}`,
+            `beforeDpr=${Number(context.surface?.dpr) || 0}`,
+            `afterDpr=${Number(current.dpr) || 0}`,
+          ].join('; '),
+        };
+      }
 
       let publishedSurface;
       let surfaceKind;

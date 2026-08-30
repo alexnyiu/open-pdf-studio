@@ -224,7 +224,12 @@ export function createTextEditPublicationCoordinator({
       revisionAuthority: 'model',
       publishedPageRevision: revision,
     });
-    if (!tokenIsCurrent(token, documentState)) return resultFor(token, 'superseded');
+    if (!tokenIsCurrent(token, documentState)) {
+      return resultFor(token, 'superseded', {
+        errorCode: 'PUBLICATION_TOKEN_STALE_BEFORE_START',
+        error: 'The document revision changed before page publication started',
+      });
+    }
     let surface = resolveSurface(documentState, pageNum, { targetRevision: revision });
     const input = {
       documentState,
@@ -269,7 +274,16 @@ export function createTextEditPublicationCoordinator({
     }
     if (!tokenIsCurrent(token, documentState)
         || base?.status === 'superseded' || semantics?.status === 'superseded') {
-      return resultFor(token, 'superseded');
+      const superseded = base?.status === 'superseded' ? base
+        : semantics?.status === 'superseded' ? semantics : null;
+      return resultFor(token, 'superseded', {
+        errorCode: superseded?.errorCode
+          || (!tokenIsCurrent(token, documentState)
+            ? 'PUBLICATION_TOKEN_STALE_AFTER_RENDER'
+            : 'PAGE_PUBLICATION_SUPERSEDED'),
+        error: superseded?.error
+          || 'The page surface or document revision changed during publication',
+      });
     }
     if (base?.status === 'deferred-unmounted' && !expectedVisible) {
       queuePending(input, token);
@@ -314,7 +328,10 @@ export function createTextEditPublicationCoordinator({
       textLayer: semantics.textLayer || surface.textLayer,
       surfaceKind: base.surfaceKind || surface.surfaceKind,
     })) {
-      return resultFor(token, 'superseded');
+      return resultFor(token, 'superseded', {
+        errorCode: 'PAGE_SURFACE_CHANGED_BEFORE_ACKNOWLEDGEMENT',
+        error: 'The mounted page surface changed before publication acknowledgement',
+      });
     }
     for (const layer of PAGE_EDIT_READY_LAYERS) {
       markLayerReady(documentState, pageNum, layer, token);
