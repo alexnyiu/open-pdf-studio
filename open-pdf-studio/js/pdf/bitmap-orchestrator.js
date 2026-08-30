@@ -14,7 +14,7 @@
 // before mutating viewport state, so a slower in-flight request can't
 // overwrite a newer one (e.g. zoom-in while a previous render is pending).
 
-import { viewport } from './pdf-viewport.js';
+import { viewport, viewportHasAuthoritativeTextPreview } from './pdf-viewport.js';
 import {
     computeCappedWholePageScale,
     computeZoomBucket,
@@ -90,6 +90,10 @@ function viewportPublication(source, pageNum = viewport.pageNum) {
 function viewportPublicationIsCurrent(publication) {
     return Boolean(publication
         && viewport.active
+        && !viewportHasAuthoritativeTextPreview(
+            publication.documentState,
+            publication.token.pageNum,
+        )
         && viewport.documentId === publication.documentState.id
         && viewport.pageNum === publication.token.pageNum
         && renderPublicationTokenIsCurrent(publication.token, publication.documentState));

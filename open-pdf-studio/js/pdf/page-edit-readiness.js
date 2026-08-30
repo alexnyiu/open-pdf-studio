@@ -19,7 +19,8 @@ function contentRevision(documentState) {
 
 function pageRevision(documentState, pageNum) {
   return Number(documentState?.revisionState?.pageContentRevisions?.[pageNum]
-    ?? documentState?.pageRenderRevisions?.[pageNum]) || 0;
+    ?? documentState?.pageRenderRevisions?.[pageNum]
+    ?? documentState?.revisionState?.contentRevision) || 0;
 }
 
 export function capturePageEditReadinessIdentity(documentState, pageNum) {
@@ -41,22 +42,22 @@ export function capturePageEditReadinessIdentity(documentState, pageNum) {
 function identityMatchesDocument(identity, documentState) {
   if (!identity || !documentState) return false;
   return identity.documentId === String(documentState.id)
-    && identity.pdfDocument === documentState.pdfDoc
     && identity.lifecycleGeneration === (Number(documentState.lifecycleGeneration) || 0)
     && identity.contentRevision === contentRevision(documentState)
-    && identity.pageRevision === pageRevision(documentState, identity.pageNum)
-    && identity.livePdfRevision === (Number(documentState.revisionState?.livePdfRevision) || 0);
+    && identity.pageRevision === pageRevision(documentState, identity.pageNum);
 }
 
 function tokenMatchesIdentity(token, identity) {
-  return Boolean(token
+  const ownerRevisionMatches = Boolean(token
     && token.documentId === identity.documentId
-    && token.pdfDocument === identity.pdfDocument
     && token.lifecycleGeneration === identity.lifecycleGeneration
     && token.contentRevision === identity.contentRevision
-    && token.livePdfRevision === identity.livePdfRevision
     && token.pageRevision === identity.pageRevision
     && token.pageNum === identity.pageNum);
+  if (!ownerRevisionMatches) return false;
+  if (token.revisionAuthority === 'model') return true;
+  return token.pdfDocument === identity.pdfDocument
+    && token.livePdfRevision === identity.livePdfRevision;
 }
 
 function readinessMap(documentState) {
@@ -94,7 +95,9 @@ function detailFor(entry) {
     layers: Object.freeze({ ...entry.layers }),
     failure: entry.failure,
     ready: !entry.failure
-      && PAGE_EDIT_READY_LAYERS.every((layer) => entry.layers[layer] === true),
+      && PAGE_EDIT_READY_LAYERS.every(
+        (layer) => Number(entry.layers[layer]) >= entry.identity.pageRevision,
+      ),
   });
 }
 
@@ -121,7 +124,10 @@ export function markPageEditLayerReady(documentState, pageNum, layer, publicatio
   if (!tokenMatchesIdentity(publicationToken, identity)) return false;
   const entry = currentEntry(documentState, pageNum, { create: true });
   if (!entry || !identityMatchesDocument(entry.identity, documentState)) return false;
-  entry.layers[layer] = true;
+  const publishedRevision = Number(publicationToken.publishedPageRevision
+    ?? publicationToken.pageRevision) || 0;
+  if (publishedRevision > identity.pageRevision) return false;
+  entry.layers[layer] = Math.max(Number(entry.layers[layer]) || 0, publishedRevision);
   const detail = detailFor(entry);
   dispatchReadinessEvent('opds:page-edit-readiness', detail);
   if (detail.ready) dispatchReadinessEvent('opds:page-edit-ready', detail);
@@ -145,7 +151,9 @@ export function pageEditReadinessSatisfied(
   const entry = currentEntry(documentState, pageNum);
   return Boolean(entry
     && !entry.failure
-    && requiredLayers.every((layer) => entry.layers[layer] === true));
+    && requiredLayers.every(
+      (layer) => Number(entry.layers[layer]) >= entry.identity.pageRevision,
+    ));
 }
 
 export function pageEditReadinessSnapshot(documentState, pageNum) {

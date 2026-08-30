@@ -270,6 +270,13 @@ let _progGen = 0;
 // fire-and-forget; de lopende run publiceert zelf).
 let _inflightKey = null;
 
+/** Prevent an older proxy render from overwriting a candidate-backed page. */
+export function cancelProgressiveBitmapPublication(_reason = 'superseded') {
+  _progGen += 1;
+  _restartToken += 1;
+  _inflightKey = null;
+}
+
 /** Loopt er op dit moment een progressieve run? Gebruikt door de pre-warm
  *  (bitmap-orchestrator) om interactie-werk voorrang te geven. */
 export function progressiveRunActive() {

@@ -8,12 +8,33 @@ function nonNegativeRevision(value) {
   return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
 }
 
-export function captureRenderPublicationToken(documentState, pageNum, source = 'render') {
+export function captureRenderPublicationToken(
+  documentState,
+  pageNum,
+  source = 'render',
+  { revisionAuthority = 'proxy', publishedPageRevision = null } = {},
+) {
   if (!documentState?.id || !documentState.pdfDoc) {
     throw new TypeError('A render publication token requires a document owner and PDF proxy');
   }
   const page = Number(pageNum);
   if (!Number.isSafeInteger(page) || page < 1) throw new RangeError('Render page must be one-based');
+  const targetPageRevision = nonNegativeRevision(
+    documentState.revisionState?.pageContentRevisions?.[page]
+      ?? documentState.pageRenderRevisions?.[page]
+      ?? documentState.revisionState?.contentRevision,
+  );
+  const livePdfRevision = nonNegativeRevision(documentState.revisionState?.livePdfRevision);
+  const authority = revisionAuthority === 'model' ? 'model' : 'proxy';
+  const publicationRevision = publishedPageRevision == null
+    ? authority === 'model' ? targetPageRevision : Math.min(targetPageRevision, livePdfRevision)
+    : nonNegativeRevision(publishedPageRevision);
+  if (publicationRevision > targetPageRevision) {
+    throw new RangeError('A render publication cannot exceed the current page revision');
+  }
+  if (authority === 'proxy' && publicationRevision > livePdfRevision) {
+    throw new RangeError('A proxy publication cannot exceed the live PDF revision');
+  }
   requestSequence += 1;
   return Object.freeze({
     requestId: `render-${requestSequence.toString(36)}`,
@@ -22,11 +43,10 @@ export function captureRenderPublicationToken(documentState, pageNum, source = '
     lifecycleGeneration: nonNegativeRevision(documentState.lifecycleGeneration),
     pdfDocument: documentState.pdfDoc,
     contentRevision: nonNegativeRevision(documentState.revisionState?.contentRevision),
-    livePdfRevision: nonNegativeRevision(documentState.revisionState?.livePdfRevision),
-    pageRevision: nonNegativeRevision(
-      documentState.revisionState?.pageContentRevisions?.[page]
-      ?? documentState.pageRenderRevisions?.[page],
-    ),
+    livePdfRevision,
+    pageRevision: targetPageRevision,
+    publishedPageRevision: publicationRevision,
+    revisionAuthority: authority,
     pageNum: page,
   });
 }

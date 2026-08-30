@@ -87,7 +87,34 @@ test('the first layer publication mutates the readiness entry retained by a reac
   });
   const token = captureRenderPublicationToken(documentState, 1, 'reactive-readiness');
   assert.equal(markPageEditLayerReady(documentState, 1, 'raster', token), true);
-  assert.equal(pageEditReadinessSnapshot(documentState, 1).layers.raster, true);
+  assert.equal(pageEditReadinessSnapshot(documentState, 1).layers.raster, 1);
+});
+
+test('a model-owned page preview reaches the page revision while the proxy lags', () => {
+  const documentState = owner();
+  documentState.revisionState.contentRevision = 2;
+  documentState.revisionState.pageContentRevisions[1] = 2;
+  const proxyToken = captureRenderPublicationToken(documentState, 1, 'old-proxy');
+  assert.equal(proxyToken.publishedPageRevision, 1);
+  for (const layer of PAGE_EDIT_READY_LAYERS) {
+    markPageEditLayerReady(documentState, 1, layer, proxyToken);
+  }
+  assert.equal(pageEditReadinessSatisfied(documentState, 1), false);
+
+  const modelToken = captureRenderPublicationToken(documentState, 1, 'model-preview', {
+    revisionAuthority: 'model',
+  });
+  assert.equal(modelToken.publishedPageRevision, 2);
+  for (const layer of PAGE_EDIT_READY_LAYERS) {
+    markPageEditLayerReady(documentState, 1, layer, modelToken);
+  }
+  assert.equal(pageEditReadinessSatisfied(documentState, 1), true);
+  assert.equal(pageEditReadinessSnapshot(documentState, 1).layers.raster, 2);
+
+  documentState.revisionState.persistedRevision = 2;
+  documentState.revisionState.livePdfRevision = 2;
+  assert.equal(pageEditReadinessSatisfied(documentState, 1), true,
+    'installing matching proxy bytes must not erase a current model preview');
 });
 
 test('stale layer completion cannot satisfy a newer content revision', () => {

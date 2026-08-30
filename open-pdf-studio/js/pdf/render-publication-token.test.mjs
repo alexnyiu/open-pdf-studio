@@ -44,6 +44,21 @@ test('a complete render publication token accepts only its exact owner revision'
   assert.equal(token.contentRevision, 1);
   assert.equal(token.livePdfRevision, 1);
   assert.equal(token.pageRevision, 1);
+  assert.equal(token.publishedPageRevision, 1);
+  assert.equal(token.revisionAuthority, 'proxy');
+});
+
+test('model publication explicitly owns a page revision newer than the live proxy', () => {
+  const document = documentOwner();
+  document.revisionState.contentRevision = 2;
+  document.revisionState.pageContentRevisions[1] = 2;
+  const proxy = captureRenderPublicationToken(document, 1, 'proxy');
+  const model = captureRenderPublicationToken(document, 1, 'model', {
+    revisionAuthority: 'model',
+  });
+  assert.equal(proxy.publishedPageRevision, 1);
+  assert.equal(model.publishedPageRevision, 2);
+  assert.equal(model.revisionAuthority, 'model');
 });
 
 const races = [

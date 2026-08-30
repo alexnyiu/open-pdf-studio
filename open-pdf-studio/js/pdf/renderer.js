@@ -88,6 +88,10 @@ import {
   pageEditReadinessSatisfied,
 } from './page-edit-readiness.js';
 import { awaitRequiredPageRenders } from './visible-page-render-barrier.js';
+import {
+  registerPageSurface,
+  unregisterPageSurface,
+} from './page-surface-registry.js';
 
 const RENDER_EDIT_READY_LAYERS = Object.freeze(['raster', 'annotations', 'text', 'links', 'forms']);
 
@@ -102,6 +106,69 @@ function failRendererReadiness(doc, pageNum, error, publicationToken) {
     error instanceof Error ? error.message : String(error || 'page render failed'),
     publicationToken,
   );
+}
+
+function canonicalSurfaceDimensions(doc, pageNum, fallback = null) {
+  const dimensions = doc?.pageDims?.[pageNum];
+  const width = Number(dimensions?.widthPt ?? fallback?.width);
+  const height = Number(dimensions?.heightPt ?? fallback?.height);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+function registerSinglePageSurface(doc, pageNum, {
+  baseSurface = getPdfCanvas(),
+  overlayCanvas = getAnnotationCanvas(),
+  textLayer,
+  surfaceKind = 'single-page-canvas',
+} = {}) {
+  const container = baseSurface?.closest?.('#canvas-container')
+    || document.getElementById('canvas-container');
+  if (!doc || !container) return null;
+  const input = {
+    documentState: doc,
+    pageNum,
+    surfaceKind,
+    container,
+    baseSurface,
+    overlayCanvas,
+    canonicalPageDimensions: canonicalSurfaceDimensions(doc, pageNum),
+    cssScale: Number(doc.scale) || 1,
+    dpr: getCanvasDPR(),
+  };
+  if (textLayer !== undefined) input.textLayer = textLayer;
+  return registerPageSurface(input);
+}
+
+function registerContinuousPageSurface(doc, pageNum, pageWrapper, overrides = {}) {
+  const container = pageWrapper?.querySelector?.('.canvas-container-cont');
+  if (!doc || !container) return null;
+  const rasterImage = container.querySelector('.pdf-page-raster');
+  const geometryCanvas = container.querySelector('canvas.pdf-canvas-geometry');
+  const baseCanvas = container.querySelector('canvas.pdf-canvas:not(.annotation-canvas)');
+  const baseSurface = overrides.baseSurface
+    ?? container.querySelector('.text-edit-authoritative-preview')
+    ?? rasterImage
+    ?? baseCanvas
+    ?? container.querySelector('.page-preview-image, .page-preview-canvas');
+  const input = {
+    documentState: doc,
+    pageNum,
+    surfaceKind: overrides.surfaceKind
+      || (rasterImage ? 'continuous-raster-image' : 'continuous-canvas'),
+    container,
+    baseSurface,
+    geometryCanvas: overrides.geometryCanvas ?? geometryCanvas,
+    overlayCanvas: overrides.overlayCanvas
+      ?? container.querySelector('canvas.annotation-canvas'),
+    textLayer: overrides.textLayer ?? container.querySelector('.textLayer'),
+    canonicalPageDimensions: canonicalSurfaceDimensions(doc, pageNum, {
+      width: Number(pageWrapper.dataset.baseW),
+      height: Number(pageWrapper.dataset.baseH),
+    }),
+    cssScale: Number(doc.scale) || 1,
+    dpr: getCanvasDPR(),
+  };
+  return registerPageSurface(input);
 }
 
 function scheduleBackgroundMetadata(centerPage, direction) {
@@ -377,6 +444,7 @@ async function _renderPageImpl(pageNum, { requireEditReady = false } = {}) {
   const pdfCanvas = getPdfCanvas();
   const annotationCanvas = getAnnotationCanvas();
   if (!pdfCanvas || !annotationCanvas) return;
+  registerSinglePageSurface(doc, pageNum, { baseSurface: pdfCanvas, overlayCanvas: annotationCanvas });
 
   const dpr = getCanvasDPR();
   const bufferW = Math.floor(viewport.width * dpr);
@@ -1929,6 +1997,12 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
       quality: publishedQuality,
     },
   );
+  registerContinuousPageSurface(doc, pageNum, pageWrapper, {
+    baseSurface: directRasterImage || pdfCanvasEl,
+    geometryCanvas: directRasterImage ? pdfCanvasEl : null,
+    overlayCanvas: annotationCanvasEl,
+    surfaceKind: directRasterImage ? 'continuous-raster-image' : 'continuous-canvas',
+  });
   markLayer('raster');
 
   const fullQualityPaintedAt = performance.now();
@@ -1972,6 +2046,7 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
   try {
     const textLayerResult = await createTextLayer(page, viewport, canvasContainer, pageNum);
     if (!textLayerResult) throw new Error(`The current text layer for page ${pageNum} was not published`);
+    registerContinuousPageSurface(doc, pageNum, pageWrapper, { textLayer: textLayerResult });
     markLayer('text');
     if (doc.revisionState?.saveState !== 'synchronizing') markLayer('editableMetadata');
   } catch (e) {
@@ -2150,6 +2225,7 @@ function _createContinuousWrapper(doc, pageNum, rect) {
   } else {
     incrementPerformanceCounter('uncachedPageMounts');
   }
+  registerContinuousPageSurface(doc, pageNum, pageWrapper);
   return pageWrapper;
 }
 
@@ -2162,6 +2238,7 @@ function _releaseContinuousWrapper(pageNum, wrapper) {
   releaseTextLayer(pageNum);
   releaseLinkLayer(pageNum);
   releaseFormLayer(pageNum);
+  unregisterPageSurface(wrapper.querySelector('.canvas-container-cont'));
   // A low-resolution cache surface may be temporarily mounted as the visual
   // preview. Detach it without clearing its backing store so the next visit
   // reuses the same allocation rather than retaining a duplicate.

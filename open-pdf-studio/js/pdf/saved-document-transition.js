@@ -462,11 +462,21 @@ async function runSynchronization(record, { retry = false } = {}) {
     });
     assertOwned('after-editable-metadata-rebuild');
     for (const page of positivePages(readiness.renderReadyPages)) {
-      if (requiredPages.includes(page)) markPageRenderReady(documentState, page, requestedRevision);
+      if (requiredPages.includes(page)) {
+        markPageRenderReady(
+          documentState,
+          page,
+          documentState.revisionState?.pageContentRevisions?.[page] ?? requestedRevision,
+        );
+      }
     }
     for (const page of positivePages(readiness.semanticReadyPages)) {
       if (requiredPages.includes(page) && metadataReadyPages.includes(page)) {
-        markPageSemanticReady(documentState, page, requestedRevision);
+        markPageSemanticReady(
+          documentState,
+          page,
+          documentState.revisionState?.pageContentRevisions?.[page] ?? requestedRevision,
+        );
       }
     }
     await restartSemanticPreload({

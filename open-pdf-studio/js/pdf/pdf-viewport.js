@@ -21,6 +21,7 @@ import {
 } from './render-resource-budget.js';
 import { recordPerformancePeak } from './performance-metrics.js';
 import { releaseCanvasBackingStores } from './viewport-backing-store.js';
+import { registerPageSurface, unregisterPageSurface } from './page-surface-registry.js';
 
 // ─── Viewport State (singleton via window to survive HMR/dynamic imports) ───
 if (!window.__pdfViewport) {
@@ -52,6 +53,7 @@ viewport.documentId ??= null;
 viewport.documentLifecycleGeneration ??= 0;
 viewport.viewportRevision ??= 0;
 viewport.backingStoresSuspended ??= false;
+viewport.authoritativeTextPreview ??= null;
 
 let _canvas = null;
 let _ctx = null;
@@ -59,6 +61,132 @@ let _rafId = 0;
 let _annotationRedraw = null; // callback for annotation overlay
 let _resizeObserver = null;
 const _viewportCanvasResourceKeys = new Set();
+
+function _registerViewportPageSurface() {
+  const doc = getActiveDocument();
+  const pageNum = Number(viewport.pageNum) || 0;
+  const container = _canvas?.closest?.('#canvas-container');
+  if (!doc || !container || pageNum < 1) return null;
+  const owner = captureTextLayerOwner(doc, pageNum);
+  const textLayer = owner ? findTextLayerForOwner(container, owner) : null;
+  return registerPageSurface({
+    documentState: doc,
+    pageNum,
+    surfaceKind: `single-page-${viewport.pageType || 'canvas'}`,
+    container,
+    baseSurface: _canvas,
+    overlayCanvas: container.querySelector('.annotation-canvas, #annotation-canvas'),
+    textLayer,
+    canonicalPageDimensions: { width: viewport.pageW, height: viewport.pageH },
+    cssScale: Number(viewport.zoom) || Number(doc.scale) || 1,
+    dpr: _getDpr(),
+  });
+}
+
+function authoritativePreviewOwns(documentState, pageNum = viewport.pageNum) {
+  const preview = viewport.authoritativeTextPreview;
+  return Boolean(preview
+    && documentState?.id
+    && preview.documentId === String(documentState.id)
+    && preview.lifecycleGeneration === (Number(documentState.lifecycleGeneration) || 0)
+    && preview.pageNum === Number(pageNum)
+    && viewport.documentId === preview.documentId
+    && (Number(viewport.documentLifecycleGeneration) || 0) === preview.lifecycleGeneration
+    && viewport.pageNum === preview.pageNum
+    && viewport.currentBitmap === preview.bitmap);
+}
+
+/** True while a candidate-backed bitmap owns the active single-page surface. */
+export function viewportHasAuthoritativeTextPreview(
+  documentState = getActiveDocument(),
+  pageNum = viewport.pageNum,
+) {
+  return authoritativePreviewOwns(documentState, pageNum);
+}
+
+function releasePreviewBitmap(preview) {
+  const bitmap = preview?.bitmap;
+  if (!bitmap) return;
+  try {
+    if (bitmap.dataset?.textEditCandidateBitmap === 'true') {
+      bitmap.width = 0;
+      bitmap.height = 0;
+    } else {
+      bitmap.close?.();
+    }
+  } catch {}
+}
+
+/** Release a candidate-backed viewport bitmap before proxy/page replacement. */
+export function clearViewportAuthoritativeTextPreview({ restorePrevious = false } = {}) {
+  const preview = viewport.authoritativeTextPreview;
+  if (!preview) return false;
+  if (viewport.currentBitmap === preview.bitmap) {
+    viewport.currentBitmap = restorePrevious ? preview.previousBitmap : null;
+    viewport.currentTile = restorePrevious ? preview.previousTile : null;
+    viewport.currentTileMeta = restorePrevious ? preview.previousTileMeta : null;
+    viewport.pageType = restorePrevious ? preview.previousPageType : viewport.pageType;
+  }
+  viewport.authoritativeTextPreview = null;
+  releasePreviewBitmap(preview);
+  viewport.dirty = true;
+  return true;
+}
+
+/**
+ * Atomically install one fully rendered candidate page in the fixed viewport.
+ * Pan and zoom continue through the normal viewport render loop.
+ */
+export async function publishViewportAuthoritativeTextPreview({
+  documentState,
+  pageNum,
+  revision,
+  bitmap,
+  renderScale,
+} = {}) {
+  const ownsViewport = () => Boolean(bitmap && documentState?.id && _canvas && viewport.active
+    && viewport.documentId === String(documentState.id)
+    && (Number(viewport.documentLifecycleGeneration) || 0)
+      === (Number(documentState.lifecycleGeneration) || 0)
+    && viewport.pageNum === Number(pageNum));
+  if (!ownsViewport()) return null;
+  try {
+    const progressive = await import('./progressive-render.js');
+    progressive.cancelProgressiveBitmapPublication?.('authoritative-text-preview');
+  } catch {}
+  if (!ownsViewport()) return null;
+
+  const previous = viewport.authoritativeTextPreview;
+  const priorState = previous || {
+    previousBitmap: viewport.currentBitmap,
+    previousTile: viewport.currentTile,
+    previousTileMeta: viewport.currentTileMeta,
+    previousPageType: viewport.pageType,
+  };
+  viewport.authoritativeTextPreview = Object.freeze({
+    documentId: String(documentState.id),
+    lifecycleGeneration: Number(documentState.lifecycleGeneration) || 0,
+    pageNum: Number(pageNum),
+    pageRevision: Number(revision) || 0,
+    renderScale: Number(renderScale) || 1,
+    bitmap,
+    previousBitmap: priorState.previousBitmap,
+    previousTile: priorState.previousTile,
+    previousTileMeta: priorState.previousTileMeta,
+    previousPageType: priorState.previousPageType,
+  });
+  viewport.currentBitmap = bitmap;
+  viewport.currentTile = null;
+  viewport.currentTileMeta = null;
+  // The candidate contains the full source page. Proxy vector commands would
+  // otherwise paint the replaced glyphs over the candidate again.
+  viewport.pageType = 'raster';
+  viewport.dirty = true;
+  _render();
+  _registerViewportPageSurface();
+  if (previous) releasePreviewBitmap(previous);
+  return _canvas;
+}
 
 function _registerViewportCanvasResources(container) {
   const doc = getActiveDocument();
@@ -167,6 +295,7 @@ export function suspendViewportBackingStores(reason = 'inactive-view') {
 
   viewport.active = false;
   viewport.backingStoresSuspended = true;
+  clearViewportAuthoritativeTextPreview({ restorePrevious: false });
   viewport.currentBitmap = null;
   viewport.currentTile = null;
   viewport.currentTileMeta = null;
@@ -182,6 +311,7 @@ export function suspendViewportBackingStores(reason = 'inactive-view') {
   _zoomFreezeBitmap = null;
 
   const container = document.getElementById('pdf-container');
+  unregisterPageSurface(_canvas?.closest?.('#canvas-container'));
   const result = releaseCanvasBackingStores([
     _canvas || document.getElementById('pdf-canvas'),
     container?.querySelector('.annotation-canvas, #annotation-canvas')
@@ -279,6 +409,7 @@ function _resizeCanvas() {
     bumpViewportRevision('resize');
   }
   _registerViewportCanvasResources(container);
+  if (viewport.active) _registerViewportPageSurface();
 }
 
 // ─── Cross-monitor DPI change (issue #263) ─────────────────────────────────
@@ -1047,6 +1178,7 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
   // glitch on raster-classified PDFs (Tekst.pdf, rapport-constructie.pdf) and
   // a persistent old-orientation ghost after rotating.
   if (isNewDocument || isPageChange || isRotationChange) {
+    clearViewportAuthoritativeTextPreview({ restorePrevious: false });
     viewport.currentBitmap = null;
     viewport.currentTile = null;
     viewport.currentTileMeta = null;
@@ -1091,6 +1223,7 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
     viewport.dirty = true;
   }
   bumpViewportRevision(isNewDocument ? 'document' : isRotationChange ? 'rotation' : 'page');
+  _registerViewportPageSurface();
 }
 
 /// Compute the zoom factor needed to fit a page into a canvas under one of

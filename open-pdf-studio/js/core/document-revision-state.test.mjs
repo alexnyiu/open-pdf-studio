@@ -7,6 +7,8 @@ import {
   documentHasRevisionPersistenceDebt,
   documentIsEditReady,
   documentNeedsSynchronization,
+  documentProxyRevisionSynchronized,
+  documentRevisionReadinessSatisfied,
   documentRevisionDebugSnapshot,
   initializeDocumentRevisionState,
   markDocumentSaveState,
@@ -155,9 +157,25 @@ test('edit readiness requires one current live, raster, and semantic revision', 
   assert.equal(documentIsEditReady(doc, 1), false);
 });
 
+test('model-owned page publication can be edit-ready while disk and proxy revisions lag', () => {
+  const doc = createDocument();
+  noteDocumentMutation(doc, { pages: [1], reason: 'text:apply' });
+  setVisibleRequiredPages(doc, [1]);
+  assert.equal(doc.revisionState.persistedRevision, 0);
+  assert.equal(doc.revisionState.livePdfRevision, 0);
+  assert.equal(documentProxyRevisionSynchronized(doc), false);
+  assert.equal(documentNeedsSynchronization(doc), true);
+  markPageRenderReady(doc, 1, 1);
+  markPageSemanticReady(doc, 1, 1);
+  assert.equal(documentRevisionReadinessSatisfied(doc, 1), true);
+  assert.equal(documentIsEditReady(doc, 1), true);
+  assert.equal(doc.revisionState.visibleRenderRevision, 1);
+  assert.equal(doc.revisionState.visibleSemanticRevision, 1);
+});
+
 test('impossible persisted/live/readiness transitions fail closed', () => {
   const doc = createDocument();
   assert.throws(() => markLivePdfRevision(doc, 1), /unpersisted/u);
-  doc.revisionState.pageRenderReadyRevisions = { 1: 1 };
-  assert.throws(() => assertDocumentRevisionState(doc), /newer than livePdfRevision/u);
+  doc.revisionState.pageRenderReadyRevisions = { 1: 2 };
+  assert.throws(() => assertDocumentRevisionState(doc), /newer than contentRevision/u);
 });

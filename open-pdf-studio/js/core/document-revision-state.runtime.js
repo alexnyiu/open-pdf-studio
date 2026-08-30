@@ -140,6 +140,10 @@ function recomputeVisibleReadiness(state) {
     ...required.map((page) => state.pageSemanticReadyRevisions[page] ?? 0)
   );
 }
+function targetPageRevision(state, page) {
+  return Object.prototype.hasOwnProperty.call(state.pageContentRevisions, page)
+    ? state.pageContentRevisions[page] : state.contentRevision;
+}
 function assertDocumentRevisionState(documentState) {
   const state = documentState?.revisionState;
   if (!state || typeof state !== "object") throw new TypeError("Document revision state is required");
@@ -160,16 +164,16 @@ function assertDocumentRevisionState(documentState) {
   if (state.livePdfRevision > state.persistedRevision) {
     throw new RangeError("livePdfRevision cannot exceed persistedRevision");
   }
-  if (state.visibleRenderRevision > state.livePdfRevision) {
-    throw new RangeError("visibleRenderRevision cannot exceed livePdfRevision");
+  if (state.visibleRenderRevision > state.contentRevision) {
+    throw new RangeError("visibleRenderRevision cannot exceed contentRevision");
   }
-  if (state.visibleSemanticRevision > state.livePdfRevision) {
-    throw new RangeError("visibleSemanticRevision cannot exceed livePdfRevision");
+  if (state.visibleSemanticRevision > state.contentRevision) {
+    throw new RangeError("visibleSemanticRevision cannot exceed contentRevision");
   }
   for (const mapName of ["pageRenderReadyRevisions", "pageSemanticReadyRevisions"]) {
     for (const value of Object.values(state[mapName] || {})) {
-      if (revision(value, `${mapName} value`) > state.livePdfRevision) {
-        throw new RangeError(`${mapName} cannot contain a revision newer than livePdfRevision`);
+      if (revision(value, `${mapName} value`) > state.contentRevision) {
+        throw new RangeError(`${mapName} cannot contain a revision newer than contentRevision`);
       }
     }
   }
@@ -292,7 +296,7 @@ function markPageRenderReady(documentState, page, requestedRevision) {
   const state = initializeDocumentRevisionState(documentState);
   const pageNum = pageNumber(page);
   const next = revision(requestedRevision, "page render-ready revision");
-  if (next > state.livePdfRevision) throw new RangeError("Page render readiness cannot exceed livePdfRevision");
+  if (next > state.contentRevision) throw new RangeError("Page render readiness cannot exceed contentRevision");
   state.pageRenderReadyRevisions[pageNum] = next;
   recomputeVisibleReadiness(state);
   assertDocumentRevisionState(documentState);
@@ -302,7 +306,7 @@ function markPageSemanticReady(documentState, page, requestedRevision) {
   const state = initializeDocumentRevisionState(documentState);
   const pageNum = pageNumber(page);
   const next = revision(requestedRevision, "page semantic-ready revision");
-  if (next > state.livePdfRevision) throw new RangeError("Page semantic readiness cannot exceed livePdfRevision");
+  if (next > state.contentRevision) throw new RangeError("Page semantic readiness cannot exceed contentRevision");
   state.pageSemanticReadyRevisions[pageNum] = next;
   recomputeVisibleReadiness(state);
   assertDocumentRevisionState(documentState);
@@ -330,13 +334,22 @@ function documentHasRevisionPersistenceDebt(documentState) {
   const state = initializeDocumentRevisionState(documentState);
   return state.contentRevision > state.persistedRevision;
 }
+function documentProxyRevisionSynchronized(documentState) {
+  const state = initializeDocumentRevisionState(documentState);
+  return state.contentRevision === state.persistedRevision
+    && state.persistedRevision === state.livePdfRevision;
+}
 function documentNeedsSynchronization(documentState) {
   const state = initializeDocumentRevisionState(documentState);
-  if (state.persistedRevision > state.livePdfRevision) return true;
+  if (!documentProxyRevisionSynchronized(documentState)) return true;
   if (state.saveState === "saved-refresh-failed" || state.saveState === "synchronizing") return true;
   if (state.activeSaveRequestId || state.saveState === "saving" || state.saveState === "persisted") return true;
   if (state.visibleRequiredPages.length === 0) return false;
-  return state.visibleRenderRevision < state.livePdfRevision || state.visibleSemanticRevision < state.livePdfRevision;
+  return state.visibleRequiredPages.some((page) => {
+    const target = targetPageRevision(state, page);
+    return (state.pageRenderReadyRevisions[page] ?? -1) < target
+      || (state.pageSemanticReadyRevisions[page] ?? -1) < target;
+  });
 }
 function documentIsEditReady(documentState, page) {
   const state = initializeDocumentRevisionState(documentState);
@@ -347,8 +360,11 @@ function documentIsEditReady(documentState, page) {
 function documentRevisionReadinessSatisfied(documentState, page) {
   const state = initializeDocumentRevisionState(documentState);
   const pageNum = pageNumber(page);
-  if (state.contentRevision !== state.persistedRevision || state.persistedRevision !== state.livePdfRevision) return false;
-  return Object.prototype.hasOwnProperty.call(state.pageRenderReadyRevisions, pageNum) && Object.prototype.hasOwnProperty.call(state.pageSemanticReadyRevisions, pageNum) && state.pageRenderReadyRevisions[pageNum] === state.livePdfRevision && state.pageSemanticReadyRevisions[pageNum] === state.livePdfRevision;
+  const target = targetPageRevision(state, pageNum);
+  return Object.prototype.hasOwnProperty.call(state.pageRenderReadyRevisions, pageNum)
+    && Object.prototype.hasOwnProperty.call(state.pageSemanticReadyRevisions, pageNum)
+    && state.pageRenderReadyRevisions[pageNum] === target
+    && state.pageSemanticReadyRevisions[pageNum] === target;
 }
 function documentRevisionDebugSnapshot(documentState) {
   const state = initializeDocumentRevisionState(documentState);
@@ -378,6 +394,7 @@ export {
   documentIsEditReady,
   documentRevisionReadinessSatisfied,
   documentNeedsSynchronization,
+  documentProxyRevisionSynchronized,
   documentRevisionDebugSnapshot,
   initializeDocumentRevisionState,
   markDocumentSaveState,
