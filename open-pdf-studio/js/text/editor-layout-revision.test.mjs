@@ -41,6 +41,8 @@ test('layout revision changes for every paragraph, geometry, collision, and owne
     [() => { config.existingBounds[0].x += 1; }, () => { config.existingBounds[0].x -= 1; }],
     [() => { config.directManipulationRevision = 1; }, () => { config.directManipulationRevision = 0; }],
     [() => { identity.ownerDocumentGeneration += 1; }, () => { identity.ownerDocumentGeneration -= 1; }],
+    [() => { identity.editorMountGeneration = 1; }, () => { identity.editorMountGeneration = 0; }],
+    [() => { identity.draftRevision = 1; }, () => { identity.draftRevision = 0; }],
   ];
   for (const [mutate, restore] of cases) {
     mutate();

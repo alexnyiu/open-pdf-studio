@@ -84,6 +84,8 @@ export function createEditorLayoutRevision(document, config = {}, identity = {})
       sessionId: identity.sessionId || null,
       ownerDocumentId: identity.ownerDocumentId || null,
       ownerDocumentGeneration: Number(identity.ownerDocumentGeneration) || 0,
+      editorMountGeneration: Number(identity.editorMountGeneration) || 0,
+      draftRevision: Number(identity.draftRevision) || 0,
       placementGeneration: Number(identity.placementGeneration) || 0,
     },
   };

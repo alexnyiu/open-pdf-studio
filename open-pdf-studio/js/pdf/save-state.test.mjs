@@ -8,6 +8,7 @@ import {
   documentLifecycleOwnerMatches,
   textEditCommitAllowsSave,
 } from './save-state.js';
+import { createTextApplyResult } from '../text/text-apply-result.js';
 
 const cleanDocument = () => ({
   modified: false,
@@ -139,12 +140,15 @@ test('document-scoped text-edit commit is a mandatory save barrier', async () =>
   const documentState = { id: 'doc-a' };
   assert.equal(await textEditCommitAllowsSave(documentState, 'save', async (...args) => {
     calls.push(args);
-    return false;
+    return createTextApplyResult({
+      status: 'rejected', documentId: 'doc-a', pageNum: 1,
+      rejectionCode: 'TEXT_LAYOUT_WIDTH_CAPACITY', recoveryActions: ['keep-editing'],
+    });
   }), false);
   assert.deepEqual(calls, [['doc-a', 'save']]);
   assert.equal(await textEditCommitAllowsSave(documentState, 'save-as', async (...args) => {
     calls.push(args);
-    return true;
+    return createTextApplyResult({ status: 'noop', documentId: 'doc-a', pageNum: 1 });
   }), true);
   assert.deepEqual(calls.at(-1), ['doc-a', 'save-as']);
   await assert.rejects(

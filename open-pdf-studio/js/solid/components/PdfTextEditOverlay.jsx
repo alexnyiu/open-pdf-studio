@@ -6,7 +6,8 @@ import { active, editorMountGeneration, editorStyle, editorPlacement, text, setT
   richTextSelection, typingStyle, updateRichTextDraft, updateRichTextSelection,
   undoRichTextDraft, redoRichTextDraft, updateEditorGeometry,
   updateEditorValidatedLayoutGeometry,
-  recordEditorGeometryHistory } from '../stores/pdfTextEditStore.js';
+  recordEditorGeometryHistory,
+  setEditorDraftFlushHandler } from '../stores/pdfTextEditStore.js';
 import {
   canonicalRichTextHash,
   createRichTextDocument,
@@ -22,6 +23,11 @@ import { shapeRichTextDocument } from '../../text/font-catalog.js';
 import { reflowRichTextToWidth } from '../../text/text-edit-selection.js';
 import { createEditorLayoutRevision } from '../../text/editor-layout-revision.js';
 import { cancelLatestNativeLayout, requestLatestNativeLayout } from '../../text/native-layout-scheduler.js';
+import {
+  disposeFinalTextLayoutSession,
+  recordValidatedFinalTextLayout,
+} from '../../text/final-text-layout.js';
+import { textApplyResultSchedulesPersistence } from '../../text/text-apply-result.js';
 import { throwIfSaveFaultInjected } from '../../pdf/save-fault-injection.js';
 import {
   applyActiveTextEditing,
@@ -536,10 +542,14 @@ export default function PdfTextEditOverlay() {
     if (!config || !source) return;
     const placement = editorPlacement();
     const session = getActiveTextEditSession();
+    const draftRevision = richTextDraftRevision();
+    const mountGeneration = editorMountGeneration();
     const revision = createEditorLayoutRevision(source, config, {
       sessionId: session?.sessionId,
       ownerDocumentId: session?.ownerDocumentId || placement?.documentId,
       ownerDocumentGeneration: session?.ownerDocumentGeneration,
+      editorMountGeneration: mountGeneration,
+      draftRevision,
       placementGeneration: placement?.sessionGeneration,
     });
     const fingerprint = revision.fingerprint;
@@ -579,6 +589,8 @@ export default function PdfTextEditOverlay() {
         sessionId: currentSession?.sessionId,
         ownerDocumentId: currentSession?.ownerDocumentId || editorPlacement()?.documentId,
         ownerDocumentGeneration: currentSession?.ownerDocumentGeneration,
+        editorMountGeneration: editorMountGeneration(),
+        draftRevision: richTextDraftRevision(),
         placementGeneration: editorPlacement()?.sessionGeneration,
       });
       if (response.fingerprint !== fingerprint || currentRevision.fingerprint !== fingerprint) return;
@@ -598,11 +610,17 @@ export default function PdfTextEditOverlay() {
           sessionId: currentSession?.sessionId,
           ownerDocumentId: currentSession?.ownerDocumentId || editorPlacement()?.documentId,
           ownerDocumentGeneration: currentSession?.ownerDocumentGeneration,
+          editorMountGeneration: editorMountGeneration(),
+          draftRevision: richTextDraftRevision(),
           placementGeneration: editorPlacement()?.sessionGeneration,
         },
       );
       shapedSignature = canonicalRichTextHash(result.document);
-      updateRichTextDraft(result.document, { recordHistory: false, preserveDom: true });
+      updateRichTextDraft(result.document, {
+        recordHistory: false,
+        preserveDom: true,
+        advanceDraftRevision: false,
+      });
       exactRequiredHeight = result.requiredHeight;
       liveContentWidth = result.contentWidth;
       publishContentInsetsPx({
@@ -643,6 +661,12 @@ export default function PdfTextEditOverlay() {
           contrast: documentNeedsContrastAid(result.document, config.editorBackground)
             ? contrastNotice : null,
         },
+      });
+      recordValidatedFinalTextLayout({
+        sessionId: currentSession?.sessionId,
+        draftRevision,
+        fingerprint: validatedRevision.fingerprint,
+        result,
       });
       setEditorStatus(message, result.valid ? 'info' : 'invalid');
       config.onDraftLayout?.(result);
@@ -864,7 +888,8 @@ export default function PdfTextEditOverlay() {
         // Keep ownership of the initiating pointer through its compatibility
         // click even when the successful Apply already unmounted this portal.
         await settleCapturedGesture();
-        if (result === true && capturedIntent) {
+        const interactionCompleted = result?.status === 'applied' || result?.status === 'noop';
+        if (interactionCompleted && capturedIntent) {
           try {
             const stateModule = await import('../../core/state.js');
             await replayTextEditClickAwayIntent(capturedIntent, {
@@ -901,7 +926,7 @@ export default function PdfTextEditOverlay() {
         // editor-family adapters may finalize their draft during commit. Queue
         // persistence after replay so a second text region can establish its
         // live session before the coordinator considers heavy serialization.
-        if (result === true) {
+        if (textApplyResultSchedulesPersistence(result)) {
           void import('../../pdf/saver.js')
             .then(({ scheduleCommittedTextEditSave }) => scheduleCommittedTextEditSave(
               ownerDocumentId,
@@ -911,7 +936,7 @@ export default function PdfTextEditOverlay() {
               console.warn('[text-edit] Click-away auto-save failed:', error);
             });
         }
-        if (result === false
+        if (result?.status === 'rejected'
             && active()
             && getActiveTextEditSession()?.sessionId === sessionId) {
           refocusCurrentSession();
@@ -1488,6 +1513,9 @@ export default function PdfTextEditOverlay() {
     contentResizeFrameId = 0;
     placementController.dispose();
     cancelLatestNativeLayout();
+    const sessionId = getActiveTextEditSession()?.sessionId;
+    if (sessionId) disposeFinalTextLayoutSession(sessionId);
+    setEditorDraftFlushHandler(null);
     for (const attachment of editorOptions().attachedPageElements || []) {
       attachment?.element?.remove?.();
     }
@@ -1588,7 +1616,16 @@ export default function PdfTextEditOverlay() {
           anchorTop: expandable.anchorTop,
         })
       : next;
-    updateRichTextDraft(draft, { preserveDom: true });
+    let authoredChanged = true;
+    try {
+      authoredChanged = canonicalRichTextHash(draft) !== canonicalRichTextHash(current);
+    } catch {
+      authoredChanged = true;
+    }
+    updateRichTextDraft(draft, {
+      preserveDom: true,
+      advanceDraftRevision: authoredChanged,
+    });
     if (expandable) {
       exactRequiredHeight = draft.region.height;
       lastExpandableFingerprint = '';
@@ -1601,6 +1638,21 @@ export default function PdfTextEditOverlay() {
     queueMicrotask(syncRichSelection);
     pendingInputContext = null;
   };
+
+  createEffect(() => {
+    if (!active()) {
+      setEditorDraftFlushHandler(null);
+      return;
+    }
+    const mountGeneration = editorMountGeneration();
+    setEditorDraftFlushHandler(() => {
+      if (!active() || editorMountGeneration() !== mountGeneration) return false;
+      if (richEditorRef && richTextDocument()) syncRichDocument();
+      else if (textareaRef) setText(textareaRef.value);
+      return true;
+    });
+    onCleanup(() => setEditorDraftFlushHandler(null));
+  });
 
   const captureRichBeforeInput = (event) => {
     const current = richTextDocument();

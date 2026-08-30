@@ -68,3 +68,25 @@ export function runOwnerScopedTextCommit({
   restore();
   return false;
 }
+
+/**
+ * Decide persisted meaning before assigning the next record revision. Neither
+ * the owner record nor the supplied candidate is mutated by this helper.
+ */
+export function prepareTextEditRecordCommit(previous, candidateWithoutRevision, {
+  force = false,
+  newRecord = false,
+} = {}) {
+  if (!candidateWithoutRevision) throw new TypeError('A text-edit commit candidate is required');
+  const changed = force === true
+    || textEditRecordContentChanged(previous, candidateWithoutRevision);
+  if (!changed) return Object.freeze({ changed: false, candidate: null });
+  const candidate = JSON.parse(JSON.stringify(candidateWithoutRevision));
+  if (candidate.schema === 'open-pdf-studio.text-edit-record' && candidate.version === 2) {
+    candidate.revision = newRecord
+      ? Math.max(1, Number(candidate.revision) || 1)
+      : Math.max(1, Number(previous?.revision) || 1) + 1;
+  }
+  return Object.freeze({ changed: true, candidate });
+}
+import { textEditRecordContentChanged } from './text-edit-dirty-state.js';

@@ -3,6 +3,7 @@ import {
   documentNeedsSynchronization,
   initializeDocumentRevisionState,
 } from '../core/document-revision-state.runtime.js';
+import { textApplyResultCompletesInteraction } from '../text/text-apply-result.js';
 
 /**
  * Return whether an owner document still has state that must cross the PDF
@@ -65,7 +66,9 @@ export async function textEditCommitAllowsSave(documentState, reason, commitForD
   if (typeof commitForDocument !== 'function') {
     throw new TypeError('Saving requires a document-scoped text-edit commit barrier');
   }
-  return (await commitForDocument(documentState.id, reason)) === true;
+  return textApplyResultCompletesInteraction(
+    await commitForDocument(documentState.id, reason),
+  );
 }
 
 /**

@@ -109,7 +109,9 @@ export function buildMergedTextEditSelection(items, { createId = () => `edit-${D
   return {
     orderedItems: sorted,
     primaryId: primary?.id || createId(),
-    revision: primary ? Number(primary.revision || 1) + 1 : 1,
+    // The merged editor is still an isolated draft. The Apply transaction is
+    // the only boundary allowed to advance an existing record revision.
+    revision: primary ? Number(primary.revision || 1) : 1,
     page,
     rotation,
     geometry,

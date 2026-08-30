@@ -67,6 +67,28 @@ export function saveRenderCoherenceReportIssues(report, {
   ]) {
     if (textAssertions[name] !== true) issues.push(`text assertion failed: ${name}`);
   }
+  const a23Layout = textAssertions.a23FinalLayoutBoundToTypedDraft || {};
+  if (!Number.isSafeInteger(a23Layout.draftRevision)
+      || !a23Layout.requestedFingerprint
+      || a23Layout.requestedFingerprint !== a23Layout.validatedFingerprint
+      || a23Layout.resizeHandleEventCount !== 0) {
+    issues.push('A23 final layout was not bound to the exact typed draft without resize events');
+  }
+  const a23Blocked = textAssertions.a23ImpossibleAutoFit || {};
+  if (a23Blocked.draftRetained !== true
+      || a23Blocked.editorRemainedOpen !== true
+      || a23Blocked.revisionUnchanged !== true
+      || a23Blocked.persistedBytesUnchanged !== true
+      || a23Blocked.resizeHandleEventCount !== 0
+      || ![
+        'TEXT_LAYOUT_PAGE_BOUNDARY',
+        'TEXT_LAYOUT_COLUMN_BOUNDARY',
+        'TEXT_LAYOUT_NEIGHBOR_OVERLAP',
+      ].includes(a23Blocked.rejectionCode)
+      || typeof a23Blocked.recoveryMessage !== 'string'
+      || a23Blocked.recoveryMessage.trim() === '') {
+    issues.push('A23 impossible auto-fit evidence is incomplete');
+  }
   const visual = report?.visualAssertions || {};
   if (visual.geometryPreserved !== true) issues.push('reopen geometry was not preserved');
   if (visual.renderMatchesPersistedPdf !== true
@@ -89,7 +111,7 @@ export function saveRenderCoherenceReportIssues(report, {
       issues.push(`scenario matrix entry ${id} lacks evidence`);
     }
   }
-  for (const id of ['A1', 'A22']) {
+  for (const id of ['A1', 'A22', 'A23']) {
     if (byId.get(id)?.status !== 'PASS'
         || byId.get(id)?.evidenceKind !== 'packaged-production-ui') {
       issues.push(`${id} is not packaged production-UI evidence`);

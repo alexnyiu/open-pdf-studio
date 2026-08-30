@@ -1,14 +1,17 @@
 import { createSignal } from 'solid-js';
 import {
+  canonicalRichTextHash,
   applyTextFormat,
   graphemeLength,
   richTextToPlainText,
   textFormatState,
 } from '../../text/rich-text.js';
 import {
+  canonicalEditorBoundsForRichText,
   canonicalDeltaFromDisplayDelta,
   mergePageTextEditStyle,
 } from '../../text/page-text-edit-placement.js';
+import { createEditorLayoutRevision } from '../../text/editor-layout-revision.js';
 
 const [active, setActive] = createSignal(false);
 const [editorMountGeneration, setEditorMountGeneration] = createSignal(0);
@@ -37,6 +40,7 @@ let richTextHistory = [];
 let richTextHistoryIndex = 0;
 let richTextHistoryApproxBytes = 0;
 let editorSessionGeneration = 0;
+let editorDraftFlushHandler = null;
 
 export function setEditorStatus(value, kind = 'info') {
   const message = String(value || '');
@@ -319,6 +323,7 @@ export function showPdfTextEditor(style, initialText, handlers) {
   setEditorOptions(handlers.options || {});
   setEditorStatus('');
   setEditorLayoutState({ pending: false, valid: true, message: '' });
+  editorDraftFlushHandler = null;
   // Never let the live contentEditable draft mutate the record (or a Solid
   // proxy for it) before commit. Re-editing always works on an isolated copy.
   const sourceRichText = handlers.options?.richTextDocument || null;
@@ -364,6 +369,7 @@ export function hidePdfTextEditor() {
   setEditorOptions({});
   setEditorStatus('');
   setEditorLayoutState({ pending: false, valid: true, message: '' });
+  editorDraftFlushHandler = null;
   setRichTextDocument(null);
   setRichTextDraftRevision((revision) => revision + 1);
   setRichTextSelection(null);
@@ -394,6 +400,7 @@ export function updateRichTextDraft(document, {
   recordHistory = true,
   preserveDom = false,
   historyKind = 'typing',
+  advanceDraftRevision = true,
 } = {}) {
   const currentBeforeUpdate = richTextDocument();
   const before = currentBeforeUpdate ? cloneRichTextDocument(currentBeforeUpdate) : null;
@@ -417,7 +424,7 @@ export function updateRichTextDraft(document, {
   } else {
     setRichTextDocument(nextDocument);
   }
-  setRichTextDraftRevision((revision) => revision + 1);
+  if (advanceDraftRevision) setRichTextDraftRevision((revision) => revision + 1);
   setText(richTextToPlainText(nextDocument));
   if (richTextSelection()) setMixedFormatState(textFormatState(nextDocument, richTextSelection()));
 }
@@ -577,19 +584,127 @@ export function updateEditorGeometry({ canonicalBounds, width, minimumHeight, an
       height: `${safeHeight * sourceScale}px`,
     };
   });
-  setEditorOptions((previous) => previous?.expandableRegion ? {
-    ...previous,
-    expandableRegion: {
-      ...previous.expandableRegion,
-      width: safeWidth,
-      contentWidth: Math.max(
-        0.0001,
-        safeWidth - 2 * (previous.expandableRegion.contentInset || 0),
-      ),
-      minimumHeight: safeHeight,
-      anchorTop: Number.isFinite(anchorTop) ? anchorTop : previous.expandableRegion.anchorTop,
+  setEditorOptions((previous) => {
+    if (!previous?.expandableRegion) return previous;
+    const priorWidth = Math.max(0.0001, Number(previous.expandableRegion.width) || safeWidth);
+    const widthDelta = safeWidth - priorWidth;
+    return {
+      ...previous,
+      expandableRegion: {
+        ...previous.expandableRegion,
+        width: safeWidth,
+        contentWidth: Math.max(
+          0.0001,
+          (Number(previous.expandableRegion.contentWidth)
+            || priorWidth - 2 * (previous.expandableRegion.contentInset || 0)) + widthDelta,
+        ),
+        effectiveContentWidth: Math.max(
+          0.0001,
+          (Number(previous.expandableRegion.effectiveContentWidth)
+            || Number(previous.expandableRegion.contentWidth)
+            || priorWidth - 2 * (previous.expandableRegion.contentInset || 0)) + widthDelta,
+        ),
+        minimumHeight: safeHeight,
+        anchorTop: Number.isFinite(anchorTop) ? anchorTop : previous.expandableRegion.anchorTop,
+      },
+    };
+  });
+}
+
+export function setEditorDraftFlushHandler(handler) {
+  editorDraftFlushHandler = typeof handler === 'function' ? handler : null;
+}
+
+function immutableJson(value) {
+  if (value == null || typeof value !== 'object') return value;
+  const copy = JSON.parse(JSON.stringify(value));
+  const freeze = (item) => {
+    if (!item || typeof item !== 'object' || Object.isFrozen(item)) return item;
+    for (const child of Object.values(item)) freeze(child);
+    return Object.freeze(item);
+  };
+  return freeze(copy);
+}
+
+/** Synchronously seal the visible contentEditable draft for one Apply request. */
+export function flushEditorDraftForCommit({
+  sessionId,
+  ownerDocumentId,
+  ownerDocumentGeneration,
+} = {}) {
+  editorDraftFlushHandler?.();
+  const document = richTextDocument();
+  if (!document) return null;
+  const snapshot = immutableJson(document);
+  const placement = editorPlacement();
+  const config = editorOptions().expandableRegion;
+  const { onDraftLayout: _onDraftLayout, ...layoutConfig } = config || {};
+  const draftRevision = richTextDraftRevision();
+  const identity = {
+    sessionId: String(sessionId || ''),
+    ownerDocumentId: String(ownerDocumentId || placement?.documentId || ''),
+    ownerDocumentGeneration: Number(ownerDocumentGeneration) || 0,
+    editorMountGeneration: editorMountGeneration(),
+    draftRevision,
+    placementGeneration: Number(placement?.sessionGeneration) || 0,
+  };
+  const frozenConfig = immutableJson(layoutConfig);
+  return Object.freeze({
+    sessionId: identity.sessionId,
+    ownerDocumentId: identity.ownerDocumentId,
+    ownerDocumentGeneration: identity.ownerDocumentGeneration,
+    editorMountGeneration: identity.editorMountGeneration,
+    placementGeneration: identity.placementGeneration,
+    draftRevision,
+    document: snapshot,
+    plainText: richTextToPlainText(snapshot),
+    options: frozenConfig,
+    identity: Object.freeze(identity),
+    layoutRevision: createEditorLayoutRevision(snapshot, frozenConfig, identity),
+    sourceHash: canonicalRichTextHash(snapshot),
+  });
+}
+
+/** Adopt the exact final layout without creating a second authored draft unit. */
+export function adoptFinalTextLayoutDecision(value) {
+  if (!value || !['ready', 'auto-fitted', 'blocked', 'failed', 'superseded'].includes(value.status)) {
+    return false;
+  }
+  const accepted = ['ready', 'auto-fitted'].includes(value.status);
+  setEditorLayoutState({
+    pending: false,
+    valid: accepted,
+    requestedFingerprint: value.requestedFingerprint,
+    validatedFingerprint: value.validatedFingerprint,
+    validatedRevision: null,
+    message: (value.rejectionReasons || []).join('; '),
+    finalDecision: value,
+    statuses: accepted ? {} : {
+      overflow: (value.rejectionReasons || []).join('; '),
     },
-  } : previous);
+  });
+  if (!accepted || !value.document) return true;
+  const document = cloneRichTextDocument(value.document);
+  updateRichTextDraft(document, {
+    recordHistory: false,
+    preserveDom: true,
+    advanceDraftRevision: false,
+  });
+  const placement = editorPlacement();
+  if (placement) {
+    const canonicalBounds = canonicalEditorBoundsForRichText(
+      document.region,
+      placement.pageHeight,
+    );
+    updateEditorGeometry({
+      canonicalBounds,
+      width: document.region.width,
+      minimumHeight: document.region.height,
+      anchorTop: document.region.y + document.region.height,
+    });
+  }
+  setEditorStatus('');
+  return true;
 }
 
 /**

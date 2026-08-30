@@ -1068,10 +1068,11 @@ async function handleGetViewportState() {
   }
 
   try {
-    const [placementModule, historyModule, layoutModule] = await Promise.all([
+    const [placementModule, historyModule, layoutModule, richTextModule] = await Promise.all([
       import('/js/text/page-text-edit-metrics.js'),
       import('/js/solid/stores/pdfTextEditStore.js'),
       import('/js/text/native-layout-scheduler.js'),
+      import('/js/text/rich-text.js'),
     ]);
     editorMetrics = {
       placement: placementModule.pageTextEditPlacementMetrics(),
@@ -1089,6 +1090,24 @@ async function handleGetViewportState() {
           message: layout.message || '',
           requestedFingerprint: layout.requestedFingerprint || null,
           validatedFingerprint: layout.validatedFingerprint || null,
+          draftRevision: Number(historyModule.richTextDraftRevision?.()) || 0,
+          draftText: historyModule.getEditorRichText?.()
+            ? richTextModule.richTextToPlainText(historyModule.getEditorRichText()) : null,
+          draftHash: historyModule.getEditorRichText?.()
+            ? richTextModule.canonicalRichTextHash(historyModule.getEditorRichText()) : null,
+          validatedIdentity: layout.validatedRevision?.identity
+            ? { ...layout.validatedRevision.identity } : null,
+          finalDecision: layout.finalDecision ? {
+            status: layout.finalDecision.status,
+            sessionId: layout.finalDecision.sessionId,
+            draftRevision: layout.finalDecision.draftRevision,
+            requestedFingerprint: layout.finalDecision.requestedFingerprint,
+            validatedFingerprint: layout.finalDecision.validatedFingerprint,
+            rejectionCode: layout.finalDecision.rejectionCode,
+            rejectionReasons: [...(layout.finalDecision.rejectionReasons || [])],
+            autoFitApplied: layout.finalDecision.autoFit?.applied === true,
+          } : null,
+          editorStatus: historyModule.editorStatus?.() || '',
           statuses: layout.statuses ? { ...layout.statuses } : null,
           result: layout.result ? {
             valid: layout.result.valid === true,
@@ -1101,6 +1120,7 @@ async function handleGetViewportState() {
             pageEdgeValid: layout.result.pageEdgeValid ?? null,
             columnValid: layout.result.columnValid ?? null,
             rejectionReasons: [...(layout.result.rejectionReasons || [])],
+            rejectionCode: layout.result.rejectionCode || null,
             overlapWarningCount: layout.result.overlapWarnings?.length || 0,
           } : null,
         };

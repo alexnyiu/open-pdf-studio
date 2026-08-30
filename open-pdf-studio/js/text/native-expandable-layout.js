@@ -499,6 +499,13 @@ export async function layoutExpandableNativeText(document, options = {}) {
   }
   if (crossesColumnBounds) rejectionReasons.push('Shaped text crosses its native column boundary');
   if (crossesPageEdge) rejectionReasons.push('Shaped text crosses the page CropBox');
+  const rejectionCodes = [];
+  if (maximumLineAdvance > effectiveContentWidth + 1e-6) {
+    rejectionCodes.push('TEXT_LAYOUT_WIDTH_CAPACITY');
+  }
+  if (crossesColumnBounds) rejectionCodes.push('TEXT_LAYOUT_COLUMN_BOUNDARY');
+  if (crossesPageEdge) rejectionCodes.push('TEXT_LAYOUT_PAGE_BOUNDARY');
+  if (rejectionReasons.length > rejectionCodes.length) rejectionCodes.push('TEXT_LAYOUT_FAILED');
   return {
     document: reflowed,
     layout,
@@ -527,6 +534,8 @@ export async function layoutExpandableNativeText(document, options = {}) {
     columnValid: !crossesColumnBounds,
     pageEdgeValid: !crossesPageEdge,
     valid: rejectionReasons.length === 0,
+    rejectionCode: rejectionCodes[0] || null,
+    rejectionCodes: [...new Set(rejectionCodes)],
     rejectionReasons: [...new Set(rejectionReasons)],
   };
 }

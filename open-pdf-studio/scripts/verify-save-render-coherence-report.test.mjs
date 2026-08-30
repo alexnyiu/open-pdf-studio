@@ -33,22 +33,46 @@ function passingReport() {
       threeConsecutiveEditsExtracted: true,
       reopenedTextMatches: true,
       manualCleanSavePreservedBytes: true,
+      a23FinalLayoutBoundToTypedDraft: {
+        draftRevision: 7,
+        requestedFingerprint: 'layout-final',
+        validatedFingerprint: 'layout-final',
+        resizeHandleEventCount: 0,
+      },
+      a23ImpossibleAutoFit: {
+        draftRetained: true,
+        editorRemainedOpen: true,
+        rejectionCode: 'TEXT_LAYOUT_COLUMN_BOUNDARY',
+        recoveryMessage: 'Press Enter to create a new line or keep editing.',
+        revisionUnchanged: true,
+        persistedBytesUnchanged: true,
+        resizeHandleEventCount: 0,
+      },
     },
     visualAssertions: {
       geometryPreserved: true,
       renderMatchesPersistedPdf: true,
       pixelDifferencePercent: 0.01,
     },
-    scenarioMatrix: saveRenderCoherenceScenarioMatrix(['A1', 'A22']),
+    scenarioMatrix: saveRenderCoherenceScenarioMatrix(['A1', 'A22', 'A23']),
     failures: [],
     artifacts: [],
   };
 }
 
-test('a complete packaged A1/A22 coherence report passes', () => {
+test('a complete packaged A1/A22/A23 coherence report passes', () => {
   assert.deepEqual(saveRenderCoherenceReportIssues(passingReport(), {
     expectedCommit: '1234567890abcdef',
   }), []);
+});
+
+test('A23 resize events or a lost blocked draft fail closed', () => {
+  const report = passingReport();
+  report.textAssertions.a23FinalLayoutBoundToTypedDraft.resizeHandleEventCount = 1;
+  report.textAssertions.a23ImpossibleAutoFit.draftRetained = false;
+  const issues = saveRenderCoherenceReportIssues(report);
+  assert.ok(issues.some((issue) => issue.includes('exact typed draft')));
+  assert.ok(issues.some((issue) => issue.includes('impossible auto-fit')));
 });
 
 test('revision divergence, stale publication, or missing matrix evidence fails closed', () => {

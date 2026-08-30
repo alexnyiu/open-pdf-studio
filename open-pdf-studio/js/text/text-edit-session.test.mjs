@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTextEditSessionRegistry } from './text-edit-session-registry.js';
+import { createTextApplyResult } from './text-apply-result.js';
 import {
+  prepareTextEditRecordCommit,
   runOwnerScopedTextCommit,
   textEditValidationReason,
 } from './text-edit-commit.js';
@@ -15,6 +17,16 @@ function fixture() {
     documents,
     registry: createTextEditSessionRegistry((id) => documents.get(id) || null, { now: () => 1 }),
   };
+}
+
+function applyResult(status) {
+  return createTextApplyResult({
+    status,
+    documentId: 'doc-a', documentGeneration: 3, pageNum: 1,
+    ownerCommitted: status === 'applied',
+    rejectionCode: status === 'rejected' ? 'TEXT_APPLY_REJECTED' : null,
+    recoveryActions: status === 'rejected' ? ['keep-editing'] : [],
+  });
 }
 
 test('coded validation failures retain their exact reason without classifying cancellation', () => {
@@ -63,7 +75,7 @@ test('stale lifecycle rejects Apply and synchronously restores through cancel', 
     kind: 'native-source-text', commit() { commits += 1; }, cancel(reason) { cancellations.push(reason); },
   });
   documents.get('doc-a').lifecycleGeneration += 1;
-  assert.equal(await registry.applyActive(), false);
+  assert.equal((await registry.applyActive()).status, 'superseded');
   assert.equal(commits, 0);
   assert.deepEqual(cancellations, ['stale-owner']);
   assert.equal(registry.active(), null);
@@ -149,7 +161,7 @@ test('cancelling an in-flight Apply invalidates its token and preserves a newer 
   });
   releaseCommit();
 
-  assert.equal(await applying, false);
+  assert.equal((await applying).status, 'superseded');
   assert.equal(ownerMutations, 0);
   assert.deepEqual(cancellations, ['tab-switch']);
   assert.equal(registry.active(), newer);
@@ -181,7 +193,7 @@ test('lifecycle replacement during Apply invalidates the token and cancels the s
   assert.equal(operation.isCurrent(), false);
   releaseCommit();
 
-  assert.equal(await applying, false);
+  assert.equal((await applying).status, 'superseded');
   assert.equal(ownerMutations, 0);
   assert.deepEqual(cancellations, ['stale-owner']);
   assert.equal(registry.active(), null);
@@ -195,18 +207,18 @@ test('rejected and thrown Apply attempts keep the same session retryable', async
     kind: 'owned-text',
     commit() {
       attempts += 1;
-      if (attempts === 1) return false;
+      if (attempts === 1) return applyResult('rejected');
       if (attempts === 2) throw new Error('persistence unavailable');
-      return true;
+      return applyResult('applied');
     },
     cancel() { throw new Error('failed Apply must not cancel the live draft'); },
   });
 
-  assert.equal(await registry.applyActive(), false);
+  assert.equal((await registry.applyActive()).status, 'rejected');
   assert.equal(registry.active(), session);
   await assert.rejects(registry.applyActive(), /persistence unavailable/u);
   assert.equal(registry.active(), session);
-  assert.equal(await registry.applyActive(), true);
+  assert.equal((await registry.applyActive()).status, 'applied');
   assert.equal(registry.active(), null);
 });
 
@@ -222,7 +234,7 @@ test('concurrent click-away and document commits share one in-flight operation',
       commitCount += 1;
       assert.equal(operation.reason, 'click-away');
       await gate;
-      return true;
+      return applyResult('applied');
     },
     cancel() {},
   });
@@ -232,19 +244,32 @@ test('concurrent click-away and document commits share one in-flight operation',
   assert.equal(outside, save);
   assert.equal(commitCount, 1);
   releaseCommit();
-  assert.equal(await save, true);
+  assert.equal((await save).status, 'applied');
   assert.equal(registry.active(), null);
 });
 
 test('document commit succeeds without a matching live draft and retains failures', async () => {
   const { registry } = fixture();
-  assert.equal(await registry.commitForDocument('doc-a', 'save'), true);
+  assert.equal((await registry.commitForDocument('doc-a', 'save')).status, 'noop');
   const session = registry.register({
     ownerDocumentId: 'doc-a', ownerDocumentGeneration: 3, pageNum: 1,
-    kind: 'owned-text', commit: () => false, cancel() {},
+    kind: 'owned-text', commit: () => applyResult('rejected'), cancel() {},
   });
-  assert.equal(await registry.commitForDocument('doc-b', 'save'), true);
-  assert.equal(await registry.commitForDocument('doc-a', 'save'), false);
+  assert.equal((await registry.commitForDocument('doc-b', 'save')).status, 'noop');
+  assert.equal((await registry.commitForDocument('doc-a', 'save')).status, 'rejected');
+  assert.equal(registry.active(), session);
+});
+
+test('legacy boolean commit results are rejected at the session boundary', async () => {
+  const { registry } = fixture();
+  const session = registry.register({
+    ownerDocumentId: 'doc-a', ownerDocumentGeneration: 3, pageNum: 1,
+    kind: 'legacy-editor', commit: () => true, cancel() {},
+  });
+  await assert.rejects(
+    registry.applyActive(),
+    /must return TextApplyResult/u,
+  );
   assert.equal(registry.active(), session);
 });
 
@@ -290,4 +315,80 @@ test('owner-scoped commit rejection or throw restores owner history and content'
   assert.deepEqual(ownerDocument.redoStack, [{ type: 'redo-before' }]);
   assert.equal(ownerDocument.savedUndoStackLength, 1);
   assert.equal(ownerDocument.modified, false);
+});
+
+test('100 semantic no-op cycles never assign a revision or touch owner history', () => {
+  const record = {
+    schema: 'open-pdf-studio.text-edit-record', version: 2,
+    id: 'owned-noop', page: 1, revision: 6,
+    richText: {
+      schema: 'open-pdf-studio.rich-text-document', version: 2,
+      region: {
+        x: 10, y: 20, width: 100, height: 20,
+        rotation: 0, baselineDirection: 'decreasing-y',
+      },
+      lines: [{
+        id: 'line-1', baseline: 32, baselineAdvance: 14.4,
+        alignment: 'left', breakAfter: 'hard',
+        runs: [{
+          id: 'run-1', text: 'unchanged', faceId: 'liberation-sans-regular',
+          size: 12, color: '#000000', bold: false, italic: false,
+          underline: false, strikeout: false, direction: 'ltr',
+        }],
+      }],
+    },
+    original: null, sourceProvenance: null,
+  };
+  const bytes = JSON.stringify(record);
+  const owner = { undoStack: [], redoStack: [], modified: false };
+  for (let cycle = 0; cycle < 100; cycle += 1) {
+    const candidate = JSON.parse(JSON.stringify(record));
+    candidate.revision += cycle + 1;
+    candidate.richText.lines[0].runs[0].shaped = { advance: cycle };
+    const prepared = prepareTextEditRecordCommit(record, candidate);
+    assert.equal(prepared.changed, false);
+    assert.equal(prepared.candidate, null);
+  }
+  assert.equal(record.revision, 6);
+  assert.equal(JSON.stringify(record), bytes);
+  assert.deepEqual(owner.undoStack, []);
+  assert.equal(owner.modified, false);
+});
+
+test('content, style, and geometry candidates each assign exactly one next record revision', () => {
+  const base = {
+    schema: 'open-pdf-studio.text-edit-record', version: 2,
+    id: 'owned-revision', page: 1, revision: 12,
+    richText: {
+      schema: 'open-pdf-studio.rich-text-document', version: 2,
+      region: {
+        x: 10, y: 20, width: 100, height: 20,
+        rotation: 0, baselineDirection: 'decreasing-y',
+      },
+      lines: [{
+        baseline: 32, baselineAdvance: 14.4, alignment: 'left', breakAfter: 'hard',
+        runs: [{
+          text: 'source', faceId: 'liberation-sans-regular', size: 12,
+          color: '#000000', bold: false, italic: false, underline: false,
+          strikeout: false, direction: 'ltr',
+        }],
+      }],
+    },
+    original: null,
+  };
+  for (const mutate of [
+    (record) => { record.richText.lines[0].runs[0].text = 'changed'; },
+    (record) => {
+      record.richText.lines[0].runs[0].bold = true;
+      record.richText.lines[0].runs[0].faceId = 'liberation-sans-bold';
+    },
+    (record) => { record.richText.region.width += 0.05; },
+  ]) {
+    const candidate = JSON.parse(JSON.stringify(base));
+    mutate(candidate);
+    const prepared = prepareTextEditRecordCommit(base, candidate);
+    assert.equal(prepared.changed, true);
+    assert.equal(prepared.candidate.revision, 13);
+    assert.equal(base.revision, 12);
+  }
 });

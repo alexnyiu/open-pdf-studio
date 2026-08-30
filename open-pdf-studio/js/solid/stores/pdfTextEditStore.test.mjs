@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyRichTextDraftParagraphFormat,
+  adoptFinalTextLayoutDecision,
+  flushEditorDraftForCommit,
   getEditorRichText,
   hidePdfTextEditor,
   editorMountGeneration,
@@ -13,6 +15,7 @@ import {
   richTextHistoryMetrics,
   showPdfTextEditor,
   shiftEditorPosition,
+  setEditorDraftFlushHandler,
   undoRichTextDraft,
   updateEditorGeometry,
   updateEditorStyle,
@@ -290,5 +293,87 @@ test('keyboard shifts mutate canonical bounds through source rotation', () => {
   shiftEditorPosition(20, 10);
   assert.equal(editorPlacement().canonicalBounds.x, 15);
   assert.equal(editorPlacement().canonicalBounds.y, 10);
+  hidePdfTextEditor();
+});
+
+test('final commit flush returns an immutable session and draft-revision snapshot', () => {
+  const placement = {
+    documentId: 'document-1', pageNum: 1, generation: 0, sessionGeneration: 12,
+    pageWidth: 600, pageHeight: 800, sourceScale: 2, sourceRotation: 0,
+    canonicalStyle: {
+      geometry: { width: 100, height: 20 },
+      typography: {}, padding: {}, border: {}, decoration: {}, layout: {},
+    },
+    canonicalBounds: { x: 10, y: 20, width: 100, height: 20 },
+  };
+  showPdfTextEditor({}, 'before', {
+    options: {
+      placement,
+      richTextDocument: documentWithText('before'),
+      expandableRegion: {
+        width: 100, contentWidth: 100, effectiveContentWidth: 100,
+        minimumHeight: 20, anchorTop: 20,
+        pageBounds: { x: 0, y: 0, width: 600, height: 800 },
+      },
+    },
+    onCommit() {}, onCancel() {},
+  });
+  setEditorDraftFlushHandler(() => {
+    updateRichTextDraft(documentWithText('final draft'));
+  });
+  const snapshot = flushEditorDraftForCommit({
+    sessionId: 'session-1',
+    ownerDocumentId: 'document-1',
+    ownerDocumentGeneration: 9,
+  });
+  assert.equal(snapshot.plainText, 'final draft');
+  assert.equal(snapshot.sessionId, 'session-1');
+  assert.equal(snapshot.ownerDocumentGeneration, 9);
+  assert.equal(snapshot.placementGeneration, editorPlacement().sessionGeneration);
+  assert.equal(snapshot.layoutRevision.payload.identity.draftRevision, snapshot.draftRevision);
+  assert.equal(snapshot.layoutRevision.payload.identity.editorMountGeneration, editorMountGeneration());
+  assert.equal(Object.isFrozen(snapshot), true);
+  assert.equal(Object.isFrozen(snapshot.document), true);
+
+  updateRichTextDraft(documentWithText('newer mutable draft'));
+  assert.equal(snapshot.plainText, 'final draft');
+  assert.equal(richTextToPlainText(snapshot.document), 'final draft');
+  hidePdfTextEditor();
+});
+
+test('adopting an exact auto-fit layout does not create a second draft revision', () => {
+  const placement = {
+    documentId: 'document-1', pageNum: 1, generation: 0, sessionGeneration: 3,
+    pageWidth: 600, pageHeight: 800, sourceScale: 2, sourceRotation: 0,
+    canonicalStyle: {
+      geometry: { width: 100, height: 20 },
+      typography: {}, padding: {}, border: {}, decoration: {}, layout: {},
+    },
+    canonicalBounds: { x: 10, y: 20, width: 100, height: 20 },
+  };
+  const document = documentWithText('fit me');
+  showPdfTextEditor({}, 'fit me', {
+    options: {
+      placement, richTextDocument: document,
+      expandableRegion: {
+        width: 100, contentWidth: 100, effectiveContentWidth: 100,
+        minimumHeight: 20, anchorTop: 20,
+      },
+    },
+    onCommit() {}, onCancel() {},
+  });
+  const before = richTextDraftRevision();
+  const fitted = documentWithText('fit me');
+  fitted.region.width = 110;
+  assert.equal(adoptFinalTextLayoutDecision({
+    status: 'auto-fitted',
+    requestedFingerprint: 'fit-2',
+    validatedFingerprint: 'fit-2',
+    document: fitted,
+  }), true);
+  assert.equal(richTextDraftRevision(), before);
+  assert.equal(getEditorRichText().region.width, 110);
+  assert.equal(editorOptions().expandableRegion.width, 110);
+  assert.equal(editorOptions().expandableRegion.effectiveContentWidth, 110);
   hidePdfTextEditor();
 });

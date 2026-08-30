@@ -8,6 +8,7 @@ import {
 } from './rich-text.js';
 import {
   createTextEditDirtyBaseline,
+  textEditRecordContentChanged,
   textEditDraftIsDirty,
   textEditGeometryChanged,
 } from './text-edit-dirty-state.js';
@@ -300,4 +301,84 @@ test('OCR explicit style markers and layout-only height changes remain observabl
     text: 'Recognized text',
     geometryChanged: true,
   }), true);
+});
+
+test('persisted-record comparison ignores revision and regenerated shaping caches only', () => {
+  const richText = richTextFixture();
+  richText.lines[0].runs[0].shaped = { advance: 55, glyphs: [{ id: 1 }] };
+  richText.lines[0].runs[0].geometry = { x: 0, width: 55 };
+  const previous = {
+    schema: 'open-pdf-studio.text-edit-record',
+    version: 2,
+    id: 'owned-1',
+    page: 2,
+    revision: 7,
+    richText,
+    original: richTextFixture(),
+    sourceProvenance: [{ markerId: 'source-1', operatorIndex: 4 }],
+    substitution: { approved: true, replacementFaceId: 'liberation-sans-regular' },
+    originalSnapshotHash: 'snapshot-1',
+    ownedLayerId: 'OpenPDFStudioTextEdit-owned-1',
+    editorStatus: 'transient',
+    selection: { line: 0, offset: 3 },
+  };
+  const candidate = clone(previous);
+  candidate.revision = 999;
+  candidate.richText.lines[0].runs[0].shaped = { advance: 999, glyphs: [] };
+  candidate.richText.lines[0].runs[0].geometry = { x: 42, width: 999 };
+  candidate.editorStatus = 'different transient value';
+  candidate.selection = { line: 1, offset: 0 };
+
+  assert.equal(textEditRecordContentChanged(previous, candidate), false);
+
+  candidate.richText.lines[0].runs[0].text += ' ';
+  assert.equal(textEditRecordContentChanged(previous, candidate), true,
+    'exact trailing whitespace is persisted meaning');
+});
+
+test('persisted-record comparison observes exact empty, style, geometry, provenance, mode, and page', () => {
+  const previous = {
+    schema: 'open-pdf-studio.text-edit-record',
+    version: 2,
+    id: 'owned-2',
+    page: 1,
+    revision: 3,
+    richText: richTextFixture(),
+    original: richTextFixture(),
+    sourceProvenance: [{ markerId: 'source-2', operatorIndex: 8 }],
+    mode: 'owned-native',
+    deleted: false,
+  };
+  const mutations = [
+    (record) => { record.richText.lines[0].runs[0].text = ''; },
+    (record) => { record.richText.lines[0].runs[0].bold = true; },
+    (record) => { record.richText.lines[0].alignment = 'right'; },
+    (record) => { record.richText.region.width += 0.05; },
+    (record) => { record.sourceProvenance[0].operatorIndex += 1; },
+    (record) => { record.mode = 'inserted'; },
+    (record) => { record.page = 2; },
+    (record) => { record.deleted = true; },
+  ];
+  for (const mutate of mutations) {
+    const candidate = clone(previous);
+    mutate(candidate);
+    assert.equal(textEditRecordContentChanged(previous, candidate), true);
+  }
+});
+
+test('exact whitespace variants remain distinct persisted content', () => {
+  const previous = {
+    schema: 'open-pdf-studio.text-edit-record', version: 2,
+    id: 'whitespace', page: 1, revision: 1,
+    richText: richTextFixture(), original: null,
+  };
+  for (const value of ['', ' ', '  ', ' First line', 'First line ', '  \n  ']) {
+    const candidate = clone(previous);
+    candidate.richText.lines = [createTextLine([
+      createTextRun(value, previous.richText.lines[0].runs[0]),
+    ], {
+      baseline: 40, baselineAdvance: 14.4, alignment: 'left', breakAfter: 'hard',
+    })];
+    assert.equal(textEditRecordContentChanged(previous, candidate), true, JSON.stringify(value));
+  }
 });

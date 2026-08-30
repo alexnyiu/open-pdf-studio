@@ -87,9 +87,56 @@ function richTextFingerprint(document) {
 function recordFingerprint(record) {
   if (!record) return null;
   try {
-    return JSON.stringify(record);
+    return JSON.stringify(semanticTextEditRecord(record));
   } catch {
     return 'invalid-text-edit-record';
+  }
+}
+
+const TRANSIENT_RECORD_KEYS = new Set([
+  'editorStatus',
+  'editorStatusKind',
+  'selection',
+  'typingStyle',
+  'mixedFormatState',
+  'layoutState',
+  'draftLayout',
+  'reactiveProxyIdentity',
+]);
+
+function stableObject(value) {
+  if (Array.isArray(value)) return value.map(stableObject);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableObject(value[key])]));
+}
+
+function semanticRichTextForRecord(document) {
+  if (!document) return null;
+  return richTextFingerprint(document);
+}
+
+function semanticTextEditRecord(record) {
+  const result = {};
+  for (const key of Object.keys(record).sort()) {
+    if (key === 'revision' || TRANSIENT_RECORD_KEYS.has(key)) continue;
+    if (key === 'richText' || key === 'original') {
+      result[key] = semanticRichTextForRecord(record[key]);
+      continue;
+    }
+    result[key] = stableObject(record[key]);
+  }
+  return result;
+}
+
+/** Compare persisted record meaning before assigning its next revision. */
+export function textEditRecordContentChanged(previous, candidateWithoutRevision) {
+  if (!previous || !candidateWithoutRevision) return previous !== candidateWithoutRevision;
+  try {
+    return JSON.stringify(semanticTextEditRecord(previous))
+      !== JSON.stringify(semanticTextEditRecord(candidateWithoutRevision));
+  } catch {
+    // Invalid drafts must fail dirty and cannot be treated as a safe no-op.
+    return true;
   }
 }
 

@@ -6,7 +6,8 @@ import { showTextEditProperties, hideProperties } from '../ui/panels/properties-
 import { canvasContainer, continuousContainer, pdfCanvas } from '../ui/dom-elements.js';
 import { showPdfTextEditor, hidePdfTextEditor, getPdfEditorText as getEditorText,
   updatePdfEditorStyle, shiftPdfEditorPosition, setPdfEditorStatus,
-  getPdfEditorRichText, getPdfEditorLayoutState, applyPdfEditorRichTextFormat,
+  getPdfEditorRichText, flushPdfEditorDraftForCommit, adoptPdfEditorFinalTextLayout,
+  applyPdfEditorRichTextFormat,
   applyPdfEditorRichTextParagraphFormat } from '../bridge.js';
 import {
   DEFAULT_TEXT_FORMAT_CAPABILITIES,
@@ -85,6 +86,7 @@ import {
   textEditDraftIsDirty,
 } from '../text/text-edit-dirty-state.js';
 import {
+  prepareTextEditRecordCommit,
   runOwnerScopedTextCommit,
   textEditValidationReason,
 } from '../text/text-edit-commit.js';
@@ -107,6 +109,12 @@ import {
   pageEditReadinessSatisfied,
 } from '../pdf/page-edit-readiness.js';
 import { runPageEditIntent } from '../text/page-edit-intent.js';
+import {
+  awaitFinalTextLayout,
+  disposeFinalTextLayoutSession,
+} from '../text/final-text-layout.js';
+import { createTextApplyResult } from '../text/text-apply-result.js';
+import { createEditorLayoutRevision } from '../text/editor-layout-revision.js';
 
 let activeEditor = null;
 let hoverListeners = [];
@@ -191,7 +199,73 @@ function editorApplyOperationIsCurrent(editor, operation) {
 }
 
 function completeEditorSession(editor) {
+  disposeFinalTextLayoutSession(editor?.sessionId);
   completeTextEditSession(editor?.sessionId);
+}
+
+function textApplyResultFor(editor, status, overrides = {}) {
+  const owner = editor?.ownerDocument || null;
+  const pageNum = Number(overrides.pageNum ?? editor?.pageNum) || 1;
+  return createTextApplyResult({
+    status,
+    documentId: String(owner?.id || ''),
+    documentGeneration: Number(editor?.ownerDocumentGeneration
+      ?? owner?.lifecycleGeneration) || 0,
+    pageNum,
+    contentRevision: Number(owner?.revisionState?.contentRevision) || 0,
+    pageRevision: Number(owner?.revisionState?.pageContentRevisions?.[pageNum]) || 0,
+    editId: overrides.editId ?? editor?._sourceRecordRef?.id ?? editor?._recordRef?.id ?? null,
+    editRevision: overrides.editRevision
+      ?? editor?._sourceRecordRef?.revision
+      ?? editor?._recordRef?.revision
+      ?? null,
+    ...overrides,
+  });
+}
+
+function finalEditorDraft(editor) {
+  const snapshot = flushPdfEditorDraftForCommit({
+    sessionId: editor?.sessionId,
+    ownerDocumentId: editor?.ownerDocument?.id,
+    ownerDocumentGeneration: editor?.ownerDocumentGeneration,
+  });
+  if (snapshot) return snapshot;
+  const document = getPdfEditorRichText() || editor?.richTextDocument || null;
+  return Object.freeze({
+    sessionId: editor?.sessionId || '',
+    ownerDocumentId: editor?.ownerDocument?.id || '',
+    ownerDocumentGeneration: editor?.ownerDocumentGeneration || 0,
+    draftRevision: 0,
+    document,
+    plainText: document ? richTextToPlainText(document) : getEditorText(),
+    options: Object.freeze({}),
+    identity: Object.freeze({
+      sessionId: editor?.sessionId || '',
+      ownerDocumentId: editor?.ownerDocument?.id || '',
+      ownerDocumentGeneration: editor?.ownerDocumentGeneration || 0,
+    }),
+    layoutRevision: null,
+  });
+}
+
+function layoutAdjustmentForDecision(value) {
+  if (value?.status !== 'auto-fitted' || !value.autoFit?.priorBounds || !value.autoFit?.nextBounds) {
+    return null;
+  }
+  return {
+    kind: 'auto-grow-width',
+    deltaWidthPt: value.autoFit.nextBounds.width - value.autoFit.priorBounds.width,
+    deltaHeightPt: value.autoFit.nextBounds.height - value.autoFit.priorBounds.height,
+  };
+}
+
+function layoutRecoveryActions(value) {
+  if (Array.isArray(value?.recoveryActions) && value.recoveryActions.length) {
+    return value.recoveryActions;
+  }
+  return value?.rejectionCode?.startsWith('TEXT_LAYOUT_')
+    ? ['insert-line-break', 'keep-editing']
+    : ['keep-editing'];
 }
 
 function registerActiveEditorSession(editor, ownerDocument, kind = editor?.kind) {
@@ -642,6 +716,9 @@ async function openCombinedTextBoxEditor() {
     // Combining boxes is itself an edit, including an unchanged native-only
     // merge whose normalized geometry differs from its original snapshot.
     forceCommit: true,
+    // A native-only combination creates its first owner record at revision 1.
+    // An existing owned record advances once when this transaction commits.
+    draftOnly: originalRecords.length === 0,
     commit(finalRecord) {
       const originalTextEdits = [...(doc.textEdits || [])];
       const consumedIds = new Set(originalRecords.map((item) => String(item.record.id)));
@@ -1248,39 +1325,69 @@ function expandableNativeEditorOptions(document, pageNum, canvasEl, layer, optio
   };
 }
 
-async function nativeLayoutReadyForCommit(editor) {
-  if (!editor?.expandableNative) return true;
+async function nativeLayoutReadyForCommit(editor, draft, operation) {
+  if (!editor?.expandableNative) {
+    return {
+      status: 'ready',
+      document: draft?.document || null,
+      autoFit: { applied: false, priorBounds: null, nextBounds: null },
+    };
+  }
   const retainEditorFocus = () => queueMicrotask(() => {
     document.querySelector('.pdf-text-editor.rich-text-editor')?.focus();
   });
-  const deadline = performance.now() + 5_000;
-  let layout = null;
-  while (performance.now() < deadline) {
-    layout = getPdfEditorLayoutState();
-    const draft = getPdfEditorRichText();
-    const validatedDraft = layout?.result?.document;
-    const exactFingerprintMatches = Boolean(
-      layout?.requestedFingerprint
-        && layout.validatedFingerprint === layout.requestedFingerprint,
-    );
-    const exactDraftMatches = Boolean(draft && validatedDraft
-      && canonicalRichTextHash(draft) === canonicalRichTextHash(validatedDraft));
-    if (!layout?.pending && exactFingerprintMatches && exactDraftMatches) {
-      if (layout.valid === true) return true;
-      setPdfEditorStatus(layout.message || hardeningText('textEditor.status.cropBoxRejected'), 'invalid');
-      retainEditorFocus();
-      return false;
-    }
-    setPdfEditorStatus(hardeningText('textEditor.status.shaping'), 'shaping');
-    await new Promise((resolve) => {
-      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
-      else setTimeout(resolve, 4);
-    });
-    if (activeEditor !== editor || !editorOwnerIsCurrent(editor)) return false;
+  if (!draft?.document || !draft?.layoutRevision?.fingerprint) {
+    setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
+    retainEditorFocus();
+    return {
+      status: 'failed',
+      rejectionCode: 'TEXT_LAYOUT_STALE_FINGERPRINT',
+      rejectionReasons: ['Final text layout identity is incomplete'],
+      document: draft?.document || null,
+      autoFit: { applied: false, priorBounds: null, nextBounds: null },
+    };
   }
-  setPdfEditorStatus(layout?.message || hardeningText('textEditor.status.layoutTimeout'), 'invalid');
+  setPdfEditorStatus(hardeningText('textEditor.status.shaping'), 'shaping');
+  // Source reconciliation is allowed only for an unchanged source draft.
+  // This function is reached after authored dirty-state succeeds, so a width
+  // increase must use the explicit safe auto-fit transaction instead.
+  const finalOptions = Object.freeze({
+    ...draft.options,
+    substitutionWidthAllowance: 0,
+  });
+  const finalRevision = createEditorLayoutRevision(
+    draft.document,
+    finalOptions,
+    draft.identity,
+  );
+  const decision = await awaitFinalTextLayout({
+    sessionId: draft.sessionId,
+    draftRevision: draft.draftRevision,
+    fingerprint: finalRevision.fingerprint,
+    document: draft.document,
+    options: finalOptions,
+    identity: draft.identity,
+    allowSafeAutoFit: true,
+    signal: operation?.signal,
+    timeoutMs: 5_000,
+  });
+  if (!editorApplyOperationIsCurrent(editor, operation)) return {
+    ...decision,
+    status: 'superseded',
+  };
+  adoptPdfEditorFinalTextLayout(decision);
+  if (decision.status === 'ready' || decision.status === 'auto-fitted') {
+    return decision;
+  }
+  const reasons = decision.rejectionReasons?.length
+    ? decision.rejectionReasons.join('; ')
+    : decision.rejectionCode || hardeningText('textEditor.status.operationFailed');
+  const message = decision.rejectionCode === 'TEXT_LAYOUT_TIMEOUT'
+    ? hardeningText('textEditor.status.layoutTimeout')
+    : hardeningText('textEditor.status.layoutRejected', { reasons });
+  setPdfEditorStatus(message, 'invalid');
   retainEditorFocus();
-  return false;
+  return decision;
 }
 
 function applyActiveTextEditingWithStatus() {
@@ -2431,11 +2538,20 @@ async function startScannedTextEditing(
     return cleanup();
   };
   const finish = async (operation) => {
-    if (editor.committing || !editorApplyOperationIsCurrent(editor, operation)) return false;
+    if (editor.committing) {
+      return textApplyResultFor(editor, 'rejected', {
+        editId: editor.selectionId,
+        rejectionCode: 'TEXT_APPLY_IN_PROGRESS',
+        recoveryActions: ['keep-editing'],
+      });
+    }
+    if (!editorApplyOperationIsCurrent(editor, operation)) {
+      return textApplyResultFor(editor, 'superseded', { editId: editor.selectionId });
+    }
     const replacementText = getEditorText();
     if (replacementText === editor.originalText && editor.styleTouchedKeys.size === 0) {
       cleanup();
-      return true;
+      return textApplyResultFor(editor, 'noop', { editId: editor.selectionId });
     }
     editor.committing = true;
     editor.commitOperationId = operation.operationId;
@@ -2465,7 +2581,7 @@ async function startScannedTextEditing(
         : null;
       if (!editorApplyOperationIsCurrent(editor, operation)) {
         cleanup();
-        return false;
+        return textApplyResultFor(editor, 'superseded', { editId: editor.selectionId });
       }
       if (editor.existingOwnedEdit) {
         await reviseScannedTextEditForDocument(doc, editor.selectionId, {
@@ -2490,21 +2606,41 @@ async function startScannedTextEditing(
       }
       if (!editorApplyOperationIsCurrent(editor, operation)) {
         cleanup();
-        return false;
+        return textApplyResultFor(editor, 'superseded', { editId: editor.selectionId });
       }
       cleanup();
+      let visiblePublished = false;
+      let semanticPublished = false;
+      let publicationError = null;
       if (getActiveDocument() === doc) {
-        refreshPendingOcrTextLayer(pageNum);
-        enableTextLayerHover();
+        try {
+          refreshPendingOcrTextLayer(pageNum);
+          enableTextLayerHover();
+          visiblePublished = true;
+          semanticPublished = true;
+        } catch (error) {
+          publicationError = error instanceof Error ? error.message : String(error);
+          console.warn('[scanned-text-edit] Publication failed:', error);
+        }
       }
-      return true;
+      const committedSelection = doc.scannedTextEdits?.pages
+        ?.flatMap((page) => page.selections || [])
+        .find((selection) => selection.id === editor.selectionId);
+      return textApplyResultFor(editor, 'applied', {
+        ownerCommitted: true,
+        visiblePublished,
+        semanticPublished,
+        editId: editor.selectionId,
+        editRevision: committedSelection?.revision ?? null,
+        publicationError,
+      });
     } catch (error) {
       editor.committing = false;
       editor.commitOperationId = null;
       if (error?.code === 'SCANNED_TEXT_EDIT_OPERATION_INVALIDATED'
           || !editorApplyOperationIsCurrent(editor, operation)) {
         cleanup();
-        return false;
+        return textApplyResultFor(editor, 'superseded', { editId: editor.selectionId });
       }
       console.warn('[scanned-text-edit] Apply failed:', error);
       const validationReason = textEditValidationReason(error);
@@ -2513,7 +2649,12 @@ async function startScannedTextEditing(
         : hardeningText('textEditor.status.operationFailed');
       setPdfEditorStatus(rejection, 'invalid');
       if (!validationReason) showMessage(rejection);
-      return false;
+      return textApplyResultFor(editor, 'rejected', {
+        editId: editor.selectionId,
+        rejectionCode: typeof error?.code === 'string'
+          ? error.code : 'SCANNED_TEXT_EDIT_REJECTED',
+        recoveryActions: ['keep-editing'],
+      });
     }
   };
   editor._finishEditing = finish;
@@ -2962,11 +3103,13 @@ async function startPdfTextEditing(
 }
 
 async function finishPdfTextEditing(operation) {
-  if (!activeEditor) return false;
+  if (!activeEditor) {
+    return createTextApplyResult({ status: 'superseded', pageNum: 1 });
+  }
 
   const editor = activeEditor;
   if (!editorApplyOperationIsCurrent(editor, operation)) {
-    return false;
+    return textApplyResultFor(editor, 'superseded');
   }
 
   // If this editor was started via startTextEditEditing, delegate to its own finish handler
@@ -2974,17 +3117,13 @@ async function finishPdfTextEditing(operation) {
     return activeEditor._finishEditing(operation);
   }
 
-  if (!(await nativeLayoutReadyForCommit(editor))) return false;
-  if (!editorApplyOperationIsCurrent(editor, operation)) {
-    return false;
-  }
-
   const {
     block, pageNum, originalText,
     pdfX, pdfY, pdfWidth, fontSize, lineSpacing, numOriginalLines, styleState
   } = editor;
-  const newText = getEditorText();
-  const richTextDraft = getPdfEditorRichText();
+  const finalDraft = finalEditorDraft(editor);
+  const newText = finalDraft.plainText;
+  const richTextDraft = finalDraft.document;
 
   const st = styleState || {};
   // Did the panel change any formatting relative to the detected block style?
@@ -3004,11 +3143,41 @@ async function finishPdfTextEditing(operation) {
     richText: richTextDraft || editor.richTextDocument,
     transientStyleChanged: styleChanged,
   });
-  if (nativeChanged && !editor.sourceProvenance) {
+  if (!nativeChanged) {
+    hidePdfTextEditor();
+    for (const span of block.spans) span.style.visibility = '';
+    completeEditorSession(editor);
+    activeEditor = null;
+    state.pdfTextEditState = null;
+    hideProperties();
+    return textApplyResultFor(editor, 'noop', { editId: null, editRevision: null });
+  }
+  if (!editor.sourceProvenance) {
     showMessage(hardeningText('textEditor.status.nativeSourceUnavailable'));
     setPdfEditorStatus(hardeningText('textEditor.status.nativeSourceUnavailable'), 'invalid');
-    return false;
-  } else if (nativeChanged) {
+    return textApplyResultFor(editor, 'rejected', {
+      editId: null,
+      editRevision: null,
+      rejectionCode: 'TEXT_SOURCE_PROVENANCE_MISSING',
+      recoveryActions: ['keep-editing'],
+    });
+  }
+
+  const layoutDecision = await nativeLayoutReadyForCommit(editor, finalDraft, operation);
+  if (!editorApplyOperationIsCurrent(editor, operation)
+      || layoutDecision.status === 'superseded') {
+    return textApplyResultFor(editor, 'superseded', { editId: null, editRevision: null });
+  }
+  if (!['ready', 'auto-fitted'].includes(layoutDecision.status)) {
+    return textApplyResultFor(editor, 'rejected', {
+      editId: null,
+      editRevision: null,
+      rejectionCode: layoutDecision.rejectionCode || 'TEXT_LAYOUT_FAILED',
+      recoveryActions: layoutRecoveryActions(layoutDecision),
+    });
+  }
+
+  {
     const { lineData } = block;
     const pdfFontName = lineData[0].pdfFontName || '';
 
@@ -3031,7 +3200,7 @@ async function finishPdfTextEditing(operation) {
     const loadedFontName = st.fontFaceChanged ? '' : (lineData[0].loadedFontName || '');
 
     const originalRichText = editor.richTextDocument;
-    const finalRichText = richTextDraft || richTextFromPlainText(newText, {
+    const finalRichText = layoutDecision.document || richTextDraft || richTextFromPlainText(newText, {
       faceId: resolvePackagedFace(fontFamily, finalBold, finalItalic)?.id,
       size: finalSize,
       color: finalColor,
@@ -3057,7 +3226,9 @@ async function finishPdfTextEditing(operation) {
     });
 
     const doc = editor.ownerDocument;
-    if (!doc || !editorOwnerIsCurrent(editor)) return false;
+    if (!doc || !editorOwnerIsCurrent(editor)) {
+      return textApplyResultFor(editor, 'superseded', { editId: null, editRevision: null });
+    }
     const storedRecord = cloneTextEditRecord(editRecord);
     const hadTextEdits = Array.isArray(doc.textEdits);
     const recorded = runOwnerScopedTextCommit({
@@ -3079,11 +3250,19 @@ async function finishPdfTextEditing(operation) {
     });
     if (!recorded) {
       setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
-      return false;
+      return textApplyResultFor(editor, 'rejected', {
+        editId: null,
+        editRevision: null,
+        rejectionCode: 'TEXT_OWNER_COMMIT_FAILED',
+        recoveryActions: ['keep-editing'],
+      });
     }
 
     // Only project the committed record into the transient PDF.js layer after
     // owner persistence and its undo unit are both durable.
+    let semanticPublished = false;
+    let visiblePublished = false;
+    let publicationError = null;
     try {
       for (const sourceSpan of block.spans) {
         sourceSpan.dataset.editId = String(editRecord.id);
@@ -3098,25 +3277,40 @@ async function finishPdfTextEditing(operation) {
           for (const s of lineSpans) s.textContent = '';
         }
       }
+      semanticPublished = true;
     } catch (error) {
       // Persistence and undo recording are already durable. A transient
       // PDF.js projection failure must not leave a retryable session that
       // could append the same owner record a second time.
       console.warn('[text-edit] Native-source projection refresh failed:', error);
+      publicationError = error instanceof Error ? error.message : String(error);
     }
     if (getActiveDocument() === doc) {
-      try { reRenderAddedText(pageNum); }
-      catch (error) { console.warn('[text-edit] Native-source refresh failed:', error); }
+      try {
+        reRenderAddedText(pageNum);
+        visiblePublished = true;
+      } catch (error) {
+        console.warn('[text-edit] Native-source refresh failed:', error);
+        publicationError ||= error instanceof Error ? error.message : String(error);
+      }
     }
-  }
 
-  hidePdfTextEditor();
-  for (const s of block.spans) s.style.visibility = '';
-  completeEditorSession(editor);
-  activeEditor = null;
-  state.pdfTextEditState = null;
-  hideProperties();
-  return true;
+    hidePdfTextEditor();
+    for (const span of block.spans) span.style.visibility = '';
+    completeEditorSession(editor);
+    activeEditor = null;
+    state.pdfTextEditState = null;
+    hideProperties();
+    return textApplyResultFor(editor, 'applied', {
+      ownerCommitted: true,
+      visiblePublished,
+      semanticPublished,
+      editId: editRecord.id,
+      editRevision: editRecord.revision,
+      layoutAdjustment: layoutAdjustmentForDecision(layoutDecision),
+      publicationError,
+    });
+  }
 }
 
 function cancelPdfTextEditing() {
@@ -3444,69 +3638,117 @@ export function startTextEditEditing(
   const finishEditing = async (operation) => {
     const editor = activeEditor;
     if (!editorApplyOperationIsCurrent(editor, operation)) {
-      return false;
+      return textApplyResultFor(editor, 'superseded');
     }
-    if (!(await nativeLayoutReadyForCommit(editor))) return false;
-    if (!editorApplyOperationIsCurrent(editor, operation)) {
-      return false;
-    }
-    const newText = getEditorText();
-    const richTextDraft = getPdfEditorRichText();
-
-    // Clearing all the text of an INSERTED edit deletes it entirely — this is
-    // how the user removes inserted text (issue #264).
-    if (isAddedText && newText.trim() === '') {
-      if (transaction) {
-        hidePdfTextEditor();
-        completeEditorSession(activeEditor);
-        activeEditor = null;
-        state.pdfTextEditState = null;
-        hideProperties();
-        return true;
-      }
-      if (!removeTextEditRecord(sourceTextEdit, editDoc)) {
-        setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
-        return false;
-      }
+    const closeEditor = () => {
       hidePdfTextEditor();
-      completeEditorSession(activeEditor);
+      completeEditorSession(editor);
       activeEditor = null;
       state.pdfTextEditState = null;
       hideProperties();
-      return true;
+    };
+    const finalDraft = finalEditorDraft(editor);
+    const newText = finalDraft.plainText;
+    const richTextDraft = finalDraft.document;
+
+    // Clearing all the text of an INSERTED edit deletes it entirely — this is
+    // how the user removes inserted text (issue #264).
+    if (isAddedText && newText === '') {
+      if (transaction) {
+        closeEditor();
+        return textApplyResultFor(editor, 'noop');
+      }
+      if (!removeTextEditRecord(sourceTextEdit, editDoc)) {
+        setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
+        return textApplyResultFor(editor, 'rejected', {
+          rejectionCode: 'TEXT_OWNER_COMMIT_FAILED',
+          recoveryActions: ['keep-editing'],
+        });
+      }
+      closeEditor();
+      return textApplyResultFor(editor, 'applied', {
+        ownerCommitted: true,
+        visiblePublished: getActiveDocument() === editDoc,
+        semanticPublished: getActiveDocument() === editDoc,
+        editId: null,
+        editRevision: null,
+      });
     }
 
     const candidateTextEdit = cloneTextEditRecord(draftTextEdit);
-    if (newText.trim() !== '') {
-      if (candidateTextEdit.schema === 'open-pdf-studio.text-edit-record'
-          && candidateTextEdit.version === 2 && richTextDraft) {
-        candidateTextEdit.richText = transaction && !exactExpandable
-          ? reflowRichTextToWidth(richTextDraft, Math.max(candidateTextEdit.richText.region.width, 1))
-          : richTextDraft;
-        if (!transaction) candidateTextEdit.revision += 1;
-      } else {
-        candidateTextEdit.newText = newText;
-      }
+    if (candidateTextEdit.schema === 'open-pdf-studio.text-edit-record'
+        && candidateTextEdit.version === 2 && richTextDraft) {
+      candidateTextEdit.richText = transaction && !exactExpandable
+        ? reflowRichTextToWidth(richTextDraft, Math.max(candidateTextEdit.richText.region.width, 1))
+        : richTextDraft;
+    } else {
+      candidateTextEdit.newText = newText;
     }
     // Persist when content, style, or position changed. The document record is
     // still untouched here; compare and commit the isolated draft atomically.
-    const changed = JSON.stringify(candidateTextEdit) !== JSON.stringify(oldTextEdit);
-    if (transaction && (changed || transaction.forceCommit)) {
-      const commitResult = transaction.commit(cloneTextEditRecord(candidateTextEdit));
+    const prepared = prepareTextEditRecordCommit(oldTextEdit, candidateTextEdit, {
+      force: transaction?.forceCommit === true,
+      newRecord: transaction?.draftOnly === true,
+    });
+    if (!prepared.changed) {
+      closeEditor();
+      return textApplyResultFor(editor, 'noop', {
+        editId: oldTextEdit.id,
+        editRevision: oldTextEdit.revision ?? null,
+      });
+    }
+
+    let layoutDecision = {
+      status: 'ready',
+      document: candidateTextEdit.richText || richTextDraft,
+      autoFit: { applied: false, priorBounds: null, nextBounds: null },
+    };
+    if (exactExpandable) {
+      layoutDecision = await nativeLayoutReadyForCommit(editor, finalDraft, operation);
+      if (!editorApplyOperationIsCurrent(editor, operation)
+          || layoutDecision.status === 'superseded') {
+        return textApplyResultFor(editor, 'superseded');
+      }
+      if (!['ready', 'auto-fitted'].includes(layoutDecision.status)) {
+        return textApplyResultFor(editor, 'rejected', {
+          rejectionCode: layoutDecision.rejectionCode || 'TEXT_LAYOUT_FAILED',
+          recoveryActions: layoutRecoveryActions(layoutDecision),
+        });
+      }
+      candidateTextEdit.richText = layoutDecision.document;
+    }
+    const committedCandidate = prepareTextEditRecordCommit(oldTextEdit, candidateTextEdit, {
+      force: transaction?.forceCommit === true,
+      newRecord: transaction?.draftOnly === true,
+    }).candidate;
+
+    let visiblePublished = false;
+    let semanticPublished = false;
+    let publicationError = null;
+    if (transaction && (prepared.changed || transaction.forceCommit)) {
+      const commitResult = transaction.commit(cloneTextEditRecord(committedCandidate));
       if (commitResult !== true) {
         setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
-        return false;
+        return textApplyResultFor(editor, 'rejected', {
+          rejectionCode: 'TEXT_OWNER_COMMIT_FAILED',
+          recoveryActions: ['keep-editing'],
+        });
       }
-    } else if (changed) {
+      visiblePublished = getActiveDocument() === editDoc;
+      semanticPublished = visiblePublished;
+    } else if (prepared.changed) {
       const ownerIndex = editDoc.textEdits?.findIndex((record) => (
         String(record.id) === String(oldTextEdit.id)
       )) ?? -1;
       if (ownerIndex < 0) {
         setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
-        return false;
+        return textApplyResultFor(editor, 'rejected', {
+          rejectionCode: 'TEXT_OWNER_RECORD_MISSING',
+          recoveryActions: ['keep-editing'],
+        });
       }
       const previousOwnerRecord = editDoc.textEdits[ownerIndex];
-      const committedRecord = cloneTextEditRecord(candidateTextEdit);
+      const committedRecord = cloneTextEditRecord(committedCandidate);
       const recorded = runOwnerScopedTextCommit({
         ownerDocument: editDoc,
         attempt() {
@@ -3523,20 +3765,33 @@ export function startTextEditEditing(
       });
       if (!recorded) {
         setPdfEditorStatus(hardeningText('textEditor.status.operationFailed'), 'invalid');
-        return false;
+        return textApplyResultFor(editor, 'rejected', {
+          rejectionCode: 'TEXT_OWNER_COMMIT_FAILED',
+          recoveryActions: ['keep-editing'],
+        });
       }
       if (getActiveDocument() === editDoc) {
-        try { reRenderAddedText(pageNum); }
-        catch (error) { console.warn('[text-edit] Owned-text refresh failed:', error); }
+        try {
+          reRenderAddedText(pageNum);
+          visiblePublished = true;
+          semanticPublished = true;
+        } catch (error) {
+          console.warn('[text-edit] Owned-text refresh failed:', error);
+          publicationError = error instanceof Error ? error.message : String(error);
+        }
       }
     }
 
-    hidePdfTextEditor();
-    completeEditorSession(editor);
-    activeEditor = null;
-    state.pdfTextEditState = null;
-    hideProperties();
-    return true;
+    closeEditor();
+    return textApplyResultFor(editor, 'applied', {
+      ownerCommitted: true,
+      visiblePublished,
+      semanticPublished,
+      editId: committedCandidate.id ?? null,
+      editRevision: committedCandidate.revision ?? null,
+      layoutAdjustment: layoutAdjustmentForDecision(layoutDecision),
+      publicationError,
+    });
   };
 
   const cancelEditing = () => {

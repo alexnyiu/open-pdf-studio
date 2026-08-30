@@ -1,4 +1,9 @@
 import { createTextEditTargetIdentity } from './text-edit-target-identity.js';
+import {
+  createTextApplyResult,
+  isTextApplyResult,
+  textApplyResultCompletesInteraction,
+} from './text-apply-result.js';
 
 /** Pure registry used by the application wrapper and owner/lifecycle tests. */
 export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.now } = {}) {
@@ -15,6 +20,38 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
     return Boolean(owner
       && (Number(owner.lifecycleGeneration) || 0) === session.ownerDocumentGeneration);
   };
+  const resultContext = (session, overrides = {}) => {
+    const owner = session ? resolveDocumentById(session.ownerDocumentId) : null;
+    const pageNum = Number(overrides.pageNum ?? session?.pageNum) || 1;
+    return {
+      documentId: String(overrides.documentId ?? session?.ownerDocumentId ?? owner?.id ?? ''),
+      documentGeneration: Number(
+        overrides.documentGeneration
+          ?? session?.ownerDocumentGeneration
+          ?? owner?.lifecycleGeneration,
+      ) || 0,
+      pageNum,
+      contentRevision: Number(owner?.revisionState?.contentRevision) || 0,
+      pageRevision: Number(owner?.revisionState?.pageContentRevisions?.[pageNum]) || 0,
+      editId: null,
+      editRevision: null,
+    };
+  };
+  const supersededResult = (session, overrides = {}) => createTextApplyResult({
+    status: 'superseded',
+    ...resultContext(session, overrides),
+  });
+  const noLiveDraftResult = (documentId) => {
+    const owner = resolveDocumentById(documentId);
+    return createTextApplyResult({
+      status: 'noop',
+      ...resultContext(null, {
+        documentId,
+        documentGeneration: owner?.lifecycleGeneration,
+        pageNum: owner?.currentPage || 1,
+      }),
+    });
+  };
   const clearIfCurrent = (session) => {
     if (activeSession?.sessionId === session?.sessionId) activeSession = null;
   };
@@ -23,6 +60,7 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
     if (!operation || (session && operation.session !== session)) return false;
     operation.valid = false;
     operation.reason = reason;
+    operation.controller.abort(reason);
     if (activeApplyOperation === operation) activeApplyOperation = null;
     return true;
   };
@@ -37,12 +75,12 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
   };
 
   const applySession = (session, reason = 'apply') => {
-    if (!session) return Promise.resolve(false);
+    if (!session) return Promise.resolve(noLiveDraftResult(''));
     if (activeApplyOperation?.session === session) return activeApplyOperation.promise;
     if (!ownerMatches(session)) {
       activeSession = null;
       session.cancel('stale-owner');
-      return Promise.resolve(false);
+      return Promise.resolve(supersededResult(session));
     }
     const operationState = {
       session,
@@ -50,6 +88,7 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
       reason: null,
       operation: null,
       promise: null,
+      controller: new AbortController(),
     };
     const operation = Object.freeze({
       operationId: `text-edit-apply-${now().toString(36)}-${(++nextOperationId).toString(36)}`,
@@ -57,6 +96,7 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
       ownerDocumentId: session.ownerDocumentId,
       ownerDocumentGeneration: session.ownerDocumentGeneration,
       reason,
+      signal: operationState.controller.signal,
       isCurrent() {
         return operationState.valid
           && activeApplyOperation === operationState
@@ -80,15 +120,20 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
             activeSession = null;
             session.cancel('stale-owner');
           }
-          resolveOperation(false);
+          resolveOperation(supersededResult(session));
           return;
         }
-        if (!operation.isCurrent() || result === false) {
-          resolveOperation(false);
+        if (!operation.isCurrent()) {
+          resolveOperation(supersededResult(session));
           return;
         }
-        clearIfCurrent(session);
-        resolveOperation(true);
+        if (!isTextApplyResult(result)) {
+          throw new TypeError('Text editor commit callbacks must return TextApplyResult');
+        }
+        const normalized = result;
+        if (textApplyResultCompletesInteraction(normalized)) clearIfCurrent(session);
+        else if (normalized.status === 'superseded') clearIfCurrent(session);
+        resolveOperation(normalized);
       } catch (error) {
         if (!ownerMatches(session)) {
           invalidateApplyOperation(session, 'stale-owner');
@@ -165,7 +210,9 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
     },
     commitForDocument(documentId, reason = 'document-command') {
       const session = activeSession;
-      if (!session || session.ownerDocumentId !== documentId) return Promise.resolve(true);
+      if (!session || session.ownerDocumentId !== documentId) {
+        return Promise.resolve(noLiveDraftResult(documentId));
+      }
       return applySession(session, reason);
     },
     ownerIsCurrent(session = activeSession) {

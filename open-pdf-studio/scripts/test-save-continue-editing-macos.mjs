@@ -46,6 +46,7 @@ const EDIT_C = `${EDIT_B}\nCoherence Edit C`;
 export const SAVE_CONTINUE_EDITING_SCENARIO = Object.freeze([
   'launch-packaged-app',
   'open-native-editable-pdf',
+  'a23-type-without-resize-and-bind-final-layout-to-draft',
   'edit-a',
   'click-away-and-await-automatic-save',
   'assert-persisted-live-render-semantic-revisions-match',
@@ -54,6 +55,7 @@ export const SAVE_CONTINUE_EDITING_SCENARIO = Object.freeze([
   'save-again',
   'edit-c-without-reopen',
   'verify-all-edits-in-bytes-live-semantics-and-reopen',
+  'a23-impossible-auto-fit-keeps-complete-draft-and-exposes-recovery',
 ]);
 
 function parseArguments(argv) {
@@ -267,6 +269,7 @@ export async function runSaveContinueEditing(options) {
   let app = null;
   let latestViewport = null;
   const recordedStates = new Set();
+  const resizeHandleAutomationEvents = [];
 
   const recordViewport = (label, viewport) => {
     latestViewport = viewport;
@@ -301,7 +304,16 @@ export async function runSaveContinueEditing(options) {
       cwd: projectDir,
       env: { OPS_TEST_SESSION_PATH: path.join(runDirectory, 'session.json') },
     });
-    const call = (name, arguments_ = {}) => app.callTool(name, arguments_);
+    const call = async (name, arguments_ = {}) => {
+      const result = await app.callTool(name, arguments_);
+      const explicitSelector = String(arguments_?.selector || '');
+      const targetClasses = result?.target?.classes || [];
+      if (explicitSelector.includes('.pdf-text-editor-resize-handle')
+          || targetClasses.includes('pdf-text-editor-resize-handle')) {
+        resizeHandleAutomationEvents.push({ name, arguments: arguments_, target: result?.target });
+      }
+      return result;
+    };
     const ui = (selector) => call('app_ui_state', { selector, searchTabs: false });
     const waitUi = (selector, predicate = (value) => value.found && value.visible) => (
       waitUntil(selector, async () => {
@@ -406,6 +418,26 @@ export async function runSaveContinueEditing(options) {
     const initialSha256 = await sha256File(workingPdf);
     await openEditor(sourceSelector, 'ARCALYST penetration');
     await replaceEditorText(EDIT_A);
+    const a23TypedLayout = await waitUntil('A23 exact layout for the final typed draft', async () => {
+      const viewport = await call('app_get_viewport_state');
+      const layout = viewport.editorMetrics?.layoutState;
+      const exact = layout
+        && layout.pending === false
+        && layout.valid === true
+        && layout.requestedFingerprint
+        && layout.requestedFingerprint === layout.validatedFingerprint
+        && layout.draftText === EDIT_A
+        && Number(layout.validatedIdentity?.draftRevision) === Number(layout.draftRevision);
+      return exact ? layout : null;
+    }, options.timeoutMs);
+    assert.equal(resizeHandleAutomationEvents.length, 0,
+      `A23 emitted an event against the resize handle: ${JSON.stringify(resizeHandleAutomationEvents)}`);
+    report.textAssertions.a23FinalLayoutBoundToTypedDraft = {
+      draftRevision: a23TypedLayout.draftRevision,
+      requestedFingerprint: a23TypedLayout.requestedFingerprint,
+      validatedFingerprint: a23TypedLayout.validatedFingerprint,
+      resizeHandleEventCount: resizeHandleAutomationEvents.length,
+    };
     let globalLoadingObserved = false;
     await click('.status-page-input');
     await waitUi('.pdf-text-editor', (value) => !value.found);
@@ -504,7 +536,55 @@ export async function runSaveContinueEditing(options) {
     assert.match(String(reopenedEditor.value ?? reopenedEditor.text), /Coherence Edit B/u);
     assert.match(String(reopenedEditor.value ?? reopenedEditor.text), /Coherence Edit C/u);
     await call('app_key', { key: 'Escape' });
+    await waitUi('.pdf-text-editor', (value) => !value.found);
     report.textAssertions.reopenedTextMatches = true;
+
+    // A23 negative branch: a deliberately impossible one-line expansion must
+    // retain the entire draft, keep the same editor session open, expose the
+    // typed terminal constraint, and schedule no owner revision or save.
+    const beforeBlocked = await call('app_get_viewport_state');
+    const beforeBlockedRevision = beforeBlocked.documentSaveState.contentRevision;
+    const beforeBlockedSha256 = await sha256File(workingPdf);
+    const blockedDraft = `A23 ${'W'.repeat(240)}`;
+    await openEditor(ownedSelector, EDIT_A);
+    await replaceEditorText(blockedDraft);
+    await click('.status-page-input');
+    const blockedLayout = await waitUntil('A23 typed layout rejection retains editor', async () => {
+      const [editor, viewport] = await Promise.all([
+        ui('.pdf-text-editor'),
+        call('app_get_viewport_state'),
+      ]);
+      const layout = viewport.editorMetrics?.layoutState;
+      const finalDecision = layout?.finalDecision;
+      const typedConstraint = [
+        'TEXT_LAYOUT_PAGE_BOUNDARY',
+        'TEXT_LAYOUT_COLUMN_BOUNDARY',
+        'TEXT_LAYOUT_NEIGHBOR_OVERLAP',
+      ].includes(finalDecision?.rejectionCode);
+      return editor.found && editor.visible
+        && layout?.draftText === blockedDraft
+        && finalDecision?.status === 'blocked'
+        && typedConstraint
+        && layout.editorStatus
+        && viewport.documentSaveState?.contentRevision === beforeBlockedRevision
+        ? { editor, viewport, layout, finalDecision }
+        : null;
+    }, options.timeoutMs);
+    assert.equal(await sha256File(workingPdf), beforeBlockedSha256,
+      'blocked A23 draft changed persisted bytes');
+    assert.equal(resizeHandleAutomationEvents.length, 0,
+      `A23 emitted an event against the resize handle: ${JSON.stringify(resizeHandleAutomationEvents)}`);
+    report.textAssertions.a23ImpossibleAutoFit = {
+      draftRetained: blockedLayout.layout.draftText === blockedDraft,
+      editorRemainedOpen: true,
+      rejectionCode: blockedLayout.finalDecision.rejectionCode,
+      recoveryMessage: blockedLayout.layout.editorStatus,
+      revisionUnchanged: true,
+      persistedBytesUnchanged: true,
+      resizeHandleEventCount: resizeHandleAutomationEvents.length,
+    };
+    await call('app_key', { key: 'Escape' });
+    await waitUi('.pdf-text-editor', (value) => !value.found);
     const finalView = await call('app_screenshot_view', { width: 1600 });
     assert.equal(finalView.ok, true, finalView.error);
 
@@ -574,7 +654,7 @@ export async function runSaveContinueEditing(options) {
       maximumPixelDifferencePercent: 0.1,
       crop,
     };
-    report.scenarioMatrix = saveRenderCoherenceScenarioMatrix(['A1', 'A22']);
+    report.scenarioMatrix = saveRenderCoherenceScenarioMatrix(['A1', 'A22', 'A23']);
     report.artifacts = [
       path.basename(finalPdfArtifact),
       path.basename(mountedArtifact),

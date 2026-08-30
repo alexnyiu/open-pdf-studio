@@ -31,7 +31,7 @@ test('merge preserves formatting, hard paragraph breaks, provenance, union, and 
   const b = item('b', 'Beta', 10, 40, { richText: doc('Beta', 10, 40, { bold: true }) });
   const plan = buildMergedTextEditSelection([b, a]);
   assert.equal(plan.primaryId, 'stable');
-  assert.equal(plan.revision, 5);
+  assert.equal(plan.revision, 4);
   assert.equal(richTextToPlainText(plan.richText), 'Alpha\nBeta');
   assert.equal(plan.richText.lines[1].runs[0].bold, true);
   assert.deepEqual(plan.sourceProvenance.map((source) => source.markerId), ['a', 'b']);

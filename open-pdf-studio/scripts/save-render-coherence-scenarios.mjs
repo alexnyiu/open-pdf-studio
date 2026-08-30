@@ -82,7 +82,7 @@ export const SAVE_RENDER_COHERENCE_SCENARIOS = Object.freeze([
   ['A22', 'Three consecutive edits', ['scripts/test-save-continue-editing-macos.mjs']],
   ['A23', 'Typing-only commit without resize', [
     'scripts/test-save-continue-editing-macos.mjs',
-    'js/text/text-edit-commit-layout.test.mjs',
+    'js/text/final-text-layout.test.mjs',
   ]],
 ].map(([id, scenario, evidence]) => Object.freeze({
   id,

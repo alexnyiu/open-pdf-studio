@@ -10,8 +10,9 @@ import { viewport as vpState } from '../pdf/pdf-viewport.js';
 import {
   showPdfTextEditor, hidePdfTextEditor,
   getPdfEditorRichText,
+  flushPdfEditorDraftForCommit,
+  adoptPdfEditorFinalTextLayout,
   getPdfEditorFormatState,
-  getPdfEditorLayoutState,
   applyPdfEditorRichTextFormat,
   applyPdfEditorRichTextParagraphFormat,
   openStickyPopup,
@@ -19,7 +20,6 @@ import {
 } from '../bridge.js';
 import {
   DEFAULT_TEXT_FORMAT_CAPABILITIES,
-  canonicalRichTextHash,
   cloneRichTextDocument,
   richTextFromPlainText,
   richTextToPlainText,
@@ -53,30 +53,66 @@ import { runOwnerScopedTextCommit } from '../text/text-edit-commit.js';
 import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-transition.js';
 import { awaitPageEditReady } from '../pdf/page-edit-readiness.js';
 import { runPageEditIntent } from '../text/page-edit-intent.js';
+import {
+  awaitFinalTextLayout,
+  disposeFinalTextLayoutSession,
+} from '../text/final-text-layout.js';
+import { createTextApplyResult } from '../text/text-apply-result.js';
+import { createEditorLayoutRevision } from '../text/editor-layout-revision.js';
 
-async function waitForExactAnnotationLayout(operation) {
-  const deadline = performance.now() + 5_000;
-  while (performance.now() < deadline) {
-    const layout = getPdfEditorLayoutState();
-    const draft = getPdfEditorRichText();
-    const validatedDraft = layout?.result?.document;
-    const exactFingerprintMatches = Boolean(
-      layout?.requestedFingerprint
-        && layout.validatedFingerprint === layout.requestedFingerprint,
-    );
-    const exactDraftMatches = Boolean(draft && validatedDraft
-      && canonicalRichTextHash(draft) === canonicalRichTextHash(validatedDraft));
-    if (!layout?.pending && exactFingerprintMatches && exactDraftMatches) {
-      return layout.valid === true ? cloneRichTextDocument(validatedDraft) : null;
-    }
-    if (operation && !operation.isCurrent()) return null;
-    await new Promise((resolve) => {
-      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
-      else setTimeout(resolve, 4);
-    });
+function annotationApplyResult(ownerDocument, ownerGeneration, annotation, status, overrides = {}) {
+  const pageNum = Number(annotation?.page) || 1;
+  return createTextApplyResult({
+    status,
+    documentId: String(ownerDocument?.id || ''),
+    documentGeneration: Number(ownerGeneration) || 0,
+    pageNum,
+    contentRevision: Number(ownerDocument?.revisionState?.contentRevision) || 0,
+    pageRevision: Number(ownerDocument?.revisionState?.pageContentRevisions?.[pageNum]) || 0,
+    editId: annotation?.id ?? null,
+    editRevision: null,
+    ...overrides,
+  });
+}
+
+async function waitForExactAnnotationLayout({ operation, snapshot }) {
+  if (!snapshot?.layoutRevision?.fingerprint) {
+    return {
+      status: 'failed', rejectionCode: 'TEXT_LAYOUT_STALE_FINGERPRINT',
+      rejectionReasons: ['Final text layout identity is incomplete'], document: snapshot?.document,
+    };
   }
-  setPdfEditorStatus(i18next.t('textEditor.status.layoutTimeout', { ns: 'hardening' }), 'invalid');
-  return null;
+  const finalOptions = Object.freeze({
+    ...snapshot.options,
+    substitutionWidthAllowance: 0,
+  });
+  const finalRevision = createEditorLayoutRevision(
+    snapshot.document,
+    finalOptions,
+    snapshot.identity,
+  );
+  const decision = await awaitFinalTextLayout({
+    sessionId: snapshot.sessionId,
+    draftRevision: snapshot.draftRevision,
+    fingerprint: finalRevision.fingerprint,
+    document: snapshot.document,
+    options: finalOptions,
+    identity: snapshot.identity,
+    allowSafeAutoFit: true,
+    signal: operation?.signal,
+    timeoutMs: 5_000,
+  });
+  adoptPdfEditorFinalTextLayout(decision);
+  if (decision.status === 'ready' || decision.status === 'auto-fitted') {
+    return decision;
+  }
+  const reasons = decision.rejectionReasons?.join('; ')
+    || decision.rejectionCode
+    || i18next.t('textEditor.status.operationFailed', { ns: 'hardening' });
+  setPdfEditorStatus(decision.rejectionCode === 'TEXT_LAYOUT_TIMEOUT'
+    ? i18next.t('textEditor.status.layoutTimeout', { ns: 'hardening' })
+    : i18next.t('textEditor.status.layoutRejected', { ns: 'hardening', reasons }), 'invalid');
+  return decision;
 }
 
 // Start inline text editing for textbox/callout
@@ -351,6 +387,7 @@ export async function startTextEditing(annotation, {
   let session = null;
   let draftHeight = height;
   const resetEditingState = () => {
+    disposeFinalTextLayoutSession(session?.sessionId);
     completeTextEditSession(session?.sessionId);
     state.isEditingText = false;
     state.editingAnnotation = null;
@@ -369,23 +406,37 @@ export async function startTextEditing(annotation, {
 
   // Commit function: update only the immutable owner document.
   const commitFn = async (operation) => {
-    if (!state.isEditingText || !state.editingAnnotation) return false;
+    if (!state.isEditingText || !state.editingAnnotation) {
+      return annotationApplyResult(
+        ownerDocument, ownerGeneration, sourceAnnotation, 'superseded',
+      );
+    }
 
     let currentOwner = getDocumentById(ownerDocument.id);
     if (currentOwner !== ownerDocument || currentOwner.lifecycleGeneration !== ownerGeneration) {
       cancelFn('stale-owner');
-      return false;
+      return annotationApplyResult(
+        ownerDocument, ownerGeneration, sourceAnnotation, 'superseded',
+      );
     }
 
     const ann = state.editingAnnotation;
-    const richDraft = await waitForExactAnnotationLayout(operation);
-    currentOwner = getDocumentById(ownerDocument.id);
-    if (!richDraft || !operation?.isCurrent()
-        || currentOwner !== ownerDocument
-        || currentOwner.lifecycleGeneration !== ownerGeneration) return false;
-    // Exact shaping is validation, not an authored mutation. A clean Apply
-    // closes the session without normalizing PDF-number jitter, soft wraps, or
-    // annotation geometry and therefore creates no undo unit.
+    const snapshot = flushPdfEditorDraftForCommit({
+      sessionId: session?.sessionId,
+      ownerDocumentId: ownerDocument.id,
+      ownerDocumentGeneration: ownerGeneration,
+    });
+    if (!snapshot) {
+      setPdfEditorStatus(i18next.t('textEditor.status.operationFailed', {
+        ns: 'hardening',
+      }), 'invalid');
+      return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'rejected', {
+        rejectionCode: 'TEXT_LAYOUT_STALE_FINGERPRINT',
+        recoveryActions: ['keep-editing'],
+      });
+    }
+    // A clean existing annotation closes before exact shaping can normalize
+    // transient layout caches or turn a source mismatch into a false reject.
     if (cleanTextAnnotationApplyIsNoop({
       isNew: state._textEditIsNew,
       isDirty: session?.isDirty?.() === true,
@@ -393,7 +444,21 @@ export async function startTextEditing(annotation, {
       hidePdfTextEditor();
       resetEditingState();
       redrawOwnerIfVisible();
-      return true;
+      return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'noop');
+    }
+    const layoutDecision = await waitForExactAnnotationLayout({ operation, snapshot });
+    const richDraft = layoutDecision.document;
+    currentOwner = getDocumentById(ownerDocument.id);
+    if (!operation?.isCurrent()
+        || currentOwner !== ownerDocument
+        || currentOwner.lifecycleGeneration !== ownerGeneration) {
+      return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'superseded');
+    }
+    if (!richDraft || !['ready', 'auto-fitted'].includes(layoutDecision.status)) {
+      return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'rejected', {
+        rejectionCode: layoutDecision.rejectionCode || 'TEXT_LAYOUT_FAILED',
+        recoveryActions: ['insert-line-break', 'keep-editing'],
+      });
     }
     if (richDraft.region) {
       draftHeight = richDraft.region.height;
@@ -444,7 +509,10 @@ export async function startTextEditing(annotation, {
         setPdfEditorStatus(i18next.t('textEditor.status.operationFailed', {
           ns: 'hardening',
         }), 'invalid');
-        return false;
+        return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'rejected', {
+          rejectionCode: 'TEXT_OWNER_COMMIT_FAILED',
+          recoveryActions: ['keep-editing'],
+        });
       }
     } else if (state._textEditSnapshot && ann.id) {
       const applied = runOwnerScopedTextCommit({
@@ -465,18 +533,38 @@ export async function startTextEditing(annotation, {
         setPdfEditorStatus(i18next.t('textEditor.status.operationFailed', {
           ns: 'hardening',
         }), 'invalid');
-        return false;
+        return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'rejected', {
+          rejectionCode: 'TEXT_OWNER_COMMIT_FAILED',
+          recoveryActions: ['keep-editing'],
+        });
       }
     } else {
       setPdfEditorStatus(i18next.t('textEditor.status.operationFailed', {
         ns: 'hardening',
       }), 'invalid');
-      return false;
+      return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'rejected', {
+        rejectionCode: 'TEXT_OWNER_RECORD_MISSING',
+        recoveryActions: ['keep-editing'],
+      });
     }
     hidePdfTextEditor();
     resetEditingState();
     redrawOwnerIfVisible();
-    return true;
+    const adjustment = layoutDecision.status === 'auto-fitted'
+      ? {
+          kind: 'auto-grow-width',
+          deltaWidthPt: layoutDecision.autoFit.nextBounds.width
+            - layoutDecision.autoFit.priorBounds.width,
+          deltaHeightPt: layoutDecision.autoFit.nextBounds.height
+            - layoutDecision.autoFit.priorBounds.height,
+        }
+      : null;
+    return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'applied', {
+      ownerCommitted: true,
+      visiblePublished: getActiveDocument() === ownerDocument,
+      semanticPublished: getActiveDocument() === ownerDocument,
+      layoutAdjustment: adjustment,
+    });
   };
 
   // Cancel function: restore original text, reset state, refresh display
