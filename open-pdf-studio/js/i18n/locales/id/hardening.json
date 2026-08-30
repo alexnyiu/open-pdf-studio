@@ -48,6 +48,7 @@
       "ocrFixed": "Beberapa baris OCR sedang disunting dalam satu area asli yang tetap. Satu paragraf mengalir ulang di dalam area ini; pemisah baris tetap mempertahankan mode baris tetap. Command-Enter untuk menerapkan.",
       "ocrReflow": "Satu paragraf sedang disunting dalam area OCR asli yang disetujui. Command-Enter untuk menerapkan; luapan akan ditolak.",
       "operationFailed": "Operasi teks tidak dapat diselesaikan. Dokumen dibiarkan tanpa perubahan.",
+      "pageNotReady": "Halaman ini belum siap diedit. Coba lagi.",
       "staleDraft": "Dokumen berubah saat editor teks terbuka. Draf dibuang.",
       "multipleOcrParagraphs": "Pilihan mencakup beberapa paragraf OCR. Tinjau kerangka terpisah dan gunakan Gabungkan secara eksplisit. Penggabungan antar kolom tetap dinonaktifkan.",
       "nativeColumnBoundary": "Paragraf ini melintasi batas kolom asli yang terdeteksi. Pengeditan diblokir dan dokumen dibiarkan tanpa perubahan.",

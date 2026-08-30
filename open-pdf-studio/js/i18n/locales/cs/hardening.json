@@ -48,6 +48,7 @@
       "ocrFixed": "Upravuje se několik řádků OCR v jedné pevné původní oblasti. Jeden odstavec se v této oblasti přeformátuje; pevné konce řádků zachovají režim pevných řádků. Command-Enter použije změnu.",
       "ocrReflow": "Upravuje se jeden odstavec ve schválené původní oblasti OCR. Command-Enter použije změnu; přetečení bude odmítnuto.",
       "operationFailed": "Textovou operaci se nepodařilo dokončit. Dokument zůstal beze změny.",
+      "pageNotReady": "Tato stránka ještě není připravena k úpravám. Zkuste to znovu.",
       "staleDraft": "Dokument se během otevření textového editoru změnil. Koncept byl zahozen.",
       "multipleOcrParagraphs": "Výběr zahrnuje několik odstavců OCR. Zkontrolujte samostatné obrysy a výslovně použijte Sloučit. Slučování mezi sloupci zůstává zakázáno.",
       "nativeColumnBoundary": "Tento odstavec překračuje zjištěnou hranici původního sloupce. Úpravy byly zablokovány a dokument zůstal beze změny.",

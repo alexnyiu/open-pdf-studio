@@ -48,6 +48,7 @@
       "ocrFixed": "Flera OCR-rader redigeras inom ett fast ursprungligt område. Ett enda stycke flödar om inom området; fasta radbrytningar bevarar läget med fasta rader. Kommando-Retur tillämpar ändringen.",
       "ocrReflow": "Ett stycke redigeras inom det godkända ursprungliga OCR-området. Kommando-Retur tillämpar ändringen; överflöd avvisas.",
       "operationFailed": "Textåtgärden kunde inte slutföras. Dokumentet lämnades oförändrat.",
+      "pageNotReady": "Den här sidan är inte klar för redigering ännu. Försök igen.",
       "staleDraft": "Dokumentet ändrades medan textredigeraren var öppen. Utkastet kasserades.",
       "multipleOcrParagraphs": "Markeringen omfattar flera OCR-stycken. Granska de separata konturerna och använd Sammanfoga uttryckligen. Sammanfogning mellan kolumner är fortfarande inaktiverad.",
       "nativeColumnBoundary": "Det här stycket korsar en identifierad ursprunglig kolumngräns. Redigeringen blockerades och dokumentet lämnades oförändrat.",

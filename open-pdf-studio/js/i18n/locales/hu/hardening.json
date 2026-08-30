@@ -48,6 +48,7 @@
       "ocrFixed": "Több OCR-sor szerkesztése egy rögzített eredeti területen belül. Egyetlen bekezdés tördelődik újra ezen a területen; a kézi sortörések megtartják a rögzített soros módot. Alkalmazás: Command-Enter.",
       "ocrReflow": "Egy bekezdés szerkesztése a jóváhagyott eredeti OCR-területen belül. Alkalmazás: Command-Enter; a túlcsordulás elutasításra kerül.",
       "operationFailed": "A szövegműveletet nem sikerült befejezni. A dokumentum változatlan maradt.",
+      "pageNotReady": "Ez az oldal még nem áll készen a szerkesztésre. Próbálja újra.",
       "staleDraft": "A dokumentum megváltozott, miközben a szövegszerkesztő nyitva volt. A piszkozat el lett vetve.",
       "multipleOcrParagraphs": "A kijelölés több OCR-bekezdésre terjed ki. Tekintse át a különálló körvonalakat, és kifejezetten használja az Egyesítés műveletet. Az oszlopok közötti egyesítés továbbra is le van tiltva.",
       "nativeColumnBoundary": "Ez a bekezdés átlép egy észlelt eredeti oszlophatárt. A szerkesztés le lett tiltva, és a dokumentum változatlan maradt.",

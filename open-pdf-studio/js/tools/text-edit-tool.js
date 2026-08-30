@@ -174,7 +174,7 @@ function queueCurrentPageEditIntent({ documentState, pageNum, point = null, acti
     activate,
   }).then((result) => {
     if (result?.activated === false && result?.action === 'retry-page-edit') {
-      showMessage('This page is not ready for editing yet. Try again.');
+      showMessage(hardeningText('textEditor.status.pageNotReady'));
     }
     return result;
   });
@@ -824,7 +824,7 @@ async function openCombinedTextBoxEditor() {
     }
   } catch (error) {
     reportQueuedEditFailure(error);
-    showMessage('This page is not ready for editing yet. Try again.');
+    showMessage(hardeningText('textEditor.status.pageNotReady'));
     return;
   }
   if (getActiveDocument() !== ownerDocument) return;

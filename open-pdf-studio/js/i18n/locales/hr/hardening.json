@@ -48,6 +48,7 @@
       "ocrFixed": "Uređuje se više OCR redaka unutar jednog fiksnog izvornog područja. Jedan odlomak prelama se unutar tog područja; čvrsti prijelomi redaka zadržavaju način fiksnih redaka. Primijenite tipkama Command-Enter.",
       "ocrReflow": "Jedan odlomak uređuje se unutar odobrenog izvornog OCR područja. Primijenite tipkama Command-Enter; prekoračenje se odbija.",
       "operationFailed": "Tekstnu radnju nije bilo moguće dovršiti. Dokument je ostao nepromijenjen.",
+      "pageNotReady": "Ova stranica još nije spremna za uređivanje. Pokušajte ponovno.",
       "staleDraft": "Dokument se promijenio dok je uređivač teksta bio otvoren. Skica je odbačena.",
       "multipleOcrParagraphs": "Odabir obuhvaća više OCR odlomaka. Pregledajte zasebne obrise i izričito upotrijebite Spoji. Spajanje između stupaca i dalje je onemogućeno.",
       "nativeColumnBoundary": "Ovaj odlomak prelazi otkrivenu granicu izvornog stupca. Uređivanje je blokirano i dokument je ostao nepromijenjen.",

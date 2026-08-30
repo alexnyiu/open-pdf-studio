@@ -48,6 +48,7 @@
       "ocrFixed": "Modifica di più righe OCR in un'unica area originale fissa. Un solo paragrafo viene ridisposto nell'area; le interruzioni di riga esplicite mantengono la modalità a righe fisse. Premi Command-Invio per applicare.",
       "ocrReflow": "Modifica di un paragrafo nella relativa area OCR originale approvata. Premi Command-Invio per applicare; il testo eccedente viene rifiutato.",
       "operationFailed": "Impossibile completare l'operazione sul testo. Il documento non è stato modificato.",
+      "pageNotReady": "Questa pagina non è ancora pronta per la modifica. Riprova.",
       "staleDraft": "Il documento è cambiato mentre l'editor di testo era aperto. La bozza è stata eliminata.",
       "multipleOcrParagraphs": "La selezione include più paragrafi OCR. Esamina separatamente i contorni e usa esplicitamente «Unisci». L'unione tra colonne resta disabilitata.",
       "nativeColumnBoundary": "Questo paragrafo attraversa un limite di colonna originale rilevato. La modifica è stata bloccata e il documento non è stato modificato.",

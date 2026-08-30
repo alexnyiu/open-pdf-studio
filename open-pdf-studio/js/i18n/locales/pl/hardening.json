@@ -48,6 +48,7 @@
       "ocrFixed": "W jednym stałym obszarze źródłowym edytowanych jest wiele wierszy OCR. Pojedynczy akapit przepływa ponownie w tym obszarze; wymuszone podziały wierszy zachowują tryb stałych wierszy. Command-Enter stosuje zmianę.",
       "ocrReflow": "Jeden akapit jest edytowany w zatwierdzonym źródłowym obszarze OCR. Command-Enter stosuje zmianę; przepełnienie jest odrzucane.",
       "operationFailed": "Nie udało się ukończyć operacji na tekście. Dokument pozostał bez zmian.",
+      "pageNotReady": "Ta strona nie jest jeszcze gotowa do edycji. Spróbuj ponownie.",
       "staleDraft": "Dokument zmienił się, gdy edytor tekstu był otwarty. Wersja robocza została odrzucona.",
       "multipleOcrParagraphs": "Zaznaczenie obejmuje wiele akapitów OCR. Przejrzyj osobne obrysy i jawnie użyj opcji Scal. Scalanie między kolumnami pozostaje wyłączone.",
       "nativeColumnBoundary": "Ten akapit przekracza wykrytą granicę kolumny w oryginale. Edycja została zablokowana, a dokument pozostał bez zmian.",

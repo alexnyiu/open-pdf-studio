@@ -48,6 +48,7 @@
       "ocrFixed": "正在一个固定的原始区域内编辑多行 OCR 文本。单个段落会在此区域内重排；显式换行会保留固定行模式。Command-Enter 可应用更改。",
       "ocrReflow": "正在已批准的原始 OCR 区域内编辑一个段落。Command-Enter 可应用更改；溢出会被拒绝。",
       "operationFailed": "无法完成文本操作。文档未发生更改。",
+      "pageNotReady": "此页面尚未准备好进行编辑。请重试。",
       "staleDraft": "文本编辑器打开期间文档发生了更改。草稿已丢弃。",
       "multipleOcrParagraphs": "选择范围跨越多个 OCR 段落。请检查各自的轮廓，并明确使用“合并”。跨列合并仍处于禁用状态。",
       "nativeColumnBoundary": "此段落跨越了检测到的原始列边界。编辑已被阻止，文档未发生更改。",

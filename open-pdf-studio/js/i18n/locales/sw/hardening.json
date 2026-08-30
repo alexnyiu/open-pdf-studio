@@ -48,6 +48,7 @@
       "ocrFixed": "Mistari kadhaa ya OCR inahaririwa ndani ya eneo moja la awali lisilobadilika. Aya moja inapangwa upya ndani ya eneo hili; mikatizo ya mistari iliyowekwa hudumisha hali ya mistari isiyobadilika. Command-Enter hutumia mabadiliko.",
       "ocrReflow": "Aya moja inahaririwa ndani ya eneo lake la awali la OCR lililoidhinishwa. Command-Enter hutumia mabadiliko; kufurika kunakataliwa.",
       "operationFailed": "Kitendo cha maandishi hakikuweza kukamilishwa. Hati iliachwa bila kubadilishwa.",
+      "pageNotReady": "Ukurasa huu bado hauko tayari kuhaririwa. Jaribu tena.",
       "staleDraft": "Hati ilibadilika wakati kihariri cha maandishi kilikuwa wazi. Rasimu ilitupwa.",
       "multipleOcrParagraphs": "Uteuzi unajumuisha aya nyingi za OCR. Kagua mipaka tofauti na utumie Unganisha waziwazi. Kuunganisha kati ya safu wima bado kumezimwa.",
       "nativeColumnBoundary": "Aya hii inavuka mpaka wa safu wima asilia uliotambuliwa. Uhariri ulizuiwa na hati iliachwa bila kubadilishwa.",

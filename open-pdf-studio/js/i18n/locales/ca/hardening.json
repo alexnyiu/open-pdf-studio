@@ -48,6 +48,7 @@
       "ocrFixed": "S'estan editant diverses línies d'OCR dins d'una única regió original fixa. Un sol paràgraf es redistribueix dins d'aquesta regió; els salts de línia explícits conserven el mode de línies fixes. Ordre-Retorn aplica el canvi.",
       "ocrReflow": "S'està editant un paràgraf dins de la regió d'OCR original aprovada. Ordre-Retorn aplica el canvi; el desbordament es rebutja.",
       "operationFailed": "No s'ha pogut completar l'operació de text. El document no s'ha modificat.",
+      "pageNotReady": "Aquesta pàgina encara no està preparada per editar-la. Torneu-ho a provar.",
       "staleDraft": "El document ha canviat mentre l'editor de text era obert. S'ha descartat l'esborrany.",
       "multipleOcrParagraphs": "La selecció s'estén per diversos paràgrafs OCR. Reviseu els contorns separats i feu servir «Combina» explícitament. Les combinacions entre columnes continuen desactivades.",
       "nativeColumnBoundary": "Aquest paràgraf travessa un límit de columna original detectat. S'ha bloquejat l'edició i el document no s'ha modificat.",

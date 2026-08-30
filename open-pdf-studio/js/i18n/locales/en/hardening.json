@@ -45,6 +45,7 @@
       "scannedRejected": "Scanned text change rejected: {{reason}}",
       "readOnly": "Previously edited text is read-only. The document was left untouched.",
       "operationFailed": "The text operation could not be completed. The document was left untouched.",
+      "pageNotReady": "This page is not ready for editing yet. Try again.",
       "staleDraft": "The document changed while the text editor was open. The draft was discarded.",
       "multipleOcrParagraphs": "The selection spans multiple OCR paragraphs. Review the separate outlines and use Merge explicitly. Cross-column merges remain disabled.",
       "nativeColumnBoundary": "This paragraph crosses a detected native column boundary. Editing was blocked and the document was left untouched.",

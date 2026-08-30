@@ -48,6 +48,7 @@
       "ocrFixed": "Mehrere OCR-Zeilen werden innerhalb eines festen ursprünglichen Bereichs bearbeitet. Ein einzelner Absatz wird innerhalb dieses Bereichs neu umbrochen; feste Zeilenumbrüche erhalten den Modus mit festen Zeilen. Befehlstaste-Eingabetaste wendet die Änderung an.",
       "ocrReflow": "Ein Absatz wird innerhalb seines genehmigten ursprünglichen OCR-Bereichs bearbeitet. Befehlstaste-Eingabetaste wendet die Änderung an; Überlauf wird abgelehnt.",
       "operationFailed": "Der Textvorgang konnte nicht abgeschlossen werden. Das Dokument wurde nicht verändert.",
+      "pageNotReady": "Diese Seite ist noch nicht zur Bearbeitung bereit. Versuchen Sie es erneut.",
       "staleDraft": "Das Dokument wurde geändert, während der Texteditor geöffnet war. Der Entwurf wurde verworfen.",
       "multipleOcrParagraphs": "Die Auswahl erstreckt sich über mehrere OCR-Absätze. Prüfen Sie die einzelnen Umrisse und verwenden Sie ausdrücklich „Zusammenführen“. Das Zusammenführen über Spalten hinweg bleibt deaktiviert.",
       "nativeColumnBoundary": "Dieser Absatz überschreitet eine erkannte Spaltengrenze im Original. Die Bearbeitung wurde blockiert und das Dokument wurde nicht verändert.",

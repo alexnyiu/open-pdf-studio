@@ -210,7 +210,7 @@ export async function startTextEditing(annotation, {
         },
       });
       if (!intent.activated && intent.action === 'retry-page-edit') {
-        showMessage('This page is not ready for editing yet. Try again.');
+        showMessage(i18next.t('textEditor.status.pageNotReady', { ns: 'hardening' }));
       }
       return intent.activated ? intent.value : false;
     } catch (error) {

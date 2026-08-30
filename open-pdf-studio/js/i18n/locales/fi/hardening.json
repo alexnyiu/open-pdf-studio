@@ -48,6 +48,7 @@
       "ocrFixed": "Useita OCR-rivejä muokataan yhdellä kiinteällä alkuperäisellä alueella. Yksi kappale juoksutetaan uudelleen tämän alueen sisällä; pakotetut rivinvaihdot säilyttävät kiinteiden rivien tilan. Komento-Enter käyttää muutosta.",
       "ocrReflow": "Yhtä kappaletta muokataan sen hyväksytyllä alkuperäisellä OCR-alueella. Komento-Enter käyttää muutosta; ylivuoto hylätään.",
       "operationFailed": "Tekstitoimintoa ei voitu suorittaa loppuun. Asiakirjaa ei muutettu.",
+      "pageNotReady": "Tämä sivu ei ole vielä valmis muokattavaksi. Yritä uudelleen.",
       "staleDraft": "Asiakirja muuttui tekstieditorin ollessa avoinna. Luonnos hylättiin.",
       "multipleOcrParagraphs": "Valinta ulottuu useaan OCR-kappaleeseen. Tarkista erilliset ääriviivat ja käytä Yhdistä-toimintoa erikseen. Sarakkeiden välinen yhdistäminen on edelleen pois käytöstä.",
       "nativeColumnBoundary": "Tämä kappale ylittää havaitun alkuperäisen sarakerajan. Muokkaus estettiin, eikä asiakirjaa muutettu.",

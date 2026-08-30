@@ -48,6 +48,7 @@
       "ocrFixed": "Birden fazla OCR satırı tek bir sabit özgün bölge içinde düzenleniyor. Tek paragraf bu bölge içinde yeniden akar; açık satır sonları sabit satır modunu korur. Command-Enter değişikliği uygular.",
       "ocrReflow": "Tek bir paragraf, onaylanan özgün OCR bölgesi içinde düzenleniyor. Command-Enter değişikliği uygular; taşma reddedilir.",
       "operationFailed": "Metin işlemi tamamlanamadı. Belge değiştirilmeden bırakıldı.",
+      "pageNotReady": "Bu sayfa henüz düzenlemeye hazır değil. Tekrar deneyin.",
       "staleDraft": "Metin düzenleyici açıkken belge değişti. Taslak atıldı.",
       "multipleOcrParagraphs": "Seçim birden fazla OCR paragrafını kapsıyor. Ayrı anahatları gözden geçirin ve açıkça Birleştir'i kullanın. Sütunlar arası birleştirme devre dışı kalmaya devam ediyor.",
       "nativeColumnBoundary": "Bu paragraf algılanan özgün sütun sınırını aşıyor. Düzenleme engellendi ve belge değiştirilmeden bırakıldı.",

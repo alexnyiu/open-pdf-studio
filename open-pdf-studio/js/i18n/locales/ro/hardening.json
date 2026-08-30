@@ -48,6 +48,7 @@
       "ocrFixed": "Sunt editate mai multe rânduri OCR într-o singură regiune originală fixă. Un singur paragraf este rearanjat în această regiune; întreruperile de rând explicite păstrează modul cu rânduri fixe. Command-Enter aplică modificarea.",
       "ocrReflow": "Este editat un paragraf în regiunea OCR originală aprobată. Command-Enter aplică modificarea; depășirea regiunii este respinsă.",
       "operationFailed": "Operația asupra textului nu a putut fi finalizată. Documentul a rămas nemodificat.",
+      "pageNotReady": "Această pagină nu este încă pregătită pentru editare. Încercați din nou.",
       "staleDraft": "Documentul s-a modificat cât timp editorul de text era deschis. Schița a fost eliminată.",
       "multipleOcrParagraphs": "Selecția se întinde pe mai multe paragrafe OCR. Examinați contururile separate și folosiți explicit Îmbinare. Îmbinarea între coloane rămâne dezactivată.",
       "nativeColumnBoundary": "Acest paragraf traversează o limită detectată a coloanei originale. Editarea a fost blocată și documentul a rămas nemodificat.",

@@ -48,6 +48,7 @@
       "ocrFixed": "Flere OCR-linjer redigeres innenfor ett fast opprinnelig område. Ett avsnitt ombrekkes innenfor området; eksplisitte linjeskift beholder modus med faste linjer. Command-Enter bruker endringen.",
       "ocrReflow": "Ett avsnitt redigeres innenfor det godkjente opprinnelige OCR-området. Command-Enter bruker endringen; overflyt avvises.",
       "operationFailed": "Tekstoperasjonen kunne ikke fullføres. Dokumentet ble ikke endret.",
+      "pageNotReady": "Denne siden er ikke klar for redigering ennå. Prøv på nytt.",
       "staleDraft": "Dokumentet ble endret mens tekstredigereren var åpen. Utkastet ble forkastet.",
       "multipleOcrParagraphs": "Markeringen omfatter flere OCR-avsnitt. Se gjennom de separate omrissene, og bruk Slå sammen eksplisitt. Sammenslåing på tvers av kolonner er fortsatt deaktivert.",
       "nativeColumnBoundary": "Dette avsnittet krysser en registrert opprinnelig kolonnegrense. Redigeringen ble blokkert og dokumentet ble ikke endret.",

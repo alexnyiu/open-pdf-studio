@@ -48,6 +48,7 @@
       "ocrFixed": "Modification de plusieurs lignes OCR dans une seule zone d'origine fixe. Un seul paragraphe est redistribué dans cette zone ; les sauts de ligne forcés conservent le mode de lignes fixes. Commande-Entrée applique la modification.",
       "ocrReflow": "Modification d'un paragraphe dans sa zone OCR d'origine approuvée. Commande-Entrée applique la modification ; le débordement est rejeté.",
       "operationFailed": "L’opération sur le texte n’a pas pu être effectuée. Le document n’a pas été modifié.",
+      "pageNotReady": "Cette page n’est pas encore prête à être modifiée. Réessayez.",
       "staleDraft": "Le document a changé pendant que l’éditeur de texte était ouvert. Le brouillon a été abandonné.",
       "multipleOcrParagraphs": "La sélection s’étend sur plusieurs paragraphes OCR. Examinez les contours séparés et utilisez explicitement « Fusionner ». La fusion entre colonnes reste désactivée.",
       "nativeColumnBoundary": "Ce paragraphe franchit une limite de colonne d’origine détectée. La modification a été bloquée et le document n’a pas été modifié.",

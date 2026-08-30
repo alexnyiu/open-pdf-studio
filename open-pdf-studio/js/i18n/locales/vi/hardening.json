@@ -48,6 +48,7 @@
       "ocrFixed": "Đang chỉnh sửa nhiều dòng OCR trong một vùng gốc cố định. Một đoạn văn được dàn lại trong vùng này; các ngắt dòng rõ ràng duy trì chế độ dòng cố định. Command-Enter áp dụng thay đổi.",
       "ocrReflow": "Đang chỉnh sửa một đoạn văn trong vùng OCR gốc đã phê duyệt. Command-Enter áp dụng thay đổi; phần tràn bị từ chối.",
       "operationFailed": "Không thể hoàn tất thao tác văn bản. Tài liệu không bị thay đổi.",
+      "pageNotReady": "Trang này chưa sẵn sàng để chỉnh sửa. Hãy thử lại.",
       "staleDraft": "Tài liệu đã thay đổi trong khi trình soạn thảo văn bản đang mở. Bản nháp đã bị hủy.",
       "multipleOcrParagraphs": "Vùng chọn trải dài trên nhiều đoạn OCR. Hãy xem lại từng đường viền riêng và sử dụng rõ ràng lệnh Hợp nhất. Tính năng hợp nhất giữa các cột vẫn bị tắt.",
       "nativeColumnBoundary": "Đoạn này vượt qua ranh giới cột gốc đã phát hiện. Việc chỉnh sửa đã bị chặn và tài liệu không bị thay đổi.",

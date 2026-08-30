@@ -48,6 +48,7 @@
       "ocrFixed": "Meerdere OCR-regels worden binnen één vast oorspronkelijk gebied bewerkt. Eén alinea loopt binnen dit gebied opnieuw om; harde regeleinden behouden de modus met vaste regels. Command-Enter past de wijziging toe.",
       "ocrReflow": "Eén alinea wordt binnen het goedgekeurde oorspronkelijke OCR-gebied bewerkt. Command-Enter past de wijziging toe; overloop wordt afgewezen.",
       "operationFailed": "De tekstbewerking kon niet worden voltooid. Het document is ongewijzigd gebleven.",
+      "pageNotReady": "Deze pagina is nog niet klaar om te bewerken. Probeer het opnieuw.",
       "staleDraft": "Het document is gewijzigd terwijl de teksteditor geopend was. Het concept is verwijderd.",
       "multipleOcrParagraphs": "De selectie beslaat meerdere OCR-alinea's. Controleer de afzonderlijke contouren en gebruik Samenvoegen expliciet. Samenvoegen tussen kolommen blijft uitgeschakeld.",
       "nativeColumnBoundary": "Deze alinea overschrijdt een gedetecteerde oorspronkelijke kolomgrens. Bewerken is geblokkeerd en het document is ongewijzigd gebleven.",

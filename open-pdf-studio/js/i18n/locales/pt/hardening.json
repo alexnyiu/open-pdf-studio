@@ -48,6 +48,7 @@
       "ocrFixed": "Editando várias linhas de OCR dentro de uma única região original fixa. Um único parágrafo reflui dentro dessa região; quebras de linha explícitas mantêm o modo de linhas fixas. Command-Enter aplica a alteração.",
       "ocrReflow": "Editando um parágrafo dentro da região original aprovada do OCR. Command-Enter aplica a alteração; o excesso é rejeitado.",
       "operationFailed": "Não foi possível concluir a operação de texto. O documento não foi alterado.",
+      "pageNotReady": "Esta página ainda não está pronta para edição. Tente novamente.",
       "staleDraft": "O documento foi alterado enquanto o editor de texto estava aberto. O rascunho foi descartado.",
       "multipleOcrParagraphs": "A seleção abrange vários parágrafos de OCR. Reveja os contornos separados e use explicitamente «Unir». A união entre colunas continua desativada.",
       "nativeColumnBoundary": "Este parágrafo atravessa um limite de coluna original detetado. A edição foi bloqueada e o documento não foi alterado.",

@@ -48,6 +48,7 @@
       "ocrFixed": "Flere OCR-linjer redigeres inden for ét fast oprindeligt område. Et enkelt afsnit ombrydes inden for området; hårde linjeskift bevarer tilstanden med faste linjer. Kommando-Enter anvender ændringen.",
       "ocrReflow": "Et afsnit redigeres inden for det godkendte oprindelige OCR-område. Kommando-Enter anvender ændringen; overløb afvises.",
       "operationFailed": "Teksthandlingen kunne ikke fuldføres. Dokumentet blev ikke ændret.",
+      "pageNotReady": "Denne side er ikke klar til redigering endnu. Prøv igen.",
       "staleDraft": "Dokumentet blev ændret, mens teksteditoren var åben. Kladden blev kasseret.",
       "multipleOcrParagraphs": "Markeringen spænder over flere OCR-afsnit. Gennemse de separate konturer, og brug Flet eksplicit. Fletning på tværs af kolonner er fortsat deaktiveret.",
       "nativeColumnBoundary": "Dette afsnit krydser en registreret kolonnegrænse i originalen. Redigeringen blev blokeret, og dokumentet blev ikke ændret.",
