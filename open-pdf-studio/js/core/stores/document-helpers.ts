@@ -36,7 +36,7 @@ export function createDocument(filePath: string | null = null): DocumentState {
     pageRenderRevisions: revisionState.pageContentRevisions,
     currentPage: 1,
     scale: 1.5,
-    viewMode: 'single',
+    viewMode: 'continuous',
     annotations: [],
     textEdits: [],
     textEditManifest: null,
