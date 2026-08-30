@@ -77,6 +77,7 @@ import {
 } from './page-raster.js';
 import { planVisiblePageTiles } from './page-tile-plan.js';
 import { singlePageOverlaySurfaceDimensions } from './canvas-dpr.js';
+import { applyContinuousPageSurfaceLayout } from './continuous-page-surface-layout.js';
 import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
 import { publishPageModelRevision } from '../text/text-edit-publication.js';
 import {
@@ -1302,7 +1303,7 @@ function _loadContinuousRasterImage(lease) {
   });
 }
 
-function _publishContinuousRasterImage(doc, pageNum, oldCanvas, image, viewport) {
+function _publishContinuousRasterImage(doc, pageNum, oldCanvas, image) {
   if (!oldCanvas?.isConnected || !image?.naturalWidth || !image?.naturalHeight) return null;
   const container = oldCanvas.parentElement;
   if (!container) return null;
@@ -1311,8 +1312,7 @@ function _publishContinuousRasterImage(doc, pageNum, oldCanvas, image, viewport)
   geometryCanvas.classList.add('pdf-canvas-geometry');
   geometryCanvas.width = image.naturalWidth;
   geometryCanvas.height = image.naturalHeight;
-  geometryCanvas.style.width = `${Math.floor(viewport.width)}px`;
-  geometryCanvas.style.height = `${Math.floor(viewport.height)}px`;
+  applyContinuousPageSurfaceLayout(geometryCanvas, 'direct-image-publication');
   geometryCanvas.style.background = 'transparent';
   geometryCanvas.dataset.renderSurface = 'geometry';
   geometryCanvas.dataset.rasterWidth = String(image.naturalWidth);
@@ -1320,8 +1320,7 @@ function _publishContinuousRasterImage(doc, pageNum, oldCanvas, image, viewport)
 
   image.style.position = 'absolute';
   image.style.inset = '0';
-  image.style.width = `${Math.floor(viewport.width)}px`;
-  image.style.height = `${Math.floor(viewport.height)}px`;
+  applyContinuousPageSurfaceLayout(image, 'direct-image-publication');
   image.style.objectFit = 'fill';
   image.style.pointerEvents = 'none';
   image.dataset.renderSurface = 'pdf-image';
@@ -1346,7 +1345,6 @@ function _transferContinuousBitmapToFreshCanvas(
   pageNum,
   oldCanvas,
   rasterEntry,
-  viewport,
 ) {
   if (!oldCanvas?.isConnected || !rasterEntry?.bitmap
       || (Number(rasterEntry.coalescedConsumers) || 1) > 1) return null;
@@ -1354,8 +1352,7 @@ function _transferContinuousBitmapToFreshCanvas(
   nextCanvas.classList.remove('pdf-canvas-geometry');
   nextCanvas.width = rasterEntry.w;
   nextCanvas.height = rasterEntry.h;
-  nextCanvas.style.width = `${Math.floor(viewport.width)}px`;
-  nextCanvas.style.height = `${Math.floor(viewport.height)}px`;
+  applyContinuousPageSurfaceLayout(nextCanvas, 'bitmap-publication');
   nextCanvas.dataset.renderSurface = 'pdf';
   let bitmapContext = null;
   try {
@@ -1592,6 +1589,7 @@ function _publishContinuousThumbnailPreview(doc, pageNum, src) {
     preview.draggable = false;
     preview.style.position = 'absolute';
     preview.style.inset = '0';
+    applyContinuousPageSurfaceLayout(preview, 'thumbnail-preview');
     preview.style.objectFit = 'fill';
     preview.style.pointerEvents = 'none';
     preview.style.zIndex = '0';
@@ -1618,8 +1616,7 @@ function _publishContinuousPreview(doc, pageNum, canvas) {
   canvas.classList.add('page-preview-canvas');
   canvas.style.position = 'absolute';
   canvas.style.inset = '0';
-  canvas.style.width = '100%';
-  canvas.style.height = '100%';
+  applyContinuousPageSurfaceLayout(canvas, 'low-resolution-preview');
   canvas.style.pointerEvents = 'none';
   canvas.style.zIndex = '0';
   if (canvas.parentElement !== container) container.appendChild(canvas);
@@ -2117,11 +2114,11 @@ async function _renderContinuousPageNow(
     // Show a low-res preview immediately while the full render runs. Do not
     // allocate a blank full-DPR backing store when the thumbnail image already
     // supplies the visible placeholder; the final raster gets a fresh surface.
-    pdfCanvasEl.style.width = `${Math.floor(viewport.width)}px`;
-    pdfCanvasEl.style.height = `${Math.floor(viewport.height)}px`;
+    applyContinuousPageSurfaceLayout(pdfCanvasEl, 'continuous-page-mount');
     const lowRes = _lowResCache.get(_lowResKey(pageNum));
     if (lowRes) {
       setupCanvasHiDPI(pdfCanvasEl, viewport.width, viewport.height);
+      applyContinuousPageSurfaceLayout(pdfCanvasEl, 'continuous-page-preview');
       const previewCtx = pdfCanvasEl.getContext('2d');
       previewCtx.drawImage(lowRes.canvas, 0, 0, pdfCanvasEl.width, pdfCanvasEl.height);
     }
@@ -2148,8 +2145,7 @@ async function _renderContinuousPageNow(
   annotationCanvasEl.style.height = `${Math.floor(viewport.height)}px`;
   annotationCanvasEl.dataset.renderSurface = 'annotation';
   if (!isNewPage) {
-    pdfCanvasEl.style.width = Math.floor(viewport.width) + 'px';
-    pdfCanvasEl.style.height = Math.floor(viewport.height) + 'px';
+    applyContinuousPageSurfaceLayout(pdfCanvasEl, 'continuous-render-preflight');
   }
   // Cursor is handled centrally by js/ui/cursor.js — no need to set it here.
 
@@ -2287,7 +2283,6 @@ async function _renderContinuousPageNow(
       pageNum,
       pdfCanvasEl,
       directRasterImage,
-      viewport,
     );
     if (!geometryCanvas) {
       directImageLease?.cancel?.('publication-failed');
@@ -2303,15 +2298,13 @@ async function _renderContinuousPageNow(
       pageNum,
       pdfCanvasEl,
       rasterEntry,
-      viewport,
     );
     if (transferredCanvas) {
       pdfCanvasEl = transferredCanvas;
     } else {
       pdfCanvasEl.width = rasterEntry.w;
       pdfCanvasEl.height = rasterEntry.h;
-      pdfCanvasEl.style.width = `${Math.floor(viewport.width)}px`;
-      pdfCanvasEl.style.height = `${Math.floor(viewport.height)}px`;
+      applyContinuousPageSurfaceLayout(pdfCanvasEl, 'continuous-bitmap-fallback');
       pdfCanvasEl.dataset.renderSurface = 'pdf';
       pdfCanvasEl.classList.remove('pdf-canvas-geometry');
       pdfCanvasEl.getContext('2d')?.drawImage(rasterEntry.bitmap, 0, 0);
@@ -2511,8 +2504,16 @@ function _positionContinuousWrapper(wrapper, rect, scale) {
   canvasContainer.querySelectorAll(
     'canvas:not(.page-sharp-tile), .page-preview-image, .pdf-page-raster',
   ).forEach((surface) => {
-    surface.style.width = `${rect.width}px`;
-    surface.style.height = `${rect.height}px`;
+    const pageSurface = surface.classList?.contains('pdf-canvas')
+      || surface.classList?.contains('page-preview-canvas')
+      || surface.classList?.contains('page-preview-image')
+      || surface.classList?.contains('pdf-page-raster');
+    if (pageSurface) {
+      applyContinuousPageSurfaceLayout(surface, 'continuous-window-layout');
+    } else {
+      surface.style.width = `${rect.width}px`;
+      surface.style.height = `${rect.height}px`;
+    }
   });
   for (const tile of canvasContainer.querySelectorAll('.page-sharp-tile')) {
     tile.style.left = `${(Number(tile.dataset.regionXpt) || 0) * scale}px`;
@@ -2562,6 +2563,7 @@ function _createContinuousWrapper(doc, pageNum, rect) {
     preview.src = cachedPreview.src;
     preview.style.position = 'absolute';
     preview.style.inset = '0';
+    applyContinuousPageSurfaceLayout(preview, 'cached-thumbnail-preview');
     preview.style.objectFit = 'fill';
     preview.style.pointerEvents = 'none';
     canvasContainer.appendChild(preview);
@@ -2573,6 +2575,7 @@ function _createContinuousWrapper(doc, pageNum, rect) {
     preview.classList.add('page-preview-canvas');
     preview.style.position = 'absolute';
     preview.style.inset = '0';
+    applyContinuousPageSurfaceLayout(preview, 'cached-low-resolution-preview');
     preview.style.pointerEvents = 'none';
     canvasContainer.appendChild(preview);
     incrementPerformanceCounter('cachedPreviewPaints');
@@ -3310,8 +3313,13 @@ function _applyContinuousZoomInstant(oldScale, anchorInput = null) {
     // Stretch the already-rendered bitmap(s) to the new box immediately; the
     // debounced re-render replaces them with a crisp render at the new scale.
     cc.querySelectorAll('canvas').forEach(cv => {
-      cv.style.width = `${w}px`;
-      cv.style.height = `${h}px`;
+      if (cv.classList?.contains('pdf-canvas')
+          || cv.classList?.contains('page-preview-canvas')) {
+        applyContinuousPageSurfaceLayout(cv, 'continuous-zoom-preview');
+      } else {
+        cv.style.width = `${w}px`;
+        cv.style.height = `${h}px`;
+      }
     });
   });
   container.scrollTop = Math.max(0, targetY);

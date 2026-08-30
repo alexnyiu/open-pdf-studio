@@ -504,10 +504,12 @@ async function ocrGeometry(mode = 'single') {
       layer: layer.rect,
       layerMatches: layer.matchCount,
       layerDataset: layer.dataset,
+      canvasDataset: canvas.dataset,
       page: pageRect,
       normalized,
       viewport,
       layerStyle: layer.inlineStyle,
+      canvasStyle: canvas.inlineStyle,
       spanStyle: settledSpan.inlineStyle,
     };
     return sameLayerSnapshot && layerAligned
