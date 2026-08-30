@@ -49,6 +49,76 @@ export function planContinuousRenderOverscan({
   });
 }
 
+function normalizedPages(pages) {
+  return [...new Set((pages || [])
+    .map(Number)
+    .filter((pageNum) => Number.isSafeInteger(pageNum) && pageNum > 0))];
+}
+
+/**
+ * Keep a bounded hysteresis window around the pages selected by the current
+ * overscan calculation. Only already-mounted pages are retained, so this does
+ * not create speculative DOM or raster work; it prevents a one-frame shift in
+ * the virtual window from throwing away pixels that a small reverse scroll is
+ * likely to need again.
+ */
+export function planContinuousMountRetention({
+  wantedPages = [],
+  mountedPages = [],
+  centerPage = 1,
+  maxPages = 9,
+  retainMounted = true,
+} = {}) {
+  const wanted = normalizedPages(wantedPages);
+  if (!retainMounted) return Object.freeze(wanted);
+  const capacity = Math.max(wanted.length, Math.max(1, Number(maxPages) || 9));
+  const kept = new Set(wanted);
+  if (kept.size >= capacity) return Object.freeze([...kept]);
+
+  const lower = wanted.length ? Math.min(...wanted) : Number(centerPage) || 1;
+  const upper = wanted.length ? Math.max(...wanted) : lower;
+  const center = Number(centerPage) || lower;
+  const distanceFromWanted = (pageNum) => (
+    pageNum < lower ? lower - pageNum : pageNum > upper ? pageNum - upper : 0
+  );
+  const candidates = normalizedPages(mountedPages)
+    .filter((pageNum) => !kept.has(pageNum))
+    .sort((left, right) => (
+      distanceFromWanted(left) - distanceFromWanted(right)
+      || Math.abs(left - center) - Math.abs(right - center)
+      || left - right
+    ));
+  for (const pageNum of candidates) {
+    if (kept.size >= capacity) break;
+    kept.add(pageNum);
+  }
+  return Object.freeze([...kept]);
+}
+
+/**
+ * A scroll should promote the visible render plus one already-mounted page in
+ * the direction of travel. Promoting that look-ahead job prevents generic
+ * foreground-activity cancellation from discarding the exact raster the next
+ * scroll frame is about to expose.
+ */
+export function continuousScrollRenderRetentionPages({
+  strictlyVisiblePages = [],
+  mountedPages = [],
+  direction = 1,
+} = {}) {
+  const visible = normalizedPages(strictlyVisiblePages).sort((left, right) => left - right);
+  const retained = new Set(visible);
+  if (!visible.length) return Object.freeze([]);
+  const mounted = normalizedPages(mountedPages).filter((pageNum) => !retained.has(pageNum));
+  const forward = direction < 0 ? -1 : 1;
+  const edge = forward > 0 ? visible.at(-1) : visible[0];
+  const lookAhead = mounted
+    .filter((pageNum) => forward > 0 ? pageNum > edge : pageNum < edge)
+    .sort((left, right) => Math.abs(left - edge) - Math.abs(right - edge))[0];
+  if (lookAhead) retained.add(lookAhead);
+  return Object.freeze([...retained]);
+}
+
 export function continuousRenderJobKey({
   documentId,
   lifecycleGeneration,

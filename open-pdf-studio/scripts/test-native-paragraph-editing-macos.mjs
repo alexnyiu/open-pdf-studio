@@ -863,18 +863,19 @@ try {
     assert.ok(Math.abs(realRelativeAfterScroll.top - realRelativeBeforeScroll.top) <= 0.5,
       `real PDF editor drifted vertically while scrolling: ${JSON.stringify({ realRelativeBeforeScroll, realRelativeAfterScroll })}`);
 
-    await callTool('app_set_view_mode', { mode: 'single' });
-    await waitUi('.pdf-text-editor', (value) => (
-      value.found && value.visible && value.focused
-        && value.pageTextEditHost?.attached && value.pageTextEditHost?.page === '3'
-        && value.pageTextEditHost?.parentId === 'canvas-container'
-    ), 30_000);
     const realZoom = await callTool('app_set_zoom', { scale: 1.35 });
     assert.equal(realZoom.ok, true, realZoom.error);
     const realViewBeforeClickAway = await waitUntil('real PDF pre-save zoom', async () => {
       const viewport = await callTool('app_get_viewport_state');
-      return Math.abs(Number(viewport.viewport?.zoom) - 1.35) <= 0.001 ? viewport : null;
+      return viewport.doc?.viewMode === 'continuous'
+        && Math.abs(Number(viewport.doc?.scale) - 1.35) <= 0.001
+        && Number(viewport.container?.scrollTop) > 0 ? viewport : null;
     }, 30_000);
+    await waitUi('.pdf-text-editor', (value) => (
+      value.found && value.visible && value.focused
+        && value.pageTextEditHost?.attached && value.pageTextEditHost?.page === '3'
+        && String(value.pageTextEditHost?.parentClass).includes('canvas-container-cont')
+    ), 30_000);
     const realReplacement = [
       'EUV (extreme ultraviolet lithography; advanced chip-printing technology',
       'used for leading-edge semiconductors)/High-NA (high numerical',
@@ -981,18 +982,24 @@ try {
     assert.equal(realSettledViewAfterClickAway.doc?.lifecycleGeneration,
       realViewBeforeClickAway.doc?.lifecycleGeneration,
       'click-away save replaced the live PDF document lifecycle');
-    for (const field of ['zoom', 'offsetX', 'offsetY']) {
-      assert.ok(Math.abs(
-        Number(realSettledViewAfterClickAway.viewport?.[field])
-          - Number(realViewBeforeClickAway.viewport?.[field]),
-      ) <= 0.01, `click-away save changed viewport ${field}`);
-    }
+    assert.ok(Math.abs(
+      Number(realSettledViewAfterClickAway.doc?.scale)
+        - Number(realViewBeforeClickAway.doc?.scale),
+    ) <= 0.001, 'click-away save changed continuous zoom');
     for (const field of ['scrollLeft', 'scrollTop']) {
       assert.ok(Math.abs(
         Number(realSettledViewAfterClickAway.container?.[field])
           - Number(realViewBeforeClickAway.container?.[field]),
       ) <= 0.5, `click-away save changed container ${field}`);
     }
+    assert.ok(
+      ['restored', 'unchanged'].includes(
+        realSettledViewAfterClickAway.lastTextClickAwayViewportRestore?.status,
+      ),
+      `click-away viewport guard did not retain the continuous view: ${JSON.stringify(
+        realSettledViewAfterClickAway.lastTextClickAwayViewportRestore,
+      )}`,
+    );
 
     await closeActiveTab();
     await openPdf(realWorkingPdf);
@@ -1044,6 +1051,8 @@ try {
       viewBeforeClickAway: realViewBeforeClickAway,
       viewAfterClickAway: realViewAfterClickAway,
       settledViewAfterClickAway: realSettledViewAfterClickAway,
+      clickAwayViewportRestore:
+        realSettledViewAfterClickAway.lastTextClickAwayViewportRestore,
       clickAwayTarget: realClickAway.target || null,
       clickAwayCreatedUndoUnit: realUndoAfterClickAway.disabled === false,
       clickAwayScreenshot: path.relative(path.dirname(reportPath), realClickAwayScreenshotPath),

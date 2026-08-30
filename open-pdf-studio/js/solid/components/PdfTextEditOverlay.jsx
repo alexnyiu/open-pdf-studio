@@ -85,6 +85,11 @@ import {
 import { acquirePageLease, releasePageLease } from '../../pdf/page-lease-registry.js';
 import { showMessage } from '../../bridge.js';
 import { committedTextSaveFailureMayNotify } from '../../pdf/save-state.js';
+import { getActiveDocument, getDocumentById } from '../../core/state.js';
+import {
+  captureTextEditViewportGuard,
+  restoreTextEditViewportGuard,
+} from '../../text/text-edit-viewport-guard.js';
 
 async function observeCommittedTextPersistence(documentId, documentGeneration) {
   const [{ scheduleCommittedTextEditSave }, stateModule] = await Promise.all([
@@ -969,6 +974,13 @@ export default function PdfTextEditOverlay() {
     }
     const ownerDocumentId = session.ownerDocumentId;
     const ownerDocumentGeneration = session.ownerDocumentGeneration;
+    const viewportGuard = captureTextEditViewportGuard({
+      documentState: getDocumentById(ownerDocumentId),
+      activeDocument: getActiveDocument(),
+      scrollContainer: document.getElementById('pdf-container'),
+      sessionId,
+      mountGeneration: editorMountGeneration(),
+    });
     const refocusCurrentSession = () => queueMicrotask(() => {
       if (active() && getActiveTextEditSession()?.sessionId === sessionId) {
         (richEditorRef || textareaRef)?.focus?.({ preventScroll: true });
@@ -982,6 +994,18 @@ export default function PdfTextEditOverlay() {
         await settleCapturedGesture();
         window.__lastTextApplyResult = result;
         const interactionCompleted = result?.status === 'applied' || result?.status === 'noop';
+        if (interactionCompleted) {
+          const owner = getDocumentById(ownerDocumentId);
+          const viewportRestore = restoreTextEditViewportGuard(viewportGuard, {
+            documentState: owner,
+            activeDocument: getActiveDocument(),
+            scrollContainer: document.getElementById('pdf-container'),
+            currentSessionId: getActiveTextEditSession()?.sessionId || null,
+            currentMountGeneration: editorMountGeneration(),
+          });
+          window.__lastTextClickAwayViewportRestore = viewportRestore;
+          if (owner) owner.textEditViewportRestore = viewportRestore;
+        }
         if (interactionCompleted && capturedIntent) {
           try {
             const stateModule = await import('../../core/state.js');

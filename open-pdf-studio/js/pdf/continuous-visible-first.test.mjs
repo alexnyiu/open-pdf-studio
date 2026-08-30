@@ -57,7 +57,8 @@ test('production scroll velocity feeds adaptive look-ahead and pauses only backg
   assert.match(scroll, /scrollVelocityPxPerMs/u);
   assert.match(scroll, /_continuousPreviewScheduler\.noteInteraction/u);
   assert.match(scroll, /_continuousRenderScheduler\.noteInteraction/u);
-  assert.match(scroll, /preserveVisible/u);
+  assert.match(scroll, /continuousScrollRenderRetentionPages/u);
+  assert.match(scroll, /preserveUsefulRender/u);
 });
 
 test('initial continuous readiness pages are protected before the virtual window is mounted', () => {

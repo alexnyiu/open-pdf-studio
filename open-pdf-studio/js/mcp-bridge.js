@@ -1216,6 +1216,9 @@ async function handleGetViewportState() {
     lastTextApplyResult: window.__lastTextApplyResult
       ? { ...window.__lastTextApplyResult }
       : null,
+    lastTextClickAwayViewportRestore: window.__lastTextClickAwayViewportRestore
+      ? { ...window.__lastTextClickAwayViewportRestore }
+      : null,
     lastTextPublicationResult: window.__lastTextPublicationResult
       ? { ...window.__lastTextPublicationResult }
       : null,

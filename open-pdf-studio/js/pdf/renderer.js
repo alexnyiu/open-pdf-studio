@@ -37,7 +37,9 @@ import {
 import { createRenderWorkScheduler } from './render-work-scheduler.js';
 import {
   CONTINUOUS_RENDER_LANES,
+  continuousScrollRenderRetentionPages,
   continuousRenderJobKey,
+  planContinuousMountRetention,
   planContinuousRenderOverscan,
 } from './continuous-render-lanes.js';
 import { notePdfForegroundActivity, isPdfForegroundIdle } from './foreground-activity.js';
@@ -2857,7 +2859,18 @@ function _updateContinuousVirtualWindow({
     maxPages: Math.max(9, protectedPages.length + 9),
     protectedPages,
   });
-  const wantedSet = new Set(wanted);
+  const retainedMountPages = planContinuousMountRetention({
+    wantedPages: wanted,
+    mountedPages: [...mounted.keys()],
+    centerPage,
+    maxPages: Math.max(9, protectedPages.length + 9),
+    // A force rebuild (zoom, rotation, proxy transition) must not retain a
+    // surface whose geometry or pixels belong to the previous renderer state.
+    // Ordinary scrolling gets bounded hysteresis while memory pressure still
+    // contracts immediately to the current overscan window.
+    retainMounted: !force && backgroundRenderAdmissionAllowed(),
+  });
+  const retainedMountSet = new Set(retainedMountPages);
   const strictlyVisible = new Set(index.visiblePages({
     scrollTop: scrollContainer.scrollTop,
     viewportHeight: scrollContainer.clientHeight,
@@ -2869,7 +2882,7 @@ function _updateContinuousVirtualWindow({
   }));
 
   for (const [pageNum, wrapper] of mounted) {
-    if (wantedSet.has(pageNum)) continue;
+    if (retainedMountSet.has(pageNum)) continue;
     _releaseContinuousWrapper(pageNum, wrapper);
     mounted.delete(pageNum);
   }
@@ -2944,6 +2957,7 @@ function _updateContinuousVirtualWindow({
   recordPerformancePeak('mountedPageSurfaces', mounted.size);
   return Object.freeze({
     wanted: Object.freeze([...wanted]),
+    retained: Object.freeze([...retainedMountPages]),
     strictlyVisible: Object.freeze([...strictlyVisible]),
     centerPage,
     overscan,
@@ -3547,9 +3561,14 @@ function _bindContinuousScrollSync() {
     notePerformanceInteraction('continuous-scroll', handlerStartedAt);
     notePdfForegroundActivity('continuous-scroll');
     const strictlyVisibleNow = _strictlyVisibleContinuousPageSet(doc);
-    const preserveVisible = (entry) => strictlyVisibleNow.has(Number(entry.pageNum));
-    _continuousRenderScheduler.noteInteraction(250, { preserve: preserveVisible });
-    _continuousPreviewScheduler.noteInteraction(250, { preserve: preserveVisible });
+    const retainedRenderPages = new Set(continuousScrollRenderRetentionPages({
+      strictlyVisiblePages: [...strictlyVisibleNow],
+      mountedPages: [...(_continuousWindow?.mounted?.keys?.() || [])],
+      direction,
+    }));
+    const preserveUsefulRender = (entry) => retainedRenderPages.has(Number(entry.pageNum));
+    _continuousRenderScheduler.noteInteraction(250, { preserve: preserveUsefulRender });
+    _continuousPreviewScheduler.noteInteraction(250, { preserve: preserveUsefulRender });
     if (_continuousSettleTimer) clearTimeout(_continuousSettleTimer);
     _continuousSettleTimer = setTimeout(() => {
       _continuousSettleTimer = null;

@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
   CONTINUOUS_RENDER_LANES,
+  continuousScrollRenderRetentionPages,
   continuousRenderJobKey,
+  planContinuousMountRetention,
   planContinuousRenderOverscan,
 } from './continuous-render-lanes.js';
 
@@ -57,4 +60,49 @@ test('render work keys isolate page revision, scale, and quality lanes', () => {
   });
   assert.notEqual(preview, full);
   assert.match(preview, /doc-a:2:5:7:visible-preview/u);
+});
+
+test('mount retention reuses the nearest settled pages without exceeding the surface cap', () => {
+  assert.deepEqual(planContinuousMountRetention({
+    wantedPages: [10, 11, 12],
+    mountedPages: [6, 7, 8, 9, 10, 11, 12, 13, 20],
+    centerPage: 11,
+    maxPages: 6,
+  }), [10, 11, 12, 9, 13, 8]);
+
+  assert.deepEqual(planContinuousMountRetention({
+    wantedPages: [10, 11],
+    mountedPages: [8, 9, 10, 11, 12],
+    centerPage: 10,
+    maxPages: 9,
+    retainMounted: false,
+  }), [10, 11]);
+});
+
+test('scroll interaction preserves visible work and one mounted page in the travel direction', () => {
+  assert.deepEqual(continuousScrollRenderRetentionPages({
+    strictlyVisiblePages: [4, 5],
+    mountedPages: [2, 3, 4, 5, 6, 7],
+    direction: 1,
+  }), [4, 5, 6]);
+  assert.deepEqual(continuousScrollRenderRetentionPages({
+    strictlyVisiblePages: [4, 5],
+    mountedPages: [2, 3, 4, 5, 6, 7],
+    direction: -1,
+  }), [4, 5, 3]);
+});
+
+test('continuous renderer applies mount hysteresis and promotes directional work on scroll', async () => {
+  const source = await readFile(new URL('./renderer.js', import.meta.url), 'utf8');
+  const retentionAt = source.indexOf('const retainedMountPages = planContinuousMountRetention({');
+  const releaseAt = source.indexOf('for (const [pageNum, wrapper] of mounted)', retentionAt);
+  const scrollRetentionAt = source.indexOf(
+    'const retainedRenderPages = new Set(continuousScrollRenderRetentionPages({',
+  );
+  const schedulerAt = source.indexOf(
+    '_continuousRenderScheduler.noteInteraction(250, { preserve: preserveUsefulRender });',
+    scrollRetentionAt,
+  );
+  assert.ok(retentionAt >= 0 && retentionAt < releaseAt);
+  assert.ok(scrollRetentionAt >= 0 && scrollRetentionAt < schedulerAt);
 });
