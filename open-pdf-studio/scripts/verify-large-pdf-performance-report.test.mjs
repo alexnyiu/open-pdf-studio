@@ -9,7 +9,13 @@ function passingReport() {
     schemaVersion: 2,
     head: 'abc',
     packagedApp: { executablePath: '/tmp/Open PDF Studio' },
-    fixture: { pageCount: 108, sha256: 'a'.repeat(64) },
+    fixture: {
+      controlled: true,
+      file: 'lightweight-500.pdf',
+      pageCount: 500,
+      manifestSchemaVersion: 2,
+      sha256: 'a'.repeat(64),
+    },
     provenance: { execution: 'packaged-production-ui', realClock: true, stateSeeding: false },
     metrics: {
       largeDocument: true,
@@ -71,4 +77,12 @@ test('large-PDF performance evaluator fails a slow first visible preview', () =>
   const result = evaluateLargePdfPerformanceReport(report);
   assert.equal(result.status, 'FAIL');
   assert.ok(result.failures.includes('strictlyVisibleFirstPreview'));
+});
+
+test('large-PDF performance evaluator rejects the retired uploaded 108-page identity', () => {
+  const report = passingReport();
+  report.fixture = { pageCount: 108, sha256: 'a'.repeat(64) };
+  const result = evaluateLargePdfPerformanceReport(report);
+  assert.equal(result.status, 'FAIL');
+  assert.ok(result.failures.includes('fixtureIdentity'));
 });

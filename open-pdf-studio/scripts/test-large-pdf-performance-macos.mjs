@@ -89,6 +89,33 @@ async function sha256(filePath) {
   return createHash('sha256').update(await readFile(filePath)).digest('hex');
 }
 
+async function controlledFixtureIdentity(pdfPath) {
+  const manifestPath = path.join(path.dirname(pdfPath), 'manifest.json');
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const file = path.basename(pdfPath);
+  const entry = manifest?.fixtures?.find((fixture) => fixture.file === file);
+  if (manifest?.schemaVersion !== 2 || !entry) {
+    throw new Error(`controlled large-PDF fixture identity is missing for ${file}`);
+  }
+  const information = await stat(pdfPath);
+  const digest = await sha256(pdfPath);
+  if (file !== 'lightweight-500.pdf' || entry.pageCount !== 500
+      || entry.bytes !== information.size || entry.sha256 !== digest) {
+    throw new Error(`controlled 500-page fixture does not match its manifest: ${file}`);
+  }
+  return {
+    path: pdfPath,
+    manifestPath,
+    manifestSchemaVersion: manifest.schemaVersion,
+    file,
+    controlled: true,
+    committed: false,
+    bytes: information.size,
+    sha256: digest,
+    pageCount: entry.pageCount,
+  };
+}
+
 async function bundleIdentity(appBundle) {
   const executablePath = path.join(appBundle, 'Contents', 'MacOS', 'open-pdf-studio');
   const plistPath = path.join(appBundle, 'Contents', 'Info.plist');
@@ -126,7 +153,10 @@ function sample(metrics, name, field = 'p95') {
 async function runOnce(options) {
   const outputDir = path.dirname(options.outputPath);
   const executablePath = path.join(options.appBundle, 'Contents', 'MacOS', 'open-pdf-studio');
-  const fixtureStat = await stat(options.pdfPath);
+  const fixture = await controlledFixtureIdentity(options.pdfPath);
+  const lastPage = fixture.pageCount;
+  const middlePage = Math.ceil(lastPage / 2);
+  const maximumTraversalEvents = Math.max(150, lastPage);
   await Promise.all([access(options.appBundle), access(executablePath), mkdir(outputDir, { recursive: true })]);
   const reportBase = {
     contract: 'open-pdf-studio.large-pdf-performance',
@@ -136,13 +166,7 @@ async function runOnce(options) {
     generatedAt: new Date().toISOString(),
     platform: { os: process.platform, architecture: process.arch },
     packagedApp: await bundleIdentity(options.appBundle),
-    fixture: {
-      path: options.pdfPath,
-      committed: false,
-      bytes: fixtureStat.size,
-      sha256: await sha256(options.pdfPath),
-      pageCount: null,
-    },
+    fixture,
     provenance: {
       execution: 'packaged-production-ui',
       realClock: true,
@@ -245,9 +269,9 @@ async function runOnce(options) {
     const initial = await waitUntil('uploaded PDF and performance profile', async () => {
       const viewport = await callTool('app_get_viewport_state');
       return viewport.doc?.filePath === options.pdfPath
-        && viewport.pageCount === 108
+        && viewport.pageCount === lastPage
         && viewport.performanceProfile?.largeDocument === true
-        && viewport.pageGeometry?.pages === 108
+        && viewport.pageGeometry?.pages === lastPage
         ? viewport : null;
     }, 90_000);
     const coldOpenMs = now() - coldOpenStartedAt;
@@ -257,7 +281,7 @@ async function runOnce(options) {
     // Single-page direct jumps use the production navigation path and prove
     // that virtualization does not change random access.
     const singleMode = { jumps: [] };
-    for (const page of [54, 108, 1]) {
+    for (const page of [middlePage, lastPage, 1]) {
       const startedAt = now();
       const result = await callTool('app_go_to_page', { page });
       assert.equal(result.ok, true, result.error);
@@ -288,8 +312,8 @@ async function runOnce(options) {
     await waitForRenderIdle('initial continuous render');
     await sampleRss('continuous-initial-settled');
 
-    // Page 3 contains the supplied ASML/EUV paragraph and is also a stable
-    // small-text sharpness target. Capture the actual mounted raster and a
+    // Page 3 contains deterministic vector text and is a stable sharpness
+    // target. Capture the actual mounted raster and a
     // direct PDFium render at exactly the same pixel width.
     await callTool('app_go_to_page', { page: 3 });
     await waitForRenderIdle('page 3 sharp render');
@@ -332,21 +356,21 @@ async function runOnce(options) {
     const scrollX = scrollViewport.container.left + scrollViewport.container.width / 2;
     const scrollY = scrollViewport.container.top + scrollViewport.container.height / 2;
     let scrollEvents = 0;
-    for (let index = 0; index < 150; index += 1) {
+    for (let index = 0; index < maximumTraversalEvents; index += 1) {
       await callTool('app_scroll', { x: scrollX, y: scrollY, dy: 1_400 });
       scrollEvents += 1;
       if (index % 10 === 0) {
         scrollViewport = await callTool('app_get_viewport_state');
         await sampleRss(`scroll-down-${scrollViewport.doc?.currentPage || index}`);
-        if (scrollViewport.doc?.currentPage === 108) break;
+        if (scrollViewport.doc?.currentPage === lastPage) break;
       }
       await delay(4);
     }
     await waitUntil('bottom page selection', async () => {
       const viewport = await callTool('app_get_viewport_state');
-      return viewport.doc?.currentPage === 108 ? viewport : null;
+      return viewport.doc?.currentPage === lastPage ? viewport : null;
     });
-    for (let index = 0; index < 150; index += 1) {
+    for (let index = 0; index < maximumTraversalEvents; index += 1) {
       await callTool('app_scroll', { x: scrollX, y: scrollY, dy: -1_400 });
       scrollEvents += 1;
       if (index % 10 === 0) {
@@ -367,17 +391,17 @@ async function runOnce(options) {
 
     // Repeat the complete traversal in the same process. The second pass is
     // the leak/regrowth gate; it may retain at most 32 MiB after settling.
-    for (let index = 0; index < 150; index += 1) {
+    for (let index = 0; index < maximumTraversalEvents; index += 1) {
       await callTool('app_scroll', { x: scrollX, y: scrollY, dy: 1_400 });
       if (index % 10 === 0
-          && (await callTool('app_get_viewport_state')).doc?.currentPage === 108) break;
+          && (await callTool('app_get_viewport_state')).doc?.currentPage === lastPage) break;
       await delay(4);
     }
     await waitUntil('second traversal bottom page', async () => {
       const viewport = await callTool('app_get_viewport_state');
-      return viewport.doc?.currentPage === 108 ? viewport : null;
+      return viewport.doc?.currentPage === lastPage ? viewport : null;
     });
-    for (let index = 0; index < 150; index += 1) {
+    for (let index = 0; index < maximumTraversalEvents; index += 1) {
       await callTool('app_scroll', { x: scrollX, y: scrollY, dy: -1_400 });
       if (index % 10 === 0
           && (await callTool('app_get_viewport_state')).doc?.currentPage === 1) break;
@@ -398,7 +422,7 @@ async function runOnce(options) {
 
     // Start the zoom capture from a stable, rendered middle page. A stream of
     // small pixel-wheel deltas represents macOS precision-trackpad input.
-    await callTool('app_go_to_page', { page: 54 });
+    await callTool('app_go_to_page', { page: middlePage });
     await delay(300);
     await waitForRenderIdle('middle-page render');
     const zoomReset = await callTool('app_reset_performance_metrics', { observeLongTasks: true });

@@ -23,8 +23,12 @@ export function evaluateLargePdfPerformanceReport(report) {
     requirement,
   });
   const criteria = [
-    threshold('fixtureIdentity', report?.fixture?.pageCount === 108
-      && /^[0-9a-f]{64}$/u.test(report?.fixture?.sha256 || ''), report?.fixture, 'uploaded 108-page PDF with SHA-256'),
+    threshold('fixtureIdentity', report?.fixture?.controlled === true
+      && report?.fixture?.file === 'lightweight-500.pdf'
+      && report?.fixture?.pageCount === 500
+      && report?.fixture?.manifestSchemaVersion === 2
+      && /^[0-9a-f]{64}$/u.test(report?.fixture?.sha256 || ''), report?.fixture,
+    'controlled manifest-verified 500-page PDF with SHA-256'),
     threshold('largeDocumentClassification', metrics.largeDocument === true, metrics.largeDocument, 'true'),
     threshold('scrollHandlerP95Ms', finite(metrics.scrollHandlerP95Ms) && metrics.scrollHandlerP95Ms < 4,
       metrics.scrollHandlerP95Ms, '< 4 ms'),
