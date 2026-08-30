@@ -215,6 +215,20 @@ export function richTextFromPlainText(text, style = {}, region = {}) {
   })), region);
 }
 
+/** Map a live root-text selection prefix back into one canonical rich-text point. */
+export function richTextPointFromPlainTextPrefix(document, prefix) {
+  if (!document?.lines?.length) return null;
+  const normalized = String(prefix ?? '').replaceAll('\u200b', '').replaceAll('\r', '');
+  const plainLines = normalized.split('\n');
+  const line = Math.min(plainLines.length - 1, document.lines.length - 1);
+  const lineLength = document.lines[line].runs
+    .reduce((sum, run) => sum + graphemeLength(run.text), 0);
+  return {
+    line,
+    offset: Math.min(graphemeLength(plainLines.at(-1) || ''), lineLength),
+  };
+}
+
 export function richTextToPlainText(document) {
   assertRichTextDocumentV2(document);
   return document.lines.map((line, index) => {

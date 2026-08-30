@@ -17,6 +17,7 @@ import {
   graphemeLength,
   replaceTextRange,
   richTextInsertionContext,
+  richTextPointFromPlainTextPrefix,
   shouldInsertRichHardBreak,
 } from '../../text/rich-text.js';
 import { shapeRichTextDocument } from '../../text/font-catalog.js';
@@ -1388,7 +1389,14 @@ export default function PdfTextEditOverlay() {
     // document instead of reusing a stale caret selection.
     if (node === richEditorRef) {
       const lineElements = [...richEditorRef.querySelectorAll(':scope > [data-rich-line-index]')];
-      if (lineElements.length === 0) return null;
+      if (lineElements.length === 0) {
+        const range = document.createRange();
+        range.setStart(richEditorRef, 0);
+        try {
+          range.setEnd(richEditorRef, Math.min(offset, richEditorRef.childNodes.length));
+        } catch { return null; }
+        return richTextPointFromPlainTextPrefix(richTextDocument(), range.toString());
+      }
       if (offset <= 0) {
         return { line: Number(lineElements[0].dataset.richLineIndex), offset: 0 };
       }
@@ -1398,6 +1406,12 @@ export default function PdfTextEditOverlay() {
         line: Number(line.dataset.richLineIndex),
         offset: Math.max(0, graphemeOffsets.length - 1),
       };
+    }
+    if (node.nodeType === Node.TEXT_NODE && node.parentElement === richEditorRef) {
+      const range = document.createRange();
+      range.setStart(richEditorRef, 0);
+      try { range.setEnd(node, offset); } catch { return null; }
+      return richTextPointFromPlainTextPrefix(richTextDocument(), range.toString());
     }
     const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
     const line = element?.closest?.('[data-rich-line-index]');

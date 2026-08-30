@@ -16,10 +16,25 @@ import {
   replaceTextRange,
   richTextInsertionContext,
   richTextFromPlainText,
+  richTextPointFromPlainTextPrefix,
   richTextToPlainText,
   shouldInsertRichHardBreak,
   textFormatState,
 } from './rich-text.js';
+
+test('root contenteditable text selections map to canonical lines and graphemes', () => {
+  const document = richTextFromPlainText('first\nsecond \ud83e\udd8a', { size: 12 });
+  assert.deepEqual(richTextPointFromPlainTextPrefix(document, 'first'), { line: 0, offset: 5 });
+  assert.deepEqual(richTextPointFromPlainTextPrefix(document, 'first\n'), { line: 1, offset: 0 });
+  assert.deepEqual(richTextPointFromPlainTextPrefix(document, 'first\nsecond \ud83e\udd8a'), {
+    line: 1,
+    offset: 8,
+  });
+  assert.deepEqual(richTextPointFromPlainTextPrefix(document, 'first\nsecond \ud83e\udd8a extra'), {
+    line: 1,
+    offset: 8,
+  });
+});
 
 const normal = {
   faceId: 'liberation-sans-regular',
