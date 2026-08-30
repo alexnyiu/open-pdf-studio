@@ -345,10 +345,10 @@ test('persistent undo commands schedule readiness rebuilding for their new revis
 
 test('rotation recording does not publish the already-rendered mutation twice', async () => {
   const undoSource = await readFile(new URL('../core/undo-manager.js', import.meta.url), 'utf8');
-  const recorderStart = undoSource.indexOf('export function recordPageRotation');
+  const recorderStart = undoSource.indexOf('export function recordPageRotationForDocument');
   const recorderEnd = undoSource.indexOf('\n}\n', recorderStart);
   const recorder = undoSource.slice(recorderStart, recorderEnd);
-  assert.match(recorder, /executeForDocument\(getActiveDocument\(\),/u);
+  assert.match(recorder, /executeForDocument\(documentState,/u);
   assert.match(recorder, /\{ noteRevision: false \}\)/u);
 
   const rendererSource = await readFile(new URL('./renderer.js', import.meta.url), 'utf8');
@@ -365,6 +365,11 @@ test('rotation recording does not publish the already-rendered mutation twice', 
     rotation.indexOf('noteDocumentMutation(doc,')
       < rotation.indexOf('rebuildDocumentPageGeometryIndex(doc)'),
     'rotation geometry must be stamped after the content revision advances',
+  );
+  assert.ok(
+    rotation.indexOf('recordPageRotationForDocument(doc,')
+      < rotation.indexOf('await renderPage(pageNum'),
+    'rotation history must publish before a later user action can overtake its awaited render',
   );
   assert.match(
     rotation,

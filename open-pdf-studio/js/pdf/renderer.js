@@ -1,4 +1,5 @@
 import { state, getActiveDocument, getPageRotation, setPageRotation } from '../core/state.js';
+import { recordPageRotationForDocument } from '../core/undo-manager.js';
 import { isTauri, invoke } from '../core/platform.js';
 // Always-fresh DOM refs (never stale regardless of init timing or bundler behavior)
 function getPdfCanvas() { return document.getElementById('pdf-canvas'); }
@@ -4607,6 +4608,7 @@ export async function rotatePage(delta, targetPage) {
   const rotationRevision = noteDocumentMutation(
     doc, { pages: [pageNum], reason: 'page:rotate' },
   );
+  recordPageRotationForDocument(doc, pageNum, current, getPageRotation(pageNum));
   rebuildDocumentPageGeometryIndex(doc);
 
   // Re-render

@@ -893,17 +893,24 @@ export function recordModify(annotationId, oldState, newState) {
   });
 }
 
-export function recordPageRotation(pageNum, oldRotation, newRotation) {
+export function recordPageRotationForDocument(documentState, pageNum, oldRotation, newRotation) {
   // rotatePage() has already published the persistent content mutation before
-  // its awaited render. This recorder only adds the already-applied rotation
-  // to the undo stack; publishing it again would clear the fresh readiness
-  // barrier and start a competing render for a second content revision.
-  executeForDocument(getActiveDocument(), {
+  // its awaited render. Record the already-applied rotation synchronously at
+  // that mutation boundary so a later user action cannot appear below it in
+  // history. Publishing it again would clear the fresh readiness barrier and
+  // start a competing render for a second content revision.
+  return executeForDocument(documentState, {
     type: 'rotatePage',
     pageNum,
     oldRotation,
     newRotation
   }, { noteRevision: false });
+}
+
+export function recordPageRotation(pageNum, oldRotation, newRotation) {
+  return recordPageRotationForDocument(
+    getActiveDocument(), pageNum, oldRotation, newRotation,
+  );
 }
 
 export function recordDocumentMetadata(oldState, newState) {

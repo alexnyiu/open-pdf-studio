@@ -1,5 +1,5 @@
-import { state, getActiveDocument, getPageRotation, selectAllOnPage, clearSelection } from '../core/state.js';
-import { undo, redo, recordAdd, recordBulkDelete, recordDelete, recordModify, recordBulkModify, recordClearPage, recordPageRotation } from '../core/undo-manager.js';
+import { state, getActiveDocument, selectAllOnPage, clearSelection } from '../core/state.js';
+import { undo, redo, recordAdd, recordBulkDelete, recordDelete, recordModify, recordBulkModify, recordClearPage } from '../core/undo-manager.js';
 import { setTool } from './manager.js';
 import { showPreferencesDialog, setAsDefaultStyle } from '../core/preferences.js';
 import { getAnnotationType } from '../plugins/annotation-type-registry.js';
@@ -43,16 +43,10 @@ function redraw() {
 // Paginarotatie via sneltoets. Zelfde undo-bare pad als de draaiknoppen op de
 // tabbladen Beeld en Organiseren: rotatie toepassen en de oude/nieuwe stand
 // vastleggen zodat Ctrl+Z hem terugdraait.
-// rotatePage() is async en zet de nieuwe stand pas NA een await, dus de
-// nieuwe waarde moet awaited uitgelezen worden — anders legt de undo-stap
-// oud==nieuw vast en doet Ctrl+Z niets.
 async function rotateCurrentPageBy(delta) {
   const doc = getActiveDocument();
   if (!doc) return;
-  const pg = doc.currentPage || 1;
-  const oldRot = getPageRotation(pg);
   await rotatePage(delta);
-  recordPageRotation(pg, oldRot, getPageRotation(pg));
 }
 
 // Live preview while TYPING a measurement: re-fire the normal pointermove
