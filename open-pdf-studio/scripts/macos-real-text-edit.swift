@@ -38,16 +38,43 @@ func axPoint(_ element: AXUIElement, _ attribute: CFString) -> CGPoint? {
     return AXValueGetValue(value, .cgPoint, &point) ? point : nil
 }
 
+func axSize(_ element: AXUIElement, _ attribute: CFString) -> CGSize? {
+    guard let rawValue = axAttribute(element, attribute),
+          CFGetTypeID(rawValue) == AXValueGetTypeID() else { return nil }
+    let value = rawValue as! AXValue
+    guard AXValueGetType(value) == .cgSize else { return nil }
+    var size = CGSize.zero
+    return AXValueGetValue(value, .cgSize, &size) ? size : nil
+}
+
 func findWebArea(_ root: AXUIElement) -> AXUIElement? {
     var queue: [AXUIElement] = [root]
     var inspected = 0
-    while !queue.isEmpty && inspected < 512 {
+    while !queue.isEmpty && inspected < 4096 {
         let element = queue.removeFirst()
         inspected += 1
         if axString(element, kAXRoleAttribute as CFString) == "AXWebArea" { return element }
         queue.append(contentsOf: axChildren(element))
     }
     return nil
+}
+
+func elementEvidence(_ element: AXUIElement?) -> [String: Any] {
+    guard let element else { return ["available": false] }
+    var evidence: [String: Any] = [
+        "available": true,
+        "role": axString(element, kAXRoleAttribute as CFString) ?? "",
+        "title": axString(element, kAXTitleAttribute as CFString) ?? "",
+        "description": axString(element, kAXDescriptionAttribute as CFString) ?? "",
+        "help": axString(element, kAXHelpAttribute as CFString) ?? "",
+    ]
+    if let position = axPoint(element, kAXPositionAttribute as CFString) {
+        evidence["position"] = ["x": position.x, "y": position.y]
+    }
+    if let size = axSize(element, kAXSizeAttribute as CFString) {
+        evidence["size"] = ["width": size.width, "height": size.height]
+    }
+    return evidence
 }
 
 func postMouseClick(_ point: CGPoint) {
@@ -140,29 +167,31 @@ guard let rawWindows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNull
 }
 
 let accessibilityApplication = AXUIElementCreateApplication(pid)
-let accessibilityWindow = axChildren(accessibilityApplication, kAXWindowsAttribute as CFString).first
-let webArea = accessibilityWindow.flatMap(findWebArea)
-let interactionOrigin = webArea.flatMap { axPoint($0, kAXPositionAttribute as CFString) }
-    // The packaged main window is borderless (`decorations: false`), so its
-    // WebView client origin is the CGWindow origin when WebKit does not expose
-    // an AXWebArea. Adding a native title-bar inset clicks below short editors.
+let accessibilityWindows = axChildren(accessibilityApplication, kAXWindowsAttribute as CFString)
+let webArea = accessibilityWindows.lazy.compactMap(findWebArea).first
+    ?? findWebArea(accessibilityApplication)
+let outerOrigin = webArea.flatMap { axPoint($0, kAXPositionAttribute as CFString) }
     ?? CGPoint(x: windowBounds.minX, y: windowBounds.minY)
-let point = CGPoint(
+// The AXWebArea and CGWindow origins both include the custom 28-point window
+// chrome. DOM client coordinates start immediately below it.
+let interactionOrigin = CGPoint(x: outerOrigin.x, y: outerOrigin.y + 28)
+let requestedPoint = CGPoint(
     x: interactionOrigin.x + number(3, "x"),
     y: interactionOrigin.y + number(4, "y")
 )
+let point = requestedPoint
 
 var payload: [String: Any] = [
     "mode": mode,
     "targetPid": pid,
     "frontmostPid": frontmostPid ?? -1,
-    "point": ["x": point.x, "y": point.y],
+    "requestedPoint": ["x": requestedPoint.x, "y": requestedPoint.y],
     "authorization": [
         "accessibilityTrusted": AXIsProcessTrusted(),
         "postEventTrusted": CGPreflightPostEventAccess(),
     ],
     "coordinateSpace": [
-        "origin": webArea == nil ? "window" : "web-area",
+        "origin": webArea == nil ? "window-plus-custom-chrome" : "web-area-plus-custom-chrome",
         "x": interactionOrigin.x,
         "y": interactionOrigin.y,
     ],
@@ -184,11 +213,21 @@ func focusedRole() -> String? {
     return axString(focused, kAXRoleAttribute as CFString)
 }
 
+
+func focusedElement() -> AXUIElement? {
+    guard let rawFocused = axAttribute(
+        accessibilityApplication,
+        kAXFocusedUIElementAttribute as CFString
+    ), CFGetTypeID(rawFocused) == AXUIElementGetTypeID() else { return nil }
+    return (rawFocused as! AXUIElement)
+}
+
 if mode == "insert" {
     guard CommandLine.arguments.count == 7 else { fail("insert requires x y offset text") }
     let offset = Int(number(5, "offset"))
     guard offset >= 0 else { fail("offset must be non-negative") }
     let text = CommandLine.arguments[6]
+    payload["point"] = ["x": point.x, "y": point.y]
     postMouseClick(point)
     eventSequence.append("physical-click-editor-point")
     usleep(100_000)
@@ -196,6 +235,7 @@ if mode == "insert" {
         fail("target application lost frontmost status after editor click")
     }
     payload["focusedAccessibilityRole"] = focusedRole() ?? NSNull()
+    payload["focusedAccessibilityElement"] = elementEvidence(focusedElement())
     postKey(0, flags: .maskCommand) // Command+A selects the current editor.
     eventSequence.append("command-a")
     postKey(123) // Left collapses the selection to the start.
@@ -216,6 +256,7 @@ if mode == "insert" {
 usleep(250_000)
 payload["frontmostPidAfterEvents"] = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1
 payload["focusedAccessibilityRoleAfterEvents"] = focusedRole() ?? NSNull()
+payload["focusedAccessibilityElementAfterEvents"] = elementEvidence(focusedElement())
 payload["eventSequence"] = eventSequence
 let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
 FileHandle.standardOutput.write(data)

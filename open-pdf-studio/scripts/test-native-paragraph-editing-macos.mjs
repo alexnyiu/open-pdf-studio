@@ -192,8 +192,14 @@ async function realTextEditorInteraction(mode, offset, insertedText) {
   ), 5_000);
   const beforeText = String(editorBefore.value ?? editorBefore.text ?? '');
   const mountGeneration = String(editorBefore.pageTextEditHost.editorMountGeneration);
-  const x = editorBefore.rect.x + Math.min(editorBefore.rect.width / 2, 120);
-  const y = editorBefore.rect.y + Math.min(editorBefore.rect.height / 4, 12);
+  const focusTarget = await waitUi(
+    '.pdf-text-editor [data-rich-line-index="0"] [data-rich-run]',
+    (value) => value.found && value.visible
+      && value.rect?.width > 2 && value.rect?.height > 2,
+    5_000,
+  );
+  const x = focusTarget.rect.x + focusTarget.rect.width / 2;
+  const y = focusTarget.rect.y + focusTarget.rect.height / 2;
   const { stdout } = await execFileAsync(realTextEditHelper, [
     String(applicationPid), mode, String(x), String(y), String(offset), String(insertedText),
   ], { maxBuffer: 1024 * 1024 });
@@ -209,6 +215,7 @@ async function realTextEditorInteraction(mode, offset, insertedText) {
     targetPid: applicationPid,
     mountGeneration,
     coordinateOrigin: result.coordinateSpace,
+    focusTarget,
     editorBefore,
     helper: result,
     editorAfter,
@@ -240,6 +247,14 @@ async function closeActiveTab() {
 async function setEditTool() {
   const result = await callTool('app_set_tool', { tool: 'editText' });
   assert.equal(result.current, 'editText');
+}
+
+async function expandRibbonForPhysicalInput() {
+  const actualSize = await ui('#actual-size-ribbon');
+  if (!actualSize.found || !actualSize.visible) {
+    await click('#ribbon-collapse-toggle');
+  }
+  await waitUi('#actual-size-ribbon', (value) => value.found && value.visible, 10_000);
 }
 
 async function openEditor(selector, expectedText, expectedPage = '1') {
@@ -382,6 +397,7 @@ try {
   applicationPid = application.processId;
   await callTool('app_set_window_size', { width: 1320, height: 900 });
   await openPdf(workingPdf);
+  await expandRibbonForPhysicalInput();
   await setEditTool();
 
   const nativeSelector = '.textLayer span[data-item-index="2"]';
@@ -466,6 +482,33 @@ try {
 
   const ownedSelector = '.textLayer span[data-owned-text-edit-hit="true"]';
   await openEditor(ownedSelector, 'Packaged first line');
+  await callTool('app_set_zoom', { scale: 3 });
+  const [physicalInputViewport, physicalInputOccluder] = await Promise.all([
+    callTool('app_get_viewport_state'),
+    ui('#actual-size-ribbon'),
+  ]);
+  assert.ok(physicalInputOccluder.found && physicalInputOccluder.visible,
+    `physical input ribbon geometry was unavailable: ${JSON.stringify(physicalInputOccluder)}`);
+  const physicalInputScroll = await callTool('app_scroll', {
+    x: Math.round(physicalInputViewport.container.left + physicalInputViewport.container.width / 2),
+    y: Math.round(physicalInputViewport.container.top + physicalInputViewport.container.height / 2),
+    dy: -430,
+  });
+  assert.equal(physicalInputScroll.ok, true, physicalInputScroll.error);
+  await delay(1_000);
+  const zoomedPhysicalTarget = await ui(
+    '.pdf-text-editor [data-rich-line-index="0"] [data-rich-run]',
+  );
+  assert.ok(zoomedPhysicalTarget.found && zoomedPhysicalTarget.visible
+      && zoomedPhysicalTarget.rect?.top >= physicalInputOccluder.rect.bottom + 12
+      && zoomedPhysicalTarget.rect?.bottom < physicalInputViewport.container.top
+        + physicalInputViewport.container.height - 12,
+    `physical input target was not clear of app chrome: ${JSON.stringify({
+      zoomedPhysicalTarget,
+      physicalInputOccluder,
+      physicalInputViewport,
+      physicalInputScroll,
+    })}`);
   const beforeInteriorSha256 = await sha256(workingPdf);
   const physicalInsert = await realTextEditorInteraction(
     'insert',
@@ -515,6 +558,7 @@ try {
     bytesChanged: true,
     ownedManifest: interiorManifest,
   };
+  await callTool('app_set_zoom', { scale: 1 });
 
   const unsavedReedit = await openEditor(ownedSelector, middleText);
   assert.equal(String(unsavedReedit.value ?? unsavedReedit.text).includes('Packaged second line'), true);

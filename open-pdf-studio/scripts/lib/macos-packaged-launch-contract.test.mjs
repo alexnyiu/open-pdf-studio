@@ -63,9 +63,12 @@ test('trusted insertion re-queries, clicks, verifies focus ownership, then emits
   assert.match(swiftHelper, /focusedAccessibilityRole/u);
   assert.match(swiftHelper, /eventSequence/u);
   assert.equal(JSON.parse(tauriConfiguration).app.windows[0].decorations, false);
-  assert.match(
-    swiftHelper,
-    /\?\? CGPoint\(x: windowBounds\.minX, y: windowBounds\.minY\)/u,
-  );
-  assert.doesNotMatch(swiftHelper, /windowBounds\.minY\s*\+/u);
+  assert.match(interaction, /\.pdf-text-editor \[data-rich-line-index=/u);
+  assert.match(interaction, /focusTarget\.rect\.x \+ focusTarget\.rect\.width \/ 2/u);
+  assert.match(swiftHelper, /outerOrigin\.y \+ 28/u);
+  assert.match(producer, /expandRibbonForPhysicalInput/u);
+  assert.match(producer, /app_set_zoom', \{ scale: 3 \}/u);
+  assert.match(producer, /physicalInputScroll.*app_scroll/u);
+  assert.match(producer, /dy: -430/u);
+  assert.match(producer, /physicalInputOccluder\.rect\.bottom \+ 12/u);
 });
