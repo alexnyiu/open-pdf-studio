@@ -993,6 +993,7 @@ async function handleGetViewportState() {
   let safeSaveProvider = null;
   let documentLoadState = null;
   let pageEditReadiness = null;
+  let pageSurfaceRegistry = null;
   let renderPublicationDiagnostics = null;
   try {
     const stateMod = await import('/js/core/state.ts');
@@ -1061,6 +1062,8 @@ async function handleGetViewportState() {
         const readinessModule = await import('/js/pdf/page-edit-readiness.js');
         pageEditReadiness = readinessModule.pageEditReadinessSnapshot(doc, activePageNum);
       }
+      const surfaceModule = await import('/js/pdf/page-surface-registry.js');
+      pageSurfaceRegistry = surfaceModule.pageSurfaceRegistrySnapshot(doc);
       documentLoadState = {
         loading: doc._isLoading === true,
         rejected: doc._loadRejected === true,
@@ -1193,6 +1196,7 @@ async function handleGetViewportState() {
     safeSaveProvider,
     documentLoadState,
     pageEditReadiness,
+    pageSurfaceRegistry,
     renderPublicationDiagnostics,
     ocrWorkflowMetrics,
     performanceProfile,

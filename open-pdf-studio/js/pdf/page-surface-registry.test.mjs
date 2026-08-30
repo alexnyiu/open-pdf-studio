@@ -90,34 +90,41 @@ test('a continuous raster image retains its page-local geometry and overlay canv
 test('text-layer replacement updates one mount and stale publication cannot advance it', () => {
   const documentState = owner();
   const container = element('page');
+  const oldTextLayer = element('old-text');
+  oldTextLayer.dataset.textLayerRequest = '3';
   const first = registerPageSurface({
     documentState,
     pageNum: 50,
     container,
     surfaceKind: 'continuous-canvas',
     baseSurface: element('base'),
-    textLayer: element('old-text'),
+    textLayer: oldTextLayer,
     canonicalPageDimensions: { width: 612, height: 792 },
     cssScale: 1,
     dpr: 2,
   });
+  const newTextLayer = element('new-text');
+  newTextLayer.dataset.textLayerRequest = '4';
   const replacement = registerPageSurface({
     documentState,
     pageNum: 50,
     container,
     surfaceKind: 'continuous-canvas',
-    textLayer: element('new-text'),
+    textLayer: newTextLayer,
   });
   assert.equal(replacement.mountGeneration, first.mountGeneration);
   assert.equal(replacement.textLayer.name, 'new-text');
   assert.equal(replacement.baseSurface.name, 'base');
 
+  oldTextLayer.isConnected = false;
   assert.equal(markPageSurfacePublication(replacement, {
     documentState,
     revision: 7,
     basePublished: true,
     semanticPublished: true,
+    textLayer: oldTextLayer,
   }), true);
+  assert.equal(resolvePageSurface(documentState, 50)?.textLayer, newTextLayer);
   documentState.revisionState.contentRevision = 8;
   documentState.revisionState.pageContentRevisions[50] = 8;
   assert.equal(markPageSurfacePublication(replacement, {

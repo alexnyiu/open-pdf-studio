@@ -56,6 +56,14 @@ function connected(surface) {
     && surface?.textLayer?.isConnected !== false;
 }
 
+function newestConnectedTextLayer(published, registered) {
+  if (!published || published.isConnected === false) return registered ?? null;
+  if (!registered || registered.isConnected === false || registered === published) return published;
+  const publishedRequest = nonNegativeRevision(published.dataset?.textLayerRequest);
+  const registeredRequest = nonNegativeRevision(registered.dataset?.textLayerRequest);
+  return registeredRequest > publishedRequest ? registered : published;
+}
+
 function emit(type, surface) {
   const event = Object.freeze({ type, surface });
   for (const listener of [...listeners]) {
@@ -212,7 +220,11 @@ export function markPageSurfacePublication(surface, {
     baseSurface: baseSurface ?? live.baseSurface,
     geometryCanvas: geometryCanvas ?? live.geometryCanvas,
     overlayCanvas: overlayCanvas ?? live.overlayCanvas,
-    textLayer: textLayer ?? live.textLayer,
+    // A later text-layer request can register while an older publication is
+    // awaiting its final raster/semantic barrier. Never let that older
+    // acknowledgement replace the newer connected layer with a detached or
+    // lower-request-generation node.
+    textLayer: newestConnectedTextLayer(textLayer, live.textLayer),
     canonicalPageDimensions: live.canonicalPageDimensions,
     cssScale: live.cssScale,
     dpr: live.dpr,
@@ -305,9 +317,28 @@ export function adoptPageSurfacesForDocumentLifecycle(documentState) {
   return Object.freeze(adopted);
 }
 
-export function pageSurfaceRegistrySnapshot() {
+function elementDebugState(element) {
+  if (!element) return null;
+  return Object.freeze({
+    tagName: String(element.tagName || '').toLowerCase() || null,
+    id: String(element.id || '') || null,
+    className: typeof element.className === 'string' ? element.className : null,
+    connected: element.isConnected !== false,
+  });
+}
+
+export function pageSurfaceRegistrySnapshot(documentState = null) {
+  const ownerId = documentState?.id == null ? null : String(documentState.id);
+  const ownerGeneration = documentState == null
+    ? null : nonNegativeRevision(documentState.lifecycleGeneration);
   return Object.freeze([...surfacesByPage.values()]
     .flatMap((registrations) => [...registrations.values()])
+    .filter((surface) => ownerId == null || (
+      surface.documentId === ownerId
+      && surface.lifecycleGeneration === ownerGeneration
+    ))
+    .sort((left, right) => left.pageNum - right.pageNum
+      || left.mountGeneration - right.mountGeneration)
     .map((surface) => Object.freeze({
       documentId: surface.documentId,
       lifecycleGeneration: surface.lifecycleGeneration,
@@ -318,6 +349,11 @@ export function pageSurfaceRegistrySnapshot() {
       surfaceKind: surface.surfaceKind,
       mountGeneration: surface.mountGeneration,
       connected: connected(surface),
+      container: elementDebugState(surface.container),
+      baseSurface: elementDebugState(surface.baseSurface),
+      geometryCanvas: elementDebugState(surface.geometryCanvas),
+      overlayCanvas: elementDebugState(surface.overlayCanvas),
+      textLayer: elementDebugState(surface.textLayer),
     })));
 }
 

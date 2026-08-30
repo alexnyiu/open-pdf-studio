@@ -248,7 +248,7 @@ async function setEditTool() {
 }
 
 async function openEditor(selector, expectedText, expectedPage = '1') {
-  await click(selector);
+  const clickResult = await click(selector);
   try {
     const editor = await waitUi('.pdf-text-editor', (value) => (
       value.found && value.visible && value.focused
@@ -263,12 +263,21 @@ async function openEditor(selector, expectedText, expectedPage = '1') {
     assert.notEqual(editor.computedStyle?.overflowY, 'scroll');
     return editor;
   } catch (error) {
-    const [dialog, consoleLog, sourceState] = await Promise.all([
+    const [dialog, consoleLog, sourceState, viewport] = await Promise.all([
       ui('.message-dialog-overlay').catch(() => null),
       callTool('app_get_recent_console').catch(() => null),
       ui(selector).catch(() => null),
+      callTool('app_get_viewport_state').catch(() => null),
     ]);
-    throw new Error(`editor did not open: ${JSON.stringify({ selector, expectedText, sourceState, dialog, consoleLog })}`, {
+    throw new Error(`editor did not open: ${JSON.stringify({
+      selector,
+      expectedText,
+      clickResult,
+      sourceState,
+      viewport,
+      dialog,
+      consoleLog,
+    })}`, {
       cause: error,
     });
   }
