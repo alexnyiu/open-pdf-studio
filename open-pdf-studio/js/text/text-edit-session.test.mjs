@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTextEditSessionRegistry } from './text-edit-session-registry.js';
 import { createTextApplyResult } from './text-apply-result.js';
+import { textEditRuntimeOwnerIsCurrent } from './text-edit-runtime-owner.js';
 import {
   prepareTextEditRecordCommit,
   runOwnerScopedTextCommit,
@@ -64,6 +65,37 @@ test('registration captures immutable owner, generation, page, and editor kind',
   assert.equal(Object.isFrozen(session.targetIdentity), true);
   assert.equal(Object.isFrozen(session.targetIdentity.markerIds), true);
   assert.equal(Object.isFrozen(session), true);
+});
+
+test('annotation runtime ownership uses immutable IDs instead of reactive draft identity', () => {
+  const session = Object.freeze({
+    sessionId: 'session-a',
+    ownerDocumentId: 'doc-a',
+    ownerDocumentGeneration: 3,
+  });
+  const mountOwner = Object.freeze({
+    sessionId: 'session-a',
+    documentId: 'doc-a',
+    documentGeneration: 3,
+  });
+  assert.equal(textEditRuntimeOwnerIsCurrent({
+    isEditing: true,
+    activeSession: { ...session },
+    session,
+    mountOwner,
+  }), true);
+  assert.equal(textEditRuntimeOwnerIsCurrent({
+    isEditing: true,
+    activeSession: { ...session, sessionId: 'session-b' },
+    session,
+    mountOwner,
+  }), false);
+  assert.equal(textEditRuntimeOwnerIsCurrent({
+    isEditing: true,
+    activeSession: session,
+    session,
+    mountOwner: { ...mountOwner, documentGeneration: 4 },
+  }), false);
 });
 
 test('stale lifecycle rejects Apply and synchronously restores through cancel', async () => {
@@ -246,6 +278,32 @@ test('concurrent click-away and document commits share one in-flight operation',
   releaseCommit();
   assert.equal((await save).status, 'applied');
   assert.equal(registry.active(), null);
+});
+
+test('bounded lifecycle diagnostics retain the exact apply invalidation reason', async () => {
+  const { registry } = fixture();
+  let releaseCommit;
+  const gate = new Promise((resolve) => { releaseCommit = resolve; });
+  const first = registry.register({
+    ownerDocumentId: 'doc-a', ownerDocumentGeneration: 3, pageNum: 1,
+    kind: 'textbox', async commit() { await gate; return applyResult('applied'); }, cancel() {},
+  });
+  const applying = registry.applyActive('click-away');
+  registry.cancelActive('tool-deactivated');
+  releaseCommit();
+  assert.equal((await applying).status, 'superseded');
+  const history = registry.diagnostics();
+  assert.ok(Object.isFrozen(history));
+  assert.deepEqual(history.map(({ event }) => event), [
+    'registered',
+    'apply-started',
+    'cancelled',
+    'apply-invalidated',
+    'commit-returned',
+    'apply-superseded',
+  ]);
+  assert.equal(history[0].sessionId, first.sessionId);
+  assert.equal(history[3].reason, 'tool-deactivated');
 });
 
 test('document commit succeeds without a matching live draft and retains failures', async () => {

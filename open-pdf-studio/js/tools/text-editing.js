@@ -35,8 +35,10 @@ import {
   applyActiveTextEditing,
   cancelActiveTextEditing,
   completeTextEditSession,
+  getActiveTextEditSession,
   registerTextEditSession,
 } from '../text/text-edit-session.js';
+import { textEditRuntimeOwnerIsCurrent } from '../text/text-edit-runtime-owner.js';
 import {
   applyExistingTextAnnotationDraft,
   applyTextAnnotationDraft,
@@ -167,9 +169,8 @@ export async function startTextEditing(annotation, {
   // Idempotency guard: if already editing this same annotation, do nothing.
   // Without this, double-firing handlers (select-tool dblclick + dispatcher dblclick)
   // call finishTextEditing on a freshly-opened overlay, wiping the existing text.
-  if (state.isEditingText && (state.editingAnnotation === annotation
-      || (annotation?.id != null && state._textEditSnapshot?.id != null
-        && String(annotation.id) === String(state._textEditSnapshot.id)))) {
+  if (state.isEditingText && annotation?.id != null && state._textEditSnapshot?.id != null
+      && String(annotation.id) === String(state._textEditSnapshot.id)) {
     return;
   }
   if (state.isEditingText) {
@@ -437,15 +438,17 @@ export async function startTextEditing(annotation, {
   let session = null;
   let mountOwner = null;
   let draftHeight = height;
-  const runtimeOwnsSharedState = () => (
-    state.isEditingText === true && state.editingAnnotation === annotation
-  );
+  const runtimeOwnsSharedState = () => textEditRuntimeOwnerIsCurrent({
+    isEditing: state.isEditingText,
+    activeSession: getActiveTextEditSession(),
+    session,
+    mountOwner,
+  });
   const completeOwnedSession = () => {
     disposeFinalTextLayoutSession(session?.sessionId);
     completeTextEditSession(session?.sessionId);
   };
   const resetEditingState = () => {
-    if (!runtimeOwnsSharedState()) return false;
     state.isEditingText = false;
     state.editingAnnotation = null;
     state.textEditElement = null;
@@ -458,6 +461,9 @@ export async function startTextEditing(annotation, {
     completeOwnedSession();
     const closeResult = hidePdfTextEditor(mountOwner, reason);
     if (closeResult.status === 'superseded') return closeResult;
+    // A closed or already-inactive owner token proves that no newer portal is
+    // being cleared. This also covers registry cancellation, which removes the
+    // session before invoking this editor's cancel callback.
     resetEditingState();
     return closeResult;
   };

@@ -14,6 +14,13 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
   let activeApplyOperation = null;
   let nextSessionId = 0;
   let nextOperationId = 0;
+  const lifecycleHistory = [];
+  const recordLifecycle = (event, details = {}) => {
+    lifecycleHistory.push(Object.freeze({ at: now(), event, ...details }));
+    if (lifecycleHistory.length > 64) {
+      lifecycleHistory.splice(0, lifecycleHistory.length - 64);
+    }
+  };
 
   const ownerMatches = (session) => {
     const owner = session ? resolveDocumentById(session.ownerDocumentId) : null;
@@ -58,6 +65,11 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
   const invalidateApplyOperation = (session, reason) => {
     const operation = activeApplyOperation;
     if (!operation || (session && operation.session !== session)) return false;
+    recordLifecycle('apply-invalidated', {
+      sessionId: operation.session?.sessionId ?? null,
+      operationId: operation.operation?.operationId ?? null,
+      reason,
+    });
     operation.valid = false;
     operation.reason = reason;
     operation.controller.abort(reason);
@@ -68,6 +80,7 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
   const cancelActive = (reason = 'cancelled') => {
     const session = activeSession;
     if (!session) return false;
+    recordLifecycle('cancelled', { sessionId: session.sessionId, reason });
     activeSession = null;
     invalidateApplyOperation(session, reason);
     session.cancel(reason);
@@ -105,6 +118,11 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
     });
     operationState.operation = operation;
     activeApplyOperation = operationState;
+    recordLifecycle('apply-started', {
+      sessionId: session.sessionId,
+      operationId: operation.operationId,
+      reason,
+    });
     let resolveOperation;
     let rejectOperation;
     operationState.promise = new Promise((resolve, reject) => {
@@ -114,6 +132,12 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
     void (async () => {
       try {
         const result = await session.commit(operation);
+        recordLifecycle('commit-returned', {
+          sessionId: session.sessionId,
+          operationId: operation.operationId,
+          status: result?.status ?? typeof result,
+          operationCurrent: operation.isCurrent(),
+        });
         if (!ownerMatches(session)) {
           invalidateApplyOperation(session, 'stale-owner');
           if (activeSession?.sessionId === session.sessionId) {
@@ -124,6 +148,11 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
           return;
         }
         if (!operation.isCurrent()) {
+          recordLifecycle('apply-superseded', {
+            sessionId: session.sessionId,
+            operationId: operation.operationId,
+            reason: operationState.reason || 'operation-not-current',
+          });
           resolveOperation(supersededResult(session));
           return;
         }
@@ -183,13 +212,23 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
         return null;
       }
       activeSession = session;
+      recordLifecycle('registered', {
+        sessionId: session.sessionId,
+        ownerDocumentId: session.ownerDocumentId,
+        ownerDocumentGeneration: session.ownerDocumentGeneration,
+        pageNum: session.pageNum,
+        kind: session.kind,
+      });
       return session;
     },
     active() {
       return activeSession;
     },
     complete(sessionId) {
-      if (activeSession?.sessionId === sessionId) activeSession = null;
+      const activeSessionId = activeSession?.sessionId ?? null;
+      const accepted = activeSessionId === sessionId;
+      if (accepted) activeSession = null;
+      recordLifecycle('completed', { sessionId, activeSessionId, accepted });
     },
     cancelActive,
     cancelForDocument(documentId, reason = 'document-transition') {
@@ -217,6 +256,9 @@ export function createTextEditSessionRegistry(resolveDocumentById, { now = Date.
     },
     ownerIsCurrent(session = activeSession) {
       return ownerMatches(session);
+    },
+    diagnostics() {
+      return Object.freeze(lifecycleHistory.map((entry) => Object.freeze({ ...entry })));
     },
   };
 }

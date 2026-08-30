@@ -1149,7 +1149,11 @@ async function handleGetViewportState() {
   } catch { /* editor may not be initialized yet */ }
 
   try {
-    const { getActiveTextEditSession } = await import('/js/text/text-edit-session.js');
+    const {
+      getActiveTextEditSession,
+      textEditSessionDiagnostics,
+    } = await import('/js/text/text-edit-session.js');
+    if (editorMetrics) editorMetrics.sessionLifecycle = textEditSessionDiagnostics();
     const session = getActiveTextEditSession();
     if (session) {
       editorSession = {

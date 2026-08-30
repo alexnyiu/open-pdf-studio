@@ -34,6 +34,10 @@ export function getActiveTextEditSession() {
   return registry.active();
 }
 
+export function textEditSessionDiagnostics() {
+  return registry.diagnostics();
+}
+
 export function completeTextEditSession(sessionId) {
   registry.complete(sessionId);
 }

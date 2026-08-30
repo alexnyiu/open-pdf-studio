@@ -91,6 +91,8 @@ test('annotation registration cancels the old owner before publishing the new sh
   assert.ok(sharedDraft < mount);
   assert.match(sourceText, /const ann = annotation;/u);
   assert.match(sourceText, /const closed = closeEditingState\('published'\);[\s\S]*closed\.status === 'superseded'/u);
+  assert.match(sourceText, /textEditRuntimeOwnerIsCurrent\(\{/u);
+  assert.doesNotMatch(sourceText, /state\.editingAnnotation === annotation/u);
 });
 
 test('asynchronous tool deactivation cannot cancel a newer editor session', async () => {
