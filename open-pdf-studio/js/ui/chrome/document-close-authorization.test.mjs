@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createTextEditSessionRegistry } from '../../text/text-edit-session-registry.js';
+import { createSaveResult } from '../../pdf/save-result.js';
+import { createInitialDocumentRevisionState } from '../../core/document-revision-state.runtime.js';
 import { authorizeDocumentClose } from './document-close-authorization.js';
 
 function fixture({ modified = true, editorDirty = true } = {}) {
@@ -11,6 +13,8 @@ function fixture({ modified = true, editorDirty = true } = {}) {
     lifecycleGeneration: 4,
     modified,
   };
+  documentState.revisionState = createInitialDocumentRevisionState();
+  if (modified) documentState.revisionState.contentRevision = 1;
   const registry = createTextEditSessionRegistry(
     (documentId) => documentId === documentState.id ? documentState : null,
     { now: () => 1 },
@@ -86,7 +90,13 @@ test('a failed Save preserves the editor and rejects the close', async () => {
   const authorized = await authorizeDocumentClose({
     documentState,
     requestAction: async () => 'save',
-    saveDocument: async () => false,
+    saveDocument: async () => createSaveResult({
+      status: 'failed',
+      documentId: documentState.id,
+      requestedRevision: 1,
+      errorCode: 'WRITE_FAILED',
+      errorMessage: 'disk full',
+    }),
     isTextEditingDirtyForDocument,
     cancelTextEditingForDocument: registry.cancelForDocument.bind(registry),
   });
@@ -146,7 +156,7 @@ test('Cancel preserves a dirty text draft on an otherwise clean document', async
   assert.deepEqual(cancellations, []);
 });
 
-test('Save can never implicitly apply or discard an active dirty text draft', async () => {
+test('Save commits and durably flushes an active dirty text draft before close', async () => {
   const {
     documentState,
     registry,
@@ -154,19 +164,31 @@ test('Save can never implicitly apply or discard an active dirty text draft', as
     isTextEditingDirtyForDocument,
   } = fixture({ modified: true, editorDirty: true });
   let saveCalls = 0;
-  const session = registry.active();
   const authorized = await authorizeDocumentClose({
     documentState,
     requestAction: async () => 'save',
-    saveDocument: async () => { saveCalls += 1; return true; },
+    saveDocument: async () => {
+      saveCalls += 1;
+      documentState.revisionState.serializedRevision = 1;
+      documentState.revisionState.persistedRevision = 1;
+      return createSaveResult({
+        status: 'saved-refresh-pending',
+        documentId: documentState.id,
+        requestedRevision: 1,
+        serializedRevision: 1,
+        persistedRevision: 1,
+        proxyRevision: 0,
+        bytesPersisted: true,
+      });
+    },
     isTextEditingDirtyForDocument,
     cancelTextEditingForDocument: registry.cancelForDocument.bind(registry),
   });
 
-  assert.equal(authorized, false);
-  assert.equal(saveCalls, 0);
-  assert.equal(registry.active(), session);
-  assert.deepEqual(cancellations, []);
+  assert.equal(authorized, true);
+  assert.equal(saveCalls, 1);
+  assert.equal(registry.active(), null);
+  assert.deepEqual(cancellations, ['document-close']);
 });
 
 test('a clean document with a clean editor closes without prompting', async () => {

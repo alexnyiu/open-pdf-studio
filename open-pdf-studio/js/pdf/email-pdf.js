@@ -12,6 +12,7 @@ import { getActiveDocument } from '../core/state.js';
 import { openExternal } from '../core/platform.js';
 import { showMessage } from '../bridge.js';
 import { savePDF } from './saver.js';
+import { saveResultIsDurable } from './save-result.js';
 import i18next from 'i18next';
 
 function basename(p) {
@@ -33,8 +34,8 @@ export async function emailCurrentPdf() {
   }
   // Eerst opslaan zodat er een actueel bestand op schijf staat om bij te
   // voegen (vraagt om een locatie bij naamloze documenten).
-  const ok = await savePDF();
-  if (!ok) return;
+  const result = await savePDF();
+  if (!saveResultIsDurable(result)) return;
   const path = getActiveDocument()?.filePath;
   if (!path) return;
 

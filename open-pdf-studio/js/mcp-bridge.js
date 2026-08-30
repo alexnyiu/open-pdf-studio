@@ -2393,7 +2393,14 @@ async function handleSavePdf(params) {
   } catch (e) {
     return { ok: false, error: `savePDF: ${e?.message ?? e}` };
   }
-  if (!success) return { ok: false, error: 'savePDF reported failure' };
+  const { saveResultIsDurable } = await import('./pdf/save-result.js');
+  if (!saveResultIsDurable(success)) {
+    return {
+      ok: false,
+      error: success?.errorMessage || `savePDF reported ${success?.status || 'failure'}`,
+      status: success?.status || 'failed',
+    };
+  }
   return { ok: true, path: path || doc.filePath };
 }
 

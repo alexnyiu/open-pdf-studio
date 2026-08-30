@@ -6,6 +6,7 @@ import { updateAllStatus } from './status-bar.js';
 import { generateThumbnails, clearThumbnails, clearThumbnailCache, refreshActiveTab, refreshAllTabs, saveThumbnailScrollPosition } from '../panels/left-panel.js';
 import { cancelAnnotationLoading, hidePdfABar, clearCachedPdfBytes } from '../../pdf/loader.js';
 import { savePDF } from '../../pdf/saver.js';
+import { saveResultIsDurable } from '../../pdf/save-result.js';
 import { unlockFile, lockFile, renameFile, fileExists, invoke, isTauri } from '../../core/platform.js';
 import { cancelPendingZoom } from '../setup/navigation-events.js';
 import { closeAllPopups } from '../../bridge.js';
@@ -387,7 +388,7 @@ export async function renameDocument(index, newName) {
   // Untitled docs — trigger Save As instead
   if (!doc.filePath) {
     const { savePDFAs } = await import('../../pdf/saver.js');
-    return await savePDFAs();
+    return saveResultIsDurable(await savePDFAs());
   }
 
   // Validate: no invalid characters

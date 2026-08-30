@@ -83,6 +83,22 @@ import {
 import { acquirePageLease, releasePageLease } from '../../pdf/page-lease-registry.js';
 import { showMessage } from '../../bridge.js';
 
+async function observeCommittedTextPersistence(documentId, documentGeneration) {
+  const [{ scheduleCommittedTextEditSave }, stateModule] = await Promise.all([
+    import('../../pdf/saver.js'),
+    import('../../core/state.js'),
+  ]);
+  const result = await scheduleCommittedTextEditSave(documentId, documentGeneration);
+  const owner = stateModule.getDocumentById(documentId);
+  if (owner) owner.lastTextSaveResult = result;
+  if (result?.status === 'failed') {
+    showMessage(`Your text edit is still in the document, but saving failed: ${result.errorMessage}`);
+  } else if (result?.status === 'save-as-required') {
+    showMessage('Your text edit is ready. Use Save As to choose where to keep the PDF.');
+  }
+  return result;
+}
+
 export default function PdfTextEditOverlay() {
   const { t: tHardening, language: hardeningLanguage } = useTranslation('hardening');
   let textareaRef;
@@ -1005,11 +1021,7 @@ export default function PdfTextEditOverlay() {
         // persistence after replay so a second text region can establish its
         // live session before the coordinator considers heavy serialization.
         if (textApplyResultSchedulesPersistence(result)) {
-          void import('../../pdf/saver.js')
-            .then(({ scheduleCommittedTextEditSave }) => scheduleCommittedTextEditSave(
-              ownerDocumentId,
-              ownerDocumentGeneration,
-            ))
+          void observeCommittedTextPersistence(ownerDocumentId, ownerDocumentGeneration)
             .catch((error) => {
               console.warn('[text-edit] Click-away auto-save failed:', error);
             });
@@ -1922,11 +1934,10 @@ export default function PdfTextEditOverlay() {
       const session = getActiveTextEditSession();
       const result = await applyActiveTextEditing('layout-recovery-expand');
       if (textApplyResultSchedulesPersistence(result) && session) {
-        void import('../../pdf/saver.js')
-          .then(({ scheduleCommittedTextEditSave }) => scheduleCommittedTextEditSave(
-            session.ownerDocumentId,
-            session.ownerDocumentGeneration,
-          ))
+        void observeCommittedTextPersistence(
+          session.ownerDocumentId,
+          session.ownerDocumentGeneration,
+        )
           .catch((error) => console.warn('[text-edit] Layout recovery save failed:', error));
       } else if (result?.status === 'rejected') {
         const finalDecision = editorLayoutState()?.finalDecision || null;

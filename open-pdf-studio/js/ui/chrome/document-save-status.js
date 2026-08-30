@@ -4,8 +4,14 @@ import {
   initializeDocumentRevisionState,
   markDocumentSaveState,
 } from '../../core/document-revision-state.runtime.js';
+import { saveResultIsDurable } from '../../pdf/save-result.js';
 
-const FAILURE_STATES = new Set(['failed', 'saved-refresh-failed']);
+const FAILURE_STATES = new Set([
+  'failed',
+  'saved-with-warning',
+  'saved-refresh-failed',
+  'save-as-required',
+]);
 
 export function documentSaveStatusIdentity(documentState) {
   if (!documentState?.id) return '';
@@ -18,6 +24,8 @@ export function documentSaveStatusIdentity(documentState) {
     revision.persistedRevision,
     revision.livePdfRevision,
     revision.lastSaveError || '',
+    revision.lastSaveErrorCode || '',
+    JSON.stringify(revision.lastSaveWarnings || []),
     revision.lastSynchronizationError || '',
   ].join(':');
 }
@@ -45,7 +53,10 @@ export function documentSaveStatusModel(documentState) {
     state: revision.saveState,
     identity,
     exactError: revision.saveState === 'saved-refresh-failed'
-      ? revision.lastSynchronizationError : revision.lastSaveError,
+      ? revision.lastSynchronizationError
+      : revision.saveState === 'saved-with-warning'
+        ? revision.lastSaveWarnings?.[0]?.message || null
+        : revision.lastSaveError,
     progress: false,
     severity: 'neutral',
     actions: [],
@@ -82,6 +93,43 @@ export function documentSaveStatusModel(documentState) {
         visible: true,
         severity: 'success',
         message: 'Saved',
+      });
+    case 'saved-with-warning':
+      return Object.freeze({
+        ...common,
+        visible: true,
+        severity: 'warning',
+        message: 'PDF saved with a warning',
+        actions: ['view-save-details', 'acknowledge'],
+      });
+    case 'saved-refresh-pending':
+      return Object.freeze({
+        ...common,
+        visible: true,
+        severity: 'success',
+        message: 'Saved; editor refresh pending',
+      });
+    case 'save-as-required':
+      return Object.freeze({
+        ...common,
+        visible: true,
+        severity: 'warning',
+        message: 'Choose a destination to save changes',
+        actions: ['save-as', 'acknowledge'],
+      });
+    case 'deferred':
+      return Object.freeze({
+        ...common,
+        visible: true,
+        severity: 'pending',
+        message: 'Save deferred',
+      });
+    case 'superseded':
+      return Object.freeze({
+        ...common,
+        visible: documentHasRevisionPersistenceDebt(documentState),
+        severity: 'pending',
+        message: 'Newer changes are queued to save',
       });
     case 'failed':
       return Object.freeze({
@@ -164,8 +212,9 @@ export function createDocumentSaveRecoveryController({
           documentGeneration: Number(documentState.lifecycleGeneration) || 0,
           requestedRevision: revision.persistedRevision,
         });
-        documentState.saveRefreshRetryFailed = recovered !== true;
-        return recovered === true;
+        const succeeded = recovered === true || saveResultIsDurable(recovered);
+        documentState.saveRefreshRetryFailed = !succeeded;
+        return succeeded;
       } catch (error) {
         documentState.saveRefreshRetryFailed = true;
         markDocumentSaveState(documentState, 'saved-refresh-failed', {

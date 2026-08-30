@@ -55,6 +55,12 @@ import {
 import { pageEditIntentPendingForDocument } from '../text/page-edit-intent.js';
 import { isPdfForegroundIdle, notePdfForegroundActivity } from './foreground-activity.js';
 import { createSaveCoordinator, SaveRequestSupersededError } from './save-coordinator.js';
+import { createSaveResult, saveResultIsDurable } from './save-result.js';
+import {
+  createSaveCandidate,
+  releaseSaveCandidate,
+  storeSaveCandidate,
+} from './save-candidate.js';
 import { throwIfSaveFaultInjected } from './save-fault-injection.js';
 import { createSaveDocumentSnapshot } from './save-document-snapshot.js';
 import {
@@ -67,6 +73,7 @@ import {
 } from '../core/document-revision-state.runtime.js';
 import {
   captureSavedDocumentViewState,
+  decidePersistedProxyAdoption,
   hasRecoverableSavedDocumentSynchronization,
   restoreSavedDocumentViewState,
   retrySavedDocumentSynchronization,
@@ -226,10 +233,50 @@ function stableFreeTextModifiedTimestamp(annotation = {}) {
   return candidate ? new Date(candidate.time).toISOString() : '1970-01-01T00:00:00.000Z';
 }
 
-const TEXT_EDIT_AUTO_SAVE_DELAY_MS = 120;
+const TEXT_EDIT_AUTO_SAVE_DELAY_MS = 750;
 const TEXT_EDIT_AUTO_SAVE_RETRY_MS = 50;
-const TEXT_EDIT_AUTO_SAVE_MAX_COALESCE_MS = 800;
+const TEXT_EDIT_AUTO_SAVE_MAX_COALESCE_MS = 2_000;
 const saveDiagnosticHistory = [];
+
+const DURABLE_RESULT_STATUSES = new Set([
+  'saved',
+  'saved-with-warning',
+  'saved-refresh-pending',
+  'saved-refresh-failed',
+]);
+
+function ownerSaveResult(owner, status, {
+  documentId = owner?.id || 'unowned-document',
+  requestedRevision = owner
+    ? initializeDocumentRevisionState(owner).contentRevision : 0,
+  candidateBytes = null,
+  proxyAdopted = false,
+  warnings = [],
+  recovery = null,
+  errorCode = null,
+  errorMessage = null,
+} = {}) {
+  const state = owner ? initializeDocumentRevisionState(owner) : null;
+  const requested = Math.max(0, Number(requestedRevision) || 0);
+  const serializedRevision = Math.min(requested, state?.serializedRevision ?? 0);
+  const persistedRevision = Math.min(serializedRevision, state?.persistedRevision ?? 0);
+  const proxyRevision = Math.min(persistedRevision, state?.livePdfRevision ?? 0);
+  return createSaveResult({
+    status,
+    documentId: String(documentId || 'unowned-document'),
+    requestedRevision: requested,
+    serializedRevision,
+    persistedRevision,
+    proxyRevision,
+    bytesPersisted: DURABLE_RESULT_STATUSES.has(status),
+    proxyAdopted,
+    candidateBytes,
+    warnings,
+    recovery,
+    errorCode,
+    errorMessage,
+  });
+}
 
 function publishTextEditAutoSaveDebug(documentId, stateName, details = {}) {
   if (typeof window === 'undefined') return;
@@ -286,7 +333,11 @@ export function getDocumentSaveCoordinatorSnapshot(documentId) {
 export function retryDocumentSave(documentId, documentGeneration) {
   const owner = getDocumentById(String(documentId || ''));
   if (!owner || (Number(owner.lifecycleGeneration) || 0) !== (Number(documentGeneration) || 0)) {
-    return Promise.resolve(false);
+    return Promise.resolve(ownerSaveResult(owner, 'superseded', {
+      documentId: String(documentId || 'unowned-document'),
+      errorCode: 'DOCUMENT_LIFECYCLE_CHANGED',
+      errorMessage: 'The document lifecycle changed before the save retry',
+    }));
   }
   return savePDF(null, {
     allowSaveAsPrompt: false,
@@ -298,11 +349,21 @@ export function retryDocumentSave(documentId, documentGeneration) {
 export async function retryDocumentRefresh(documentId, documentGeneration) {
   const owner = getDocumentById(String(documentId || ''));
   if (!owner || (Number(owner.lifecycleGeneration) || 0) !== (Number(documentGeneration) || 0)) {
-    return false;
+    return ownerSaveResult(owner, 'superseded', {
+      documentId: String(documentId || 'unowned-document'),
+      errorCode: 'DOCUMENT_LIFECYCLE_CHANGED',
+      errorMessage: 'The document lifecycle changed before the refresh retry',
+    });
   }
   const revision = initializeDocumentRevisionState(owner);
   if (revision.contentRevision !== revision.persistedRevision
-      || revision.saveState !== 'saved-refresh-failed') return false;
+      || revision.saveState !== 'saved-refresh-failed') {
+    return ownerSaveResult(owner, 'deferred', {
+      requestedRevision: revision.contentRevision,
+      errorCode: 'REFRESH_RETRY_NOT_AVAILABLE',
+      errorMessage: 'There is no recoverable saved-document refresh',
+    });
+  }
   return saveCoordinator.request({
     documentId: owner.id,
     documentGeneration: owner.lifecycleGeneration,
@@ -411,7 +472,11 @@ async function synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext) 
         assertSynchronizationOwnership: coordinatorContext.assertSynchronizationOwnership,
       });
       markDocumentSavedForDocument(owner);
-      return { saved: true, candidateBytes };
+      return ownerSaveResult(owner, 'saved', {
+        requestedRevision: coordinatorContext.requestedRevision,
+        candidateBytes,
+        proxyAdopted: true,
+      });
     }
     const outputPath = revisionState.lastPersistedPath || owner.filePath;
     let savedBytes = getCachedPdfBytes(outputPath);
@@ -430,7 +495,11 @@ async function synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext) 
       diagnostic: (event, details) => coordinatorContext.diagnostic(event, details),
       coordinatorContext,
     });
-    return { saved: true, candidateBytes };
+    return ownerSaveResult(owner, 'saved', {
+      requestedRevision: coordinatorContext.requestedRevision,
+      candidateBytes,
+      proxyAdopted: true,
+    });
   } catch (error) {
     if (error instanceof SaveRequestSupersededError) throw error;
     const exactError = error instanceof Error ? error.message : String(error);
@@ -439,7 +508,13 @@ async function synchronizePersistedOwnerWithoutWrite(owner, coordinatorContext) 
       synchronizationError: exactError,
     });
     coordinatorContext.diagnostic('saved-refresh-failed', { retry: true, error: exactError });
-    return { saved: false, candidateBytes };
+    return ownerSaveResult(owner, 'saved-refresh-failed', {
+      requestedRevision: coordinatorContext.requestedRevision,
+      candidateBytes,
+      recovery: { action: 'retry-refresh' },
+      errorCode: error?.code || 'SAVED_DOCUMENT_SYNCHRONIZATION_FAILED',
+      errorMessage: exactError,
+    });
   }
 }
 
@@ -455,11 +530,18 @@ export function scheduleCommittedTextEditSave(
 ) {
   const id = String(documentId || '');
   const generation = Number(ownerDocumentGeneration) || 0;
-  if (!id) return Promise.resolve(false);
+  if (!id) return Promise.resolve(ownerSaveResult(null, 'failed', {
+    errorCode: 'DOCUMENT_ID_REQUIRED',
+    errorMessage: 'Automatic text persistence requires a document owner',
+  }));
   const owner = getDocumentById(id);
   if (!owner || (Number(owner.lifecycleGeneration) || 0) !== generation) {
     publishTextEditAutoSaveDebug(id, 'stale-owner', { generation });
-    return Promise.resolve(false);
+    return Promise.resolve(ownerSaveResult(owner, 'superseded', {
+      documentId: id,
+      errorCode: 'DOCUMENT_LIFECYCLE_CHANGED',
+      errorMessage: 'The document lifecycle changed before automatic persistence',
+    }));
   }
   if (!canAutoSaveCommittedTextEdit(owner)) {
     publishTextEditAutoSaveDebug(id, 'ineligible-target', {
@@ -470,7 +552,12 @@ export function scheduleCommittedTextEditSave(
       renderTemp: owner._renderTemp === true,
       pdfa: Boolean(owner.pdfaCompliance),
     });
-    return Promise.resolve(false);
+    return Promise.resolve(ownerSaveResult(owner, 'save-as-required', {
+      requestedRevision: initializeDocumentRevisionState(owner).contentRevision,
+      recovery: { action: 'save-as' },
+      errorCode: 'SAVE_AS_REQUIRED',
+      errorMessage: 'This document requires an explicit Save As destination',
+    }));
   }
   publishTextEditAutoSaveDebug(id, 'scheduled', {
     generation,
@@ -497,11 +584,18 @@ export async function savePDF(saveAsPath = null, options = {}) {
   const owner = expectedDocumentId
     ? getDocumentById(String(expectedDocumentId))
     : getActiveDocument();
-  if (!owner?.id) return false;
+  if (!owner?.id) return ownerSaveResult(null, 'failed', {
+    errorCode: 'NO_DOCUMENT',
+    errorMessage: 'No PDF document is available to save',
+  });
   const currentPath = owner.filePath;
   const outputPath = saveAsPath || owner.saveTargetPath || currentPath;
   if (!automaticTextEditSave && !saveAsPath && (!owner.filePath || owner.isUntitled)) {
-    return allowSaveAsPrompt ? savePDFAs() : false;
+    return allowSaveAsPrompt ? savePDFAs() : ownerSaveResult(owner, 'save-as-required', {
+      recovery: { action: 'save-as' },
+      errorCode: 'SAVE_AS_REQUIRED',
+      errorMessage: 'Choose a destination before saving this document',
+    });
   }
   const generation = Number(expectedDocumentGeneration ?? owner.lifecycleGeneration) || 0;
   const requestedRevision = initializeDocumentRevisionState(owner).contentRevision;
@@ -535,7 +629,11 @@ export async function savePDF(saveAsPath = null, options = {}) {
     showMessage(i18next.t('failedToSavePdf', {
       error: error instanceof Error ? error.message : String(error),
     }));
-    return false;
+    return ownerSaveResult(getDocumentById(owner.id) || owner, 'failed', {
+      requestedRevision,
+      errorCode: error?.code || 'SAVE_FAILED',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -550,7 +648,7 @@ async function performSavePDF(saveAsPath = null, {
     ? getDocumentById(String(expectedDocumentId))
     : getActiveDocument();
   const showSaveProgress = automaticTextEditSave !== true;
-  const rejectAutomaticSave = (reason, details = {}) => {
+  const rejectSave = (reason, details = {}, status = 'failed') => {
     if (automaticTextEditSave && typeof window !== 'undefined') {
       window.__textEditAutoSaveFailure = Object.freeze({
         at: Date.now(),
@@ -559,7 +657,14 @@ async function performSavePDF(saveAsPath = null, {
         ...details,
       });
     }
-    return false;
+    return ownerSaveResult(activeDoc, status, {
+      documentId: String(expectedDocumentId || activeDoc?.id || 'unowned-document'),
+      requestedRevision: coordinatorContext?.requestedRevision
+        ?? (activeDoc ? initializeDocumentRevisionState(activeDoc).contentRevision : 0),
+      recovery: status === 'save-as-required' ? { action: 'save-as' } : null,
+      errorCode: details.errorCode || String(reason || 'SAVE_FAILED').toUpperCase().replaceAll('-', '_'),
+      errorMessage: details.error || details.errorMessage || String(reason || 'Save failed'),
+    });
   };
   if (automaticTextEditSave && typeof window !== 'undefined') {
     window.__textEditAutoSaveFailure = null;
@@ -568,17 +673,17 @@ async function performSavePDF(saveAsPath = null, {
     activeDoc?.id !== expectedDocumentId
     || (Number(activeDoc?.lifecycleGeneration) || 0)
       !== (Number(expectedDocumentGeneration) || 0)
-  )) return rejectAutomaticSave('owner-mismatch-before-commit', {
+  )) return rejectSave('owner-mismatch-before-commit', {
     activeDocumentId: activeDoc?.id || null,
     activeGeneration: Number(activeDoc?.lifecycleGeneration) || 0,
-  });
+  }, 'superseded');
   const currentOwner = getDocumentById(activeDoc?.id);
   if (activeDoc && !documentLifecycleOwnerMatches(activeDoc, currentOwner)) {
     console.warn('[saver] Active document lifecycle changed before Save serialization');
-    return rejectAutomaticSave('owner-changed-after-commit', {
+    return rejectSave('owner-changed-after-commit', {
       activeDocumentId: currentOwner?.id || null,
       activeGeneration: Number(currentOwner?.lifecycleGeneration) || 0,
-    });
+    }, 'superseded');
   }
   // The commit can update a reactive document through a different proxy
   // wrapper. Continue with the freshly resolved owner so modified state and
@@ -588,18 +693,21 @@ async function performSavePDF(saveAsPath = null, {
     activeDoc?.id !== expectedDocumentId
     || (Number(activeDoc?.lifecycleGeneration) || 0)
       !== (Number(expectedDocumentGeneration) || 0)
-  )) return rejectAutomaticSave('owner-mismatch-before-serialization', {
+  )) return rejectSave('owner-mismatch-before-serialization', {
     activeDocumentId: activeDoc?.id || null,
     activeGeneration: Number(activeDoc?.lifecycleGeneration) || 0,
-  });
+  }, 'superseded');
   const currentPath = activeDoc?.filePath;
   const outputPath = saveAsPath || activeDoc?.saveTargetPath || currentPath;
   let preparedPdfJsDocument = null;
+  let saveCandidate = null;
   let stagedToken = null;
   let replacementSucceeded = false;
   let textEditManifestCandidate = null;
   let textEditRecordsCandidate = null;
   let nativeTextEditReportCandidate = null;
+  let savedBytes = null;
+  const persistenceWarnings = [];
   // Redirect to "Save As" for untitled docs. These now have a temp-file
   // `filePath` (so they render via the real pipeline), so we ALSO check the
   // `isUntitled` flag — otherwise "Save" would silently overwrite the temp
@@ -607,7 +715,7 @@ async function performSavePDF(saveAsPath = null, {
   if ((!currentPath || activeDoc?.isUntitled) && !saveAsPath) {
     return allowSaveAsPrompt
       ? await savePDFAs({ coordinatorContext, expectedDocumentId, expectedDocumentGeneration })
-      : rejectAutomaticSave('untitled-requires-save-as');
+      : rejectSave('untitled-requires-save-as', {}, 'save-as-required');
   }
 
   // Files opened from an email attachment live in Outlook's secure temp
@@ -619,7 +727,7 @@ async function performSavePDF(saveAsPath = null, {
   if (!saveAsPath && OUTLOOK_TEMP.test(currentPath)) {
     return allowSaveAsPrompt
       ? await savePDFAs({ coordinatorContext, expectedDocumentId, expectedDocumentGeneration })
-      : rejectAutomaticSave('outlook-path-requires-save-as');
+      : rejectSave('outlook-path-requires-save-as', {}, 'save-as-required');
   }
 
   if (canSkipUnmodifiedSamePathSave({
@@ -634,7 +742,11 @@ async function performSavePDF(saveAsPath = null, {
       saveError: null,
       synchronizationError: null,
     });
-    return true;
+    return ownerSaveResult(activeDoc, 'saved', {
+      requestedRevision: coordinatorContext?.requestedRevision
+        ?? initializeDocumentRevisionState(activeDoc).contentRevision,
+      proxyAdopted: true,
+    });
   }
 
   const requestedRevision = coordinatorContext?.requestedRevision
@@ -679,10 +791,10 @@ async function performSavePDF(saveAsPath = null, {
     });
     if (savePolicy.forceSaveAs) {
       if (showSaveProgress) hideLoading();
-      if (!allowSaveAsPrompt) return rejectAutomaticSave('protected-document-requires-save-as', {
+      if (!allowSaveAsPrompt) return rejectSave('protected-document-requires-save-as', {
         signed: modificationPolicy.signed === true,
         pdfa: convertsPdfA,
-      });
+      }, 'save-as-required');
       showMessage(savePolicy.warning);
       return await savePDFAs({ coordinatorContext, expectedDocumentId, expectedDocumentGeneration });
     }
@@ -3215,7 +3327,7 @@ async function performSavePDF(saveAsPath = null, {
     // as one separately owned invisible stream per eligible page, so its pixel
     // comparison baseline includes legitimate annotation/form changes.
     const preOcrBytes = new Uint8Array(await pdfDocLib.save());
-    let savedBytes = preOcrBytes;
+    savedBytes = preOcrBytes;
     let scannedTextEditPersistence = null;
     const scannedState = saveSnapshot.scannedTextState.state;
     const scannedStateRevision = scannedState?.stateRevision ?? 0;
@@ -3254,6 +3366,23 @@ async function performSavePDF(saveAsPath = null, {
     }
     await assertDocumentMetadataRoundTrip(preparedPdfJsDocument, saveSnapshot.metadata);
     markRevisionSerialized(activeDoc, requestedRevision);
+    saveCandidate = createSaveCandidate({
+      documentId: activeDoc.id,
+      lifecycleGeneration: Number(activeDoc.lifecycleGeneration) || 0,
+      requestedRevision,
+      outputPath,
+      bytes: savedBytes,
+      pageCount: pages.length,
+      preparedPdfJsDocument,
+      metadata: {
+        changedPages: saveSnapshot.changedPages,
+        textEditManifest: textEditManifestCandidate,
+        nativeTextEditReport: nativeTextEditReportCandidate,
+      },
+    });
+    preparedPdfJsDocument = null;
+    await storeSaveCandidate(saveCandidate);
+    savedBytes = saveCandidate.bytes;
     coordinatorContext?.diagnostic('validating');
     throwIfSaveFaultInjected('after-serialization-before-persistence');
 
@@ -3312,8 +3441,17 @@ async function performSavePDF(saveAsPath = null, {
         if (finalized.status !== 'pass') throw new Error('Native atomic replacement did not report success');
         if (!finalized.candidateFilesCleaned) {
           console.warn('[safe-save] Native replacement succeeded but reported a candidate cleanup warning');
+          persistenceWarnings.push(Object.freeze({
+            code: 'SAFE_SAVE_CANDIDATE_CLEANUP_WARNING',
+            message: 'Native replacement succeeded, but a save candidate could not be cleaned up',
+          }));
         }
-        for (const warning of finalized.warnings || []) console.warn(`[safe-save] ${warning}`);
+        for (const warning of finalized.warnings || []) {
+          console.warn(`[safe-save] ${typeof warning === 'string' ? warning : warning?.message}`);
+          persistenceWarnings.push(typeof warning === 'string'
+            ? Object.freeze({ code: 'SAFE_SAVE_WARNING', message: warning })
+            : Object.freeze({ ...warning }));
+        }
       } else {
         coordinatorContext?.diagnostic('persisting');
         coordinatorContext?.assertPersistenceOwnership();
@@ -3338,15 +3476,23 @@ async function performSavePDF(saveAsPath = null, {
     coordinatorContext?.diagnostic('persisted');
     cacheValidatedSavedPdfBytes(outputPath, savedBytes);
 
-    // Cancellation or a newer revision after the point of no return cannot
-    // interrupt atomic replacement, but it must suppress stale proxy/state
-    // publication. The coordinator carries this request into the follow-up.
+    // A newer revision may appear after the immutable snapshot was captured.
+    // Revision N remains allowed to cross the durable atomic boundary, but it
+    // can never publish state over revision N+1. The coordinator carries the
+    // original request waiters into the latest queued revision.
     if (coordinatorContext && !coordinatorContext.ownsPublication()) {
-      return {
-        saved: true,
+      markDocumentSaveState(persistedOwner, 'saved-refresh-pending', { requestId: null });
+      markDocumentSavedForDocument(persistedOwner);
+      coordinatorContext.diagnostic('saved-refresh-pending', {
+        reason: 'newer-content-revision',
         followUpNeeded: true,
+      });
+      const result = ownerSaveResult(persistedOwner, 'saved-refresh-pending', {
+        requestedRevision,
         candidateBytes: savedBytes.byteLength,
-      };
+        warnings: persistenceWarnings,
+      });
+      return result;
     }
     activeDoc = persistedOwner;
 
@@ -3377,11 +3523,44 @@ async function performSavePDF(saveAsPath = null, {
       activeDoc.pdfaCompliance = null;
       hidePdfABar();
     }
-    const transitionCandidate = preparedPdfJsDocument;
+
+    const activeSession = getActiveTextEditSession();
+    const adoptionDecision = decidePersistedProxyAdoption({
+      kind: automaticTextEditSave ? 'auto' : 'manual',
+      requestedRevision,
+      contentRevision: initializeDocumentRevisionState(activeDoc).contentRevision,
+      liveTextSession: String(activeSession?.ownerDocumentId || '') === String(activeDoc.id),
+      dirtyTextDraft: String(activeSession?.ownerDocumentId || '') === String(activeDoc.id)
+        && activeSession?.isDirty?.() === true,
+      pendingPageEditIntent: pageEditIntentPendingForDocument(activeDoc.id),
+      ownerActiveForSharedUi: String(getActiveDocument()?.id || '') === String(activeDoc.id),
+    });
+    if (!adoptionDecision.adopt) {
+      markDocumentSavedForDocument(activeDoc);
+      markDocumentSaveState(activeDoc, 'saved-refresh-pending', {
+        requestId: null,
+        synchronizationError: null,
+      });
+      coordinatorContext?.diagnostic('saved-refresh-pending', {
+        reason: adoptionDecision.reason,
+      });
+      return ownerSaveResult(activeDoc, 'saved-refresh-pending', {
+        requestedRevision,
+        candidateBytes: savedBytes.byteLength,
+        warnings: persistenceWarnings,
+        recovery: { action: 'adopt-when-safe', reason: adoptionDecision.reason },
+      });
+    }
+
+    const transitionCandidate = saveCandidate?.preparedPdfJsDocument || preparedPdfJsDocument;
     // The saved-document transition owns this candidate through success or
     // recoverable refresh failure. The saver must not destroy it in `finally`.
     throwIfSaveFaultInjected('after-persistence-before-proxy-adoption');
     preparedPdfJsDocument = null;
+    if (saveCandidate) {
+      await releaseSaveCandidate(saveCandidate, { destroyPreparedDocument: false });
+      saveCandidate = null;
+    }
     await synchronizePersistedOwner({
       owner: activeDoc,
       requestedRevision,
@@ -3395,7 +3574,13 @@ async function performSavePDF(saveAsPath = null, {
       coordinatorContext,
     });
 
-    return { saved: true, candidateBytes: savedBytes.byteLength };
+    return ownerSaveResult(activeDoc,
+      persistenceWarnings.length > 0 ? 'saved-with-warning' : 'saved', {
+        requestedRevision,
+        candidateBytes: savedBytes.byteLength,
+        proxyAdopted: true,
+        warnings: persistenceWarnings,
+      });
   } catch (error) {
     if (error instanceof SaveRequestSupersededError) throw error;
     console.error('Error saving PDF:', error);
@@ -3410,7 +3595,14 @@ async function performSavePDF(saveAsPath = null, {
         error: error instanceof Error ? error.message : String(error),
       });
       showMessage(`The PDF was saved, but the in-app document refresh failed: ${error?.message || String(error)}. Reopen the file to refresh the view.`);
-      return { saved: true, candidateBytes: savedBytes?.byteLength ?? null };
+      return ownerSaveResult(activeDoc, 'saved-refresh-failed', {
+        requestedRevision,
+        candidateBytes: savedBytes?.byteLength ?? null,
+        warnings: persistenceWarnings,
+        recovery: { action: 'retry-refresh' },
+        errorCode: error?.code || 'SAVED_DOCUMENT_SYNCHRONIZATION_FAILED',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
     }
     if (activeDoc) {
       markDocumentSaveState(activeDoc, 'failed', {
@@ -3419,13 +3611,14 @@ async function performSavePDF(saveAsPath = null, {
       });
     }
     showMessage(i18next.t('failedToSavePdf', { error: error?.message || String(error) }));
-    return rejectAutomaticSave('serialization-or-write-failed', {
+    return rejectSave('serialization-or-write-failed', {
       error: error instanceof Error ? error.message : String(error),
     });
   } finally {
     window.__pdfSaveInProgress = false;
     await abortMacosSafePdfSave(stagedToken);
     await destroyPreparedPdfJsDocument(preparedPdfJsDocument);
+    await releaseSaveCandidate(saveCandidate);
     if (showSaveProgress) hideLoading();
     void import('./whole-pdf-preload.js').then((module) => module.startWholePdfPreload(activeDoc));
   }
@@ -3445,13 +3638,20 @@ export async function savePDFAs({
     : getActiveDocument();
   if (!activeDoc?.pdfDoc) {
     showMessage(i18next.t('noPdfLoaded'));
-    return false;
+    return ownerSaveResult(activeDoc, 'failed', {
+      documentId: String(expectedDocumentId || activeDoc?.id || 'unowned-document'),
+      errorCode: 'NO_DOCUMENT',
+      errorMessage: 'No PDF document is available to save',
+    });
   }
   if (!coordinatorContext) {
     try {
       if (!(await textEditCommitAllowsSave(activeDoc, 'save-as', commitTextEditingForDocument))) {
         console.warn('[saver] Active text edit rejected the Save As commit barrier');
-        return false;
+        return ownerSaveResult(activeDoc, 'failed', {
+          errorCode: 'TEXT_EDIT_COMMIT_REJECTED',
+          errorMessage: 'The active text edit could not be committed before Save As',
+        });
       }
     } catch (error) {
       console.warn('[saver] Active text edit could not be committed before Save As:', error);
@@ -3459,13 +3659,19 @@ export async function savePDFAs({
         ns: 'hardening',
         reason: error instanceof Error ? error.message : String(error),
       }));
-      return false;
+      return ownerSaveResult(activeDoc, 'failed', {
+        errorCode: error?.code || 'TEXT_EDIT_COMMIT_FAILED',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
     }
   }
   const currentOwner = getDocumentById(activeDoc.id);
   if (!documentLifecycleOwnerMatches(activeDoc, currentOwner)) {
     console.warn('[saver] Active document lifecycle changed before Save As destination selection');
-    return false;
+    return ownerSaveResult(activeDoc, 'superseded', {
+      errorCode: 'DOCUMENT_LIFECYCLE_CHANGED',
+      errorMessage: 'The document lifecycle changed before Save As destination selection',
+    });
   }
   activeDoc = currentOwner;
 
@@ -3490,7 +3696,7 @@ export async function savePDFAs({
       : await savePDF(savePath);
 
     // If saved to a new path, update the current path and UI
-    if (success && savePath !== currentPath) {
+    if (saveResultIsDurable(success) && savePath !== currentPath) {
       // Clean up the in-memory original-bytes cache for untitled docs.
       if (doc && wasUntitled) {
         const memKey = `__memory__${doc.id}`;
@@ -3516,7 +3722,11 @@ export async function savePDFAs({
         } catch (e) { console.warn('[blank-pdf] temp cleanup failed:', e); }
       }
     }
-    return success || false;
+    return success;
   }
-  return false;
+  return ownerSaveResult(activeDoc, 'deferred', {
+    recovery: { action: 'save-as' },
+    errorCode: 'SAVE_AS_CANCELLED',
+    errorMessage: 'Save As was cancelled before a destination was chosen',
+  });
 }

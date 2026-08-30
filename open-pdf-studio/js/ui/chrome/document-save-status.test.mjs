@@ -58,6 +58,46 @@ test('successful persistence plus failed refresh exposes the partial-success rec
   assert.equal(status.exactError, 'Exact proxy installation failure');
 });
 
+test('queued, warning, refresh-pending, and Save As outcomes are distinct and actionable', () => {
+  const document = documentState();
+  Object.assign(document.revisionState, {
+    contentRevision: 4,
+    serializedRevision: 4,
+    persistedRevision: 4,
+    livePdfRevision: 3,
+    saveState: 'saved-refresh-pending',
+  });
+  assert.deepEqual(documentSaveStatusModel(document), {
+    documentId: document.id,
+    state: 'saved-refresh-pending',
+    identity: documentSaveStatusModel(document).identity,
+    exactError: null,
+    progress: false,
+    severity: 'success',
+    actions: [],
+    visible: true,
+    message: 'Saved; editor refresh pending',
+  });
+
+  Object.assign(document.revisionState, {
+    saveState: 'saved-with-warning',
+    livePdfRevision: 4,
+    lastSaveWarnings: [{ code: 'SAFE_SAVE_WARNING', message: 'Cleanup remains' }],
+  });
+  const warning = documentSaveStatusModel(document);
+  assert.equal(warning.message, 'PDF saved with a warning');
+  assert.equal(warning.exactError, 'Cleanup remains');
+  assert.deepEqual(warning.actions, ['view-save-details', 'acknowledge']);
+
+  Object.assign(document.revisionState, {
+    saveState: 'save-as-required',
+    contentRevision: 5,
+  });
+  const saveAs = documentSaveStatusModel(document);
+  assert.equal(saveAs.message, 'Choose a destination to save changes');
+  assert.deepEqual(saveAs.actions, ['save-as', 'acknowledge']);
+});
+
 test('retry refresh uses the refresh-only path and never invokes persistence', async () => {
   const document = documentState();
   Object.assign(document.revisionState, {
@@ -176,6 +216,9 @@ test('debug snapshot exactly reflects the authoritative revision transition', ()
     saveState: 'saved-refresh-failed',
     activeSaveRequestId: null,
     lastSaveError: null,
+    lastSaveErrorCode: null,
+    lastSaveWarnings: [],
+    lastSaveRecovery: null,
     lastSynchronizationError: 'readiness failed',
   });
 });

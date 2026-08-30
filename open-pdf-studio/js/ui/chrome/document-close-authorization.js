@@ -1,3 +1,6 @@
+import { initializeDocumentRevisionState } from '../../core/document-revision-state.runtime.js';
+import { saveResultAllowsClose } from '../../pdf/save-result.js';
+
 const CLOSE_ACTIONS = new Set(['save', 'dontsave', 'cancel']);
 
 /**
@@ -32,15 +35,17 @@ export async function authorizeDocumentClose({
     const action = CLOSE_ACTIONS.has(requestedAction) ? requestedAction : 'cancel';
     if (action === 'cancel') return false;
     if (action === 'save') {
-      // A transient editor commits through visible Apply, its keyboard
-      // shortcut, or a completed ordinary click-away. Save itself must never
-      // imply Apply or discard an editor that is still active.
-      if (dirtyTextEdit) return false;
       if (typeof saveDocument !== 'function') {
         throw new TypeError('saveDocument is required for the Save action');
       }
-      const saved = await saveDocument(documentState);
-      if (!saved || documentState.ocr?.dirty === true) return false;
+      // The owner-scoped save coordinator performs the text-edit commit
+      // barrier, promotes that final revision into the request, and flushes it
+      // immediately. Close is authorized only by a durable typed result for
+      // the latest post-commit revision.
+      const result = await saveDocument(documentState);
+      const latestRevision = initializeDocumentRevisionState(documentState).contentRevision;
+      if (!saveResultAllowsClose(result, latestRevision)
+          || documentState.ocr?.dirty === true) return false;
     }
   }
 
