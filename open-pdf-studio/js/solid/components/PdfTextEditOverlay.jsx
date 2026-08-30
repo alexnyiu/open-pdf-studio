@@ -1760,19 +1760,24 @@ export default function PdfTextEditOverlay() {
     } catch {
       authoredChanged = true;
     }
-    updateRichTextDraft(draft, {
-      preserveDom: true,
-      advanceDraftRevision: authoredChanged,
-    });
-    if (expandable) {
-      exactRequiredHeight = draft.region.height;
-      lastExpandableFingerprint = '';
-      scheduleExpandableLayout(draft);
+    // A DOM seal with identical authored semantics owns no canonical write.
+    // In particular, never replace a clean annotation draft with coordinates
+    // produced by view-scale reflow immediately before click-away Apply.
+    if (authoredChanged) {
+      updateRichTextDraft(draft, {
+        preserveDom: true,
+        advanceDraftRevision: true,
+      });
+      if (expandable) {
+        exactRequiredHeight = draft.region.height;
+        lastExpandableFingerprint = '';
+        scheduleExpandableLayout(draft);
+      }
+      // Manual-line native drafts do not reflow, so their live outline must be
+      // resized from the just-edited DOM before the asynchronous exact-layout
+      // result returns. Exact validation still owns whether Apply is allowed.
+      if (editorOptions().reflowWidth || expandable) queueMicrotask(resizeRichToContent);
     }
-    // Manual-line native drafts do not reflow, so their live outline must be
-    // resized from the just-edited DOM before the asynchronous exact-layout
-    // result returns. Exact validation still owns whether Apply is allowed.
-    if (editorOptions().reflowWidth || expandable) queueMicrotask(resizeRichToContent);
     queueMicrotask(syncRichSelection);
     pendingInputContext = null;
     return authoredChanged;

@@ -208,6 +208,10 @@ test('clean annotation Apply distinguishes authored flush changes from layout no
   assert.match(sync,
     /semanticRichTextSignature\(draft\)\s*!==\s*semanticRichTextSignature\(current\)/u,
     'DOM sealing must compare authored semantics without reflow-owned geometry');
+  const authoredGuard = sync.indexOf('if (authoredChanged) {');
+  const canonicalWrite = sync.indexOf('updateRichTextDraft(draft, {');
+  assert.ok(authoredGuard >= 0 && canonicalWrite > authoredGuard,
+    'a semantic no-op DOM seal must not replace the clean canonical draft');
 });
 
 test('keyed portal handoff clears stale editor refs before replacement sizing', async () => {
