@@ -22,6 +22,10 @@ import {
   recordRejectedRenderPublication,
   renderPublicationTokenIsCurrent,
 } from './render-publication-token.js';
+import {
+  registerWholePdfPreloadSuspensionListener,
+  wholePdfPreloadIsSuspended,
+} from './whole-pdf-preload-suspension.js';
 
 export const WHOLE_PDF_PRELOAD_LIMITS = Object.freeze({
   maxPages: 1000,
@@ -302,7 +306,7 @@ function coordinatorFor(doc) {
 }
 
 export function startWholePdfPreload(doc = getActiveDocument()) {
-  return doc ? coordinatorFor(doc).start() : Promise.resolve();
+  return doc && !wholePdfPreloadIsSuspended(doc) ? coordinatorFor(doc).start() : Promise.resolve();
 }
 
 export function cancelWholePdfPreload(doc = getActiveDocument(), options = {}) {
@@ -315,5 +319,10 @@ export function restartWholePdfPreload(doc = getActiveDocument()) {
   const old = coordinators.get(doc);
   old?.cancel({ release: true, reason: 'mutation' });
   coordinators.delete(doc);
-  return shouldPreloadEntireDocument(doc, state.preferences) ? startWholePdfPreload(doc) : Promise.resolve();
+  return !wholePdfPreloadIsSuspended(doc) && shouldPreloadEntireDocument(doc, state.preferences)
+    ? startWholePdfPreload(doc) : Promise.resolve();
 }
+
+registerWholePdfPreloadSuspensionListener((doc, reason) => {
+  cancelWholePdfPreload(doc, { release: true, reason });
+});

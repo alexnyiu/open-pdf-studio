@@ -51,6 +51,9 @@ const {
   textCacheSnapshot,
   writePageTextCache,
 } = await vite.ssrLoadModule('/js/search/text-cache.js');
+const {
+  wholePdfPreloadSuspensionSnapshotForTests,
+} = await vite.ssrLoadModule('/js/pdf/whole-pdf-preload-suspension.js');
 
 after(async () => {
   state.documents.splice(0, state.documents.length);
@@ -183,6 +186,41 @@ function startJob(controller, document, fixtures, overrides = {}) {
     ...overrides,
   });
 }
+
+test('a document OCR job exclusively owns speculative preload until its terminal boundary', async () => {
+  const document = makeDocument('document-preload-lease', [[]]);
+  const fixtures = new Map();
+  let releasePage;
+  const pageStarted = new Promise((resolve) => {
+    releasePage = resolve;
+  });
+  let signalRunStarted;
+  const runStarted = new Promise((resolve) => {
+    signalRunStarted = resolve;
+  });
+  const controller = new OcrApplicationController({
+    runPage: async ({ request }) => {
+      signalRunStarted();
+      await pageStarted;
+      const fixture = fixtures.get(request.jobId);
+      return {
+        outcome: { status: 'completed', result: fixture.result },
+        pageGeometry: fixture.pageGeometry,
+      };
+    },
+  });
+
+  const job = startJob(controller, document, fixtures);
+  await runStarted;
+  assert.deepEqual(wholePdfPreloadSuspensionSnapshotForTests(document), { owners: 1 });
+
+  releasePage();
+  const summary = await job.completion;
+
+  assert.equal(summary.status, 'completed');
+  assert.deepEqual(wholePdfPreloadSuspensionSnapshotForTests(document), { owners: 0 });
+  controller.dispose();
+});
 
 test('multi-page orchestration serializes inference and records one compound OCR command', async () => {
   const document = makeDocument('document-serial', [[], [], []]);

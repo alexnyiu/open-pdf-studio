@@ -23,6 +23,7 @@ import {
   notePdfForegroundActivity,
 } from '../pdf/foreground-activity.js';
 import { backgroundRenderAdmissionAllowed } from '../pdf/render-resource-budget.js';
+import { acquireWholePdfPreloadSuspension } from '../pdf/whole-pdf-preload-suspension.js';
 import { assertOcrPageGeometryV1 } from './contracts/page-geometry.v1.js';
 import { assertOcrResultV2 } from './contracts/v2.js';
 import {
@@ -426,6 +427,7 @@ export class OcrApplicationController {
       onProgress: typeof onProgress === 'function' ? onProgress : null,
     };
     const job = new ApplicationOcrJob(this, options);
+    const releasePreloadLane = acquireWholePdfPreloadSuspension(document, { reason: 'ocr-active' });
     this.jobs.set(job.jobId, job);
     activeDocumentApplicationJobs.set(document.id, job);
     job.completion = this.runJob(job).finally(() => {
@@ -434,6 +436,7 @@ export class OcrApplicationController {
         activeDocumentApplicationJobs.delete(document.id);
       }
       job.releaseTerminalResources();
+      releasePreloadLane();
       if (document.performanceProfile?.largeDocument === true || pages.length >= 50) {
         notePdfForegroundActivity('ocr-terminal-memory-release', 250);
       }
