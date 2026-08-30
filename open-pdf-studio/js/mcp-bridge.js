@@ -990,6 +990,7 @@ async function handleGetViewportState() {
   let performanceMetrics = null;
   let nativeRenderResources = null;
   let documentSaveState = null;
+  let safeSaveProvider = null;
   let documentLoadState = null;
   let pageEditReadiness = null;
   let renderPublicationDiagnostics = null;
@@ -1050,6 +1051,8 @@ async function handleGetViewportState() {
       totalHeight: doc.pageGeometryIndex.totalHeight?.(doc.scale, doc.bookSpread ? 'book' : 'continuous') || 0,
     } : null;
     if (doc) {
+      safeSaveProvider = doc.lastSafeSaveProvider
+        ? structuredClone(doc.lastSafeSaveProvider) : null;
       const revisionModule = await import('/js/core/document-revision-state.runtime.js');
       documentSaveState = revisionModule.documentRevisionDebugSnapshot(doc);
       if (Number.isInteger(activePageNum) && activePageNum > 0) {
@@ -1179,6 +1182,7 @@ async function handleGetViewportState() {
       ? { ...window.__textEditAutoSaveDebug }
       : null,
     documentSaveState,
+    safeSaveProvider,
     documentLoadState,
     pageEditReadiness,
     renderPublicationDiagnostics,
@@ -2399,6 +2403,8 @@ async function handleSavePdf(params) {
       ok: false,
       error: success?.errorMessage || `savePDF reported ${success?.status || 'failure'}`,
       status: success?.status || 'failed',
+      errorCode: success?.errorCode || null,
+      recovery: success?.recovery || null,
     };
   }
   return { ok: true, path: path || doc.filePath };

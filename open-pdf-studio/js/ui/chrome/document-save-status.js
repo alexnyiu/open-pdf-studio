@@ -15,6 +15,57 @@ const FAILURE_STATES = new Set([
 ]);
 
 const CLEANUP_WARNING_CODE = 'OLD_VERSION_CLEANUP_FAILED';
+const PROVIDER_RETRY_CODES = new Set([
+  'ICLOUD_PROVIDER_BUSY',
+  'FILE_PROVIDER_BUSY',
+  'PROVIDER_UNAVAILABLE',
+]);
+const PROVIDER_RESELECT_CODES = new Set([
+  'PROVIDER_NOT_MATERIALIZED',
+  'PROVIDER_AUTHENTICATION_REQUIRED',
+  'SECURITY_SCOPED_ACCESS_REQUIRED',
+  'DESTINATION_CHANGED',
+  'READ_ONLY_DESTINATION',
+  'OUT_OF_DISK_SPACE',
+]);
+
+function providerFailureStatus(revision) {
+  const code = String(revision.lastSaveErrorCode || '');
+  if (!PROVIDER_RETRY_CODES.has(code) && !PROVIDER_RESELECT_CODES.has(code)) return null;
+  const recovery = revision.lastSaveRecovery && typeof revision.lastSaveRecovery === 'object'
+    ? revision.lastSaveRecovery : {};
+  const providerKind = recovery.providerKind || null;
+  const providerLabel = providerKind === 'icloud'
+    ? 'iCloud Drive' : providerKind === 'file-provider' ? 'File Provider' : 'Storage provider';
+  let message;
+  if (code === 'PROVIDER_NOT_MATERIALIZED') {
+    message = 'Cloud PDF is not downloaded; download it or choose another destination';
+  } else if (code === 'PROVIDER_AUTHENTICATION_REQUIRED') {
+    message = `${providerLabel} needs you to sign in before saving`;
+  } else if (code === 'SECURITY_SCOPED_ACCESS_REQUIRED') {
+    message = 'macOS file access expired; choose the destination again';
+  } else if (code === 'DESTINATION_CHANGED') {
+    message = 'The destination changed; review it or save to another file';
+  } else if (code === 'READ_ONLY_DESTINATION') {
+    message = 'The destination is read-only; choose another file';
+  } else if (code === 'OUT_OF_DISK_SPACE') {
+    message = 'The destination has no free space; changes remain pending';
+  } else if (code === 'PROVIDER_UNAVAILABLE') {
+    message = `${providerLabel} is unavailable; changes remain pending`;
+  } else {
+    message = `${providerLabel} is busy; changes remain pending`;
+  }
+  const retryable = recovery.retryable === true || PROVIDER_RETRY_CODES.has(code);
+  return {
+    message,
+    actions: retryable
+      ? ['retry-save', 'save-as', 'acknowledge']
+      : ['save-as', 'acknowledge'],
+    providerKind,
+    providerRecoveryAction: recovery.recoveryAction || (retryable ? 'retry-save' : 'save-as'),
+    retryable,
+  };
+}
 
 function warningActions(warnings) {
   const actions = ['view-save-details', 'export-save-details'];
@@ -181,6 +232,16 @@ export function documentSaveStatusModel(documentState) {
         message: 'Newer changes are queued to save',
       });
     case 'failed':
+      {
+        const providerFailure = providerFailureStatus(revision);
+        if (providerFailure) {
+          return Object.freeze({
+            ...common,
+            ...providerFailure,
+            visible: true,
+            severity: 'error',
+          });
+        }
       return Object.freeze({
         ...common,
         visible: true,
@@ -188,6 +249,7 @@ export function documentSaveStatusModel(documentState) {
         message: 'Save failed; changes remain pending',
         actions: ['retry-save', 'acknowledge'],
       });
+      }
     case 'saved-refresh-failed':
       if (documentHasRevisionPersistenceDebt(documentState)) {
         return Object.freeze({

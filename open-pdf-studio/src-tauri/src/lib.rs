@@ -6,6 +6,8 @@
 mod accounts;
 mod email;
 pub mod linux_runtime;
+#[cfg(target_os = "macos")]
+pub mod macos_file_coordination;
 pub mod macos_safe_save;
 pub mod mcp_app_bridge;
 pub mod mcp_server;

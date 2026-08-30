@@ -86,6 +86,8 @@ function failedResult(request, owner, error) {
     ...resultRevisions(owner, request),
     errorCode: error?.code || 'SAVE_FAILED',
     errorMessage: error instanceof Error ? error.message : String(error),
+    recovery: error?.recovery && typeof error.recovery === 'object'
+      ? error.recovery : null,
   });
 }
 

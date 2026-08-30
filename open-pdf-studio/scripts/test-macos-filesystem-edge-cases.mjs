@@ -111,6 +111,39 @@ async function privateCandidates(directory) {
     && (name.endsWith('.candidate') || name.endsWith('.baseline')));
 }
 
+async function waitForCondition(probe, {
+  timeoutMs = 15_000,
+  intervalMs = 25,
+  label = 'condition',
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let latest = null;
+  while (Date.now() < deadline) {
+    latest = await probe();
+    if (latest) return latest;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error(`timed out waiting for ${label}: ${JSON.stringify(latest)}`);
+}
+
+async function discoverThirdPartyProviderRoots() {
+  const cloudStorageRoot = path.join(process.env.HOME || '', 'Library', 'CloudStorage');
+  let entries = [];
+  try {
+    entries = await readdir(cloudStorageRoot, { withFileTypes: true });
+  } catch {
+    return { dropbox: null, onedrive: null };
+  }
+  const providerPath = (pattern) => {
+    const entry = entries.find((candidate) => candidate.isDirectory() && pattern.test(candidate.name));
+    return entry ? path.join(cloudStorageRoot, entry.name) : null;
+  };
+  return {
+    dropbox: providerPath(/^Dropbox(?:-|$)/iu),
+    onedrive: providerPath(/^OneDrive(?:-|$)/iu),
+  };
+}
+
 async function validatePdf(filePath) {
   const bytes = await readFile(filePath);
   const document = await pdfjsLib.getDocument({
@@ -166,6 +199,7 @@ async function main() {
   const criteria = {};
   const mountedImages = [];
   let icloudTransactionPath = null;
+  const thirdPartyTransactionPaths = [];
   let app = null;
   let mutationSequence = 0;
   const cleanupErrors = [];
@@ -281,8 +315,76 @@ async function main() {
       env: {
         OPS_TEST_SESSION_PATH: path.join(tempRoot, 'session.json'),
         OPS_TEST_OCR_CACHE_DIR: path.join(tempRoot, 'app-data', 'ocr-cache'),
+        OPS_TEST_SAFE_SAVE_COORDINATION_DELAY_MS: '250',
       },
     });
+
+    const localCoordinatedPath = path.join(localRoot, 'local-coordinated.pdf');
+    await copyFile(sourcePdf, localCoordinatedPath);
+    try {
+      await openPdf(localCoordinatedPath);
+      await queueSaveMutation('local APFS coordinated transaction');
+      const saved = await app.callTool('app_save_pdf');
+      if (saved?.ok !== true) throw new Error(`local coordinated save failed: ${saved?.error}`);
+      const viewport = await app.callTool('app_get_viewport_state');
+      const provider = viewport?.safeSaveProvider;
+      if (provider?.providerKind !== 'local' || provider?.coordinationRequired !== true) {
+        throw new Error(`local save lacked coordination evidence: ${JSON.stringify(provider)}`);
+      }
+      const pdf = await validatePdf(localCoordinatedPath);
+      if ((await privateCandidates(localRoot)).length) throw new Error('local save left private files');
+      criteria.localApfsCoordinatedTransaction = status('PASS', {
+        provider,
+        coordinated: true,
+        nonAtomicFallbackUsed: false,
+        candidateCleanup: true,
+        pdf,
+      });
+    } catch (error) {
+      criteria.localApfsCoordinatedTransaction = status('FAIL', {
+        error: error.message || String(error),
+      });
+    }
+
+    const destinationChangedPath = path.join(localRoot, 'destination-changed.pdf');
+    await copyFile(sourcePdf, destinationChangedPath);
+    try {
+      await openPdf(destinationChangedPath);
+      await queueSaveMutation('destination change protection');
+      const externallyEditedBytes = Buffer.concat([
+        await readFile(sourcePdf),
+        Buffer.from('\n% external edit during staged save\n', 'utf8'),
+      ]);
+      const savePromise = app.callTool('app_save_pdf');
+      await waitForCondition(async () => {
+        const candidates = await privateCandidates(localRoot);
+        return candidates.some((name) => name.includes('destination-changed.pdf'))
+          ? candidates : null;
+      }, { label: 'staged destination-change candidate' });
+      await writeFile(destinationChangedPath, externallyEditedBytes);
+      const saved = await savePromise;
+      if (saved?.ok !== false || saved?.errorCode !== 'DESTINATION_CHANGED') {
+        throw new Error(`external destination edit was not rejected: ${JSON.stringify(saved)}`);
+      }
+      if (!Buffer.from(await readFile(destinationChangedPath)).equals(externallyEditedBytes)) {
+        throw new Error('destination-change rejection overwrote the external edit');
+      }
+      if ((await privateCandidates(localRoot)).length) {
+        throw new Error('destination-change rejection left private files');
+      }
+      criteria.destinationChangeProtection = status('PASS', {
+        rejected: true,
+        errorCode: saved.errorCode,
+        recovery: saved.recovery,
+        externalEditPreserved: true,
+        candidateCleanup: true,
+        blindRetryUsed: false,
+      });
+    } catch (error) {
+      criteria.destinationChangeProtection = status('FAIL', {
+        error: error.message || String(error),
+      });
+    }
 
     const permissionsPath = path.join(localRoot, 'permissions-locked.pdf');
     await copyFile(sourcePdf, permissionsPath);
@@ -353,6 +455,12 @@ async function main() {
       if (first?.ok !== true || second?.ok !== true) {
         throw new Error(`APFS external save failed: ${first?.error || second?.error}`);
       }
+      const apfsViewport = await app.callTool('app_get_viewport_state');
+      const apfsProvider = apfsViewport?.safeSaveProvider;
+      if (apfsProvider?.providerKind !== 'external-volume'
+          || apfsProvider?.coordinationRequired !== true) {
+        throw new Error(`APFS external classification/coordination missing: ${JSON.stringify(apfsProvider)}`);
+      }
       const pdf = await validatePdf(externalPath);
       if ((await privateCandidates(apfsImage.mountPath)).length) throw new Error('APFS saves left private files');
 
@@ -375,6 +483,7 @@ async function main() {
         repeatedSave: 'pass',
         atomicReplacement: 'pass',
         nonAtomicFallbackUsed: false,
+        provider: apfsProvider,
         lockedOriginalPreserved: true,
         pdf,
       });
@@ -485,6 +594,91 @@ async function main() {
         reason: 'APFS was exercised, but no live exFAT transaction was possible on this host.',
       });
 
+    async function qualifyThirdPartyProvider(providerName, providerRoot) {
+      if (!providerRoot) {
+        return status('UNVERIFIED', {
+          liveProviderTransactionPerformed: false,
+          reason: `${providerName} File Provider is not configured on this host.`,
+        });
+      }
+      let transactionPath = null;
+      try {
+        transactionPath = await mkdtemp(path.join(
+          providerRoot,
+          `Open PDF Studio ${providerName} Validation-`,
+        ));
+        thirdPartyTransactionPaths.push(transactionPath);
+        const providerPdf = path.join(transactionPath, 'provider-save.pdf');
+        await copyFile(sourcePdf, providerPdf);
+        await openPdf(providerPdf);
+        await queueSaveMutation(`${providerName} File Provider transaction`);
+        const first = await app.callTool('app_save_pdf');
+        await queueSaveMutation(`${providerName} repeated File Provider transaction`);
+        const second = await app.callTool('app_save_pdf');
+        if (first?.ok !== true || second?.ok !== true) {
+          throw new Error(`${providerName} save failed: ${first?.error || second?.error}`);
+        }
+        const viewport = await app.callTool('app_get_viewport_state');
+        const provider = viewport?.safeSaveProvider;
+        if (provider?.providerKind !== 'file-provider'
+            || provider?.providerManaged !== true
+            || provider?.coordinationRequired !== true) {
+          throw new Error(`${providerName} classification/coordination missing: ${JSON.stringify(provider)}`);
+        }
+        const metadataProbe = await commandResult(ubiquityHelper, [providerPdf]);
+        let metadata = null;
+        try { metadata = metadataProbe.code === 0 ? JSON.parse(metadataProbe.stdout) : null; } catch {}
+        const pdf = await validatePdf(providerPdf);
+        if ((await privateCandidates(transactionPath)).length) {
+          throw new Error(`${providerName} save left private files`);
+        }
+        return status('PASS', {
+          liveProviderTransactionPerformed: true,
+          providerRoot,
+          provider,
+          metadata,
+          save: 'pass',
+          repeatedSave: 'pass',
+          candidateCleanup: true,
+          nonAtomicFallbackUsed: false,
+          pdf,
+        });
+      } catch (error) {
+        return status('FAIL', {
+          liveProviderTransactionPerformed: Boolean(transactionPath),
+          providerRoot,
+          error: error.message || String(error),
+        });
+      }
+    }
+
+    const thirdPartyRoots = await discoverThirdPartyProviderRoots();
+    criteria.dropboxFileProviderTransaction = await qualifyThirdPartyProvider(
+      'Dropbox',
+      thirdPartyRoots.dropbox,
+    );
+    criteria.oneDriveFileProviderTransaction = await qualifyThirdPartyProvider(
+      'OneDrive',
+      thirdPartyRoots.onedrive,
+    );
+    criteria.providerNetworkLoss = status('UNVERIFIED', {
+      isolatedFaultPerformed: false,
+      originalPreservationPolicy: 'typed provider failure with no direct-write fallback',
+      reason: 'No isolated provider-network fault was available without changing host-wide connectivity.',
+    });
+    criteria.icloudCloudOnlyBeforeOpen = status('UNVERIFIED', {
+      liveCloudOnlyTransactionPerformed: false,
+      reason: 'iCloud eviction was not reached.',
+    });
+    criteria.icloudUploadInProgress = status('UNVERIFIED', {
+      liveUploadObserved: false,
+      reason: 'No iCloud upload-in-progress state was observed.',
+    });
+    criteria.providerEviction = status('UNVERIFIED', {
+      liveEvictionPerformed: false,
+      reason: 'Provider eviction was not reached.',
+    });
+
     if (options.skipIcloud) {
       criteria.icloudDriveProviderTransaction = status('UNVERIFIED', {
         liveProviderTransactionPerformed: false,
@@ -495,11 +689,12 @@ async function main() {
       const rootProbe = await commandResult(ubiquityHelper, [icloudRoot]);
       let rootStatus = null;
       try { rootStatus = rootProbe.code === 0 ? JSON.parse(rootProbe.stdout) : null; } catch {}
-      if (!rootStatus?.exists || !rootStatus?.isUbiquitous || rootStatus?.uploaded !== true) {
+      if (!rootStatus?.exists
+          || (rootStatus?.isUbiquitous !== true && rootStatus?.resourceIsUbiquitous !== true)) {
         criteria.icloudDriveProviderTransaction = status('UNVERIFIED', {
           liveProviderTransactionPerformed: false,
           reason: rootProbe.code === 0
-            ? 'The iCloud Drive path exists but was not confirmed as an uploaded ubiquitous provider root.'
+            ? 'The iCloud Drive path exists but was not confirmed as a ubiquitous provider root.'
             : `The iCloud provider metadata probe was unavailable: ${textOutput(rootProbe)}`,
           rootProbe: rootStatus,
         });
@@ -512,13 +707,22 @@ async function main() {
           await queueSaveMutation('iCloud provider transaction');
           const saved = await app.callTool('app_save_pdf');
           if (saved?.ok !== true) throw new Error(`provider-backed safe save failed: ${saved?.error}`);
+          const viewport = await app.callTool('app_get_viewport_state');
+          const provider = viewport?.safeSaveProvider;
+          if (provider?.providerKind !== 'icloud'
+              || provider?.providerManaged !== true
+              || provider?.coordinationRequired !== true) {
+            throw new Error(`iCloud classification/coordination missing: ${JSON.stringify(provider)}`);
+          }
           let itemStatus = null;
+          let uploadInProgressObserved = provider.uploading === true;
           const deadline = Date.now() + 60_000;
           while (Date.now() < deadline) {
             const probe = await commandResult(ubiquityHelper, [icloudPdf]);
             if (probe.code === 0) {
               try { itemStatus = JSON.parse(probe.stdout); } catch {}
             }
+            if (itemStatus?.uploading === true) uploadInProgressObserved = true;
             if (itemStatus?.isUbiquitous && itemStatus?.uploaded === true && !itemStatus?.uploadError) break;
             await new Promise((resolve) => setTimeout(resolve, 1_000));
           }
@@ -530,11 +734,114 @@ async function main() {
           criteria.icloudDriveProviderTransaction = status('PASS', {
             liveProviderTransactionPerformed: true,
             providerRootConfirmed: true,
+            provider,
             saved: true,
             uploaded: true,
             candidateCleanup: true,
             pdf,
           });
+          criteria.icloudUploadInProgress = uploadInProgressObserved
+            ? status('PASS', {
+              liveUploadObserved: true,
+              finalItemStatus: itemStatus,
+            })
+            : status('UNVERIFIED', {
+              liveUploadObserved: false,
+              finalItemStatus: itemStatus,
+              reason: 'The controlled iCloud save uploaded too quickly to observe an in-progress state.',
+            });
+
+          const cloudOnlyPdf = path.join(icloudTransactionPath, 'cloud-only-before-open.pdf');
+          await copyFile(sourcePdf, cloudOnlyPdf);
+          let cloudOnlyDownloadedAgain = false;
+          try {
+            await waitForCondition(async () => {
+              const probe = await commandResult(ubiquityHelper, [cloudOnlyPdf]);
+              if (probe.code !== 0) return null;
+              try {
+                const value = JSON.parse(probe.stdout);
+                return value.uploaded === true && !value.uploadError ? value : null;
+              } catch {
+                return null;
+              }
+            }, { timeoutMs: 60_000, intervalMs: 1_000, label: 'controlled iCloud upload' });
+            const originalSha256 = await sha256(cloudOnlyPdf);
+            const eviction = await commandResult('/usr/bin/brctl', ['evict', cloudOnlyPdf]);
+            if (eviction.code !== 0) {
+              const reason = `Controlled iCloud eviction was unavailable: ${textOutput(eviction)}`;
+              criteria.icloudCloudOnlyBeforeOpen = status('UNVERIFIED', {
+                liveCloudOnlyTransactionPerformed: false,
+                reason,
+              });
+              criteria.providerEviction = status('UNVERIFIED', {
+                liveEvictionPerformed: false,
+                reason,
+              });
+            } else {
+              const evictedStatus = await waitForCondition(async () => {
+                const probe = await commandResult(ubiquityHelper, [cloudOnlyPdf]);
+                if (probe.code !== 0) return null;
+                try {
+                  const value = JSON.parse(probe.stdout);
+                  return /not.?downloaded/iu.test(value.downloadStatus || '') ? value : null;
+                } catch {
+                  return null;
+                }
+              }, { timeoutMs: 30_000, intervalMs: 250, label: 'iCloud cloud-only state' });
+              await openPdf(localCoordinatedPath);
+              await queueSaveMutation('cloud-only destination rejection');
+              const rejected = await app.callTool('app_save_pdf', { path: cloudOnlyPdf });
+              if (rejected?.ok !== false
+                  || rejected?.errorCode !== 'PROVIDER_NOT_MATERIALIZED'
+                  || rejected?.recovery?.recoveryAction !== 'download-provider-file') {
+                throw new Error(`cloud-only destination lacked typed rejection: ${JSON.stringify(rejected)}`);
+              }
+              if ((await privateCandidates(icloudTransactionPath)).length) {
+                throw new Error('cloud-only rejection left private files');
+              }
+              const download = await commandResult('/usr/bin/brctl', ['download', cloudOnlyPdf]);
+              if (download.code !== 0) throw new Error(`could not rematerialize controlled iCloud file: ${textOutput(download)}`);
+              await waitForCondition(async () => {
+                const probe = await commandResult(ubiquityHelper, [cloudOnlyPdf]);
+                if (probe.code !== 0) return null;
+                try {
+                  const value = JSON.parse(probe.stdout);
+                  return /current|downloaded/iu.test(value.downloadStatus || '') ? value : null;
+                } catch {
+                  return null;
+                }
+              }, { timeoutMs: 60_000, intervalMs: 500, label: 'iCloud rematerialization' });
+              cloudOnlyDownloadedAgain = true;
+              if (await sha256(cloudOnlyPdf) !== originalSha256) {
+                throw new Error('cloud-only rejection changed the original provider bytes');
+              }
+              const evidence = {
+                liveCloudOnlyTransactionPerformed: true,
+                liveEvictionPerformed: true,
+                evictedStatus,
+                errorCode: rejected.errorCode,
+                recovery: rejected.recovery,
+                originalPreserved: true,
+                candidateCleanup: true,
+                directWriteFallbackUsed: false,
+              };
+              criteria.icloudCloudOnlyBeforeOpen = status('PASS', evidence);
+              criteria.providerEviction = status('PASS', evidence);
+            }
+          } catch (error) {
+            criteria.icloudCloudOnlyBeforeOpen = status('FAIL', {
+              liveCloudOnlyTransactionPerformed: true,
+              error: error.message || String(error),
+            });
+            criteria.providerEviction = status('FAIL', {
+              liveEvictionPerformed: true,
+              error: error.message || String(error),
+            });
+          } finally {
+            if (!cloudOnlyDownloadedAgain) {
+              await commandResult('/usr/bin/brctl', ['download', cloudOnlyPdf]);
+            }
+          }
         } catch (error) {
           criteria.icloudDriveProviderTransaction = status('FAIL', {
             liveProviderTransactionPerformed: true,
@@ -550,6 +857,10 @@ async function main() {
     if (icloudTransactionPath) {
       try { await rm(icloudTransactionPath, { recursive: true, force: true }); }
       catch (error) { cleanupErrors.push(`remove iCloud test directory: ${error.message || error}`); }
+    }
+    for (const providerPath of thirdPartyTransactionPaths) {
+      try { await rm(providerPath, { recursive: true, force: true }); }
+      catch (error) { cleanupErrors.push(`remove File Provider test directory ${providerPath}: ${error.message || error}`); }
     }
     for (const image of [...mountedImages].reverse()) {
       if (image.attached) {
@@ -571,6 +882,7 @@ async function main() {
       diskImagesDeleted: true,
       isolatedApplicationDataDeleted: true,
       icloudTestDirectoryDeleted: icloudTransactionPath ? true : null,
+      thirdPartyProviderDirectoriesDeleted: thirdPartyTransactionPaths.length,
       machineSpecificOutputCommitted: false,
     });
   report.overallStatus = overallStatus(criteria);

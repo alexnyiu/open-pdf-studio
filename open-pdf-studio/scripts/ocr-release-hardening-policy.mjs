@@ -101,6 +101,8 @@ export const MACOS_ARTIFACT_REQUIRED_CRITERIA = Object.freeze([
 ]);
 
 export const MACOS_FILESYSTEM_BLOCKING_CRITERIA = Object.freeze([
+  'localApfsCoordinatedTransaction',
+  'destinationChangeProtection',
   'permissionsLockedDestination',
   'finderLockedDestination',
   'advisoryFileLock',
@@ -113,6 +115,12 @@ export const MACOS_FILESYSTEM_ADVISORY_CRITERIA = Object.freeze([
   'exfatCrossVolumeBehavior',
   'externalVolumeFallbackAndOriginalPreservation',
   'icloudDriveProviderTransaction',
+  'icloudCloudOnlyBeforeOpen',
+  'icloudUploadInProgress',
+  'dropboxFileProviderTransaction',
+  'oneDriveFileProviderTransaction',
+  'providerNetworkLoss',
+  'providerEviction',
 ]);
 
 export const MACOS_OCR_PRODUCTION_REQUIRED_CRITERIA = Object.freeze([

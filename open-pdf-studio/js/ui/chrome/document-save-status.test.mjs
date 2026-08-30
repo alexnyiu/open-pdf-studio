@@ -43,6 +43,55 @@ test('automatic save failure remains visible and leaves persistence debt pending
   assert.equal(document.revisionState.lastSaveError, 'Exact serializer stack detail');
 });
 
+test('provider-busy failures preserve typed provider recovery and pending edits', () => {
+  const document = documentState();
+  Object.assign(document.revisionState, {
+    contentRevision: 4,
+    serializedRevision: 4,
+    persistedRevision: 3,
+    livePdfRevision: 3,
+    saveState: 'failed',
+    lastSaveError: 'The provider is temporarily busy',
+    lastSaveErrorCode: 'ICLOUD_PROVIDER_BUSY',
+    lastSaveRecovery: {
+      providerKind: 'icloud',
+      retryable: true,
+      recoveryAction: 'retry-save',
+    },
+  });
+  const status = documentSaveStatusModel(document);
+  assert.equal(status.message, 'iCloud Drive is busy; changes remain pending');
+  assert.equal(status.providerKind, 'icloud');
+  assert.equal(status.providerRecoveryAction, 'retry-save');
+  assert.equal(status.retryable, true);
+  assert.deepEqual(status.actions, ['retry-save', 'save-as', 'acknowledge']);
+  assert.ok(document.revisionState.contentRevision > document.revisionState.persistedRevision);
+});
+
+test('cloud-only failures require materialization or a new destination', () => {
+  const document = documentState();
+  Object.assign(document.revisionState, {
+    contentRevision: 2,
+    serializedRevision: 2,
+    persistedRevision: 1,
+    livePdfRevision: 1,
+    saveState: 'failed',
+    lastSaveError: 'The provider-backed PDF is not downloaded on this Mac',
+    lastSaveErrorCode: 'PROVIDER_NOT_MATERIALIZED',
+    lastSaveRecovery: {
+      providerKind: 'file-provider',
+      retryable: false,
+      recoveryAction: 'download-provider-file',
+    },
+  });
+  const status = documentSaveStatusModel(document);
+  assert.equal(status.message, 'Cloud PDF is not downloaded; download it or choose another destination');
+  assert.equal(status.providerKind, 'file-provider');
+  assert.equal(status.providerRecoveryAction, 'download-provider-file');
+  assert.equal(status.retryable, false);
+  assert.deepEqual(status.actions, ['save-as', 'acknowledge']);
+});
+
 test('successful persistence plus failed refresh exposes the partial-success recovery actions', () => {
   const document = documentState();
   Object.assign(document.revisionState, {

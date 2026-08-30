@@ -17,16 +17,36 @@ var output: [String: Any] = [
 do {
     let values = try url.resourceValues(forKeys: [
         .isUbiquitousItemKey,
+        .ubiquitousItemDownloadingStatusKey,
+        .ubiquitousItemIsDownloadingKey,
+        .ubiquitousItemDownloadingErrorKey,
+        .ubiquitousItemHasUnresolvedConflictsKey,
         .ubiquitousItemIsUploadedKey,
         .ubiquitousItemIsUploadingKey,
         .ubiquitousItemUploadingErrorKey,
+        .volumeIsLocalKey,
+        .volumeIsRemovableKey,
+        .volumeIsReadOnlyKey,
+        .volumeLocalizedFormatDescriptionKey,
     ])
     if let value = values.isUbiquitousItem { output["resourceIsUbiquitous"] = value }
+    if let value = values.ubiquitousItemDownloadingStatus { output["downloadStatus"] = value.rawValue }
+    if let value = values.ubiquitousItemIsDownloading { output["downloading"] = value }
+    if let value = values.ubiquitousItemDownloadingError {
+        output["downloadError"] = value.localizedDescription
+    }
+    if let value = values.ubiquitousItemHasUnresolvedConflicts {
+        output["unresolvedConflicts"] = value
+    }
     if let value = values.ubiquitousItemIsUploaded { output["uploaded"] = value }
     if let value = values.ubiquitousItemIsUploading { output["uploading"] = value }
     if let value = values.ubiquitousItemUploadingError {
         output["uploadError"] = value.localizedDescription
     }
+    if let value = values.volumeIsLocal { output["volumeIsLocal"] = value }
+    if let value = values.volumeIsRemovable { output["volumeIsRemovable"] = value }
+    if let value = values.volumeIsReadOnly { output["volumeIsReadOnly"] = value }
+    if let value = values.volumeLocalizedFormatDescription { output["volumeType"] = value }
 } catch {
     output["metadataError"] = error.localizedDescription
 }

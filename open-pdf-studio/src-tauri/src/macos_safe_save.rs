@@ -9,8 +9,9 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -20,11 +21,19 @@ use tauri_plugin_fs::FsExt;
 
 use crate::pdfium_renderer::{extract_all_page_text, render_page_to_rgba, PdfiumDocumentHandle};
 
+#[cfg(target_os = "macos")]
+use crate::macos_file_coordination::{
+    coordinate_replacing, inspect_provider, provider_readiness_error, CoordinatedWriteFailure,
+    MacosFileProviderInfo,
+};
+
 const ERROR_PREFIX: &str = "OPDS_SAFE_SAVE";
 const PDFIUM_RENDER_SCALE: f32 = 2.0;
 const MAX_CHANGED_PIXELS_PER_PAGE: usize = 0;
 const MAX_CHANNEL_DELTA: u8 = 0;
 const PENDING_CLEANUP_FILE: &str = "pending-safe-save-cleanups.json";
+#[cfg(target_os = "macos")]
+const PROVIDER_RETRY_DELAYS_MS: [u64; 3] = [0, 100, 250];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DestinationIdentity {
@@ -47,6 +56,10 @@ struct SafeSaveRecord {
     destination_identity: Option<DestinationIdentity>,
     storage_kind: String,
     pdfium_validated: bool,
+    cancelled: Arc<AtomicBool>,
+    transaction_gate: Arc<Mutex<()>>,
+    #[cfg(target_os = "macos")]
+    provider: MacosFileProviderInfo,
 }
 
 #[derive(Default)]
@@ -60,6 +73,8 @@ pub struct PreparedSafeSave {
     validation_baseline_path: Option<String>,
     storage_kind: String,
     same_volume: bool,
+    #[cfg(target_os = "macos")]
+    provider: MacosFileProviderInfo,
 }
 
 #[derive(Serialize)]
@@ -118,6 +133,8 @@ pub struct FinalizedSafeSave {
     macos_metadata_preserved: bool,
     full_sync_applied: bool,
     warnings: Vec<SafeSaveWarning>,
+    #[cfg(target_os = "macos")]
+    provider: MacosFileProviderInfo,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -349,7 +366,15 @@ fn classify_io(operation: &str, value: io::Error, storage_kind: &str) -> String 
         Some(libc::EBUSY) | Some(libc::ETXTBSY) if storage_kind == "icloud" => {
             "ICLOUD_PROVIDER_BUSY"
         }
+        Some(libc::EBUSY) | Some(libc::ETXTBSY) if storage_kind == "file-provider" => {
+            "FILE_PROVIDER_BUSY"
+        }
         Some(libc::EBUSY) | Some(libc::ETXTBSY) => "DESTINATION_LOCKED",
+        Some(libc::ENETDOWN)
+        | Some(libc::ENETUNREACH)
+        | Some(libc::ECONNABORTED)
+        | Some(libc::ECONNRESET)
+        | Some(libc::ETIMEDOUT) => "PROVIDER_UNAVAILABLE",
         Some(libc::EXDEV) => "CROSS_VOLUME_REPLACEMENT_REJECTED",
         Some(libc::ENOTSUP) => "ATOMIC_REPLACE_UNSUPPORTED",
         _ => "SAFE_SAVE_IO_FAILED",
@@ -660,7 +685,12 @@ pub fn begin_macos_safe_pdf_save(
             .parent()
             .ok_or_else(|| error("INVALID_DESTINATION", "Destination has no parent directory"))?
             .to_path_buf();
-        let storage_kind = storage_kind(&destination);
+        let heuristic_storage_kind = storage_kind(&destination);
+        let provider = inspect_provider(&destination, heuristic_storage_kind == "external-volume");
+        let storage_kind = provider.provider_kind.clone();
+        if let Some(readiness_error) = provider_readiness_error(&provider) {
+            return Err(readiness_error.encoded());
+        }
         if !parent.is_dir() {
             return Err(error(
                 "DESTINATION_DIRECTORY_MISSING",
@@ -771,6 +801,9 @@ pub fn begin_macos_safe_pdf_save(
             destination_identity,
             storage_kind: storage_kind.clone(),
             pdfium_validated: false,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            transaction_gate: Arc::new(Mutex::new(())),
+            provider: provider.clone(),
         };
         match state.0.lock() {
             Ok(mut records) => {
@@ -797,6 +830,7 @@ pub fn begin_macos_safe_pdf_save(
                 .map(|path| path.to_string_lossy().to_string()),
             storage_kind,
             same_volume: true,
+            provider,
         })
     }
 }
@@ -816,6 +850,16 @@ fn record_for_token(state: &MacosSafeSaveState, token: &str) -> Result<SafeSaveR
         })
 }
 
+fn ensure_transaction_active(record: &SafeSaveRecord, stage: &str) -> Result<(), String> {
+    if record.cancelled.load(Ordering::Acquire) {
+        return Err(error(
+            "SAVE_TRANSACTION_CANCELLED",
+            format!("Safe-save transaction was cancelled before {stage}"),
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn validate_macos_ocr_pdf_candidate(
     token: String,
@@ -824,9 +868,15 @@ pub async fn validate_macos_ocr_pdf_candidate(
     state: tauri::State<'_, MacosSafeSaveState>,
 ) -> Result<PdfiumCandidateValidation, String> {
     let record = record_for_token(&state, &token)?;
+    ensure_transaction_active(&record, "PDFium validation")?;
     let validation = tauri::async_runtime::spawn_blocking({
         let record = record.clone();
         move || {
+        let transaction_gate = Arc::clone(&record.transaction_gate);
+        let _guard = transaction_gate
+            .lock()
+            .map_err(|value| error("SAVE_TRANSACTION_LOCK_FAILED", value.to_string()))?;
+        ensure_transaction_active(&record, "PDFium validation")?;
         let baseline_path = record.validation_baseline.as_ref().ok_or_else(|| {
             error("VALIDATION_BASELINE_MISSING", "OCR candidate requires a private validation baseline")
         })?;
@@ -980,6 +1030,7 @@ pub async fn validate_macos_ocr_pdf_candidate(
                 candidate_text,
             });
         }
+        ensure_transaction_active(&record, "PDFium validation completion")?;
         Ok(PdfiumCandidateValidation {
             status: "pass",
             baseline_page_count,
@@ -1077,30 +1128,7 @@ enum FinalizeFailurePoint {
 }
 
 #[cfg(target_os = "macos")]
-fn finalize_record(
-    record: &SafeSaveRecord,
-    failure_point: FinalizeFailurePoint,
-) -> Result<FinalizedSafeSave, String> {
-    let parent = record
-        .destination
-        .parent()
-        .ok_or_else(|| error("INVALID_DESTINATION", "Destination has no parent directory"))?;
-    if record.validation_baseline.is_some() && !record.pdfium_validated {
-        return Err(error(
-            "PDFIUM_VALIDATION_REQUIRED",
-            "OCR candidate cannot be finalized before PDFium validation succeeds",
-        ));
-    }
-    verify_private_file(
-        &record.candidate,
-        &record.candidate_sha256,
-        record.candidate_length,
-        &record.storage_kind,
-    )?;
-    let mut full_sync_applied = sync_file(&record.candidate, &record.storage_kind)?;
-    if failure_point == FinalizeFailurePoint::FullSyncUnavailableWarning {
-        full_sync_applied = false;
-    }
+fn verify_destination_unchanged(record: &SafeSaveRecord) -> Result<bool, String> {
     let destination_exists = record.destination.exists();
     if destination_exists != record.destination_identity.is_some() {
         return Err(error(
@@ -1124,6 +1152,36 @@ fn finalize_record(
             ));
         }
     }
+    Ok(destination_exists)
+}
+
+#[cfg(target_os = "macos")]
+fn finalize_record(
+    record: &SafeSaveRecord,
+    failure_point: FinalizeFailurePoint,
+) -> Result<FinalizedSafeSave, String> {
+    ensure_transaction_active(record, "final validation")?;
+    let parent = record
+        .destination
+        .parent()
+        .ok_or_else(|| error("INVALID_DESTINATION", "Destination has no parent directory"))?;
+    if record.validation_baseline.is_some() && !record.pdfium_validated {
+        return Err(error(
+            "PDFIUM_VALIDATION_REQUIRED",
+            "OCR candidate cannot be finalized before PDFium validation succeeds",
+        ));
+    }
+    verify_private_file(
+        &record.candidate,
+        &record.candidate_sha256,
+        record.candidate_length,
+        &record.storage_kind,
+    )?;
+    let mut full_sync_applied = sync_file(&record.candidate, &record.storage_kind)?;
+    if failure_point == FinalizeFailurePoint::FullSyncUnavailableWarning {
+        full_sync_applied = false;
+    }
+    let destination_exists = verify_destination_unchanged(record)?;
 
     let mut warnings = Vec::new();
     let mut permissions_preserved = true;
@@ -1176,6 +1234,7 @@ fn finalize_record(
     }
     let _ = sync_file(&record.candidate, &record.storage_kind)?;
 
+    ensure_transaction_active(record, "atomic replacement")?;
     if let Some(path) = &record.validation_baseline {
         fs::remove_file(path).map_err(|value| {
             classify_io("clean validation baseline", value, &record.storage_kind)
@@ -1296,7 +1355,161 @@ fn finalize_record(
         macos_metadata_preserved,
         full_sync_applied,
         warnings,
+        provider: record.provider.clone(),
     })
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_provider_retry(record: &SafeSaveRecord, delay_ms: u64) -> Result<(), String> {
+    let mut remaining = delay_ms;
+    while remaining > 0 {
+        ensure_transaction_active(record, "provider retry")?;
+        let slice = remaining.min(25);
+        std::thread::sleep(Duration::from_millis(slice));
+        remaining -= slice;
+    }
+    ensure_transaction_active(record, "provider retry")
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_packaged_coordination_probe(record: &SafeSaveRecord) -> Result<(), String> {
+    let delay_ms = std::env::var("OPS_TEST_SAFE_SAVE_COORDINATION_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
+        .min(2_000);
+    wait_for_provider_retry(record, delay_ms)
+}
+
+#[cfg(target_os = "macos")]
+fn record_for_coordinated_destination(
+    record: &SafeSaveRecord,
+    coordinated_destination: &Path,
+    provider: &MacosFileProviderInfo,
+) -> Result<SafeSaveRecord, String> {
+    use std::os::unix::fs::MetadataExt;
+
+    if !coordinated_destination.is_absolute() || coordinated_destination.file_name().is_none() {
+        return Err(error(
+            "INVALID_COORDINATED_DESTINATION",
+            "File coordination returned an invalid destination path",
+        ));
+    }
+    let candidate_parent = record.candidate.parent().ok_or_else(|| {
+        error(
+            "INVALID_CANDIDATE",
+            "Safe-save candidate has no parent directory",
+        )
+    })?;
+    let coordinated_parent = coordinated_destination.parent().ok_or_else(|| {
+        error(
+            "INVALID_COORDINATED_DESTINATION",
+            "Coordinated destination has no parent directory",
+        )
+    })?;
+    let candidate_parent_metadata = fs::metadata(candidate_parent).map_err(|value| {
+        classify_io(
+            "identify candidate directory",
+            value,
+            &provider.provider_kind,
+        )
+    })?;
+    let coordinated_parent_metadata = fs::metadata(coordinated_parent).map_err(|value| {
+        classify_io(
+            "identify coordinated destination directory",
+            value,
+            &provider.provider_kind,
+        )
+    })?;
+    if candidate_parent_metadata.dev() != coordinated_parent_metadata.dev()
+        || candidate_parent_metadata.ino() != coordinated_parent_metadata.ino()
+    {
+        return Err(error(
+            "COORDINATED_DESTINATION_CHANGED",
+            "File coordination moved the destination outside the candidate directory",
+        ));
+    }
+    if coordinated_destination.exists() {
+        let metadata = fs::symlink_metadata(coordinated_destination).map_err(|value| {
+            classify_io(
+                "inspect coordinated destination",
+                value,
+                &provider.provider_kind,
+            )
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(error(
+                "UNSAFE_DESTINATION",
+                "Safe save refuses a coordinated symlink or non-file destination",
+            ));
+        }
+    }
+    let mut coordinated_record = record.clone();
+    coordinated_record.destination = coordinated_destination.to_path_buf();
+    coordinated_record.storage_kind = provider.provider_kind.clone();
+    coordinated_record.provider = provider.clone();
+    verify_destination_unchanged(&coordinated_record)?;
+    Ok(coordinated_record)
+}
+
+#[cfg(target_os = "macos")]
+fn finalize_coordinated_record(record: &SafeSaveRecord) -> Result<FinalizedSafeSave, String> {
+    let mut last_retryable_failure = None;
+    for (attempt_index, delay_ms) in PROVIDER_RETRY_DELAYS_MS.iter().copied().enumerate() {
+        wait_for_provider_retry(record, delay_ms)?;
+        ensure_transaction_active(record, "coordinated replacement")?;
+
+        let provider = inspect_provider(
+            &record.destination,
+            record.storage_kind == "external-volume",
+        );
+        if let Some(readiness_error) = provider_readiness_error(&provider) {
+            if readiness_error.retryable && attempt_index + 1 < PROVIDER_RETRY_DELAYS_MS.len() {
+                last_retryable_failure = Some(readiness_error.encoded());
+                continue;
+            }
+            return Err(readiness_error.encoded());
+        }
+
+        // Packaged acceptance can widen this otherwise microscopic race
+        // window to prove that an external edit after staging is rejected.
+        // Production launches do not set the test-only environment variable.
+        wait_for_packaged_coordination_probe(record)?;
+
+        // This read-only check runs before every coordinator request. The
+        // accessor repeats it immediately before the atomic mutation.
+        verify_destination_unchanged(record)?;
+        match coordinate_replacing(
+            &record.destination,
+            &provider.provider_kind,
+            |coordinated_destination| {
+                ensure_transaction_active(record, "coordinated accessor")?;
+                let coordinated_record =
+                    record_for_coordinated_destination(record, coordinated_destination, &provider)?;
+                finalize_record(&coordinated_record, FinalizeFailurePoint::None)
+            },
+        ) {
+            Ok(finalized) => return Ok(finalized),
+            Err(CoordinatedWriteFailure::Operation(value)) => {
+                // Existing safe-save errors, especially DESTINATION_CHANGED
+                // and rollback failures, remain exact and terminal.
+                return Err(value);
+            }
+            Err(CoordinatedWriteFailure::Coordination(value)) => {
+                if value.retryable && attempt_index + 1 < PROVIDER_RETRY_DELAYS_MS.len() {
+                    last_retryable_failure = Some(value.encoded());
+                    continue;
+                }
+                return Err(value.encoded());
+            }
+        }
+    }
+    Err(last_retryable_failure.unwrap_or_else(|| {
+        error(
+            "FILE_COORDINATION_FAILED",
+            "Provider coordination ended without a terminal result",
+        )
+    }))
 }
 
 #[tauri::command]
@@ -1309,7 +1522,13 @@ pub async fn finalize_macos_safe_pdf_save(
     #[cfg(target_os = "macos")]
     let mut result = tauri::async_runtime::spawn_blocking({
         let record = record.clone();
-        move || finalize_record(&record, FinalizeFailurePoint::None)
+        move || {
+            let transaction_gate = Arc::clone(&record.transaction_gate);
+            let _guard = transaction_gate
+                .lock()
+                .map_err(|value| error("SAVE_TRANSACTION_LOCK_FAILED", value.to_string()))?;
+            finalize_coordinated_record(&record)
+        }
     })
     .await
     .map_err(|value| error("SAFE_SAVE_TASK_PANIC", value.to_string()))?;
@@ -1409,6 +1628,11 @@ pub fn abort_macos_safe_pdf_save(
         .map_err(|value| error("SAFE_SAVE_STATE_FAILED", value.to_string()))?
         .remove(&token);
     if let Some(record) = record {
+        record.cancelled.store(true, Ordering::Release);
+        let transaction_gate = Arc::clone(&record.transaction_gate);
+        let _guard = transaction_gate
+            .lock()
+            .map_err(|value| error("SAVE_TRANSACTION_LOCK_FAILED", value.to_string()))?;
         cleanup_record_files(&record);
         if let Some(parent) = record.destination.parent() {
             let _ = sync_directory(parent, &record.storage_kind);
@@ -1456,6 +1680,9 @@ mod tests {
                 .then(|| destination_identity(&destination).expect("identity")),
             storage_kind: "local".to_string(),
             pdfium_validated: false,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            transaction_gate: Arc::new(Mutex::new(())),
+            provider: inspect_provider(&destination, false),
         }
     }
 
@@ -1475,6 +1702,48 @@ mod tests {
         );
         assert!(!record.candidate.exists());
         assert!(result.candidate_files_cleaned);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "NSFileCoordinator accessor execution is qualified in the packaged macOS app"]
+    fn coordinated_replace_keeps_existing_atomic_validation_authoritative() {
+        let dir = test_dir("coordinated-replace");
+        let record = record(&dir, true);
+        let result = finalize_coordinated_record(&record).expect("coordinated safe replace");
+        assert_eq!(fs::read(&record.destination).unwrap(), b"candidate");
+        assert_eq!(result.provider.provider_kind, "local");
+        assert!(result.provider.coordination_required);
+        assert!(!record.candidate.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn coordinated_replace_honors_cancellation_before_mutation() {
+        let dir = test_dir("coordinated-cancel");
+        let record = record(&dir, true);
+        record.cancelled.store(true, Ordering::Release);
+        let failure = finalize_coordinated_record(&record).unwrap_err();
+        assert!(failure.contains("SAVE_TRANSACTION_CANCELLED"));
+        assert_eq!(fs::read(&record.destination).unwrap(), b"original");
+        assert_eq!(fs::read(&record.candidate).unwrap(), b"candidate");
+        fs::remove_file(&record.candidate).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn coordinated_replace_never_retries_a_destination_change() {
+        let dir = test_dir("coordinated-destination-change");
+        let record = record(&dir, true);
+        fs::write(&record.destination, b"external edit after staging").unwrap();
+        let failure = finalize_coordinated_record(&record).unwrap_err();
+        assert!(failure.contains("DESTINATION_CHANGED"));
+        assert_eq!(
+            fs::read(&record.destination).unwrap(),
+            b"external edit after staging"
+        );
+        assert_eq!(fs::read(&record.candidate).unwrap(), b"candidate");
+        fs::remove_file(&record.candidate).unwrap();
         fs::remove_dir_all(dir).unwrap();
     }
 

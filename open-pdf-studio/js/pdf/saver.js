@@ -676,6 +676,8 @@ export async function savePDF(saveAsPath = null, options = {}) {
       requestedRevision,
       errorCode: error?.code || 'SAVE_FAILED',
       errorMessage: error instanceof Error ? error.message : String(error),
+      recovery: error?.recovery && typeof error.recovery === 'object'
+        ? error.recovery : null,
     });
   }
 }
@@ -704,7 +706,8 @@ async function performSavePDF(saveAsPath = null, {
       documentId: String(expectedDocumentId || activeDoc?.id || 'unowned-document'),
       requestedRevision: coordinatorContext?.requestedRevision
         ?? (activeDoc ? initializeDocumentRevisionState(activeDoc).contentRevision : 0),
-      recovery: status === 'save-as-required' ? { action: 'save-as' } : null,
+      recovery: details.recovery && typeof details.recovery === 'object'
+        ? details.recovery : status === 'save-as-required' ? { action: 'save-as' } : null,
       errorCode: details.errorCode || String(reason || 'SAVE_FAILED').toUpperCase().replaceAll('-', '_'),
       errorMessage: details.error || details.errorMessage || String(reason || 'Save failed'),
     });
@@ -742,10 +745,12 @@ async function performSavePDF(saveAsPath = null, {
   }, 'superseded');
   const currentPath = activeDoc?.filePath;
   const outputPath = saveAsPath || activeDoc?.saveTargetPath || currentPath;
+  let persistedOutputPath = outputPath;
   let preparedPdfJsDocument = null;
   let saveCandidate = null;
   let stagedToken = null;
   let replacementSucceeded = false;
+  let safeSaveProvider = null;
   let textEditManifestCandidate = null;
   let textEditRecordsCandidate = null;
   let nativeTextEditReportCandidate = null;
@@ -3482,6 +3487,9 @@ async function performSavePDF(saveAsPath = null, {
         const finalized = await finalizeMacosSafePdfSave(stagedToken);
         stagedToken = null;
         if (finalized.status !== 'pass') throw new Error('Native atomic replacement did not report success');
+        persistedOutputPath = finalized.destinationPath || outputPath;
+        safeSaveProvider = finalized.provider && typeof finalized.provider === 'object'
+          ? structuredClone(finalized.provider) : null;
         const finalizedWarnings = Array.isArray(finalized.warnings) ? finalized.warnings : [];
         if (!finalized.candidateFilesCleaned
             && !finalizedWarnings.some(
@@ -3512,18 +3520,19 @@ async function performSavePDF(saveAsPath = null, {
       stagedToken = null;
       await lockFile(outputPath);
       const msg = writeErr?.message || String(writeErr);
-      if (/denied|locked|sharing|used by another/iu.test(msg)) {
+      if (!writeErr?.code && /denied|locked|sharing|used by another/iu.test(msg)) {
         throw new Error(i18next.t('fileLocked', { defaultValue: 'The file is being used by another application. Please close it and try again.' }));
       }
       throw writeErr;
     }
-    await lockFile(outputPath);
+    await lockFile(persistedOutputPath);
     const persistedOwner = coordinatorContext?.owner() || activeDoc;
     if (persistedOwner && (coordinatorContext?.ownsDocument() ?? true)) {
-      markRevisionPersisted(persistedOwner, requestedRevision, outputPath);
+      markRevisionPersisted(persistedOwner, requestedRevision, persistedOutputPath);
+      persistedOwner.lastSafeSaveProvider = safeSaveProvider;
     }
     coordinatorContext?.diagnostic('persisted');
-    cacheValidatedSavedPdfBytes(outputPath, savedBytes);
+    cacheValidatedSavedPdfBytes(persistedOutputPath, savedBytes);
 
     // A newer revision may appear after the immutable snapshot was captured.
     // Revision N remains allowed to cross the durable atomic boundary, but it
@@ -3548,15 +3557,15 @@ async function performSavePDF(saveAsPath = null, {
     // Every mutable cache/state transition is deliberately after the atomic
     // destination replacement. A failed validation/save leaves the active
     // PDF.js/PDFium handles, cached bytes, and typed OCR state untouched.
-    if (activeDoc && outputPath !== currentPath) {
-      activeDoc.filePath = outputPath;
-      activeDoc.fileName = outputPath.split(/[\\/]/u).pop() || activeDoc.fileName;
+    if (activeDoc && persistedOutputPath !== currentPath) {
+      activeDoc.filePath = persistedOutputPath;
+      activeDoc.fileName = persistedOutputPath.split(/[\\/]/u).pop() || activeDoc.fileName;
       activeDoc.isUntitled = false;
       activeDoc.saveTargetPath = null;
       activeDoc._renderTemp = false;
     }
     if (isTauri()) {
-      await invoke('invalidate_pdf_cache', { path: outputPath });
+      await invoke('invalidate_pdf_cache', { path: persistedOutputPath });
     }
     if (ocrPersistence && activeDoc) markOwnedOcrPersisted(activeDoc, ocrPersistence.inspection);
     if (scannedTextEditPersistence && activeDoc) {
@@ -3614,7 +3623,7 @@ async function performSavePDF(saveAsPath = null, {
       owner: activeDoc,
       requestedRevision,
       requestId: coordinatorContext?.requestId || null,
-      outputPath,
+      outputPath: persistedOutputPath,
       previousFilePath: currentPath,
       savedBytes,
       preparedPdfJsDocument: transitionCandidate,
@@ -3657,11 +3666,17 @@ async function performSavePDF(saveAsPath = null, {
       markDocumentSaveState(activeDoc, 'failed', {
         requestId: coordinatorContext?.requestId || null,
         saveError: error instanceof Error ? error.message : String(error),
+        saveErrorCode: error?.code || 'SAVE_FAILED',
+        recovery: error?.recovery && typeof error.recovery === 'object'
+          ? error.recovery : null,
       });
     }
     showMessage(i18next.t('failedToSavePdf', { error: error?.message || String(error) }));
     return rejectSave('serialization-or-write-failed', {
       error: error instanceof Error ? error.message : String(error),
+      errorCode: error?.code || 'SAVE_FAILED',
+      recovery: error?.recovery && typeof error.recovery === 'object'
+        ? error.recovery : null,
     });
   } finally {
     window.__pdfSaveInProgress = false;
