@@ -402,6 +402,7 @@ async function runSynchronization(record, { retry = false } = {}) {
     assertOwned('before-synchronization');
     let installResult = record.installResult;
     if (!record.proxyInstalled) {
+      throwIfSaveFaultInjected('before-proxy-install');
       throwIfSaveFaultInjected('proxy-install');
       installResult = await installProxy({
         documentState,
@@ -420,6 +421,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       assertOwned('after-proxy-install');
       markLivePdfRevision(documentState, requestedRevision);
     }
+    throwIfSaveFaultInjected('after-proxy-install-before-view-restore');
     if (!record.semanticInvalidated) {
       await invalidateSemanticState({
         documentState,
@@ -431,6 +433,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       assertOwned('after-semantic-invalidation');
       record.semanticInvalidated = true;
     }
+    throwIfSaveFaultInjected('before-required-page-recompute');
     let requiredPages = Array.isArray(installResult?.requiredPages)
       ? positivePages(installResult.requiredPages)
       : positivePages(null, viewState.pageNumber || documentState.currentPage);
@@ -473,6 +476,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       changedPages,
     });
     assertOwned('after-semantic-preload-restart');
+    throwIfSaveFaultInjected('before-view-restore');
     await restoreViewState(documentState, viewState);
     assertOwned('after-view-state-restore');
     throwIfSaveFaultInjected('render-readiness');

@@ -22,6 +22,7 @@ import { shapeRichTextDocument } from '../../text/font-catalog.js';
 import { reflowRichTextToWidth } from '../../text/text-edit-selection.js';
 import { createEditorLayoutRevision } from '../../text/editor-layout-revision.js';
 import { cancelLatestNativeLayout, requestLatestNativeLayout } from '../../text/native-layout-scheduler.js';
+import { throwIfSaveFaultInjected } from '../../pdf/save-fault-injection.js';
 import {
   applyActiveTextEditing,
   cancelActiveTextEditing,
@@ -582,6 +583,7 @@ export default function PdfTextEditOverlay() {
       });
       if (response.fingerprint !== fingerprint || currentRevision.fingerprint !== fingerprint) return;
       const result = response.result;
+      throwIfSaveFaultInjected('before-final-text-layout-ack');
       updateEditorValidatedLayoutGeometry({
         canonicalBounds: canonicalEditorBoundsForRichText(
           result.document.region,

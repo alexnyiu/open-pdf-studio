@@ -1,4 +1,18 @@
 export const SAVE_FAULT_STAGES = Object.freeze([
+  'after-owner-commit-before-publication',
+  'before-visible-publication',
+  'after-serialization-before-persistence',
+  'after-persistence-before-proxy-adoption',
+  'before-proxy-install',
+  'after-proxy-install-before-view-restore',
+  'before-view-restore',
+  'before-required-page-recompute',
+  'before-final-text-layout-ack',
+  'drop-latest-text-layout-result',
+  'metadata-copy-warning',
+  'old-file-cleanup-warning',
+  // Compatibility stages retained while the phase-specific boundaries above
+  // replace the original coarse save fault hooks.
   'serialization',
   'persistence',
   'proxy-install',

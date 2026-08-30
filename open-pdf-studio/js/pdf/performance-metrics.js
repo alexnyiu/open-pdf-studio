@@ -1,5 +1,48 @@
 const MAX_SAMPLES_PER_METRIC = 2_048;
 const MAX_EVENTS = 1_024;
+
+export const MACOS_HARDENING_COUNTER_METRICS = Object.freeze([
+  'textEditVisiblePublicationFailures',
+  'textEditCommitVisibleMismatchCount',
+  'textEditNoopCount',
+  'textEditNoopSaveAttemptCount',
+  'textEditTargetReplayFailures',
+  'textEditOcrRefreshDeferred',
+  'textEditCancelledBySaveInstallCount',
+  'textEditIntentSynchronizationFailureCount',
+  'textEditReadinessTimeoutCount',
+  'textEditResizeGestureRequiredToCommitCount',
+  'textEditSafeAutoFitCount',
+  'textEditFinalLayoutBarrierTimeoutCount',
+  'textEditFinalLayoutStaleOrDroppedResultCount',
+  'textEditFinalDraftRevisionMismatchCount',
+  'automaticSaveWriteCount',
+  'automaticSaveFalseTerminalStateCount',
+  'saveOwnerActiveTabEscapeCount',
+  'savedProxyViewportFitResetCount',
+  'savedViewRestoreConflictCount',
+  'savedViewRestoreSkippedFieldCount',
+  'proxyAdoptionDeferredForEditorCount',
+  'macosSafeSaveRecoveryFileCount',
+  'visibleColdRenderSuppressedCount',
+  'previewUsefulCancellationCount',
+  'retiredNativeWorkCount',
+]);
+
+export const MACOS_HARDENING_SAMPLE_METRICS = Object.freeze([
+  'textEditOwnerCommitMs',
+  'textEditCommitToVisibleMs',
+  'textEditSafeAutoFitDeltaWidthPt',
+  'pendingProxyRevisionAgeMs',
+  'visiblePagePreviewLatencyMs',
+  'visiblePageFullRasterLatencyMs',
+  'visibleBlankDurationMs',
+  'renderQueueAgeMs',
+  'retiredNativeWorkDurationMs',
+  'observerLeadDistancePx',
+  'scrollVelocityPxPerMs',
+  'lookAheadCoverageMs',
+]);
 const samples = new Map();
 const counters = new Map();
 const peaks = new Map();
@@ -166,7 +209,10 @@ export function performanceMetricsSnapshot() {
     captureElapsedMs: captureStartedAt == null ? null : Math.max(0, clock() - captureStartedAt),
     longTaskSupported,
     measurements: Object.freeze(measurement),
-    counters: Object.freeze(Object.fromEntries(counters)),
+    counters: Object.freeze({
+      ...Object.fromEntries(MACOS_HARDENING_COUNTER_METRICS.map((name) => [name, 0])),
+      ...Object.fromEntries(counters),
+    }),
     peaks: Object.freeze(Object.fromEntries(peaks)),
     events: Object.freeze(events.map((event) => Object.freeze({ ...event }))),
     latestInteraction: latestInteraction ? Object.freeze({ ...latestInteraction }) : null,

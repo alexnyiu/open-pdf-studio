@@ -1,4 +1,5 @@
 import { layoutExpandableNativeText } from './native-expandable-layout.js';
+import { throwIfSaveFaultInjected } from '../pdf/save-fault-injection.js';
 
 let worker = null;
 let requestSequence = 0;
@@ -29,10 +30,17 @@ function ensureWorker() {
         || message.requestId !== activeRequest.requestId) return;
     const request = activeRequest;
     activeRequest = null;
-    if (message.type === 'result') request.resolve({
-      fingerprint: message.fingerprint,
-      result: message.result,
-    });
+    if (message.type === 'result') {
+      try {
+        throwIfSaveFaultInjected('drop-latest-text-layout-result');
+        request.resolve({
+          fingerprint: message.fingerprint,
+          result: message.result,
+        });
+      } catch (error) {
+        request.reject(error);
+      }
+    }
     else request.reject(Object.assign(new Error(message.error?.message || 'Exact layout worker failed'), {
       code: message.error?.code || 'TEXT_LAYOUT_WORKER_FAILED',
     }));
@@ -122,7 +130,10 @@ export function requestLatestNativeLayout(document, options, fingerprint) {
     return layoutExpandableNativeText(document, {
       ...options,
       shouldCancel: () => generation !== fallbackGeneration,
-    }).then((result) => ({ fingerprint, result }));
+    }).then((result) => {
+      throwIfSaveFaultInjected('drop-latest-text-layout-result');
+      return { fingerprint, result };
+    });
   }
   return new Promise((resolve, reject) => {
     const message = { type: 'layout', requestId, fingerprint, document, options };

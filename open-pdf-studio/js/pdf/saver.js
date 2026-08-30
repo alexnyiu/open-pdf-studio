@@ -3242,6 +3242,7 @@ async function performSavePDF(saveAsPath = null, {
       ?? initializeDocumentRevisionState(activeDoc).contentRevision;
     markRevisionSerialized(activeDoc, requestedRevision);
     coordinatorContext?.diagnostic('validating');
+    throwIfSaveFaultInjected('after-serialization-before-persistence');
 
     // macOS production writes only private same-volume files until PDF.js,
     // PDFium, extraction, ownership, idempotence, removal, and exact-pixel
@@ -3366,6 +3367,7 @@ async function performSavePDF(saveAsPath = null, {
     const transitionCandidate = preparedPdfJsDocument;
     // The saved-document transition owns this candidate through success or
     // recoverable refresh failure. The saver must not destroy it in `finally`.
+    throwIfSaveFaultInjected('after-persistence-before-proxy-adoption');
     preparedPdfJsDocument = null;
     await synchronizePersistedOwner({
       owner: activeDoc,

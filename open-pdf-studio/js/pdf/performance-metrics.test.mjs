@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MACOS_HARDENING_COUNTER_METRICS,
+  MACOS_HARDENING_SAMPLE_METRICS,
   incrementPerformanceCounter,
   notePerformanceInteraction,
   performanceMetricsSnapshot,
@@ -45,4 +47,13 @@ test('interaction-relative latency ignores unrelated interaction kinds', () => {
   assert.equal(recordLatencySinceInteraction('previewMs', ['zoom'], 120), null);
   assert.equal(recordLatencySinceInteraction('previewMs', ['scroll'], 125), 25);
   assert.equal(performanceMetricsSnapshot().measurements.previewMs.max, 25);
+});
+
+test('macOS hardening counters are exposed at zero before the first event', () => {
+  const snapshot = performanceMetricsSnapshot();
+  for (const name of MACOS_HARDENING_COUNTER_METRICS) {
+    assert.equal(snapshot.counters[name], 0, `${name} must be available to packaged gates`);
+  }
+  assert.ok(MACOS_HARDENING_SAMPLE_METRICS.includes('visiblePagePreviewLatencyMs'));
+  assert.ok(MACOS_HARDENING_SAMPLE_METRICS.includes('textEditCommitToVisibleMs'));
 });
