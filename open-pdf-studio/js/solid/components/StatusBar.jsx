@@ -1,10 +1,13 @@
-import { Show, createEffect, createSignal } from 'solid-js';
+import { Show, createEffect, createSignal, onMount } from 'solid-js';
 import { state, getActiveDocument } from '../../core/state.js';
 import { useTranslation, localizeNumber } from '../../i18n/useTranslation.js';
 import {
   documentRevisionDebugSnapshot,
 } from '../../core/document-revision-state.runtime.js';
-import { documentSaveStatusModel } from '../../ui/chrome/document-save-status.js';
+import {
+  documentSaveStatusModel,
+  pendingSafeSaveCleanupStatusModel,
+} from '../../ui/chrome/document-save-status.js';
 
 // All page navigation goes through goToPage() so the side effects
 // (active thumbnail update, hide properties, fire events) happen in one
@@ -163,21 +166,51 @@ export default function StatusBar() {
     return t('annotationsCount', { count: pageCount, total: annotations.length });
   };
   const preloadStatus = () => state.documents[state.activeDocumentIndex]?.preloadStatus;
-  const saveStatus = () => documentSaveStatusModel(
-    state.documents[state.activeDocumentIndex],
-  );
+  const [pendingSafeSaveCleanups, setPendingSafeSaveCleanups] = createSignal([]);
+  const refreshPendingSafeSaveCleanups = async () => {
+    const recovery = await import('../../ui/chrome/document-save-recovery.js');
+    try {
+      setPendingSafeSaveCleanups(await recovery.listPendingSafeSaveCleanups());
+    } catch (error) {
+      console.warn('[save-recovery] Pending cleanup records could not be loaded:', error);
+    }
+  };
+  onMount(() => { void refreshPendingSafeSaveCleanups(); });
+  const saveStatus = () => {
+    const documentStatus = documentSaveStatusModel(
+      state.documents[state.activeDocumentIndex],
+    );
+    const cleanupStatus = pendingSafeSaveCleanupStatusModel(pendingSafeSaveCleanups());
+    if (cleanupStatus.visible
+        && (!documentStatus.visible || ['success', 'neutral'].includes(documentStatus.severity))) {
+      return cleanupStatus;
+    }
+    return documentStatus;
+  };
   createEffect(() => {
     const documentState = state.documents[state.activeDocumentIndex];
     const snapshot = documentState ? documentRevisionDebugSnapshot(documentState) : null;
     if (typeof window !== 'undefined') window.__documentSaveDebug = snapshot;
   });
   const runSaveRecoveryAction = async (action) => {
-    const documentId = saveStatus().documentId;
-    if (!documentId) return;
+    const status = saveStatus();
+    const documentId = status.documentId;
     const recovery = await import('../../ui/chrome/document-save-recovery.js');
-    if (action === 'retry-save') await recovery.retrySaveForDocument(documentId);
+    if (action === 'retry-save' && documentId) await recovery.retrySaveForDocument(documentId);
     else if (action === 'retry-refresh') await recovery.retryRefreshForDocument(documentId);
     else if (action === 'reopen') await recovery.reopenSavedDocument(documentId);
+    else if (action === 'continue-current') recovery.continueUsingOwnerPublishedPage(documentId);
+    else if (action === 'save-as') await recovery.saveAsForDocument(documentId);
+    else if (action === 'reveal-recovery-file') {
+      await recovery.revealSaveRecoveryFile(status.recoveryPath);
+    } else if (action === 'retry-cleanup') {
+      await recovery.retrySaveRecoveryCleanup(status.recoveryPath, documentId);
+      await refreshPendingSafeSaveCleanups();
+    } else if (action === 'view-save-details') {
+      recovery.viewSaveDetails(documentId, status);
+    } else if (action === 'export-save-details') {
+      await recovery.exportSaveDetails(documentId, status);
+    }
     else if (action === 'acknowledge') recovery.acknowledgeSaveStatus(documentId);
   };
   const preloadText = () => {
@@ -326,6 +359,36 @@ export default function StatusBar() {
             <Show when={saveStatus().actions.includes('reopen')}>
               <button type="button" onClick={() => runSaveRecoveryAction('reopen')}>
                 {t('reopenDocument', { defaultValue: 'Reopen' })}
+              </button>
+            </Show>
+            <Show when={saveStatus().actions.includes('continue-current')}>
+              <button type="button" onClick={() => runSaveRecoveryAction('continue-current')}>
+                {t('continueCurrentPage', { defaultValue: 'Continue here' })}
+              </button>
+            </Show>
+            <Show when={saveStatus().actions.includes('save-as')}>
+              <button type="button" onClick={() => runSaveRecoveryAction('save-as')}>
+                {t('saveAs', { defaultValue: 'Save As…' })}
+              </button>
+            </Show>
+            <Show when={saveStatus().actions.includes('reveal-recovery-file')}>
+              <button type="button" onClick={() => runSaveRecoveryAction('reveal-recovery-file')}>
+                {t('revealRecoveryFile', { defaultValue: 'Show recovery file' })}
+              </button>
+            </Show>
+            <Show when={saveStatus().actions.includes('retry-cleanup')}>
+              <button type="button" onClick={() => runSaveRecoveryAction('retry-cleanup')}>
+                {t('retryCleanup', { defaultValue: 'Retry cleanup' })}
+              </button>
+            </Show>
+            <Show when={saveStatus().actions.includes('view-save-details')}>
+              <button type="button" onClick={() => runSaveRecoveryAction('view-save-details')}>
+                {t('saveDetails', { defaultValue: 'Details' })}
+              </button>
+            </Show>
+            <Show when={saveStatus().actions.includes('export-save-details')}>
+              <button type="button" onClick={() => runSaveRecoveryAction('export-save-details')}>
+                {t('exportSaveDetails', { defaultValue: 'Export details' })}
               </button>
             </Show>
             <Show when={saveStatus().actions.includes('acknowledge')}>

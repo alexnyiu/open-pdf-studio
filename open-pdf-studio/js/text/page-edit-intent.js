@@ -18,6 +18,24 @@ function frozenPoint(point) {
 
 const pendingIntentCounts = new Map();
 
+function readinessFailure(error) {
+  const errorCode = String(error?.code || 'PAGE_EDIT_READINESS_FAILED');
+  const reasons = {
+    PAGE_EDIT_READINESS_TIMEOUT: 'readiness-timeout',
+    PAGE_EDIT_READINESS_ABORTED: 'readiness-aborted',
+    PAGE_EDIT_READINESS_LIFECYCLE_CHANGED: 'document-lifecycle-changed',
+    PAGE_EDIT_READINESS_REVISION_CHANGED: 'document-revision-changed',
+    PAGE_EDIT_READINESS_EVENTS_UNAVAILABLE: 'readiness-events-unavailable',
+  };
+  return Object.freeze({
+    activated: false,
+    reason: reasons[errorCode] || 'readiness-failed',
+    errorCode,
+    message: error instanceof Error ? error.message : String(error),
+    action: 'retry-page-edit',
+  });
+}
+
 function beginIntent(documentId) {
   pendingIntentCounts.set(documentId, (pendingIntentCounts.get(documentId) || 0) + 1);
 }
@@ -46,6 +64,8 @@ export async function runPageEditIntent({
   activate,
   acquireLease = null,
   releaseLease = null,
+  signal = null,
+  readinessTimeoutMs = 15_000,
 }) {
   if (!documentState?.id) throw new TypeError('A page edit intent requires a document owner');
   for (const [name, callback] of Object.entries({
@@ -65,6 +85,9 @@ export async function runPageEditIntent({
     pageNum: page,
     reason: 'page-edit-intent',
   }) : null;
+  const readinessController = new AbortController();
+  const abortReadiness = () => readinessController.abort(signal?.reason);
+  signal?.addEventListener?.('abort', abortReadiness, { once: true });
   beginIntent(documentId);
   try {
     if ((await waitForSynchronization(documentId)) !== true) {
@@ -73,11 +96,24 @@ export async function runPageEditIntent({
     const readyOwner = resolveDocument(documentId);
     if (!readyOwner) return Object.freeze({ activated: false, reason: 'document-closed' });
     const readyGeneration = Number(readyOwner.lifecycleGeneration) || 0;
-    await awaitReadiness(readyOwner, page);
+    try {
+      await awaitReadiness(readyOwner, page, {
+        signal: readinessController.signal,
+        timeoutMs: readinessTimeoutMs,
+      });
+    } catch (error) {
+      return readinessFailure(error);
+    }
     const currentOwner = resolveDocument(documentId);
     if (currentOwner !== readyOwner
         || (Number(currentOwner?.lifecycleGeneration) || 0) !== readyGeneration) {
-      throw new DOMException('Document lifecycle changed before edit replay', 'AbortError');
+      return Object.freeze({
+        activated: false,
+        reason: 'document-lifecycle-changed',
+        errorCode: 'PAGE_EDIT_READINESS_LIFECYCLE_CHANGED',
+        message: 'Document lifecycle changed before edit replay',
+        action: 'retry-page-edit',
+      });
     }
     const value = await activate({
       documentState: currentOwner,
@@ -86,6 +122,8 @@ export async function runPageEditIntent({
     });
     return Object.freeze({ activated: true, value });
   } finally {
+    readinessController.abort();
+    signal?.removeEventListener?.('abort', abortReadiness);
     endIntent(documentId);
     if (lease && typeof releaseLease === 'function') releaseLease(lease);
   }

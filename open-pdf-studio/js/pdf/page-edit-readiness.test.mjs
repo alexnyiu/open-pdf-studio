@@ -16,7 +16,33 @@ import {
 } from './page-edit-readiness.js';
 
 class EventTargetWindow extends EventTarget {
+  constructor() {
+    super();
+    this.listenerCounts = new Map();
+  }
+  addEventListener(type, listener, options) {
+    super.addEventListener(type, listener, options);
+    this.listenerCounts.set(type, (this.listenerCounts.get(type) || 0) + 1);
+  }
+  removeEventListener(type, listener, options) {
+    super.removeEventListener(type, listener, options);
+    this.listenerCounts.set(type, Math.max(0, (this.listenerCounts.get(type) || 0) - 1));
+  }
   dispatch(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
+  readinessListenerCount() {
+    return [...this.listenerCounts.entries()]
+      .filter(([type]) => type.startsWith('opds:'))
+      .reduce((total, [, count]) => total + count, 0);
+  }
+}
+
+const TEST_TIMEOUT_MS = 1_000;
+
+function awaitReady(documentState, pageNum, options = {}) {
+  return awaitPageEditReady(documentState, pageNum, {
+    timeoutMs: TEST_TIMEOUT_MS,
+    ...options,
+  });
 }
 
 const priorWindow = globalThis.window;
@@ -58,7 +84,7 @@ test('page edit readiness resolves only after every required current layer settl
   window.addEventListener('opds:page-edit-ready', (event) => { readyEvent = event.detail; }, {
     once: true,
   });
-  const pending = awaitPageEditReady(documentState, 1);
+  const pending = awaitReady(documentState, 1);
   let resolved = false;
   void pending.then(() => { resolved = true; });
   for (const layer of PAGE_EDIT_READY_LAYERS.slice(0, -1)) {
@@ -129,13 +155,13 @@ test('stale layer completion cannot satisfy a newer content revision', () => {
 
 test('lifecycle change rejects a queued readiness wait cleanly', async () => {
   const documentState = owner();
-  const pending = awaitPageEditReady(documentState, 1);
+  const pending = awaitReady(documentState, 1);
   documentState.lifecycleGeneration += 1;
   window.dispatch('opds:document-lifecycle-changed', {
     documentId: documentState.id,
     lifecycleGeneration: documentState.lifecycleGeneration,
   });
-  await assert.rejects(pending, { name: 'AbortError' });
+  await assert.rejects(pending, { code: 'PAGE_EDIT_READINESS_LIFECYCLE_CHANGED' });
 });
 
 test('validated proxy adoption preserves only unchanged page readiness', () => {
@@ -182,12 +208,12 @@ test('a waiter started after a current failure rejects immediately', async () =>
   const documentState = owner();
   const token = captureRenderPublicationToken(documentState, 1, 'failed-before-wait');
   failPageEditReadiness(documentState, 1, 'forms failed', token);
-  await assert.rejects(awaitPageEditReady(documentState, 1), /forms failed/u);
+  await assert.rejects(awaitReady(documentState, 1), /forms failed/u);
 });
 
 test('an affected content revision change rejects the old readiness wait', async () => {
   const documentState = owner();
-  const pending = awaitPageEditReady(documentState, 1);
+  const pending = awaitReady(documentState, 1);
   documentState.revisionState.contentRevision += 1;
   documentState.revisionState.pageContentRevisions[1] += 1;
   window.dispatch('opds:page-edit-readiness-cleared', {
@@ -196,7 +222,21 @@ test('an affected content revision change rejects the old readiness wait', async
     contentRevision: documentState.revisionState.contentRevision,
     pages: [1],
   });
-  await assert.rejects(pending, { name: 'AbortError' });
+  await assert.rejects(pending, { code: 'PAGE_EDIT_READINESS_REVISION_CHANGED' });
+});
+
+test('a readiness timeout is typed and removes every listener', async () => {
+  const documentState = owner();
+  const pending = awaitPageEditReady(documentState, 1, { timeoutMs: 5 });
+  assert.equal(window.readinessListenerCount(), 4);
+  await assert.rejects(pending, { code: 'PAGE_EDIT_READINESS_TIMEOUT' });
+  assert.equal(window.readinessListenerCount(), 0);
+});
+
+test('readiness callers must provide a finite positive timeout', () => {
+  const documentState = owner();
+  assert.throws(() => awaitPageEditReady(documentState, 1), /positive timeoutMs/u);
+  assert.throws(() => awaitPageEditReady(documentState, 1, { timeoutMs: 0 }), /positive timeoutMs/u);
 });
 
 test('desktop blank-document creation rebuilds readiness after its committed mutation', async () => {

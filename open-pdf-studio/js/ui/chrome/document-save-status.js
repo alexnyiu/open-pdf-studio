@@ -1,5 +1,6 @@
 import {
   documentHasRevisionPersistenceDebt,
+  documentRevisionReadinessSatisfied,
   documentRevisionDebugSnapshot,
   initializeDocumentRevisionState,
   markDocumentSaveState,
@@ -12,6 +13,44 @@ const FAILURE_STATES = new Set([
   'saved-refresh-failed',
   'save-as-required',
 ]);
+
+const CLEANUP_WARNING_CODE = 'OLD_VERSION_CLEANUP_FAILED';
+
+function warningActions(warnings) {
+  const actions = ['view-save-details', 'export-save-details'];
+  const cleanup = warnings.find((warning) => warning?.code === CLEANUP_WARNING_CODE
+    && warning?.path);
+  if (cleanup) actions.push('reveal-recovery-file');
+  if (cleanup?.retryable === true) actions.push('retry-cleanup');
+  actions.push('acknowledge');
+  return actions;
+}
+
+export function pendingSafeSaveCleanupStatusModel(records = []) {
+  const pending = Array.isArray(records) ? records.filter((record) => record?.recoveryPath) : [];
+  if (pending.length === 0) return Object.freeze({ visible: false, state: 'idle', actions: [] });
+  const first = pending[0];
+  return Object.freeze({
+    documentId: '',
+    state: 'saved-with-warning',
+    identity: `pending-safe-save-cleanup:${first.id || first.recoveryPath}`,
+    exactError: first.lastError || 'A private recovery file still needs cleanup',
+    progress: false,
+    severity: 'warning',
+    actions: Object.freeze([
+      'view-save-details',
+      'export-save-details',
+      'reveal-recovery-file',
+      'retry-cleanup',
+    ]),
+    visible: true,
+    message: pending.length === 1
+      ? 'Saved PDF recovery file still needs cleanup'
+      : `${pending.length} saved PDF recovery files still need cleanup`,
+    recoveryPath: first.recoveryPath,
+    cleanupRecords: Object.freeze(pending.map((record) => Object.freeze({ ...record }))),
+  });
+}
 
 export function documentSaveStatusIdentity(documentState) {
   if (!documentState?.id) return '';
@@ -95,13 +134,23 @@ export function documentSaveStatusModel(documentState) {
         message: 'Saved',
       });
     case 'saved-with-warning':
+      {
+        const warnings = Array.isArray(revision.lastSaveWarnings)
+          ? revision.lastSaveWarnings.map((warning) => ({ ...warning })) : [];
+        const cleanup = warnings.find((warning) => warning.code === CLEANUP_WARNING_CODE
+          && warning.path);
       return Object.freeze({
         ...common,
         visible: true,
         severity: 'warning',
-        message: 'PDF saved with a warning',
-        actions: ['view-save-details', 'acknowledge'],
+        message: documentHasRevisionPersistenceDebt(documentState)
+          ? 'PDF saved with a warning; new changes remain pending'
+          : 'PDF saved with a warning',
+        actions: warningActions(warnings),
+        warnings: Object.freeze(warnings.map((warning) => Object.freeze(warning))),
+        recoveryPath: cleanup?.path || null,
       });
+      }
     case 'saved-refresh-pending':
       return Object.freeze({
         ...common,
@@ -153,10 +202,14 @@ export function documentSaveStatusModel(documentState) {
         ...common,
         visible: true,
         severity: 'warning',
-        message: 'PDF saved; editor refresh failed',
+        message: 'PDF saved safely; editor refresh failed',
         actions: [
           'retry-refresh',
-          ...(documentState.saveRefreshRetryFailed === true ? ['reopen'] : []),
+          ...(documentRevisionReadinessSatisfied(
+            documentState,
+            Number(documentState.currentPage) || 1,
+          ) ? ['continue-current'] : []),
+          'reopen',
           'acknowledge',
         ],
       });
@@ -229,8 +282,7 @@ export function createDocumentSaveRecoveryController({
       if (!documentState) return false;
       const revision = initializeDocumentRevisionState(documentState);
       if (documentHasRevisionPersistenceDebt(documentState)
-          || revision.saveState !== 'saved-refresh-failed'
-          || documentState.saveRefreshRetryFailed !== true) return false;
+          || revision.saveState !== 'saved-refresh-failed') return false;
       clearDocumentSaveStatusAcknowledgement(documentState);
       try {
         return await requestReopen({
@@ -246,6 +298,17 @@ export function createDocumentSaveRecoveryController({
         });
         return false;
       }
+    },
+    continueCurrent(documentId) {
+      const documentState = owner(documentId);
+      if (!documentState) return false;
+      const revision = initializeDocumentRevisionState(documentState);
+      const pageNum = Number(documentState.currentPage) || 1;
+      if (documentHasRevisionPersistenceDebt(documentState)
+          || revision.saveState !== 'saved-refresh-failed'
+          || !documentRevisionReadinessSatisfied(documentState, pageNum)) return false;
+      documentState.continueAfterRefreshFailure = true;
+      return acknowledgeDocumentSaveStatus(documentState);
     },
     debugSnapshot(documentId) {
       const documentState = owner(documentId);

@@ -3587,6 +3587,8 @@ pub fn run(opts: StartupOpts) {
             macos_safe_save::validate_macos_ocr_pdf_candidate,
             macos_safe_save::finalize_macos_safe_pdf_save,
             macos_safe_save::abort_macos_safe_pdf_save,
+            macos_safe_save::list_macos_safe_save_cleanup_records,
+            macos_safe_save::retry_macos_safe_save_cleanup,
             worker_pool_ready,
             render_pdf_page_region,
             render_tile_scene_region,

@@ -208,7 +208,9 @@ function noteDocumentMutation(documentState, {
   // next save attempt clears it at the explicit `saving` transition; an
   // unrelated mutation must not turn a failed automatic save into a generic
   // pending state and erase its exact diagnostic.
-  if (state.saveState !== "failed" && state.saveState !== "saved-refresh-failed") {
+  if (state.saveState !== "failed"
+      && state.saveState !== "saved-refresh-failed"
+      && state.saveState !== "saved-with-warning") {
     state.saveState = "pending";
     state.lastSaveError = null;
   }
@@ -353,6 +355,7 @@ function markDocumentSaveState(documentState, saveState, {
   }
   if (saveState === "saving" || saveState === "saved") {
     documentState.saveRefreshRetryFailed = false;
+    documentState.continueAfterRefreshFailure = false;
   }
   return state.saveState;
 }
@@ -380,6 +383,11 @@ function documentNeedsSynchronization(documentState) {
 function documentIsEditReady(documentState, page) {
   const state = initializeDocumentRevisionState(documentState);
   const pageNum = pageNumber(page);
+  if (state.saveState === "saved-refresh-failed"
+      && documentState.continueAfterRefreshFailure === true
+      && !documentHasRevisionPersistenceDebt(documentState)) {
+    return documentRevisionReadinessSatisfied(documentState, pageNum);
+  }
   if (state.saveState === "failed" || state.saveState === "saved-refresh-failed" || state.saveState === "saving" || state.saveState === "persisted" || state.saveState === "synchronizing") return false;
   return documentRevisionReadinessSatisfied(documentState, pageNum);
 }

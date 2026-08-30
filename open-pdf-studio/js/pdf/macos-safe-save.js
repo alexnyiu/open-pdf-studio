@@ -107,6 +107,31 @@ export async function finalizeMacosSafePdfSave(token) {
   }
 }
 
+export async function listPendingMacosSafeSaveCleanups() {
+  if (!isTauri()) return [];
+  try {
+    const records = await invoke('list_macos_safe_save_cleanup_records');
+    return Array.isArray(records) ? records : [];
+  } catch (error) {
+    throw nativeError(error, 'CLEANUP_RECORD_LIST_FAILED');
+  }
+}
+
+/** Retry only deletion of the recorded private recovery file. */
+export async function retryPendingMacosSafeSaveCleanup(recoveryPath) {
+  if (!isTauri()) {
+    throw new MacosSafeSaveError(
+      'MACOS_TAURI_REQUIRED',
+      'Safe-save cleanup recovery requires the packaged macOS app',
+    );
+  }
+  try {
+    return await invoke('retry_macos_safe_save_cleanup', { recoveryPath });
+  } catch (error) {
+    throw nativeError(error, 'CLEANUP_RETRY_FAILED');
+  }
+}
+
 /** @param {string|null|undefined} token */
 export async function abortMacosSafePdfSave(token) {
   if (!token) return;

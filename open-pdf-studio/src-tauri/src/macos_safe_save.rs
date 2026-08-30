@@ -10,10 +10,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tauri::Manager;
 use tauri_plugin_fs::FsExt;
 
 use crate::pdfium_renderer::{extract_all_page_text, render_page_to_rgba, PdfiumDocumentHandle};
@@ -22,6 +24,7 @@ const ERROR_PREFIX: &str = "OPDS_SAFE_SAVE";
 const PDFIUM_RENDER_SCALE: f32 = 2.0;
 const MAX_CHANGED_PIXELS_PER_PAGE: usize = 0;
 const MAX_CHANNEL_DELTA: u8 = 0;
+const PENDING_CLEANUP_FILE: &str = "pending-safe-save-cleanups.json";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DestinationIdentity {
@@ -47,7 +50,7 @@ struct SafeSaveRecord {
 }
 
 #[derive(Default)]
-pub struct MacosSafeSaveState(Mutex<HashMap<String, SafeSaveRecord>>);
+pub struct MacosSafeSaveState(Mutex<HashMap<String, SafeSaveRecord>>, Arc<Mutex<()>>);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,7 +117,220 @@ pub struct FinalizedSafeSave {
     permissions_preserved: bool,
     macos_metadata_preserved: bool,
     full_sync_applied: bool,
-    warnings: Vec<String>,
+    warnings: Vec<SafeSaveWarning>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SafeSaveWarning {
+    code: String,
+    message: String,
+    path: Option<String>,
+    retryable: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PendingSafeSaveCleanup {
+    id: String,
+    destination_path: String,
+    recovery_path: String,
+    created_at_unix_ms: u64,
+    last_error: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SafeSaveCleanupRetry {
+    status: &'static str,
+    recovery_path: String,
+    remaining_records: Vec<PendingSafeSaveCleanup>,
+}
+
+fn safe_save_warning(
+    code: &str,
+    message: impl Into<String>,
+    path: Option<&Path>,
+    retryable: bool,
+) -> SafeSaveWarning {
+    SafeSaveWarning {
+        code: code.to_string(),
+        message: message.into(),
+        path: path.map(|value| value.to_string_lossy().to_string()),
+        retryable,
+    }
+}
+
+fn cleanup_records_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let app_data = app.path().app_data_dir().map_err(|value| {
+        error(
+            "CLEANUP_RECORD_PATH_UNAVAILABLE",
+            format!("Safe-save recovery data directory is unavailable: {value}"),
+        )
+    })?;
+    fs::create_dir_all(&app_data)
+        .map_err(|value| classify_io("create safe-save recovery data directory", value, "local"))?;
+    Ok(app_data.join(PENDING_CLEANUP_FILE))
+}
+
+fn read_cleanup_records(path: &Path) -> Result<Vec<PendingSafeSaveCleanup>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let bytes = fs::read(path)
+        .map_err(|value| classify_io("read safe-save cleanup records", value, "local"))?;
+    serde_json::from_slice(&bytes).map_err(|value| {
+        error(
+            "CLEANUP_RECORD_INVALID",
+            format!("Safe-save cleanup records are invalid: {value}"),
+        )
+    })
+}
+
+fn write_cleanup_records(path: &Path, records: &[PendingSafeSaveCleanup]) -> Result<(), String> {
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let parent = path.parent().ok_or_else(|| {
+        error(
+            "CLEANUP_RECORD_PATH_UNAVAILABLE",
+            "Safe-save cleanup record has no parent directory",
+        )
+    })?;
+    fs::create_dir_all(parent).map_err(|value| {
+        classify_io("create safe-save cleanup record directory", value, "local")
+    })?;
+    let temporary = parent.join(format!(".{PENDING_CLEANUP_FILE}.tmp"));
+    let bytes = serde_json::to_vec_pretty(records).map_err(|value| {
+        error(
+            "CLEANUP_RECORD_SERIALIZATION_FAILED",
+            format!("Safe-save cleanup records could not be serialized: {value}"),
+        )
+    })?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
+        .open(&temporary)
+        .map_err(|value| classify_io("create safe-save cleanup record", value, "local"))?;
+    use std::io::Write;
+    file.write_all(&bytes)
+        .map_err(|value| classify_io("write safe-save cleanup record", value, "local"))?;
+    file.sync_all()
+        .map_err(|value| classify_io("flush safe-save cleanup record", value, "local"))?;
+    fs::rename(&temporary, path)
+        .map_err(|value| classify_io("replace safe-save cleanup record", value, "local"))?;
+    sync_directory(parent, "local")
+}
+
+fn cleanup_record_id(destination: &Path, recovery: &Path, created_at_unix_ms: u64) -> String {
+    let identity = format!(
+        "{}\n{}\n{created_at_unix_ms}",
+        destination.to_string_lossy(),
+        recovery.to_string_lossy(),
+    );
+    format!("{:x}", Sha256::digest(identity.as_bytes()))
+}
+
+fn append_cleanup_record(
+    records_path: &Path,
+    destination: &Path,
+    recovery: &Path,
+    last_error: &str,
+) -> Result<PendingSafeSaveCleanup, String> {
+    let mut records = read_cleanup_records(records_path)?;
+    if let Some(existing) = records
+        .iter_mut()
+        .find(|record| Path::new(&record.recovery_path) == recovery)
+    {
+        existing.last_error = last_error.to_string();
+        let result = existing.clone();
+        write_cleanup_records(records_path, &records)?;
+        return Ok(result);
+    }
+    let created_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
+    let record = PendingSafeSaveCleanup {
+        id: cleanup_record_id(destination, recovery, created_at_unix_ms),
+        destination_path: destination.to_string_lossy().to_string(),
+        recovery_path: recovery.to_string_lossy().to_string(),
+        created_at_unix_ms,
+        last_error: last_error.to_string(),
+    };
+    records.push(record.clone());
+    write_cleanup_records(records_path, &records)?;
+    Ok(record)
+}
+
+fn recovery_path_is_safe(record: &PendingSafeSaveCleanup) -> bool {
+    let destination = Path::new(&record.destination_path);
+    let recovery = Path::new(&record.recovery_path);
+    destination.is_absolute()
+        && recovery.is_absolute()
+        && destination != recovery
+        && destination.parent() == recovery.parent()
+        && recovery
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map_or(false, |name| {
+                name.starts_with('.')
+                    && name.contains(".open-pdf-studio-")
+                    && name.ends_with(".candidate")
+            })
+}
+
+fn retry_cleanup_record(
+    records_path: &Path,
+    recovery_path: &Path,
+) -> Result<SafeSaveCleanupRetry, String> {
+    let mut records = read_cleanup_records(records_path)?;
+    let index = records
+        .iter()
+        .position(|record| Path::new(&record.recovery_path) == recovery_path)
+        .ok_or_else(|| error("CLEANUP_RECORD_NOT_FOUND", "Cleanup record was not found"))?;
+    let record = records[index].clone();
+    if !recovery_path_is_safe(&record) {
+        return Err(error(
+            "UNSAFE_CLEANUP_RECORD",
+            "Cleanup record does not identify a private same-directory recovery file",
+        ));
+    }
+    let status = match fs::symlink_metadata(recovery_path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(error(
+                    "UNSAFE_RECOVERY_FILE",
+                    "Cleanup retry refuses symlink and non-file recovery paths",
+                ));
+            }
+            fs::remove_file(recovery_path).map_err(|value| {
+                classify_io("remove private safe-save recovery file", value, "local")
+            })?;
+            "cleaned"
+        }
+        Err(value) if value.kind() == io::ErrorKind::NotFound => "already-clean",
+        Err(value) => {
+            return Err(classify_io(
+                "inspect private safe-save recovery file",
+                value,
+                "local",
+            ))
+        }
+    };
+    if let Some(parent) = recovery_path.parent() {
+        sync_directory(parent, "local")?;
+    }
+    records.remove(index);
+    write_cleanup_records(records_path, &records)?;
+    Ok(SafeSaveCleanupRetry {
+        status,
+        recovery_path: recovery_path.to_string_lossy().to_string(),
+        remaining_records: records,
+    })
 }
 
 fn error(code: &str, message: impl AsRef<str>) -> String {
@@ -855,6 +1071,9 @@ fn swap_paths(left: &Path, right: &Path) -> io::Result<()> {
 enum FinalizeFailurePoint {
     None,
     AfterAtomicReplace,
+    MetadataCopyWarning,
+    FullSyncUnavailableWarning,
+    OldFileCleanupWarning,
 }
 
 #[cfg(target_os = "macos")]
@@ -878,7 +1097,10 @@ fn finalize_record(
         record.candidate_length,
         &record.storage_kind,
     )?;
-    let full_sync_applied = sync_file(&record.candidate, &record.storage_kind)?;
+    let mut full_sync_applied = sync_file(&record.candidate, &record.storage_kind)?;
+    if failure_point == FinalizeFailurePoint::FullSyncUnavailableWarning {
+        full_sync_applied = false;
+    }
     let destination_exists = record.destination.exists();
     if destination_exists != record.destination_identity.is_some() {
         return Err(error(
@@ -919,10 +1141,18 @@ fn finalize_record(
                 &record.storage_kind,
             )
         })?;
-        if let Err(value) = copy_macos_metadata(&record.destination, &record.candidate) {
+        let metadata_copy = if failure_point == FinalizeFailurePoint::MetadataCopyWarning {
+            Err("injected metadata copy warning".to_string())
+        } else {
+            copy_macos_metadata(&record.destination, &record.candidate)
+        };
+        if let Err(value) = metadata_copy {
             macos_metadata_preserved = false;
-            warnings.push(format!(
-                "macOS extended metadata could not be copied: {value}"
+            warnings.push(safe_save_warning(
+                "MACOS_METADATA_COPY_FAILED",
+                format!("macOS extended metadata could not be copied: {value}"),
+                Some(&record.destination),
+                false,
             ));
         }
     } else {
@@ -935,6 +1165,14 @@ fn finalize_record(
         }
         permissions_preserved = false;
         macos_metadata_preserved = false;
+    }
+    if !full_sync_applied {
+        warnings.push(safe_save_warning(
+            "FULL_FSYNC_UNAVAILABLE",
+            "The PDF was saved using the available fsync durability fallback because F_FULLFSYNC is unavailable for this volume",
+            Some(&record.destination),
+            false,
+        ));
     }
     let _ = sync_file(&record.candidate, &record.storage_kind)?;
 
@@ -985,14 +1223,26 @@ fn finalize_record(
             let _ = fs::remove_file(&record.candidate);
             return Err(value);
         }
-        if let Err(remove_error) = fs::remove_file(&record.candidate) {
+        let cleanup_result = if failure_point == FinalizeFailurePoint::OldFileCleanupWarning {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected old-version cleanup warning",
+            ))
+        } else {
+            fs::remove_file(&record.candidate)
+        };
+        if let Err(remove_error) = cleanup_result {
             // The destination is already verified and durable. Do not turn an
             // old-version cleanup problem into a failed save or swap the new
             // document back out; preserve the old bytes as a private recovery
             // file and report its exact path.
-            warnings.push(format!(
-                "replaced original could not be cleaned and remains as a private recovery file at {}: {remove_error}",
-                record.candidate.to_string_lossy()
+            warnings.push(safe_save_warning(
+                "OLD_VERSION_CLEANUP_FAILED",
+                format!(
+                    "Replaced original could not be cleaned and remains as a private recovery file: {remove_error}"
+                ),
+                Some(&record.candidate),
+                true,
             ));
         }
     } else {
@@ -1026,8 +1276,11 @@ fn finalize_record(
         // The replacement itself was already flushed before old-file cleanup.
         // Treat a cleanup-directory flush failure as a successful save with a
         // durability warning rather than falsely claiming the original remains.
-        warnings.push(format!(
-            "final candidate-cleanup directory flush failed: {value}"
+        warnings.push(safe_save_warning(
+            "CLEANUP_DIRECTORY_SYNC_FAILED",
+            format!("Final candidate-cleanup directory flush failed: {value}"),
+            Some(parent),
+            false,
         ));
     }
     Ok(FinalizedSafeSave {
@@ -1048,22 +1301,57 @@ fn finalize_record(
 
 #[tauri::command]
 pub async fn finalize_macos_safe_pdf_save(
+    app: tauri::AppHandle,
     token: String,
     state: tauri::State<'_, MacosSafeSaveState>,
 ) -> Result<FinalizedSafeSave, String> {
     let record = record_for_token(&state, &token)?;
     #[cfg(target_os = "macos")]
-    let result = tauri::async_runtime::spawn_blocking({
+    let mut result = tauri::async_runtime::spawn_blocking({
         let record = record.clone();
         move || finalize_record(&record, FinalizeFailurePoint::None)
     })
     .await
     .map_err(|value| error("SAFE_SAVE_TASK_PANIC", value.to_string()))?;
     #[cfg(not(target_os = "macos"))]
-    let result: Result<FinalizedSafeSave, String> = Err(error(
+    let mut result: Result<FinalizedSafeSave, String> = Err(error(
         "MACOS_ONLY",
         "Safe PDF replacement is enabled only on macOS",
     ));
+
+    if let Ok(finalized) = result.as_mut() {
+        let cleanup_warning = finalized
+            .warnings
+            .iter()
+            .find(|warning| warning.code == "OLD_VERSION_CLEANUP_FAILED")
+            .cloned();
+        if let Some(warning) = cleanup_warning {
+            if let Some(path) = warning.path.as_deref() {
+                let persistence = state
+                    .1
+                    .lock()
+                    .map_err(|value| error("CLEANUP_RECORD_LOCK_FAILED", value.to_string()))
+                    .and_then(|_guard| {
+                        cleanup_records_path(&app).and_then(|records_path| {
+                            append_cleanup_record(
+                                &records_path,
+                                &record.destination,
+                                Path::new(path),
+                                &warning.message,
+                            )
+                        })
+                    });
+                if let Err(value) = persistence {
+                    finalized.warnings.push(safe_save_warning(
+                        "CLEANUP_RECORD_PERSIST_FAILED",
+                        format!("The recovery file remains, but its restart cleanup record could not be persisted: {value}"),
+                        Some(Path::new(path)),
+                        false,
+                    ));
+                }
+            }
+        }
+    }
 
     state
         .0
@@ -1077,6 +1365,37 @@ pub async fn finalize_macos_safe_pdf_save(
         cleanup_record_files(&record);
     }
     result
+}
+
+#[tauri::command]
+pub fn list_macos_safe_save_cleanup_records(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, MacosSafeSaveState>,
+) -> Result<Vec<PendingSafeSaveCleanup>, String> {
+    let _guard = state
+        .1
+        .lock()
+        .map_err(|value| error("CLEANUP_RECORD_LOCK_FAILED", value.to_string()))?;
+    read_cleanup_records(&cleanup_records_path(&app)?)
+}
+
+#[tauri::command]
+pub async fn retry_macos_safe_save_cleanup(
+    app: tauri::AppHandle,
+    recovery_path: String,
+    state: tauri::State<'_, MacosSafeSaveState>,
+) -> Result<SafeSaveCleanupRetry, String> {
+    let records_path = cleanup_records_path(&app)?;
+    let recovery = PathBuf::from(recovery_path);
+    let cleanup_gate = Arc::clone(&state.1);
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = cleanup_gate
+            .lock()
+            .map_err(|value| error("CLEANUP_RECORD_LOCK_FAILED", value.to_string()))?;
+        retry_cleanup_record(&records_path, &recovery)
+    })
+    .await
+    .map_err(|value| error("CLEANUP_RETRY_TASK_PANIC", value.to_string()))?
 }
 
 #[tauri::command]
@@ -1122,7 +1441,7 @@ mod tests {
             fs::write(&destination, b"original").expect("write original");
             fs::set_permissions(&destination, fs::Permissions::from_mode(0o640)).unwrap();
         }
-        let candidate = dir.join(".document.candidate");
+        let candidate = dir.join(".document.pdf.open-pdf-studio-test.candidate");
         fs::write(&candidate, b"candidate").expect("write candidate");
         let candidate_sha256 = format!("{:x}", Sha256::digest(b"candidate"));
         SafeSaveRecord {
@@ -1156,6 +1475,97 @@ mod tests {
         );
         assert!(!record.candidate.exists());
         assert!(result.candidate_files_cleaned);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn metadata_copy_warning_is_structured_and_does_not_rollback_destination() {
+        let dir = test_dir("metadata-warning");
+        let record = record(&dir, true);
+        let result = finalize_record(&record, FinalizeFailurePoint::MetadataCopyWarning)
+            .expect("safe replace with warning");
+        assert_eq!(fs::read(&record.destination).unwrap(), b"candidate");
+        let warning = result
+            .warnings
+            .iter()
+            .find(|warning| warning.code == "MACOS_METADATA_COPY_FAILED")
+            .expect("typed metadata warning");
+        assert_eq!(warning.path.as_deref(), record.destination.to_str());
+        assert!(!warning.retryable);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn full_fsync_unavailable_is_a_typed_success_warning() {
+        let dir = test_dir("full-sync-warning");
+        let record = record(&dir, true);
+        let result = finalize_record(&record, FinalizeFailurePoint::FullSyncUnavailableWarning)
+            .expect("safe replace with fsync fallback");
+        assert_eq!(fs::read(&record.destination).unwrap(), b"candidate");
+        assert!(!result.full_sync_applied);
+        assert!(result
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "FULL_FSYNC_UNAVAILABLE"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn old_file_cleanup_warning_preserves_exact_recovery_path_and_new_destination() {
+        let dir = test_dir("cleanup-warning");
+        let record = record(&dir, true);
+        let result = finalize_record(&record, FinalizeFailurePoint::OldFileCleanupWarning)
+            .expect("durable replace with recovery warning");
+        assert_eq!(fs::read(&record.destination).unwrap(), b"candidate");
+        assert_eq!(fs::read(&record.candidate).unwrap(), b"original");
+        let warning = result
+            .warnings
+            .iter()
+            .find(|warning| warning.code == "OLD_VERSION_CLEANUP_FAILED")
+            .expect("typed cleanup warning");
+        assert_eq!(warning.path.as_deref(), record.candidate.to_str());
+        assert!(warning.retryable);
+        fs::remove_file(&record.candidate).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cleanup_record_survives_reload_and_retry_never_touches_destination() {
+        let dir = test_dir("cleanup-record-restart");
+        let record = record(&dir, true);
+        let result = finalize_record(&record, FinalizeFailurePoint::OldFileCleanupWarning)
+            .expect("durable replace with recovery warning");
+        let destination_after_save = fs::read(&record.destination).unwrap();
+        let warning = result
+            .warnings
+            .iter()
+            .find(|warning| warning.code == "OLD_VERSION_CLEANUP_FAILED")
+            .unwrap();
+        let records_path = dir.join(PENDING_CLEANUP_FILE);
+        append_cleanup_record(
+            &records_path,
+            &record.destination,
+            &record.candidate,
+            &warning.message,
+        )
+        .expect("persist cleanup record");
+
+        let reloaded = read_cleanup_records(&records_path).expect("reload after restart");
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(
+            reloaded[0].recovery_path,
+            record.candidate.to_string_lossy()
+        );
+        let retry =
+            retry_cleanup_record(&records_path, &record.candidate).expect("retry private cleanup");
+        assert_eq!(retry.status, "cleaned");
+        assert!(retry.remaining_records.is_empty());
+        assert!(!record.candidate.exists());
+        assert_eq!(
+            fs::read(&record.destination).unwrap(),
+            destination_after_save
+        );
+        assert!(read_cleanup_records(&records_path).unwrap().is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -455,8 +455,19 @@ function productionSavedTransitionCallbacks(outputPath, savedBytes) {
       return report;
     },
     waitForEditReadiness: async ({ documentState: owner, requiredPages }) => {
-      const { awaitPageEditReady } = await import('./page-edit-readiness.js');
-      await Promise.all(requiredPages.map((page) => awaitPageEditReady(owner, page)));
+      const {
+        awaitPageEditReady,
+        PAGE_EDIT_READINESS_TIMEOUT_MS,
+      } = await import('./page-edit-readiness.js');
+      const controller = new AbortController();
+      try {
+        await Promise.all(requiredPages.map((page) => awaitPageEditReady(owner, page, {
+          signal: controller.signal,
+          timeoutMs: PAGE_EDIT_READINESS_TIMEOUT_MS,
+        })));
+      } finally {
+        controller.abort();
+      }
       return requiredPages.every((page) => documentRevisionReadinessSatisfied(owner, page));
     },
   };
@@ -3471,14 +3482,20 @@ async function performSavePDF(saveAsPath = null, {
         const finalized = await finalizeMacosSafePdfSave(stagedToken);
         stagedToken = null;
         if (finalized.status !== 'pass') throw new Error('Native atomic replacement did not report success');
-        if (!finalized.candidateFilesCleaned) {
+        const finalizedWarnings = Array.isArray(finalized.warnings) ? finalized.warnings : [];
+        if (!finalized.candidateFilesCleaned
+            && !finalizedWarnings.some(
+              (warning) => warning?.code === 'OLD_VERSION_CLEANUP_FAILED',
+            )) {
           console.warn('[safe-save] Native replacement succeeded but reported a candidate cleanup warning');
           persistenceWarnings.push(Object.freeze({
             code: 'SAFE_SAVE_CANDIDATE_CLEANUP_WARNING',
             message: 'Native replacement succeeded, but a save candidate could not be cleaned up',
+            path: null,
+            retryable: false,
           }));
         }
-        for (const warning of finalized.warnings || []) {
+        for (const warning of finalizedWarnings) {
           console.warn(`[safe-save] ${typeof warning === 'string' ? warning : warning?.message}`);
           persistenceWarnings.push(typeof warning === 'string'
             ? Object.freeze({ code: 'SAFE_SAVE_WARNING', message: warning })

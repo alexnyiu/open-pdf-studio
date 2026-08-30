@@ -45,7 +45,7 @@ test('a text click during synchronization preserves its page and point and repla
   assert.deepEqual(activations[0].point, { x: 12.5, y: 28.25 });
 });
 
-test('a lifecycle change rejects a queued edit without activation', async () => {
+test('a lifecycle change returns a truthful terminal result without activation', async () => {
   const documentState = { id: 'intent-owner', lifecycleGeneration: 3 };
   const readiness = deferred();
   let activations = 0;
@@ -61,9 +61,38 @@ test('a lifecycle change rejects a queued edit without activation', async () => 
   await Promise.resolve();
   documentState.lifecycleGeneration += 1;
   readiness.resolve();
-  await assert.rejects(intent, { name: 'AbortError' });
+  assert.deepEqual(await intent, {
+    activated: false,
+    reason: 'document-lifecycle-changed',
+    errorCode: 'PAGE_EDIT_READINESS_LIFECYCLE_CHANGED',
+    message: 'Document lifecycle changed before edit replay',
+    action: 'retry-page-edit',
+  });
   assert.equal(pageEditIntentPendingForDocument(documentState.id), false);
   assert.equal(activations, 0);
+});
+
+test('a readiness timeout returns a retryable typed result', async () => {
+  const documentState = { id: 'timed-intent-owner', lifecycleGeneration: 1 };
+  const error = Object.assign(new Error('page did not settle'), {
+    code: 'PAGE_EDIT_READINESS_TIMEOUT',
+  });
+  const result = await runPageEditIntent({
+    documentState,
+    pageNum: 2,
+    waitForSynchronization: async () => true,
+    resolveDocument: () => documentState,
+    awaitReadiness: async () => { throw error; },
+    activate: () => assert.fail('timed-out intent must not activate'),
+  });
+  assert.deepEqual(result, {
+    activated: false,
+    reason: 'readiness-timeout',
+    errorCode: 'PAGE_EDIT_READINESS_TIMEOUT',
+    message: 'page did not settle',
+    action: 'retry-page-edit',
+  });
+  assert.equal(pageEditIntentPendingForDocument(documentState.id), false);
 });
 
 test('a queued page lease is held through readiness and released in finally', async () => {

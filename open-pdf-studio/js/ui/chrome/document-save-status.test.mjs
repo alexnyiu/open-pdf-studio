@@ -10,6 +10,7 @@ import {
   acknowledgeDocumentSaveStatus,
   createDocumentSaveRecoveryController,
   documentSaveStatusModel,
+  pendingSafeSaveCleanupStatusModel,
 } from './document-save-status.js';
 
 function documentState(id = 'doc-a') {
@@ -53,8 +54,8 @@ test('successful persistence plus failed refresh exposes the partial-success rec
     lastSynchronizationError: 'Exact proxy installation failure',
   });
   const status = documentSaveStatusModel(document);
-  assert.equal(status.message, 'PDF saved; editor refresh failed');
-  assert.deepEqual(status.actions, ['retry-refresh', 'acknowledge']);
+  assert.equal(status.message, 'PDF saved safely; editor refresh failed');
+  assert.deepEqual(status.actions, ['retry-refresh', 'reopen', 'acknowledge']);
   assert.equal(status.exactError, 'Exact proxy installation failure');
 });
 
@@ -87,7 +88,11 @@ test('queued, warning, refresh-pending, and Save As outcomes are distinct and ac
   const warning = documentSaveStatusModel(document);
   assert.equal(warning.message, 'PDF saved with a warning');
   assert.equal(warning.exactError, 'Cleanup remains');
-  assert.deepEqual(warning.actions, ['view-save-details', 'acknowledge']);
+  assert.deepEqual(warning.actions, [
+    'view-save-details',
+    'export-save-details',
+    'acknowledge',
+  ]);
 
   Object.assign(document.revisionState, {
     saveState: 'save-as-required',
@@ -96,6 +101,57 @@ test('queued, warning, refresh-pending, and Save As outcomes are distinct and ac
   const saveAs = documentSaveStatusModel(document);
   assert.equal(saveAs.message, 'Choose a destination to save changes');
   assert.deepEqual(saveAs.actions, ['save-as', 'acknowledge']);
+});
+
+test('a cleanup warning exposes its exact recovery file and restart-safe actions', () => {
+  const document = documentState();
+  Object.assign(document.revisionState, {
+    contentRevision: 4,
+    serializedRevision: 4,
+    persistedRevision: 4,
+    livePdfRevision: 4,
+    saveState: 'saved-with-warning',
+    lastSaveWarnings: [{
+      code: 'OLD_VERSION_CLEANUP_FAILED',
+      message: 'Old bytes remain private',
+      path: '/private/recovery.candidate',
+      retryable: true,
+    }],
+  });
+  const status = documentSaveStatusModel(document);
+  assert.equal(status.recoveryPath, '/private/recovery.candidate');
+  assert.deepEqual(status.actions, [
+    'view-save-details',
+    'export-save-details',
+    'reveal-recovery-file',
+    'retry-cleanup',
+    'acknowledge',
+  ]);
+  noteDocumentMutation(document, { pages: [1], reason: 'edit-after-save-warning' });
+  assert.equal(document.revisionState.saveState, 'saved-with-warning');
+  assert.equal(document.revisionState.lastSaveWarnings[0].message, 'Old bytes remain private');
+  assert.equal(
+    documentSaveStatusModel(document).message,
+    'PDF saved with a warning; new changes remain pending',
+  );
+});
+
+test('persisted cleanup records become visible again after restart', () => {
+  const status = pendingSafeSaveCleanupStatusModel([{
+    id: 'cleanup-1',
+    destinationPath: '/tmp/document.pdf',
+    recoveryPath: '/tmp/.document.open-pdf-studio-token.candidate',
+    createdAtUnixMs: 123,
+    lastError: 'permission denied',
+  }]);
+  assert.equal(status.visible, true);
+  assert.equal(status.recoveryPath, '/tmp/.document.open-pdf-studio-token.candidate');
+  assert.deepEqual(status.actions, [
+    'view-save-details',
+    'export-save-details',
+    'reveal-recovery-file',
+    'retry-cleanup',
+  ]);
 });
 
 test('retry refresh uses the refresh-only path and never invokes persistence', async () => {
@@ -146,6 +202,36 @@ test('a failed refresh retry exposes Reopen without changing persistence state',
     ['retry-refresh', 'reopen', 'acknowledge'],
   );
   assert.equal(await controller.reopen(document.id), true);
+});
+
+test('a current owner-published page can continue safely after refresh failure', () => {
+  const document = documentState();
+  document.currentPage = 1;
+  Object.assign(document.revisionState, {
+    contentRevision: 2,
+    serializedRevision: 2,
+    persistedRevision: 2,
+    livePdfRevision: 1,
+    saveState: 'saved-refresh-failed',
+    pageContentRevisions: { 1: 2 },
+    pageRenderReadyRevisions: { 1: 2 },
+    pageSemanticReadyRevisions: { 1: 2 },
+  });
+  const controller = createDocumentSaveRecoveryController({
+    resolveDocumentById: () => document,
+    requestSave: async () => true,
+    requestRefresh: async () => false,
+    requestReopen: async () => true,
+  });
+  assert.deepEqual(documentSaveStatusModel(document).actions, [
+    'retry-refresh',
+    'continue-current',
+    'reopen',
+    'acknowledge',
+  ]);
+  assert.equal(controller.continueCurrent(document.id), true);
+  assert.equal(document.continueAfterRefreshFailure, true);
+  assert.equal(documentSaveStatusModel(document).visible, false);
 });
 
 test('retry save resolves the latest document revision rather than the failed snapshot', async () => {
@@ -237,6 +323,11 @@ test('the production status bar binds selected-document state and exposes recove
   assert.match(statusBar, /retrySaveForDocument/u);
   assert.match(statusBar, /retryRefreshForDocument/u);
   assert.match(statusBar, /reopenSavedDocument/u);
+  assert.match(statusBar, /saveAsForDocument/u);
+  assert.match(statusBar, /retrySaveRecoveryCleanup/u);
+  assert.match(statusBar, /revealSaveRecoveryFile/u);
+  assert.match(statusBar, /continueUsingOwnerPublishedPage/u);
+  assert.match(statusBar, /exportSaveDetails/u);
   assert.doesNotMatch(statusBar, /saveStatus\(\)\.exactError/u,
     'the exact diagnostic error must not replace the concise user message');
   assert.match(recovery, /retryDocumentRefresh/u);

@@ -51,7 +51,10 @@ import {
 } from '../text/text-edit-dirty-state.js';
 import { runOwnerScopedTextCommit } from '../text/text-edit-commit.js';
 import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-transition.js';
-import { awaitPageEditReady } from '../pdf/page-edit-readiness.js';
+import {
+  awaitPageEditReady,
+  PAGE_EDIT_READINESS_TIMEOUT_MS,
+} from '../pdf/page-edit-readiness.js';
 import { runPageEditIntent } from '../text/page-edit-intent.js';
 import {
   awaitFinalTextLayout,
@@ -187,9 +190,15 @@ export async function startTextEditing(annotation, {
         pageNum,
         waitForSynchronization: waitForSavedDocumentSynchronization,
         resolveDocument: getDocumentById,
-        awaitReadiness: (documentState, page) => (
-          documentState.pdfDoc ? awaitPageEditReady(documentState, page) : Promise.resolve()
+        awaitReadiness: (documentState, page, options) => (
+          documentState.pdfDoc
+            ? awaitPageEditReady(documentState, page, {
+              ...options,
+              timeoutMs: options?.timeoutMs || PAGE_EDIT_READINESS_TIMEOUT_MS,
+            })
+            : Promise.resolve()
         ),
+        readinessTimeoutMs: PAGE_EDIT_READINESS_TIMEOUT_MS,
         activate: ({ documentState }) => {
           const liveAnnotation = isNew
             ? annotation
@@ -200,6 +209,9 @@ export async function startTextEditing(annotation, {
           return startTextEditing(liveAnnotation, { isNew, readinessGranted: true });
         },
       });
+      if (!intent.activated && intent.action === 'retry-page-edit') {
+        showMessage('This page is not ready for editing yet. Try again.');
+      }
       return intent.activated ? intent.value : false;
     } catch (error) {
       if (error?.name !== 'AbortError') console.warn('[text-edit] Page readiness failed:', error);

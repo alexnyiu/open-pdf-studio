@@ -7,6 +7,28 @@ export const PAGE_EDIT_READY_LAYERS = Object.freeze([
   'editableMetadata',
 ]);
 
+export const PAGE_EDIT_READINESS_TIMEOUT_MS = 15_000;
+
+export class PageEditReadinessError extends Error {
+  constructor(code, message, { cause = null } = {}) {
+    super(message, cause == null ? undefined : { cause });
+    this.name = 'PageEditReadinessError';
+    this.code = String(code || 'PAGE_EDIT_READINESS_FAILED');
+  }
+}
+
+function readinessError(code, message, cause = null) {
+  return new PageEditReadinessError(code, message, { cause });
+}
+
+function requiredTimeout(value) {
+  const timeoutMs = Number(value);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new TypeError('Page edit readiness requires a positive timeoutMs');
+  }
+  return timeoutMs;
+}
+
 function pageNumber(value) {
   const page = Number(value);
   if (!Number.isInteger(page) || page <= 0) throw new TypeError('Page readiness requires a positive page');
@@ -181,20 +203,32 @@ export function pageEditReadinessSnapshot(documentState, pageNum) {
 export function awaitPageEditReady(
   documentState,
   pageNum,
-  { requiredLayers = PAGE_EDIT_READY_LAYERS, signal = null } = {},
+  { requiredLayers = PAGE_EDIT_READY_LAYERS, signal = null, timeoutMs } = {},
 ) {
   const page = pageNumber(pageNum);
+  const boundedTimeoutMs = requiredTimeout(timeoutMs);
   const expected = capturePageEditReadinessIdentity(documentState, page);
   const initialSnapshot = pageEditReadinessSnapshot(documentState, page);
-  if (initialSnapshot?.failure) return Promise.reject(new Error(initialSnapshot.failure));
+  if (initialSnapshot?.failure) {
+    return Promise.reject(readinessError(
+      'PAGE_EDIT_READINESS_FAILED',
+      initialSnapshot.failure,
+    ));
+  }
   if (pageEditReadinessSatisfied(documentState, page, { requiredLayers })) {
     return Promise.resolve(initialSnapshot);
   }
   if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
-    return Promise.reject(new Error('Page readiness events are unavailable'));
+    return Promise.reject(readinessError(
+      'PAGE_EDIT_READINESS_EVENTS_UNAVAILABLE',
+      'Page readiness events are unavailable',
+    ));
   }
   return new Promise((resolve, reject) => {
+    let timer = null;
     const cleanup = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
       window.removeEventListener('opds:page-edit-readiness', inspect);
       window.removeEventListener('opds:page-edit-readiness-failed', inspect);
       window.removeEventListener('opds:page-edit-readiness-cleared', inspectRevision);
@@ -203,13 +237,20 @@ export function awaitPageEditReady(
     };
     const abort = () => {
       cleanup();
-      reject(signal?.reason || new DOMException('Page edit readiness was cancelled', 'AbortError'));
+      reject(readinessError(
+        'PAGE_EDIT_READINESS_ABORTED',
+        'Page edit readiness was cancelled',
+        signal?.reason || null,
+      ));
     };
     const inspectLifecycle = (event) => {
       if (event.detail?.documentId !== expected.documentId) return;
       if (event.detail?.lifecycleGeneration === expected.lifecycleGeneration) return;
       cleanup();
-      reject(new DOMException('Document lifecycle changed before page edit readiness', 'AbortError'));
+      reject(readinessError(
+        'PAGE_EDIT_READINESS_LIFECYCLE_CHANGED',
+        'Document lifecycle changed before page edit readiness',
+      ));
     };
     const inspectRevision = (event) => {
       if (event.detail?.documentId !== expected.documentId) return;
@@ -217,7 +258,10 @@ export function awaitPageEditReady(
       if (Array.isArray(affectedPages) && !affectedPages.includes(page)) return;
       if (identityMatchesDocument(expected, documentState)) return;
       cleanup();
-      reject(new DOMException('Document revision changed before page edit readiness', 'AbortError'));
+      reject(readinessError(
+        'PAGE_EDIT_READINESS_REVISION_CHANGED',
+        'Document revision changed before page edit readiness',
+      ));
     };
     const inspect = (event) => {
       const detail = event.detail;
@@ -231,7 +275,7 @@ export function awaitPageEditReady(
       const entry = currentEntry(documentState, page);
       if (entry?.failure) {
         cleanup();
-        reject(new Error(entry.failure));
+        reject(readinessError('PAGE_EDIT_READINESS_FAILED', entry.failure));
         return;
       }
       if (!pageEditReadinessSatisfied(documentState, page, { requiredLayers })) return;
@@ -243,6 +287,13 @@ export function awaitPageEditReady(
     window.addEventListener('opds:page-edit-readiness-cleared', inspectRevision);
     window.addEventListener('opds:document-lifecycle-changed', inspectLifecycle);
     signal?.addEventListener?.('abort', abort, { once: true });
+    timer = setTimeout(() => {
+      cleanup();
+      reject(readinessError(
+        'PAGE_EDIT_READINESS_TIMEOUT',
+        `Page ${page} did not become editable within ${boundedTimeoutMs} ms`,
+      ));
+    }, boundedTimeoutMs);
     if (signal?.aborted) abort();
     else inspect({ detail: pageEditReadinessSnapshot(documentState, page) });
   });

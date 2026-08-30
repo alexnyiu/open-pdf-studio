@@ -106,6 +106,7 @@ import { createTextEditTargetIdentity } from '../text/text-edit-target-identity.
 import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-transition.js';
 import {
   awaitPageEditReady,
+  PAGE_EDIT_READINESS_TIMEOUT_MS,
   pageEditReadinessSatisfied,
 } from '../pdf/page-edit-readiness.js';
 import { runPageEditIntent } from '../text/page-edit-intent.js';
@@ -153,7 +154,13 @@ function queueCurrentPageEditIntent({ documentState, pageNum, point = null, acti
     awaitReadiness: awaitPageEditReady,
     acquireLease: acquirePageLease,
     releaseLease: releasePageLease,
+    readinessTimeoutMs: PAGE_EDIT_READINESS_TIMEOUT_MS,
     activate,
+  }).then((result) => {
+    if (result?.activated === false && result?.action === 'retry-page-edit') {
+      showMessage('This page is not ready for editing yet. Try again.');
+    }
+    return result;
   });
 }
 
@@ -790,9 +797,18 @@ async function openCombinedTextBoxEditor() {
     return;
   }
   try {
-    await awaitPageEditReady(ownerDocument, plan.page);
+    const controller = new AbortController();
+    try {
+      await awaitPageEditReady(ownerDocument, plan.page, {
+        signal: controller.signal,
+        timeoutMs: PAGE_EDIT_READINESS_TIMEOUT_MS,
+      });
+    } finally {
+      controller.abort();
+    }
   } catch (error) {
     reportQueuedEditFailure(error);
+    showMessage('This page is not ready for editing yet. Try again.');
     return;
   }
   if (getActiveDocument() !== ownerDocument) return;
