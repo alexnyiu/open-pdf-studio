@@ -287,7 +287,7 @@ test('rotation recording does not publish the already-rendered mutation twice', 
 
 test('leaving the vector viewport transfers its authoritative zoom to continuous layout', async () => {
   const source = await readFile(new URL('./renderer.js', import.meta.url), 'utf8');
-  const viewModeStart = source.indexOf('export async function setViewMode(mode)');
+  const viewModeStart = source.indexOf('export async function setViewMode(mode,');
   const viewModeEnd = source.indexOf('// ─── Adjacent-page prefetch', viewModeStart);
   const viewMode = source.slice(viewModeStart, viewModeEnd);
   assert.match(viewMode, /doc\.scale = Number\(liveViewport\.zoom\)/u);

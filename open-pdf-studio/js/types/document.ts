@@ -244,6 +244,22 @@ export interface DocumentState {
    * before it may publish or mutate document-owned state.
    */
   lifecycleGeneration: number;
+  /** Renderer-local revision plus per-field user conflict stamps. */
+  viewportRevision: number;
+  viewMutationState: {
+    userRevision: number;
+    activationRevision: number;
+    fields: Record<
+      'page' | 'mode' | 'spread' | 'zoom' | 'pan' | 'scroll'
+      | 'rotation' | 'tool' | 'selection' | 'panels' | 'search',
+      number
+    >;
+  };
+  /** Logical renderer anchor retained until the owning tab/surface is mounted. */
+  pendingRendererViewRestore?: Readonly<{
+    snapshot: any;
+    options: Readonly<Record<string, boolean>>;
+  }>;
   /** Persistence, live-proxy, render, and semantic ownership state. */
   revisionState: DocumentRevisionState;
   /** UI acknowledgement is scoped to one exact failure identity. */

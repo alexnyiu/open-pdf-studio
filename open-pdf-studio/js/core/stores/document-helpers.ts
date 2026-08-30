@@ -12,6 +12,15 @@ export function createDocument(filePath: string | null = null): DocumentState {
   return {
     id,
     lifecycleGeneration: 0,
+    viewportRevision: 0,
+    viewMutationState: {
+      userRevision: 0,
+      activationRevision: 0,
+      fields: {
+        page: 0, mode: 0, spread: 0, zoom: 0, pan: 0, scroll: 0,
+        rotation: 0, tool: 0, selection: 0, panels: 0, search: 0,
+      },
+    },
     revisionState,
     filePath: filePath,
     fileName: filePath ? filePath.split(/[\\/]/).pop()! : 'Untitled',

@@ -22,6 +22,12 @@ import {
 import { recordPerformancePeak } from './performance-metrics.js';
 import { releaseCanvasBackingStores } from './viewport-backing-store.js';
 import { registerPageSurface, unregisterPageSurface } from './page-surface-registry.js';
+import {
+  captureSinglePageViewportState,
+  noteDocumentViewMutation,
+  resolveViewportFitAction,
+  restoreSinglePageViewportState,
+} from './view-state-transaction.js';
 
 // ─── Viewport State (singleton via window to survive HMR/dynamic imports) ───
 if (!window.__pdfViewport) {
@@ -1148,7 +1154,16 @@ export function renderViewportNow() {
 let _suppressNextFit = false;
 export function suppressNextFit() { _suppressNextFit = true; }
 
-export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotation) {
+export function setPage(
+  filePath,
+  pageNum,
+  pageW,
+  pageH,
+  originX,
+  originY,
+  rotation,
+  { fitPolicy = 'auto' } = {},
+) {
   // Detect "first time loading this document" vs "navigating to a different
   // page within the same document". The first case should fit-to-viewport
   // (initial load convention); the second must preserve the current zoom
@@ -1156,11 +1171,11 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
   // chose). Identify the document by file path — that's stable across all
   // page navigation but changes when a different file is opened.
   const ownerDocument = getActiveDocument();
-  const nextDocumentId = ownerDocument?.id || null;
+  const nextDocumentId = ownerDocument?.id ? String(ownerDocument.id) : null;
   const nextLifecycleGeneration = Number(ownerDocument?.lifecycleGeneration) || 0;
-  const isNewDocument = viewport.documentId !== nextDocumentId
-    || viewport.documentLifecycleGeneration !== nextLifecycleGeneration
-    || viewport.filePath !== filePath;
+  const isNewDocument = viewport.documentId !== nextDocumentId || viewport.filePath !== filePath;
+  const isProxyChange = !isNewDocument
+    && viewport.documentLifecycleGeneration !== nextLifecycleGeneration;
   const isPageChange = viewport.pageNum !== pageNum;
   // Rotating the CURRENT page keeps the same file + page number, so without an
   // explicit rotation check neither branch below would fire — the stale bitmap
@@ -1169,6 +1184,11 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
   // leftover, wrong-orientation raster/white rectangle is the "spookvlak"
   // reported in issue #262. Treat a rotation delta like a page change.
   const isRotationChange = (viewport.rotation || 0) !== ((rotation || 0) % 360);
+  const fitAction = resolveViewportFitAction({
+    fitPolicy,
+    logicalDocumentChanged: isNewDocument,
+    rotationChanged: isRotationChange,
+  });
 
   // Clear stale raster state on page, document OR rotation change so the
   // unified render loop doesn't keep painting the PREVIOUS bitmap (stretched
@@ -1177,7 +1197,7 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
   // the user sees the previous content "lag" through for ~10-50ms — visible
   // glitch on raster-classified PDFs (Tekst.pdf, rapport-constructie.pdf) and
   // a persistent old-orientation ghost after rotating.
-  if (isNewDocument || isPageChange || isRotationChange) {
+  if (isNewDocument || isProxyChange || isPageChange || isRotationChange) {
     clearViewportAuthoritativeTextPreview({ restorePrevious: false });
     viewport.currentBitmap = null;
     viewport.currentTile = null;
@@ -1207,12 +1227,8 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
     _anchorActive = true;
     _strictAnchor = false;
     viewport.dirty = true;
-  } else if (isNewDocument || isRotationChange) {
-    // First time we're seeing this file → fit to viewport. Rotating the
-    // current page swaps its footprint (portrait ⇄ landscape), so re-fit as
-    // well: keeping the old zoom/offset would leave the page sized/positioned
-    // for the previous orientation, exposing an old-orientation gap.
-    fitToViewport();
+  } else if (fitAction === 'initial' || fitAction === 'rotation') {
+    fitToViewport('page', { origin: 'system' });
   } else {
     // Same document, different page → keep the user's zoom and let
     // clampAndCenter() (in the next _render) center the new page if it
@@ -1222,7 +1238,8 @@ export function setPage(filePath, pageNum, pageW, pageH, originX, originY, rotat
     _strictAnchor = false;
     viewport.dirty = true;
   }
-  bumpViewportRevision(isNewDocument ? 'document' : isRotationChange ? 'rotation' : 'page');
+  bumpViewportRevision(isNewDocument
+    ? 'document' : isProxyChange ? 'proxy' : isRotationChange ? 'rotation' : 'page');
   _registerViewportPageSurface();
 }
 
@@ -1251,7 +1268,7 @@ export function computeFitZoom(mode, pageW, pageH, canvasW, canvasH, padding = 0
   }
 }
 
-export function fitToViewport(mode = 'page') {
+export function fitToViewport(mode = 'page', { origin = 'user' } = {}) {
   if (!_canvas || !viewport.pageW) return;
   // CSS-pixel viewport (backing store is dpr-scaled)
   const dpr = _getDpr();
@@ -1297,6 +1314,7 @@ export function fitToViewport(mode = 'page') {
   viewport.offsetX = newOffsetX;
   viewport.offsetY = newOffsetY;
   viewport.dirty = true;
+  noteDocumentViewMutation(getActiveDocument(), ['zoom', 'pan'], { origin });
   bumpViewportRevision(`fit-${mode}`);
 
   // Raster: re-kick the orchestrator so the new fit-zoom-bucket's bitmap +
@@ -1390,6 +1408,7 @@ function _anchorAt(screenX, screenY, oldZoom, newZoom, strict = false) {
   _anchorActive = true;
   _strictAnchor = strict;
   viewport.dirty = true;
+  noteDocumentViewMutation(getActiveDocument(), ['zoom', 'pan']);
   bumpViewportRevision('zoom');
 
   // Extend the freeze window for another 150 ms (debounce). Final cleanup
@@ -1477,6 +1496,7 @@ export function updatePan(screenX, screenY) {
   _anchorActive = true;
   _strictAnchor = false;
   viewport.dirty = true;
+  noteDocumentViewMutation(getActiveDocument(), ['pan']);
   bumpViewportRevision('pan');
   _scheduleTileRecheckAfterPan();
 }
@@ -1503,6 +1523,53 @@ export function worldToScreen(wx, wy) {
     x: wx * viewport.zoom + viewport.offsetX,
     y: wy * viewport.zoom + viewport.offsetY,
   };
+}
+
+/** Capture the authoritative single-page zoom, pan, and PDF anchor. */
+export function captureViewportViewState(documentState = getActiveDocument()) {
+  if (!documentState?.id || !_canvas || !viewport.active
+      || viewport.documentId !== String(documentState.id)) return null;
+  const dpr = _getDpr();
+  return captureSinglePageViewportState({
+    documentId: documentState.id,
+    pageNum: viewport.pageNum,
+    rotation: viewport.rotation,
+    zoom: viewport.zoom,
+    offsetX: viewport.offsetX,
+    offsetY: viewport.offsetY,
+    canvasWidth: _canvas.width / dpr,
+    canvasHeight: _canvas.height / dpr,
+    viewportRevision: viewport.viewportRevision,
+  });
+}
+
+/** Restore a saved-proxy adoption without invoking first-open fit semantics. */
+export function restoreViewportViewState(documentState, snapshot, {
+  restoreZoom = true,
+  restorePan = true,
+} = {}) {
+  if (!documentState?.id || !_canvas || snapshot?.documentId !== String(documentState.id)) {
+    return false;
+  }
+  const dpr = _getDpr();
+  const restored = restoreSinglePageViewportState(snapshot, {
+    canvasWidth: _canvas.width / dpr,
+    canvasHeight: _canvas.height / dpr,
+    currentZoom: viewport.zoom,
+    currentOffsetX: viewport.offsetX,
+    currentOffsetY: viewport.offsetY,
+    restoreZoom,
+    restorePan,
+  });
+  viewport.zoom = restored.zoom;
+  viewport.offsetX = restored.offsetX;
+  viewport.offsetY = restored.offsetY;
+  _anchorActive = true;
+  _strictAnchor = false;
+  viewport.dirty = true;
+  bumpViewportRevision('saved-proxy-restore');
+  _registerViewportPageSurface();
+  return restored;
 }
 
 // ─── Wire Events (call once after canvas is ready) ──────────────────────────
