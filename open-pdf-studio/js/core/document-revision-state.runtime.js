@@ -359,6 +359,14 @@ function markDocumentSaveState(documentState, saveState, {
   }
   return state.saveState;
 }
+function markDocumentSaveAsRequired(documentState) {
+  const state = initializeDocumentRevisionState(documentState);
+  documentState.modified = true;
+  documentState.savedUndoStackLength = -1;
+  state.saveState = "save-as-required";
+  assertDocumentRevisionState(documentState);
+  return state.saveState;
+}
 function documentHasRevisionPersistenceDebt(documentState) {
   const state = initializeDocumentRevisionState(documentState);
   return state.contentRevision > state.persistedRevision;
@@ -434,6 +442,7 @@ export {
   documentProxyRevisionSynchronized,
   documentRevisionDebugSnapshot,
   initializeDocumentRevisionState,
+  markDocumentSaveAsRequired,
   markDocumentSaveState,
   markLivePdfRevision,
   markPageRenderReady,

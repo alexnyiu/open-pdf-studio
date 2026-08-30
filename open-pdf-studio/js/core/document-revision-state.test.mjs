@@ -11,6 +11,7 @@ import {
   documentRevisionReadinessSatisfied,
   documentRevisionDebugSnapshot,
   initializeDocumentRevisionState,
+  markDocumentSaveAsRequired,
   markDocumentSaveState,
   markLivePdfRevision,
   markPageRenderReady,
@@ -85,6 +86,30 @@ test('reading an already-canonical revision state performs no reactive writes', 
   assert.equal(documentHasRevisionPersistenceDebt(documentState), false);
   assert.equal(documentRevisionDebugSnapshot(documentState).saveState, 'idle');
   assert.equal(writes, 0);
+});
+
+test('Save-As-required state stays dirty without creating persistence or readiness debt', () => {
+  const doc = createDocument();
+  doc.savedUndoStackLength = 0;
+  doc.pageEditReadiness = { 1: { ready: true } };
+  doc.revisionState.pageRenderReadyRevisions = { 1: 0 };
+  doc.revisionState.pageSemanticReadyRevisions = { 1: 0 };
+  setVisibleRequiredPages(doc, [1]);
+  const before = documentRevisionDebugSnapshot(doc);
+
+  assert.equal(markDocumentSaveAsRequired(doc), 'save-as-required');
+
+  assert.equal(doc.modified, true);
+  assert.equal(doc.savedUndoStackLength, -1);
+  assert.equal(doc.revisionState.saveState, 'save-as-required');
+  assert.equal(documentHasRevisionPersistenceDebt(doc), false);
+  assert.equal(documentProxyRevisionSynchronized(doc), true);
+  assert.equal(documentRevisionReadinessSatisfied(doc, 1), true);
+  assert.deepEqual(doc.pageEditReadiness, { 1: { ready: true } });
+  assert.deepEqual(documentRevisionDebugSnapshot(doc), {
+    ...before,
+    saveState: 'save-as-required',
+  });
 });
 
 test('one committed mutation advances content and only affected page identity', () => {

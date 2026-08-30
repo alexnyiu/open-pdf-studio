@@ -239,17 +239,27 @@ test('readiness callers must provide a finite positive timeout', () => {
   assert.throws(() => awaitPageEditReady(documentState, 1, { timeoutMs: 0 }), /positive timeoutMs/u);
 });
 
-test('desktop blank-document creation rebuilds readiness after its committed mutation', async () => {
+test('blank and template creation require Save As without fabricating a content revision', async () => {
   const source = await readFile(new URL('./loader.js', import.meta.url), 'utf8');
+  const templateStart = source.indexOf('export async function createDocFromTemplate');
+  const templateEnd = source.indexOf('// Create a new blank PDF document', templateStart);
+  const templateCreation = source.slice(templateStart, templateEnd);
   const desktopStart = source.indexOf('if (isTauri() && window.__TAURI__?.path');
   const desktopEnd = source.indexOf('// ─── Browser fallback', desktopStart);
   const desktopBlankCreation = source.slice(desktopStart, desktopEnd);
-  const mutation = desktopBlankCreation.indexOf(
-    "markDocumentModified({ reason: 'document:create-blank' })",
+  const browserBlankCreation = source.slice(desktopEnd, source.indexOf('\n  } catch (error)', desktopEnd));
+
+  assert.match(templateCreation, /if \(doc\) doc\.isUntitled = true/u);
+  assert.match(templateCreation, /markDocumentSaveAsRequired\(doc\)/u);
+  assert.match(desktopBlankCreation, /if \(doc\) doc\.isUntitled = true/u);
+  assert.match(desktopBlankCreation, /markDocumentSaveAsRequired\(doc\)/u);
+  assert.match(browserBlankCreation, /markDocumentSaveAsRequired\(doc\)/u);
+  assert.doesNotMatch(source, /markDocumentModified\(\{ reason: 'document:create-(?:blank|from-template)' \}\)/u);
+  assert.doesNotMatch(
+    desktopBlankCreation,
+    /setViewMode\(doc\?\.viewMode \|\| 'single'\)/u,
+    'desktop blank creation must not perform a second render to repair a fabricated revision',
   );
-  const rebuild = desktopBlankCreation.indexOf("setViewMode(doc?.viewMode || 'single')");
-  assert.ok(mutation >= 0, 'blank-document creation must record its persistent mutation');
-  assert.ok(rebuild > mutation, 'the new content revision must rebuild page edit readiness');
 });
 
 test('loader cancellation follows immutable document lifecycle ownership', async () => {

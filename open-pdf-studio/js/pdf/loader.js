@@ -8,7 +8,7 @@ import { showLoading, hideLoading } from '../ui/chrome/dialogs.js';
 import { updateAllStatus } from '../ui/chrome/status-bar.js';
 import { setViewMode, fitPage } from './renderer.js';
 import { generateThumbnails, refreshActiveTab } from '../ui/panels/left-panel.js';
-import { createTab, updateWindowTitle, markDocumentModified } from '../ui/chrome/tabs.js';
+import { createTab, updateWindowTitle } from '../ui/chrome/tabs.js';
 import * as pdfjsLib from 'pdfjs-dist';
 import { isTauri, readBinaryFile, openFileDialog, lockFile, unlockFile, invoke } from '../core/platform.js';
 import { PDFDocument } from 'pdf-lib';
@@ -25,6 +25,7 @@ import { restoreDocumentScrollPosition } from './document-scroll-position.js';
 import {
   clearPageReadiness,
   initializeDocumentRevisionState,
+  markDocumentSaveAsRequired,
   markDocumentSaveState,
   noteDocumentMutation,
 } from '../core/document-revision-state.runtime.js';
@@ -850,7 +851,7 @@ export async function createDocFromTemplate(templatePath) {
     if (doc) doc.isUntitled = true;
     await loadPDF(tempPath, index, typedArray);
     if (doc) doc.fileName = displayName;
-    markDocumentModified({ reason: 'document:create-from-template' });
+    markDocumentSaveAsRequired(doc);
     try { await fitPage(); } catch (e) { console.warn('[template-pdf] fitPage failed:', e); }
     updateWindowTitle();
   } catch (e) {
@@ -903,17 +904,10 @@ export async function createBlankPDF(widthPt, heightPt, numPages) {
       // normal open.
       await loadPDF(tempPath, index, typedArray);
       if (doc) doc.fileName = displayName;
-      // Mark as modified so Ctrl+S triggers Save As right away
-      markDocumentModified({ reason: 'document:create-blank' });
+      // Keep the loaded proxy revision truthful while routing Save through
+      // Save As and retaining the close-with-unsaved-changes prompt.
+      markDocumentSaveAsRequired(doc);
       try { await fitPage(); } catch (e) { console.warn('[blank-pdf] fitPage failed:', e); }
-      // The committed blank-document mutation advances contentRevision and
-      // intentionally clears the page edit-readiness owner created by the
-      // initial load. Rebuild the current view after that mutation so the
-      // first inserted-text/textbox/callout action cannot wait forever on a
-      // revision that never rendered.
-      try { await setViewMode(doc?.viewMode || 'single'); } catch (e) {
-        console.warn('[blank-pdf] readiness rebuild failed:', e);
-      }
       updateWindowTitle();
       return;
     }
@@ -964,8 +958,9 @@ export async function createBlankPDF(widthPt, heightPt, numPages) {
     if (placeholder) placeholder.style.display = 'none';
     if (pdfContainer) pdfContainer.classList.add('visible');
 
-    // Mark as modified so Ctrl+S will trigger Save As
-    markDocumentModified({ reason: 'document:create-blank' });
+    // Require Save As without fabricating a content revision for bytes that
+    // are already installed in the live PDF proxy.
+    markDocumentSaveAsRequired(doc);
 
     // Manual fit: the in-memory path bypasses the viewport, so fitPage() is
     // a no-op — compute a fit-zoom from the container directly.
