@@ -688,8 +688,23 @@ try {
       && layout.requestedFingerprint === layout.validatedFingerprint ? layout : null;
   }, 30_000);
   const widthBeforeSave = await sha256(widthWorkingPdf);
-  await click('.quick-access-btn[data-action="save"]');
-  await waitUi('.pdf-text-editor', (value) => !value.found, 60_000);
+  const firstSaveClick = await click('.quick-access-btn[data-action="save"]');
+  try {
+    await waitUi('.pdf-text-editor', (value) => !value.found, 60_000);
+  } catch (error) {
+    const [editor, status, tabs, viewport, loading, consoleLog, saveButton] = await Promise.all([
+      ui('.pdf-text-editor').catch(() => null),
+      ui('#native-text-edit-status').catch(() => null),
+      callTool('app_list_tabs').catch(() => null),
+      callTool('app_get_viewport_state').catch(() => null),
+      ui('.loading-overlay').catch(() => null),
+      callTool('app_get_recent_console').catch(() => null),
+      ui('.quick-access-btn[data-action="save"]').catch(() => null),
+    ]);
+    throw new Error(`first Save click did not close width fixture editor: ${JSON.stringify({
+      firstSaveClick, editor, status, tabs, viewport, loading, saveButton, consoleLog,
+    })}`, { cause: error });
+  }
   try {
     await waitUntil('first Save click writes width fixture', async () => (
       await sha256(widthWorkingPdf) !== widthBeforeSave ? true : null

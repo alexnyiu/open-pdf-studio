@@ -141,6 +141,7 @@ export function createTextEditPublicationCoordinator({
   markSemanticReady = markPageSemanticReady,
   subscribeSurface = subscribePageSurfaceRegistry,
   surfaceWaitTimeoutMs = 1500,
+  surfaceRetryLimit = 2,
 } = {}) {
   const pending = new Map();
 
@@ -255,10 +256,30 @@ export function createTextEditPublicationCoordinator({
       revision,
       surface,
     };
-    let [base, semantics] = await Promise.all([
-      publishBase(context),
-      publishSemantics(context),
-    ]);
+    let base;
+    let semantics;
+    let surfaceRetryCount = 0;
+    for (;;) {
+      [base, semantics] = await Promise.all([
+        publishBase(context),
+        publishSemantics(context),
+      ]);
+      const surfaceChangedDuringBase = base?.status === 'superseded'
+        && base?.errorCode === 'NATIVE_PREVIEW_SURFACE_CHANGED';
+      if (!surfaceChangedDuringBase
+          || !tokenIsCurrent(token, documentState)
+          || surfaceRetryCount >= Math.max(0, Number(surfaceRetryLimit) || 0)) break;
+      const replacement = resolveSurface(documentState, pageNum, { targetRevision: revision });
+      if (!replacement || replacement === surface
+          || !matches(replacement, documentState, pageNum, revision)) break;
+      // Zoom/view-mode publication can restamp the same page mount while the
+      // native candidate is rendering. Retry the complete base+semantic pair
+      // against that newest immutable surface record so a committed edit is
+      // not stranded as superseded merely because its visible scale settled.
+      surface = replacement;
+      context.surface = replacement;
+      surfaceRetryCount += 1;
+    }
     if (semantics?.status === 'deferred-unmounted') {
       const replacement = await waitForSurfaceUpdate(
         documentState,

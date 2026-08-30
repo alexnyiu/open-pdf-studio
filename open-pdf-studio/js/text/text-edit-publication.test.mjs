@@ -122,6 +122,62 @@ test('a replaced text layer is retried on the next exact surface update', async 
   assert.equal(semanticAttempts, 2);
 });
 
+test('native publication retries the newest surface when zoom settles during candidate render', async () => {
+  const documentState = owner();
+  const firstSurface = {
+    documentId: documentState.id,
+    lifecycleGeneration: 4,
+    pageNum: 50,
+    pageContentRevision: 9,
+    mountGeneration: 17,
+    cssScale: 1.25,
+    textLayer: { id: 'first-layer' },
+  };
+  const settledSurface = {
+    ...firstSurface,
+    cssScale: 1,
+    textLayer: { id: 'settled-layer' },
+  };
+  let currentSurface = firstSurface;
+  let baseAttempts = 0;
+  let semanticAttempts = 0;
+  let acknowledgedSurface = null;
+  const { coordinator } = harness({
+    resolveSurface: () => currentSurface,
+    publishBase: async (context) => {
+      baseAttempts += 1;
+      if (baseAttempts === 1) {
+        currentSurface = settledSurface;
+        return {
+          status: 'superseded',
+          errorCode: 'NATIVE_PREVIEW_SURFACE_CHANGED',
+          error: 'scale settled during render',
+        };
+      }
+      assert.equal(context.surface, settledSurface);
+      return { status: 'published', stamp: { kind: 'settled-base' } };
+    },
+    publishSemantics: async (context) => {
+      semanticAttempts += 1;
+      if (semanticAttempts === 2) assert.equal(context.surface, settledSurface);
+      return { status: 'published', stamp: { kind: 'semantic' } };
+    },
+    markSurface: (surface) => { acknowledgedSurface = surface; return true; },
+  });
+
+  const result = await coordinator.publish({
+    documentState,
+    pageNum: 50,
+    nativeAuthoritative: true,
+  });
+  assert.equal(result.status, 'published');
+  assert.equal(result.visiblePublished, true);
+  assert.equal(result.semanticPublished, true);
+  assert.equal(baseAttempts, 2);
+  assert.equal(semanticAttempts, 2);
+  assert.equal(acknowledgedSurface, settledSurface);
+});
+
 test('an unmounted non-visible page defers, while a missing active page fails visibly', async () => {
   const documentState = owner();
   const { coordinator } = harness({ resolveSurface: () => null });
