@@ -65,3 +65,34 @@ test('a lifecycle change rejects a queued edit without activation', async () => 
   assert.equal(pageEditIntentPendingForDocument(documentState.id), false);
   assert.equal(activations, 0);
 });
+
+test('a queued page lease is held through readiness and released in finally', async () => {
+  const documentState = { id: 'leased-intent-owner', lifecycleGeneration: 8 };
+  const readiness = deferred();
+  const events = [];
+  const intent = runPageEditIntent({
+    documentState,
+    pageNum: 9,
+    waitForSynchronization: async () => true,
+    resolveDocument: () => documentState,
+    awaitReadiness: () => readiness.promise,
+    activate: () => { throw new Error('activation failed'); },
+    acquireLease: (identity) => {
+      events.push(['acquire', identity]);
+      return { leaseId: 'intent-lease' };
+    },
+    releaseLease: (lease) => events.push(['release', lease]),
+  });
+  await Promise.resolve();
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0][1], {
+    documentId: documentState.id,
+    lifecycleGeneration: 8,
+    pageNum: 9,
+    reason: 'page-edit-intent',
+  });
+  readiness.resolve();
+  await assert.rejects(intent, /activation failed/u);
+  assert.deepEqual(events.at(-1), ['release', { leaseId: 'intent-lease' }]);
+  assert.equal(pageEditIntentPendingForDocument(documentState.id), false);
+});

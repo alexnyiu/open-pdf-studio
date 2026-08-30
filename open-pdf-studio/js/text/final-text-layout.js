@@ -108,6 +108,8 @@ function decision({
   autoFit = null,
   rejectionCode = null,
   rejectionReasons = [],
+  recoveryActions: requestedRecoveryActions = null,
+  recovery = null,
 }) {
   const frozenDocument = document ? deepFreeze(clone(document)) : null;
   const priorBounds = autoFit?.priorBounds ? deepFreeze(clone(autoFit.priorBounds)) : null;
@@ -132,6 +134,7 @@ function decision({
     },
     rejectionCode: rejectionCode ? String(rejectionCode) : null,
     rejectionReasons: [...new Set(rejectionReasons.map(String))],
+    recoveryActions: [...new Set((requestedRecoveryActions || recovery || []).map(String))],
   });
 }
 

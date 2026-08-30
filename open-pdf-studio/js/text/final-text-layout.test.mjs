@@ -193,6 +193,38 @@ test('safe auto-fit reports page, column, and newly introduced neighbor constrai
   }).rejectionCode, 'TEXT_LAYOUT_NEIGHBOR_OVERLAP');
 });
 
+test('blocked final decisions retain exact recovery actions for click-away UI', async () => {
+  const barrier = createFinalTextLayoutBarrier({
+    requestLayout: async (document, _options, fingerprint) => ({
+      fingerprint,
+      result: {
+        valid: false,
+        document,
+        requiredWidth: 140,
+        requiredHeight: 20,
+        effectiveContentWidth: 100,
+        rejectionCodes: ['TEXT_LAYOUT_WIDTH_CAPACITY'],
+        rejectionReasons: ['A line exceeds the text box width'],
+        overlapWarnings: [],
+        pageEdgeValid: true,
+        columnValid: true,
+      },
+    }),
+  });
+  const result = await barrier.awaitFinalTextLayout(request({
+    options: {
+      width: 100,
+      contentWidth: 100,
+      effectiveContentWidth: 100,
+      pageBounds: { x: 0, y: 0, width: 130, height: 300 },
+    },
+  }));
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.rejectionCode, 'TEXT_LAYOUT_PAGE_BOUNDARY');
+  assert.deepEqual(result.recoveryActions, ['insert-line-break', 'keep-editing']);
+  assert.equal(Object.isFrozen(result.recoveryActions), true);
+});
+
 test('production commit barrier contains no animation-frame polling loop', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('../tools/text-edit-tool.js', import.meta.url), 'utf8');

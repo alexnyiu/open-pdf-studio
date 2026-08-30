@@ -10,6 +10,7 @@ const SAFE_ACTION_SELECTOR = [
   'input[type="button"]',
   'input[type="checkbox"]',
   'input[type="radio"]',
+  '[data-text-edit-command]',
 ].join(', ');
 
 const FOCUS_TARGET_SELECTOR = [
@@ -29,6 +30,10 @@ const DESTRUCTIVE_SELECTOR = [
 ].join(', ');
 
 const DESTRUCTIVE_LABEL = /\b(delete|discard|remove|erase|reset|clear|close)\b/iu;
+const COMMAND_TYPES = new Set(['set-tool', 'toggle-option', 'open-panel', 'activate-control']);
+const REPLAY_STATUSES = new Set([
+  'not-needed', 'replayed', 'not-opened', 'unsafe', 'stale', 'failed',
+]);
 
 function closestAcrossNamespaces(target, selector) {
   if (!target) return null;
@@ -81,6 +86,107 @@ function controlStillValid(control) {
     && control.getAttribute?.('aria-disabled') !== 'true');
 }
 
+function controlLocator(control) {
+  const controlId = String(control?.id || control?.getAttribute?.('id') || '').trim();
+  if (controlId) return { controlId, inputType: null, inputName: null, inputValue: null };
+  const inputType = String(control?.type || control?.getAttribute?.('type') || '').toLowerCase();
+  const inputName = String(control?.name || control?.getAttribute?.('name') || '').trim();
+  const inputValue = String(control?.value ?? control?.getAttribute?.('value') ?? '');
+  if (['checkbox', 'radio'].includes(inputType) && inputName) {
+    return { controlId: null, inputType, inputName, inputValue };
+  }
+  return null;
+}
+
+function frozenCommand(value) {
+  return value ? Object.freeze(value) : null;
+}
+
+/** Capture a stable command instead of retaining behavior in a replaceable DOM node. */
+export function captureTextEditSemanticCommand(control) {
+  if (!control) return null;
+  const declaredType = String(control.dataset?.textEditCommand || '').trim();
+  if (declaredType) {
+    if (!COMMAND_TYPES.has(declaredType)) return null;
+    if (declaredType === 'set-tool') {
+      const tool = String(control.dataset?.textEditTool || '').trim();
+      return tool ? frozenCommand({ type: declaredType, tool }) : null;
+    }
+    if (declaredType === 'open-panel') {
+      const panel = String(control.dataset?.textEditPanel || '').trim();
+      return panel ? frozenCommand({ type: declaredType, panel, ...controlLocator(control) }) : null;
+    }
+    if (declaredType === 'toggle-option') {
+      const option = String(control.dataset?.textEditOption || '').trim();
+      if (option) return frozenCommand({
+        type: declaredType,
+        option,
+        nextValue: control.dataset?.textEditNextValue ?? null,
+        ...controlLocator(control),
+      });
+    }
+  }
+  const locator = controlLocator(control);
+  const inputType = String(control.type || control.getAttribute?.('type') || '').toLowerCase();
+  if (['checkbox', 'radio'].includes(inputType) && locator) {
+    return frozenCommand({
+      type: 'toggle-option',
+      ...locator,
+      nextChecked: inputType === 'radio' ? true : control.checked !== true,
+    });
+  }
+  if (locator && (control.matches?.('button, [role="button"], [role="menuitem"], input[type="button"]')
+      || control.dataset?.textEditReplay === 'simple')) {
+    return frozenCommand({ type: 'activate-control', ...locator });
+  }
+  return null;
+}
+
+function resolveCommandControl(command, documentRoot, fallbackTarget = null) {
+  let control = null;
+  if (command?.controlId) control = documentRoot?.getElementById?.(command.controlId) || null;
+  if (!control && command?.inputName) {
+    const candidates = documentRoot?.querySelectorAll?.('input') || [];
+    control = [...candidates].find((candidate) => (
+      String(candidate.type || '').toLowerCase() === command.inputType
+      && String(candidate.name || '') === command.inputName
+      && String(candidate.value ?? '') === command.inputValue
+    )) || null;
+  }
+  if (!control && controlStillValid(fallbackTarget)) control = fallbackTarget;
+  return controlStillValid(control) ? control : null;
+}
+
+/** Execute only semantic commands or proven simple native control activations. */
+export async function executeTextEditSemanticCommand(command, {
+  documentRoot = globalThis.document,
+  fallbackTarget = null,
+  dispatchCommand = null,
+} = {}) {
+  if (!command || !COMMAND_TYPES.has(command.type)) return false;
+  if (['set-tool', 'open-panel'].includes(command.type)) {
+    return typeof dispatchCommand === 'function'
+      ? (await dispatchCommand(command)) === true : false;
+  }
+  if (command.type === 'toggle-option' && command.option
+      && typeof dispatchCommand === 'function'
+      && (await dispatchCommand(command)) === true) return true;
+  const control = resolveCommandControl(command, documentRoot, fallbackTarget);
+  if (!control) return false;
+  control.focus?.({ preventScroll: true });
+  control.click?.();
+  return true;
+}
+
+function replayResult(status, actionKind = null, error = null) {
+  if (!REPLAY_STATUSES.has(status)) throw new TypeError(`Unsupported replay status: ${status}`);
+  return Object.freeze({
+    status,
+    actionKind,
+    error: error == null ? null : String(error),
+  });
+}
+
 /** Capture the intended action and pointer coordinates before Apply consumes the gesture. */
 export function captureTextEditClickAwayIntent({ event, session } = {}) {
   const target = event?.target || null;
@@ -90,20 +196,28 @@ export function captureTextEditClickAwayIntent({ event, session } = {}) {
   const preferredEditId = textSpan?.dataset?.editId || '';
   const preferredMarkerIds = textSpan?.dataset?.nativeTextMarkerIds || '';
   const preferredOcrLineId = textSpan?.dataset?.ocrLineId || '';
+  const preferredOcrRegionId = textSpan?.dataset?.ocrRegionId || '';
+  const preferredOcrLineIds = textSpan?.dataset?.ocrRegionLineIds || preferredOcrLineId;
+  const preferredOcrRecognitionGeneration = textSpan?.dataset?.ocrRecognitionGeneration || '';
   const editableTextSpan = textSpan && (
     preferredEditId || preferredMarkerIds || preferredOcrLineId
   ) ? textSpan : null;
   const actionTarget = textLayer ? null : closestAcrossNamespaces(target, SAFE_ACTION_SELECTOR);
+  const semanticCommand = actionTarget ? captureTextEditSemanticCommand(actionTarget) : null;
   const focusTarget = actionTarget || (textLayer
     ? null : closestAcrossNamespaces(target, FOCUS_TARGET_SELECTOR));
   const kind = editableTextSpan
-    ? 'text-edit' : actionTarget ? 'action' : focusTarget ? 'focus' : 'none';
+    ? 'text-edit' : semanticCommand ? 'semantic-command' : actionTarget ? 'unsafe-action'
+      : focusTarget ? 'focus' : 'none';
   const pageNum = pageNumberForTarget(target, textLayer);
   const targetIdentity = editableTextSpan ? createTextEditTargetIdentity({
     documentId: session.ownerDocumentId,
     pageNum,
     recordId: preferredEditId,
     markerIds: preferredMarkerIds,
+    recognitionGeneration: preferredOcrRecognitionGeneration,
+    regionId: preferredOcrRegionId,
+    lineIds: preferredOcrLineIds,
   }) : null;
   return {
     sessionId: session.sessionId,
@@ -116,16 +230,21 @@ export function captureTextEditClickAwayIntent({ event, session } = {}) {
     preferredEditId,
     preferredMarkerIds,
     preferredOcrLineId,
+    preferredOcrRegionId,
+    preferredOcrLineIds,
+    preferredOcrRecognitionGeneration,
     sourceTargetIdentity: session.targetIdentity || null,
     targetIdentity,
     kind,
     target,
     textLayer,
     actionTarget,
+    semanticCommand,
     focusTarget,
     destructive: destructiveControl(actionTarget),
     browserDelivered: false,
     compatibilityClickConsumed: false,
+    gestureSettlementReason: null,
     replayed: false,
     replaying: false,
   };
@@ -138,18 +257,21 @@ export function markTextEditClickAwayIntentDelivered(intent) {
   return true;
 }
 
-/**
- * Keep the consumed pointer gesture owned after the editor portal unmounts.
- * Replay waits for pointerup/click settlement, so a fast commit cannot race a
- * later browser compatibility click and activate the target twice.
- */
+/** Keep a consumed pointer owned until every compatibility-event path settles. */
 export function guardTextEditClickAwayGesture(
   intent,
   eventRoot = globalThis.document,
-  { setTimer = setTimeout, clearTimer = clearTimeout } = {},
+  {
+    setTimer = setTimeout,
+    clearTimer = clearTimeout,
+    windowRoot = eventRoot?.defaultView || globalThis.window,
+    visibilityRoot = eventRoot?.nodeType === 9 ? eventRoot : globalThis.document,
+    watchdogMs = 1_500,
+  } = {},
 ) {
   let settled = false;
-  let settleTimer = null;
+  let pointerTimer = null;
+  let watchdogTimer = null;
   let resolveSettled;
   const settledPromise = new Promise((resolve) => { resolveSettled = resolve; });
   const remove = () => {
@@ -157,14 +279,20 @@ export function guardTextEditClickAwayGesture(
     eventRoot?.removeEventListener?.('click', consumeCompatibilityMouse, true);
     eventRoot?.removeEventListener?.('pointerup', settlePointer, true);
     eventRoot?.removeEventListener?.('pointercancel', settlePointer, true);
-    if (settleTimer) clearTimer(settleTimer);
-    settleTimer = null;
+    eventRoot?.removeEventListener?.('lostpointercapture', settlePointer, true);
+    windowRoot?.removeEventListener?.('blur', settleWindowBlur, true);
+    visibilityRoot?.removeEventListener?.('visibilitychange', settleVisibility, true);
+    if (pointerTimer) clearTimer(pointerTimer);
+    if (watchdogTimer) clearTimer(watchdogTimer);
+    pointerTimer = null;
+    watchdogTimer = null;
   };
-  const finish = () => {
+  const finish = (reason = 'disposed') => {
     if (settled) return;
     settled = true;
+    if (intent) intent.gestureSettlementReason = reason;
     remove();
-    resolveSettled(true);
+    resolveSettled(Object.freeze({ reason }));
   };
   function matchingPointer(event) {
     return intent?.pointerId == null
@@ -178,63 +306,101 @@ export function guardTextEditClickAwayGesture(
     event.stopImmediatePropagation?.();
     if (event.type === 'click') {
       intent.compatibilityClickConsumed = true;
-      finish();
+      finish('compatibility-click');
     }
   }
   function settlePointer(event) {
     if (!matchingPointer(event)) return;
-    if (event?.type === 'pointercancel') {
-      finish();
+    if (event?.type === 'pointercancel' || event?.type === 'lostpointercapture') {
+      finish(event.type);
       return;
     }
-    // A native click follows pointerup before the next timer task. The timer
-    // covers drags and controls for which the browser emits no click.
-    if (!settleTimer) settleTimer = setTimer(finish, 0);
+    if (!pointerTimer) pointerTimer = setTimer(() => finish('pointerup'), 0);
+  }
+  function settleWindowBlur() { finish('window-blur'); }
+  function settleVisibility() {
+    if (visibilityRoot?.hidden === true || visibilityRoot?.visibilityState === 'hidden') {
+      finish('document-hidden');
+    }
   }
   eventRoot?.addEventListener?.('mousedown', consumeCompatibilityMouse, true);
   eventRoot?.addEventListener?.('click', consumeCompatibilityMouse, true);
   eventRoot?.addEventListener?.('pointerup', settlePointer, true);
   eventRoot?.addEventListener?.('pointercancel', settlePointer, true);
+  eventRoot?.addEventListener?.('lostpointercapture', settlePointer, true);
+  windowRoot?.addEventListener?.('blur', settleWindowBlur, true);
+  visibilityRoot?.addEventListener?.('visibilitychange', settleVisibility, true);
+  watchdogTimer = setTimer(() => finish('watchdog'), Math.max(1, Number(watchdogMs) || 1_500));
   return Object.freeze({
     settled: settledPromise,
-    dispose: finish,
+    dispose: () => finish('disposed'),
   });
 }
 
-/** Replay one safe captured action only after the editor commit succeeds. */
+/** Replay one captured intent only after the initiating Apply is terminal. */
 export async function replayTextEditClickAwayIntent(intent, {
   commitSucceeded = false,
   ownerIsCurrent = () => true,
   beginTextEdit = async () => false,
+  executeSemanticCommand = (command) => executeTextEditSemanticCommand(command, {
+    fallbackTarget: intent?.actionTarget,
+  }),
   indicateUnsafe = () => {},
 } = {}) {
-  if (!intent || commitSucceeded !== true) return 'commit-failed';
-  if (intent.replayed) return 'already-replayed';
-  if (intent.browserDelivered) return 'browser-delivered';
-  if (!ownerIsCurrent(intent)) return 'stale-owner';
-  if (intent.destructive) {
+  if (!intent || commitSucceeded !== true) return replayResult('not-needed');
+  if (intent.replayed || intent.browserDelivered) return replayResult('not-needed');
+  if (!ownerIsCurrent(intent)) return replayResult('stale', null, 'Document owner changed');
+  if (intent.destructive || intent.kind === 'unsafe-action') {
     indicateUnsafe(intent);
-    return 'unsafe-requires-second-click';
+    return replayResult('unsafe', intent.kind === 'focus' ? 'focus' : 'semantic-command',
+      'The captured action requires a second explicit activation');
   }
   if (intent.kind === 'text-edit') {
-    if (!Number.isInteger(intent.pageNum)) return 'invalid-target';
+    if (!Number.isInteger(intent.pageNum)) {
+      return replayResult('not-opened', 'text-edit', 'The captured page is unavailable');
+    }
     if (sameTextEditTarget(intent.sourceTargetIdentity, intent.targetIdentity)) {
       intent.replayed = true;
-      return 'same-text-target-suppressed';
+      return replayResult('not-needed', 'text-edit');
     }
-    intent.replayed = true;
-    await beginTextEdit(intent);
-    return 'text-edit-replayed';
+    try {
+      const opened = await beginTextEdit(intent);
+      if (opened !== true && opened?.activated !== true) {
+        return replayResult('not-opened', 'text-edit', 'The captured text target did not open');
+      }
+      intent.replayed = true;
+      return replayResult('replayed', 'text-edit');
+    } catch (error) {
+      return replayResult('failed', 'text-edit', error instanceof Error ? error.message : error);
+    }
   }
-  const target = intent.actionTarget || intent.focusTarget;
-  if (!controlStillValid(target)) return 'invalid-target';
-  intent.replaying = true;
-  try {
-    target.focus?.({ preventScroll: true });
-    if (intent.kind === 'action') target.click?.();
-    intent.replayed = true;
-  } finally {
-    intent.replaying = false;
+  if (intent.kind === 'semantic-command') {
+    try {
+      intent.replaying = true;
+      const activated = await executeSemanticCommand(intent.semanticCommand, intent);
+      if (activated !== true) {
+        return replayResult('not-opened', 'semantic-command', 'The captured command is unavailable');
+      }
+      intent.replayed = true;
+      return replayResult('replayed', 'semantic-command');
+    } catch (error) {
+      return replayResult('failed', 'semantic-command', error instanceof Error ? error.message : error);
+    } finally {
+      intent.replaying = false;
+    }
   }
-  return intent.kind === 'action' ? 'action-replayed' : 'focus-replayed';
+  if (intent.kind === 'focus') {
+    const target = intent.focusTarget;
+    if (!controlStillValid(target)) {
+      return replayResult('not-opened', 'focus', 'The captured focus target is unavailable');
+    }
+    try {
+      target.focus?.({ preventScroll: true });
+      intent.replayed = true;
+      return replayResult('replayed', 'focus');
+    } catch (error) {
+      return replayResult('failed', 'focus', error instanceof Error ? error.message : error);
+    }
+  }
+  return replayResult('not-needed');
 }

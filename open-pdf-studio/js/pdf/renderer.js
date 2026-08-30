@@ -92,6 +92,11 @@ import {
   registerPageSurface,
   unregisterPageSurface,
 } from './page-surface-registry.js';
+import {
+  leasedPagesForDocument,
+  subscribePageLeases,
+} from './page-lease-registry.js';
+export { acquirePageLease, releasePageLease } from './page-lease-registry.js';
 
 const RENDER_EDIT_READY_LAYERS = Object.freeze(['raster', 'annotations', 'text', 'links', 'forms']);
 
@@ -1013,6 +1018,17 @@ const _renderedSurfaceStates = new Map();
 const _mountedCanvasByteSizes = new Map();
 const _mountedImageByteSizes = new Map();
 let _surfacePublicationRevision = 0;
+
+subscribePageLeases((event) => {
+  const current = _continuousWindow;
+  if (!current || event.lease.documentId !== current.documentId
+      || event.lease.lifecycleGeneration !== current.lifecycleGeneration) return;
+  queueMicrotask(() => {
+    if (_continuousWindow === current) {
+      _updateContinuousVirtualWindow({ interactionSettled: true });
+    }
+  });
+});
 
 function _surfaceStateKey(documentId, lifecycleGeneration, pageNum, source = 'page') {
   return `${documentId}:${lifecycleGeneration}:${pageNum}:${source}`;
@@ -2279,6 +2295,16 @@ function _continuousWindowMatches(doc) {
     && _continuousWindow.container?.isConnected;
 }
 
+function _protectedContinuousPages(doc) {
+  const pages = new Set(leasedPagesForDocument(
+    doc?.id,
+    Number(doc?.lifecycleGeneration) || 0,
+  ));
+  const editorPage = _activeEditorPageForDocument(doc);
+  if (editorPage) pages.add(editorPage);
+  return [...pages].sort((left, right) => left - right);
+}
+
 function _teardownContinuousWindow(reason = 'continuous-teardown') {
   if (_continuousSettleTimer) clearTimeout(_continuousSettleTimer);
   _continuousSettleTimer = null;
@@ -2313,7 +2339,7 @@ function _updateContinuousVirtualWindow({
   const contentWidth = index.contentWidth(doc.scale, layout, scrollContainer.clientWidth);
   container.style.width = `${contentWidth}px`;
   container.style.height = `${index.totalHeight(doc.scale, layout)}px`;
-  const protectedPage = _activeEditorPageForDocument(doc);
+  const protectedPages = _protectedContinuousPages(doc);
   const wanted = index.visiblePages({
     scrollTop: scrollContainer.scrollTop,
     viewportHeight: scrollContainer.clientHeight,
@@ -2323,7 +2349,7 @@ function _updateContinuousVirtualWindow({
     // resolution of a page that is actually visible.
     overscanPx: backgroundRenderAdmissionAllowed() ? scrollContainer.clientHeight * 2 : 0,
     maxPages: 9,
-    protectedPages: protectedPage ? [protectedPage] : [],
+    protectedPages,
   });
   const wantedSet = new Set(wanted);
   const strictlyVisible = new Set(index.visiblePages({
@@ -2333,7 +2359,7 @@ function _updateContinuousVirtualWindow({
     layout,
     overscanPx: 0,
     maxPages: 9,
-    protectedPages: protectedPage ? [protectedPage] : [],
+    protectedPages,
   }));
 
   for (const [pageNum, wrapper] of mounted) {
@@ -2422,7 +2448,7 @@ export function trimIdleContinuousPageSurfaces() {
     return Object.freeze({ releasedBytes: 0, releasedPages: 0, keptPages: [] });
   }
   const { index, scrollContainer, mounted, layout } = stateForWindow;
-  const editorPage = _activeEditorPageForDocument(doc);
+  const protectedPages = _protectedContinuousPages(doc);
   const visible = index.visiblePages({
     scrollTop: scrollContainer.scrollTop,
     viewportHeight: scrollContainer.clientHeight,
@@ -2430,11 +2456,11 @@ export function trimIdleContinuousPageSurfaces() {
     layout,
     overscanPx: 0,
     maxPages: 9,
-    protectedPages: editorPage ? [editorPage] : [],
+    protectedPages,
   });
   const keep = new Set(visible);
   if (!keep.size && Number.isInteger(Number(doc.currentPage))) keep.add(Number(doc.currentPage));
-  if (editorPage) keep.add(editorPage);
+  for (const pageNum of protectedPages) keep.add(pageNum);
 
   let releasedBytes = 0;
   const releasedPageNums = [];

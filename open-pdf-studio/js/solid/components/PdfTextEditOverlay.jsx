@@ -76,9 +76,11 @@ import {
 } from '../../text/text-edit-focus-boundary.js';
 import {
   captureTextEditClickAwayIntent,
+  executeTextEditSemanticCommand,
   guardTextEditClickAwayGesture,
   replayTextEditClickAwayIntent,
 } from '../../text/text-edit-click-away-intent.js';
+import { acquirePageLease, releasePageLease } from '../../pdf/page-lease-registry.js';
 import { showMessage } from '../../bridge.js';
 
 export default function PdfTextEditOverlay() {
@@ -104,6 +106,7 @@ export default function PdfTextEditOverlay() {
   let outsideApplyPromise = null;
   let outsideClickAwayIntent = null;
   let outsideGestureGuard = null;
+  const activeOutsidePageLeases = new Set();
   let restoreFocusAfterHostTransition = false;
   let cachedLineRevision = -1;
   const lineGraphemeOffsetCache = new Map();
@@ -118,6 +121,8 @@ export default function PdfTextEditOverlay() {
   const [editorBox, setEditorBox] = createSignal(null);
   const [pathologicalPaste, setPathologicalPaste] = createSignal(null);
   const [pathologicalPreviewFrame, setPathologicalPreviewFrame] = createSignal(null);
+  const [layoutRecovery, setLayoutRecovery] = createSignal(null);
+  const [layoutRecoveryApplying, setLayoutRecoveryApplying] = createSignal(false);
 
   const publishContentInsetsPx = (next) => setContentInsetsPx((previous) => (
     shallowEqualPageTextEditProjection(previous, next) ? previous : next
@@ -862,11 +867,69 @@ export default function PdfTextEditOverlay() {
     });
   };
 
+  const acquireOutsidePageLeases = (session, intent) => {
+    const identities = [
+      { pageNum: session?.pageNum, reason: 'text-edit-owner' },
+      { pageNum: intent?.pageNum, reason: 'text-edit-click-away-target' },
+    ];
+    const leases = [];
+    try {
+      for (const identity of identities) {
+        if (!Number.isInteger(Number(identity.pageNum)) || Number(identity.pageNum) < 1) continue;
+        const lease = acquirePageLease({
+          documentId: session.ownerDocumentId,
+          lifecycleGeneration: session.ownerDocumentGeneration,
+          pageNum: Number(identity.pageNum),
+          reason: identity.reason,
+        });
+        leases.push(lease);
+        activeOutsidePageLeases.add(lease);
+      }
+      return leases;
+    } catch (error) {
+      for (const lease of leases) {
+        releasePageLease(lease);
+        activeOutsidePageLeases.delete(lease);
+      }
+      console.warn('[text-edit] Could not retain click-away pages:', error);
+      return [];
+    }
+  };
+
+  const releaseOutsidePageLeases = (leases = []) => {
+    for (const lease of leases) {
+      releasePageLease(lease);
+      activeOutsidePageLeases.delete(lease);
+    }
+  };
+
+  const dispatchCapturedTextEditCommand = async (command) => {
+    if (command.type === 'set-tool') {
+      const [{ setTool }, stateModule] = await Promise.all([
+        import('../../tools/manager.js'),
+        import('../../core/state.js'),
+      ]);
+      setTool(command.tool);
+      return stateModule.state.currentTool === command.tool;
+    }
+    if (command.type === 'open-panel' && command.panel === 'properties') {
+      const properties = await import('../stores/propertiesStore.js');
+      properties.setPanelVisible(true);
+      properties.setPanelCollapsed(false);
+      return true;
+    }
+    return false;
+  };
+
   const applyTextEditFromOutside = (
     capturedIntent = outsideClickAwayIntent,
     capturedGuard = outsideGestureGuard,
+    capturedLeases = [],
   ) => {
-    if (outsideApplyPromise || !active()) return outsideApplyPromise;
+    if (outsideApplyPromise || !active()) {
+      releaseOutsidePageLeases(capturedLeases);
+      return outsideApplyPromise;
+    }
     // Flush the visible control synchronously at the commit boundary. WebKit
     // can finish composition/autocorrection as focus is moving, after the last
     // ordinary input callback but before the outside pointer is handled.
@@ -874,7 +937,10 @@ export default function PdfTextEditOverlay() {
     else if (textareaRef) setText(textareaRef.value);
     const session = getActiveTextEditSession();
     const sessionId = session?.sessionId;
-    if (!sessionId) return null;
+    if (!sessionId) {
+      releaseOutsidePageLeases(capturedLeases);
+      return null;
+    }
     const ownerDocumentId = session.ownerDocumentId;
     const ownerDocumentGeneration = session.ownerDocumentGeneration;
     const refocusCurrentSession = () => queueMicrotask(() => {
@@ -892,7 +958,7 @@ export default function PdfTextEditOverlay() {
         if (interactionCompleted && capturedIntent) {
           try {
             const stateModule = await import('../../core/state.js');
-            await replayTextEditClickAwayIntent(capturedIntent, {
+            const replayResult = await replayTextEditClickAwayIntent(capturedIntent, {
               commitSucceeded: true,
               ownerIsCurrent: (intent) => {
                 const owner = stateModule.getDocumentById(intent.documentId);
@@ -911,12 +977,24 @@ export default function PdfTextEditOverlay() {
                   preferredEditId: intent.preferredEditId,
                   preferredMarkerIds: intent.preferredMarkerIds,
                   preferredOcrLineId: intent.preferredOcrLineId,
+                  preferredOcrRegionId: intent.preferredOcrRegionId,
+                  preferredOcrRecognitionGeneration:
+                    intent.preferredOcrRecognitionGeneration,
                 });
               },
+              executeSemanticCommand: (command, intent) => executeTextEditSemanticCommand(
+                command,
+                {
+                  fallbackTarget: intent.actionTarget,
+                  dispatchCommand: dispatchCapturedTextEditCommand,
+                },
+              ),
               indicateUnsafe: () => showMessage(
                 'Your text edit was applied. Click the destructive action again to confirm it.',
               ),
             });
+            const owner = stateModule.getDocumentById(ownerDocumentId);
+            if (owner) owner.textEditReplayResult = replayResult;
           } catch (error) {
             console.warn('[text-edit] Click-away target replay failed:', error);
           }
@@ -939,7 +1017,14 @@ export default function PdfTextEditOverlay() {
         if (result?.status === 'rejected'
             && active()
             && getActiveTextEditSession()?.sessionId === sessionId) {
+          const finalDecision = editorLayoutState()?.finalDecision || null;
+          if (finalDecision?.status === 'blocked') {
+            setLayoutRecovery(Object.freeze({ result, finalDecision }));
+            setEditorStatus((finalDecision.rejectionReasons || []).join(' '), 'invalid');
+          }
           refocusCurrentSession();
+        } else if (result?.status === 'applied' || result?.status === 'noop') {
+          setLayoutRecovery(null);
         }
         return result;
       })
@@ -953,6 +1038,7 @@ export default function PdfTextEditOverlay() {
       })
       .finally(() => {
         capturedGuard?.dispose?.();
+        releaseOutsidePageLeases(capturedLeases);
         if (outsideClickAwayIntent === capturedIntent) outsideClickAwayIntent = null;
         if (outsideGestureGuard === capturedGuard) outsideGestureGuard = null;
         outsideApplyPromise = null;
@@ -975,7 +1061,8 @@ export default function PdfTextEditOverlay() {
       // supersede the owner session while exact validation is still finishing.
       outsideClickAwayIntent = intent;
       outsideGestureGuard = guardTextEditClickAwayGesture(intent, document);
-      void applyTextEditFromOutside(intent, outsideGestureGuard);
+      const pageLeases = acquireOutsidePageLeases(session, intent);
+      void applyTextEditFromOutside(intent, outsideGestureGuard, pageLeases);
     }
   };
 
@@ -1516,6 +1603,9 @@ export default function PdfTextEditOverlay() {
     const sessionId = getActiveTextEditSession()?.sessionId;
     if (sessionId) disposeFinalTextLayoutSession(sessionId);
     setEditorDraftFlushHandler(null);
+    outsideGestureGuard?.dispose?.();
+    releaseOutsidePageLeases([...activeOutsidePageLeases]);
+    setLayoutRecovery(null);
     for (const attachment of editorOptions().attachedPageElements || []) {
       attachment?.element?.remove?.();
     }
@@ -1790,6 +1880,71 @@ export default function PdfTextEditOverlay() {
     columnBounds: editorOptions().expandableRegion?.columnBounds,
   });
 
+  const layoutRecoveryExpansion = () => (
+    layoutRecovery()?.result?.recoveryActions?.includes('expand-to-fit')
+      ? approvedExpansion() : null
+  );
+
+  const keepEditingAfterLayoutBlock = () => {
+    setLayoutRecovery(null);
+    setEditorStatus('');
+    queueMicrotask(() => (richEditorRef || textareaRef)?.focus?.({ preventScroll: true }));
+  };
+
+  const insertLineBreakAfterLayoutBlock = () => {
+    if (richEditorRef && richTextDocument()) {
+      insertCanonicalRichText('\n');
+    } else if (textareaRef) {
+      const start = Math.max(0, Number(textareaRef.selectionStart) || 0);
+      const end = Math.max(start, Number(textareaRef.selectionEnd) || start);
+      const value = text();
+      setText(`${value.slice(0, start)}\n${value.slice(end)}`);
+      queueMicrotask(() => textareaRef?.setSelectionRange?.(start + 1, start + 1));
+    }
+    keepEditingAfterLayoutBlock();
+  };
+
+  const expandAfterLayoutBlock = async () => {
+    if (layoutRecoveryApplying()) return;
+    const candidate = layoutRecoveryExpansion();
+    const gesture = createGeometryGesture('resize');
+    if (!candidate || !gesture) return;
+    setLayoutRecoveryApplying(true);
+    try {
+      if (outsideApplyPromise) await outsideApplyPromise;
+      const delta = {
+        x: candidate.width - gesture.bounds.width,
+        y: candidate.height - gesture.bounds.height,
+      };
+      setLayoutRecovery(null);
+      if (!applyGeometryDelta(gesture, delta)) return;
+      recordFinishedGeometryGesture(gesture);
+      const session = getActiveTextEditSession();
+      const result = await applyActiveTextEditing('layout-recovery-expand');
+      if (textApplyResultSchedulesPersistence(result) && session) {
+        void import('../../pdf/saver.js')
+          .then(({ scheduleCommittedTextEditSave }) => scheduleCommittedTextEditSave(
+            session.ownerDocumentId,
+            session.ownerDocumentGeneration,
+          ))
+          .catch((error) => console.warn('[text-edit] Layout recovery save failed:', error));
+      } else if (result?.status === 'rejected') {
+        const finalDecision = editorLayoutState()?.finalDecision || null;
+        if (finalDecision?.status === 'blocked') {
+          setLayoutRecovery(Object.freeze({ result, finalDecision }));
+        }
+      }
+    } finally {
+      setLayoutRecoveryApplying(false);
+    }
+  };
+
+  const layoutRecoveryMessage = () => {
+    const decision = layoutRecovery()?.finalDecision;
+    return (decision?.rejectionReasons || []).join(' ')
+      || 'This text cannot fit within its current page constraints. Keep editing or insert a line break.';
+  };
+
   const expandPathologicalPasteBox = () => {
     const candidate = approvedExpansion();
     const gesture = createGeometryGesture('resize');
@@ -1975,6 +2130,7 @@ export default function PdfTextEditOverlay() {
                 (editorOptions().singleLine || editorOptions().fixedRegion)
                   && 'scanned-text-edit-status',
                 pathologicalPaste() && 'pdf-text-pathological-paste-status',
+                layoutRecovery() && 'pdf-text-layout-recovery-status',
               ].filter(Boolean).join(' ') || undefined}
               style={liveEditorStyle()}
               value={text()}
@@ -2000,6 +2156,7 @@ export default function PdfTextEditOverlay() {
               aria-describedby={[
                 editorOptions().expandableRegion && 'native-text-edit-status',
                 pathologicalPaste() && 'pdf-text-pathological-paste-status',
+                layoutRecovery() && 'pdf-text-layout-recovery-status',
               ].filter(Boolean).join(' ') || undefined}
               spellcheck={false}
               style={richEditorStyle()}
@@ -2123,6 +2280,37 @@ export default function PdfTextEditOverlay() {
                 <Show when={approvedExpansion()}>
                   <button type="button" onClick={expandPathologicalPasteBox}>
                     {tHardening('textEditor.pathologicalPaste.expand')}
+                  </button>
+                </Show>
+              </div>
+            </div>
+          </Show>
+          <Show when={layoutRecovery()}>
+            <div
+              id="pdf-text-layout-recovery-status"
+              class="pdf-text-editor-paste-recovery pdf-text-editor-layout-recovery"
+              role="alert"
+              aria-live="assertive"
+              aria-atomic="true"
+              data-rejection-code={layoutRecovery().finalDecision?.rejectionCode || ''}
+            >
+              <span>{layoutRecoveryMessage()}</span>
+              <div class="pdf-text-editor-paste-actions">
+                <button type="button" onClick={keepEditingAfterLayoutBlock}>
+                  Keep editing
+                </button>
+                <Show when={layoutRecovery().result?.recoveryActions?.includes('insert-line-break')}>
+                  <button type="button" onClick={insertLineBreakAfterLayoutBlock}>
+                    Insert line break
+                  </button>
+                </Show>
+                <Show when={layoutRecoveryExpansion()}>
+                  <button
+                    type="button"
+                    disabled={layoutRecoveryApplying()}
+                    onClick={() => void expandAfterLayoutBlock()}
+                  >
+                    Expand to fit
                   </button>
                 </Show>
               </div>

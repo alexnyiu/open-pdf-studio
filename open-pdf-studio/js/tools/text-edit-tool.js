@@ -109,6 +109,7 @@ import {
   pageEditReadinessSatisfied,
 } from '../pdf/page-edit-readiness.js';
 import { runPageEditIntent } from '../text/page-edit-intent.js';
+import { acquirePageLease, releasePageLease } from '../pdf/page-lease-registry.js';
 import {
   awaitFinalTextLayout,
   disposeFinalTextLayoutSession,
@@ -150,6 +151,8 @@ function queueCurrentPageEditIntent({ documentState, pageNum, point = null, acti
     waitForSynchronization: waitForSavedDocumentSynchronization,
     resolveDocument: getDocumentById,
     awaitReadiness: awaitPageEditReady,
+    acquireLease: acquirePageLease,
+    releaseLease: releasePageLease,
     activate,
   });
 }
@@ -362,6 +365,9 @@ function registerActiveEditorSession(editor, ownerDocument, kind = editor?.kind)
     pageNum: editor.pageNum,
     recordId: ownedRecordId,
     markerIds: nativeMarkerIds,
+    recognitionGeneration: editor.ocrTargetIdentity?.recognitionGeneration,
+    regionId: editor.ocrTargetIdentity?.regionId,
+    lineIds: editor.ocrTargetIdentity?.lineIds,
   });
   const session = registerTextEditSession({
     ownerDocumentId: ownerDocument.id,
@@ -405,6 +411,31 @@ function publishPdfTextEditState(editor) {
   // Global editing state is only a keyboard-routing sentinel. Keep DOM nodes,
   // callbacks, and reactive record proxies in the module-local activeEditor.
   state.pdfTextEditState = editor ? { kind: editor.kind, pageNum: editor.pageNum } : null;
+}
+
+function cleanupEditorRuntime(editor, { restoreNativeSpans = false } = {}) {
+  const cleanupSteps = [
+    () => hidePdfTextEditor(),
+    () => {
+      if (!restoreNativeSpans) return;
+      for (const span of editor?.block?.spans || []) span.style.visibility = '';
+    },
+    () => completeEditorSession(editor),
+    () => editor?.preview?.remove?.(),
+  ];
+  for (const step of cleanupSteps) {
+    try { step(); } catch (error) {
+      console.warn('[text-edit] Editor cleanup step failed:', error);
+    }
+  }
+  if (activeEditor === editor) activeEditor = null;
+  if (!activeEditor) {
+    state.pdfTextEditState = null;
+    try { hideProperties(); } catch (error) {
+      console.warn('[text-edit] Properties cleanup failed:', error);
+    }
+  }
+  return true;
 }
 
 function rejectInvalidOwnedTextState() {
@@ -1788,18 +1819,20 @@ function ownedTextEditAtClientPoint(clientX, clientY, pageNum, layer) {
   return record ? { record, canvasEl } : null;
 }
 
-export function startTextLayerEditAtClientPointWhenReady({
+export async function startTextLayerEditAtClientPointWhenReady({
   pageNum,
   clientX,
   clientY,
   preferredEditId = '',
   preferredMarkerIds = '',
   preferredOcrLineId = '',
+  preferredOcrRegionId = '',
+  preferredOcrRecognitionGeneration = '',
   stagedLineIds = [],
 }) {
   const ownerDocument = getActiveDocument();
   if (!ownerDocument) return false;
-  const activate = ({ documentState, pageNum: readyPage, point }) => {
+  const activate = async ({ documentState, pageNum: readyPage, point }) => {
     if (getActiveDocument() !== documentState) return false;
     const layer = livePageTextLayer(readyPage);
     if (!layer) return false;
@@ -1810,44 +1843,51 @@ export function startTextLayerEditAtClientPointWhenReady({
         (preferredEditId && candidate.dataset.editId === preferredEditId)
         || (preferredMarkerIds && candidate.dataset.nativeTextMarkerIds === preferredMarkerIds)
         || (preferredOcrLineId && candidate.dataset.ocrLineId === preferredOcrLineId)
+        || (preferredOcrRegionId && candidate.dataset.ocrRegionId === preferredOcrRegionId)
       ));
     }
+    if (liveSpan?.dataset.ocrOwner && preferredOcrRecognitionGeneration
+        && liveSpan.dataset.ocrRecognitionGeneration !== preferredOcrRecognitionGeneration) {
+      return false;
+    }
     if (liveSpan?.dataset.ocrOwner) {
-      void startScannedTextEditing(liveSpan, readyPage, stagedLineIds, {
+      return startScannedTextEditing(liveSpan, readyPage, stagedLineIds, {
         readinessGranted: true,
         clientPoint: point,
       });
-      return true;
     }
     if (liveSpan) {
-      void startPdfTextEditing(liveSpan, readyPage, {
+      return startPdfTextEditing(liveSpan, readyPage, {
         readinessGranted: true,
         clientPoint: point,
       });
-      return true;
     }
     const ownedHit = ownedTextEditAtClientPoint(point.x, point.y, readyPage, layer);
     if (!ownedHit) return false;
-    startTextEditEditing(
+    return startTextEditEditing(
       ownedHit.record,
       readyPage,
       ownedHit.canvasEl,
       null,
       { readinessGranted: true },
     );
-    return true;
   };
   const point = { x: clientX, y: clientY };
   if (!ownerDocument.pdfDoc || pageEditReadinessSatisfied(ownerDocument, pageNum)) {
     return activate({ documentState: ownerDocument, pageNum, point });
   }
-  void queueCurrentPageEditIntent({
-    documentState: ownerDocument,
-    pageNum,
-    point,
-    activate,
-  }).catch(reportQueuedEditFailure);
-  return false;
+  try {
+    const queued = await queueCurrentPageEditIntent({
+      documentState: ownerDocument,
+      pageNum,
+      point,
+      activate,
+    });
+    return queued?.activated === true && queued.value === true;
+  } catch (error) {
+    reportQueuedEditFailure(error);
+    return false;
+  }
 }
 
 function enableTextLayerHover() {
@@ -1983,6 +2023,19 @@ function enableTextLayerHover() {
 
     const scannedSpans = layer.querySelectorAll('span[data-ocr-owner][data-ocr-line-id]');
     scannedSpans.forEach((span) => {
+      const identityContext = ocrParagraphContext(getActiveDocument(), pageNum);
+      const identityRegion = identityContext
+        && paragraphRegionForLine(identityContext.regions, span.dataset.ocrLineId);
+      const recognitionGeneration = identityContext?.result?.document?.generation;
+      if (identityRegion && recognitionGeneration) {
+        span.dataset.ocrRegionId = String(identityRegion.id);
+        span.dataset.ocrRegionLineIds = identityRegion.lineIds.join(' ');
+        span.dataset.ocrRecognitionGeneration = String(recognitionGeneration);
+      } else {
+        delete span.dataset.ocrRegionId;
+        delete span.dataset.ocrRegionLineIds;
+        delete span.dataset.ocrRecognitionGeneration;
+      }
       if (alreadyAttached.has(span)) return;
       span.style.pointerEvents = 'auto';
       span.style.cursor = 'text';
@@ -2297,36 +2350,41 @@ async function startScannedTextEditing(
 ) {
   let doc = getActiveDocument();
   const preferredLineId = span?.dataset?.ocrLineId || '';
-  if (!doc || !preferredLineId) return;
+  if (!doc || !preferredLineId) return false;
   if (doc.pdfDoc && !readinessGranted && !pageEditReadinessSatisfied(doc, pageNum)) {
     const fallbackPoint = clientPoint || (() => {
       const rect = span.getBoundingClientRect?.();
       return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
     })();
-    void queueCurrentPageEditIntent({
-      documentState: doc,
-      pageNum,
-      point: fallbackPoint,
-      activate: ({ documentState, pageNum: readyPage, point }) => {
-        if (getActiveDocument() !== documentState) return false;
-        const layer = livePageTextLayer(readyPage);
-        const liveSpan = spanAtClientPoint(
-          layer,
-          point,
-          'span[data-ocr-owner][data-ocr-line-id]',
-        ) || [...(layer?.querySelectorAll('span[data-ocr-owner][data-ocr-line-id]') || [])]
-          .find((candidate) => candidate.dataset.ocrLineId === preferredLineId);
-        if (!liveSpan) return false;
-        return startScannedTextEditing(liveSpan, readyPage, stagedLineIds, {
-          readinessGranted: true,
-          clientPoint: point,
-        });
-      },
-    }).catch(reportQueuedEditFailure);
-    return;
+    try {
+      const queued = await queueCurrentPageEditIntent({
+        documentState: doc,
+        pageNum,
+        point: fallbackPoint,
+        activate: ({ documentState, pageNum: readyPage, point }) => {
+          if (getActiveDocument() !== documentState) return false;
+          const layer = livePageTextLayer(readyPage);
+          const liveSpan = spanAtClientPoint(
+            layer,
+            point,
+            'span[data-ocr-owner][data-ocr-line-id]',
+          ) || [...(layer?.querySelectorAll('span[data-ocr-owner][data-ocr-line-id]') || [])]
+            .find((candidate) => candidate.dataset.ocrLineId === preferredLineId);
+          if (!liveSpan) return false;
+          return startScannedTextEditing(liveSpan, readyPage, stagedLineIds, {
+            readinessGranted: true,
+            clientPoint: point,
+          });
+        },
+      });
+      return queued?.activated === true && queued.value === true;
+    } catch (error) {
+      reportQueuedEditFailure(error);
+      return false;
+    }
   }
   doc = getDocumentById(doc.id);
-  if (!doc || getActiveDocument() !== doc) return;
+  if (!doc || getActiveDocument() !== doc) return false;
   const liveLayer = livePageTextLayer(pageNum);
   if (!span?.isConnected || span.closest('.textLayer') !== liveLayer) {
     span = spanAtClientPoint(liveLayer, clientPoint, 'span[data-ocr-owner][data-ocr-line-id]')
@@ -2334,7 +2392,7 @@ async function startScannedTextEditing(
         .find((candidate) => candidate.dataset.ocrLineId === preferredLineId);
   }
   const lineId = span?.dataset?.ocrLineId;
-  if (!span || !lineId) return;
+  if (!span || !lineId) return false;
   cancelActiveTextEditing('superseded');
   const ownerGeneration = Number(doc.lifecycleGeneration) || 0;
   let selection = appliedScannedSelection(
@@ -2375,7 +2433,7 @@ async function startScannedTextEditing(
         const layer = span.closest('.textLayer');
         if (layer) showOcrParagraphSelection(layer, selectedRegions);
         showMessage(hardeningText('textEditor.status.multipleOcrParagraphs'));
-        return;
+        return false;
       }
       const inferredRegion = selectedRegions[0]
         || paragraphRegionForLine(paragraphContext.regions, lineId);
@@ -2420,7 +2478,7 @@ async function startScannedTextEditing(
   } catch (error) {
     console.warn('[scanned-text-edit] Eligibility failed:', error);
     showMessage(hardeningText('textEditor.status.operationFailed'));
-    return;
+    return false;
   }
 
   // Rasterization and eligibility evaluation are asynchronous. Never adopt
@@ -2429,7 +2487,7 @@ async function startScannedTextEditing(
   // stale OCR geometry appear current.
   if (getActiveDocument() !== doc
       || getDocumentById(doc.id) !== doc
-      || (Number(doc.lifecycleGeneration) || 0) !== ownerGeneration) return;
+      || (Number(doc.lifecycleGeneration) || 0) !== ownerGeneration) return false;
 
   const estimate = selection.content.estimatedStyle;
   const font = scannedDisplayFont(estimate.fontClass.value);
@@ -2586,17 +2644,25 @@ async function startScannedTextEditing(
     richTextDocument: paragraphReflow ? null : scannedRichText,
     styleState,
   };
+  const identityContext = ocrParagraphContext(doc, pageNum);
+  const identityRegion = identityContext
+    && paragraphRegionForLine(identityContext.regions, lineId);
+  editor.ocrTargetIdentity = Object.freeze({
+    recognitionGeneration: String(
+      result?.document?.generation
+      || identityContext?.result?.document?.generation
+      || doc.ocr?.generation
+      || '',
+    ),
+    regionId: String(identityRegion?.id
+      || (selection.target.kind === 'region' ? selection.target.targetId : lineId)),
+    lineIds: Object.freeze([...(identityRegion?.lineIds || selection.target.lineIds || [lineId])]),
+  });
 
   const cleanup = () => {
-    completeEditorSession(editor);
-    preview?.remove();
     editor.commitOperationId = null;
     if (activeEditor !== editor) return false;
-    hidePdfTextEditor();
-    activeEditor = null;
-    state.pdfTextEditState = null;
-    hideProperties();
-    return true;
+    return cleanupEditorRuntime(editor);
   };
   const cancel = () => {
     editor.committing = false;
@@ -2816,6 +2882,7 @@ async function startScannedTextEditing(
         : hardeningText('textEditor.status.ocrOneLine'),
     },
   });
+  return true;
 }
 
 async function startPdfTextEditing(
@@ -2823,9 +2890,9 @@ async function startPdfTextEditing(
   pageNum,
   { readinessGranted = false, clientPoint = null } = {},
 ) {
-  if (rejectInvalidOwnedTextState()) return;
+  if (rejectInvalidOwnedTextState()) return false;
   let ownerDocument = getActiveDocument();
-  if (!ownerDocument) return;
+  if (!ownerDocument) return false;
   const preferredEditId = span?.dataset?.editId || '';
   const preferredMarkerIds = span?.dataset?.nativeTextMarkerIds || '';
   if (ownerDocument.pdfDoc && !readinessGranted
@@ -2834,31 +2901,36 @@ async function startPdfTextEditing(
       const rect = span?.getBoundingClientRect?.();
       return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
     })();
-    void queueCurrentPageEditIntent({
-      documentState: ownerDocument,
-      pageNum,
-      point: fallbackPoint,
-      activate: ({ documentState, pageNum: readyPage, point }) => {
-        if (getActiveDocument() !== documentState) return false;
-        const layer = livePageTextLayer(readyPage);
-        const liveSpan = spanAtClientPoint(layer, point, 'span:not([data-ocr-owner])')
-          || [...(layer?.querySelectorAll('span:not([data-ocr-owner])') || [])]
-            .find((candidate) => (
-              (preferredEditId && candidate.dataset.editId === preferredEditId)
-              || (preferredMarkerIds
-                && candidate.dataset.nativeTextMarkerIds === preferredMarkerIds)
-            ));
-        if (!liveSpan) return false;
-        return startPdfTextEditing(liveSpan, readyPage, {
-          readinessGranted: true,
-          clientPoint: point,
-        });
-      },
-    }).catch(reportQueuedEditFailure);
-    return;
+    try {
+      const queued = await queueCurrentPageEditIntent({
+        documentState: ownerDocument,
+        pageNum,
+        point: fallbackPoint,
+        activate: ({ documentState, pageNum: readyPage, point }) => {
+          if (getActiveDocument() !== documentState) return false;
+          const layer = livePageTextLayer(readyPage);
+          const liveSpan = spanAtClientPoint(layer, point, 'span:not([data-ocr-owner])')
+            || [...(layer?.querySelectorAll('span:not([data-ocr-owner])') || [])]
+              .find((candidate) => (
+                (preferredEditId && candidate.dataset.editId === preferredEditId)
+                || (preferredMarkerIds
+                  && candidate.dataset.nativeTextMarkerIds === preferredMarkerIds)
+              ));
+          if (!liveSpan) return false;
+          return startPdfTextEditing(liveSpan, readyPage, {
+            readinessGranted: true,
+            clientPoint: point,
+          });
+        },
+      });
+      return queued?.activated === true && queued.value === true;
+    } catch (error) {
+      reportQueuedEditFailure(error);
+      return false;
+    }
   }
   ownerDocument = getDocumentById(ownerDocument.id);
-  if (!ownerDocument || getActiveDocument() !== ownerDocument) return;
+  if (!ownerDocument || getActiveDocument() !== ownerDocument) return false;
   const ownerGeneration = Number(ownerDocument.lifecycleGeneration) || 0;
 
   let textLayer = livePageTextLayer(pageNum);
@@ -2870,7 +2942,7 @@ async function startPdfTextEditing(
           || (preferredMarkerIds && candidate.dataset.nativeTextMarkerIds === preferredMarkerIds)
         ));
   }
-  if (!textLayer) return;
+  if (!textLayer) return false;
   try {
     const page = await ownerDocument.pdfDoc?.getPage(pageNum);
     if (page) await resolveTextLayerFonts(page, textLayer);
@@ -2879,7 +2951,7 @@ async function startPdfTextEditing(
     // unsupported embedded fonts.
   }
   if (getActiveDocument() !== ownerDocument
-      || ownerDocument.lifecycleGeneration !== ownerGeneration) return;
+      || ownerDocument.lifecycleGeneration !== ownerGeneration) return false;
   textLayer = livePageTextLayer(pageNum);
   if (!span?.isConnected || span.closest('.textLayer') !== textLayer) {
     span = spanAtClientPoint(textLayer, clientPoint, 'span:not([data-ocr-owner])')
@@ -2889,7 +2961,7 @@ async function startPdfTextEditing(
           || (preferredMarkerIds && candidate.dataset.nativeTextMarkerIds === preferredMarkerIds)
         ));
   }
-  if (!span || !textLayer) return;
+  if (!span || !textLayer) return false;
   blockGroupsCache.delete(textLayer);
   getBlockGroups(textLayer);
   cancelActiveTextEditing('superseded');
@@ -2902,16 +2974,16 @@ async function startPdfTextEditing(
     const rec = ownerDocument.textEdits?.find(e => String(e.id) === editId);
     if (rec) {
       const canvasEl = livePageCanvas(pageNum, textLayer, ownerDocument);
-      if (canvasEl) { startTextEditEditing(rec, pageNum, canvasEl); return; }
+      if (canvasEl) return startTextEditEditing(rec, pageNum, canvasEl);
     }
   }
 
   const block = spanToBlock.get(span);
-  if (!block || block.spans.length === 0) return;
+  if (!block || block.spans.length === 0) return false;
 
   if (block.laneValid === false) {
     showMessage(hardeningText('textEditor.status.nativeColumnBoundary'));
-    return;
+    return false;
   }
 
   hideParagraphOutline();
@@ -2921,7 +2993,7 @@ async function startPdfTextEditing(
   const sourceProvenance = provenanceForSpans(block.spans);
   if (!sourceProvenance) {
     showMessage(hardeningText('textEditor.status.nativeSourceUnavailable'));
-    return;
+    return false;
   }
 
   // An unsaved native edit still sits above the original PDF.js spans. Match
@@ -2933,8 +3005,7 @@ async function startPdfTextEditing(
   ));
   if (existingNativeEdit) {
     const canvasEl = livePageCanvas(pageNum, textLayer, ownerDocument);
-    if (canvasEl) startTextEditEditing(existingNativeEdit, pageNum, canvasEl);
-    return;
+    return canvasEl ? startTextEditEditing(existingNativeEdit, pageNum, canvasEl) : false;
   }
 
   // Physical source lines inside one paragraph are soft wraps, not authored
@@ -2952,14 +3023,14 @@ async function startPdfTextEditing(
       sampleText: combinedText,
       scope: 'paragraph',
     });
-    if (!substitution) return;
+    if (!substitution) return false;
   }
 
   // Never open a draft against a tab or document generation that stopped
   // owning the source gesture.
   if (getActiveDocument() !== ownerDocument
       || getDocumentById(ownerDocument.id) !== ownerDocument
-      || (Number(ownerDocument.lifecycleGeneration) || 0) !== ownerGeneration) return;
+      || (Number(ownerDocument.lifecycleGeneration) || 0) !== ownerGeneration) return false;
 
   // PDF metadata from first line (top of block in reading order, highest pdfY)
   const pdfX = lineData[0].pdfX;
@@ -3005,7 +3076,7 @@ async function startPdfTextEditing(
   const placementGeometry = pageCanvas ? getTextEditGeometry(pageNum, pageCanvas) : null;
   if (!placementGeometry) {
     showMessage(hardeningText('textEditor.status.operationFailed'));
-    return;
+    return false;
   }
   const placementScale = Math.max(0.0001, editorFontSize / fontSize);
   const canonicalBounds = canonicalEditorBoundsForRichText(
@@ -3163,6 +3234,7 @@ async function startPdfTextEditing(
       ariaLabel: hardeningText('textEditor.aria.editRegion', { text: combinedText }),
     },
   });
+  return true;
 }
 
 async function finishPdfTextEditing(operation) {
@@ -3207,12 +3279,7 @@ async function finishPdfTextEditing(operation) {
     transientStyleChanged: styleChanged,
   });
   if (!nativeChanged) {
-    hidePdfTextEditor();
-    for (const span of block.spans) span.style.visibility = '';
-    completeEditorSession(editor);
-    activeEditor = null;
-    state.pdfTextEditState = null;
-    hideProperties();
+    cleanupEditorRuntime(editor, { restoreNativeSpans: true });
     return textApplyResultFor(editor, 'noop', { editId: null, editRevision: null });
   }
   if (!editor.sourceProvenance) {
@@ -3329,14 +3396,7 @@ async function finishPdfTextEditing(operation) {
       nativeAuthoritative: true,
     });
 
-    hidePdfTextEditor();
-    for (const span of block.spans) {
-      if (!span.dataset.nativeTextReplacedBy) span.style.visibility = '';
-    }
-    completeEditorSession(editor);
-    activeEditor = null;
-    state.pdfTextEditState = null;
-    hideProperties();
+    cleanupEditorRuntime(editor, { restoreNativeSpans: true });
     if (published.publication.status === 'superseded') {
       return textApplyResultFor(editor, 'superseded', {
         ownerCommitted: true,
@@ -3359,21 +3419,12 @@ async function finishPdfTextEditing(operation) {
 
 function cancelPdfTextEditing() {
   if (!activeEditor) return false;
-
-  if (activeEditor._cancelEditing) {
-    activeEditor._cancelEditing();
-    return true;
+  const editor = activeEditor;
+  try {
+    return editor._cancelEditing ? editor._cancelEditing() !== false : true;
+  } finally {
+    cleanupEditorRuntime(editor, { restoreNativeSpans: true });
   }
-
-  const { block } = activeEditor;
-  hidePdfTextEditor();
-  for (const s of block.spans) s.style.visibility = '';
-
-  completeEditorSession(activeEditor);
-  activeEditor = null;
-  state.pdfTextEditState = null;
-  hideProperties();
-  return true;
 }
 
 /**
@@ -3509,8 +3560,9 @@ export function startTextEditEditing(
   transaction = null,
   { readinessGranted = false } = {},
 ) {
-  if (rejectInvalidOwnedTextState()) return;
+  if (rejectInvalidOwnedTextState()) return false;
   const ownerDocument = getActiveDocument();
+  if (!ownerDocument) return false;
   if (ownerDocument?.pdfDoc && !readinessGranted
       && !pageEditReadinessSatisfied(ownerDocument, pageNum)) {
     void queueCurrentPageEditIntent({
@@ -3570,7 +3622,7 @@ export function startTextEditEditing(
 
   // Find the container to place the editor in
   const container = canvasEl.parentElement;
-  if (!container) return;
+  if (!container) return false;
   const containerRect = container.getBoundingClientRect();
   const canvasRect = canvasEl.getBoundingClientRect();
   const offsetX = canvasRect.left - containerRect.left;
@@ -3685,11 +3737,7 @@ export function startTextEditEditing(
       return textApplyResultFor(editor, 'superseded');
     }
     const closeEditor = () => {
-      hidePdfTextEditor();
-      completeEditorSession(editor);
-      activeEditor = null;
-      state.pdfTextEditState = null;
-      hideProperties();
+      cleanupEditorRuntime(editor);
     };
     const finalDraft = finalEditorDraft(editor);
     const newText = finalDraft.plainText;
@@ -3857,12 +3905,12 @@ export function startTextEditEditing(
   };
 
   const cancelEditing = () => {
-    hidePdfTextEditor();
-    reRenderAddedText(pageNum);
-    completeEditorSession(activeEditor);
-    activeEditor = null;
-    state.pdfTextEditState = null;
-    hideProperties();
+    const editor = activeEditor;
+    try {
+      reRenderAddedText(pageNum);
+    } finally {
+      cleanupEditorRuntime(editor);
+    }
     return true;
   };
 
@@ -3985,6 +4033,7 @@ export function startTextEditEditing(
       ariaLabel: hardeningText('textEditor.aria.editRegion', { text: view.newText }),
     },
   });
+  return true;
 }
 
 // ── Management of the ACTIVE text edit (called from the properties panel) ──

@@ -44,6 +44,8 @@ export async function runPageEditIntent({
   resolveDocument,
   awaitReadiness,
   activate,
+  acquireLease = null,
+  releaseLease = null,
 }) {
   if (!documentState?.id) throw new TypeError('A page edit intent requires a document owner');
   for (const [name, callback] of Object.entries({
@@ -57,6 +59,12 @@ export async function runPageEditIntent({
   const documentId = String(documentState.id);
   const page = positivePage(pageNum);
   const preservedPoint = frozenPoint(point);
+  const lease = typeof acquireLease === 'function' ? acquireLease({
+    documentId,
+    lifecycleGeneration: Number(documentState.lifecycleGeneration) || 0,
+    pageNum: page,
+    reason: 'page-edit-intent',
+  }) : null;
   beginIntent(documentId);
   try {
     if ((await waitForSynchronization(documentId)) !== true) {
@@ -79,5 +87,6 @@ export async function runPageEditIntent({
     return Object.freeze({ activated: true, value });
   } finally {
     endIntent(documentId);
+    if (lease && typeof releaseLease === 'function') releaseLease(lease);
   }
 }
