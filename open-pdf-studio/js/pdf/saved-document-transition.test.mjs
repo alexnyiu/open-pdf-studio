@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   SavedDocumentSynchronizationError,
   captureSavedDocumentViewState,
+  decidePersistedProxyAdoption,
   hasRecoverableSavedDocumentSynchronization,
   invalidateSavedDocumentDerivedState,
   restoreSavedDocumentViewState,
@@ -93,7 +94,7 @@ function transitionInput(documentState, overrides = {}) {
   };
 }
 
-test('automatic persistence installs its validated proxy and reaches the persisted revision', async () => {
+test('explicit persisted-proxy adoption installs its validated proxy and reaches the persisted revision', async () => {
   const document = persistedDocument();
   const result = await synchronizeSavedDocument(transitionInput(document));
   assert.equal(result.synchronized, true);
@@ -101,6 +102,44 @@ test('automatic persistence installs its validated proxy and reaches the persist
   assert.equal(document.revisionState.livePdfRevision, 1);
   assert.equal(document.revisionState.saveState, 'saved');
   assert.equal(documentIsEditReady(document, 2), true);
+});
+
+test('automatic persistence and newer editing interactions defer proxy adoption', () => {
+  assert.deepEqual(decidePersistedProxyAdoption({
+    kind: 'auto',
+    requestedRevision: 4,
+    contentRevision: 4,
+  }), {
+    adopt: false,
+    status: 'saved-refresh-pending',
+    reason: 'automatic-persistence',
+  });
+
+  for (const unsafe of [
+    { liveTextSession: true, expected: 'live-text-session' },
+    { dirtyTextDraft: true, expected: 'dirty-text-draft' },
+    { pendingPageEditIntent: true, expected: 'pending-page-edit-intent' },
+    { requestedRevision: 3, contentRevision: 4, expected: 'newer-content-revision' },
+    { ownerActiveForSharedUi: false, expected: 'inactive-shared-ui-owner' },
+  ]) {
+    const decision = decidePersistedProxyAdoption({
+      kind: 'manual',
+      requestedRevision: unsafe.requestedRevision ?? 4,
+      contentRevision: unsafe.contentRevision ?? 4,
+      ownerActiveForSharedUi: unsafe.ownerActiveForSharedUi ?? true,
+      ...unsafe,
+    });
+    assert.equal(decision.adopt, false);
+    assert.equal(decision.status, 'saved-refresh-pending');
+    assert.equal(decision.reason, unsafe.expected);
+  }
+
+  assert.deepEqual(decidePersistedProxyAdoption({
+    kind: 'manual',
+    requestedRevision: 4,
+    contentRevision: 4,
+    ownerActiveForSharedUi: true,
+  }), { adopt: true, status: 'saved', reason: null });
 });
 
 test('automatic save invalidates old semantics and rebuilds changed metadata before readiness', async () => {

@@ -13,6 +13,30 @@ import { clearPageEditReadiness } from './page-edit-readiness.js';
 const activeSynchronizations = new Map();
 const recoverableSynchronizations = new Map();
 
+/** Decide whether persisted bytes may replace the live PDF.js proxy now. */
+export function decidePersistedProxyAdoption({
+  kind = 'manual',
+  requestedRevision,
+  contentRevision,
+  liveTextSession = false,
+  dirtyTextDraft = false,
+  pendingPageEditIntent = false,
+  ownerActiveForSharedUi = true,
+} = {}) {
+  const defer = (reason) => Object.freeze({
+    adopt: false,
+    status: 'saved-refresh-pending',
+    reason,
+  });
+  if (kind === 'auto') return defer('automatic-persistence');
+  if (liveTextSession) return defer('live-text-session');
+  if (dirtyTextDraft) return defer('dirty-text-draft');
+  if (pendingPageEditIntent) return defer('pending-page-edit-intent');
+  if (Number(contentRevision) > Number(requestedRevision)) return defer('newer-content-revision');
+  if (!ownerActiveForSharedUi) return defer('inactive-shared-ui-owner');
+  return Object.freeze({ adopt: true, status: 'saved', reason: null });
+}
+
 export class SavedDocumentSynchronizationError extends Error {
   constructor(message, cause) {
     super(message, cause === undefined ? undefined : { cause });
