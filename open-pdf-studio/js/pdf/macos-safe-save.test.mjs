@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { MacosSafeSaveError, nativeError } from './macos-safe-save.js';
+import {
+  MacosSafeSaveError,
+  nativeError,
+  snapshotMacosFileProviderInfo,
+} from './macos-safe-save.js';
 
 test('native coordinated errors preserve provider kind, retryability, and recovery action', () => {
   const error = nativeError(
@@ -37,4 +41,50 @@ test('destination changes are terminal and never normalized into a retryable pro
   assert.equal(error.code, 'DESTINATION_CHANGED');
   assert.equal(error.retryable, false);
   assert.equal(error.recoveryAction, 'review-provider-conflict');
+});
+
+test('provider evidence snapshots reactive proxies without structuredClone', () => {
+  const source = {
+    providerKind: 'file-provider',
+    providerManaged: true,
+    ubiquitous: false,
+    materialized: true,
+    downloadStatus: 'current',
+    downloading: false,
+    uploaded: true,
+    uploading: false,
+    unresolvedConflicts: false,
+    downloadError: null,
+    uploadError: null,
+    volumeIsLocal: true,
+    volumeIsRemovable: false,
+    volumeIsReadOnly: false,
+    volumeType: 'apfs',
+    coordinationRequired: true,
+    securityScopedAccess: 'not-required-non-sandboxed',
+    ignored: 'not part of the provider contract',
+  };
+  const snapshot = snapshotMacosFileProviderInfo(new Proxy(source, {}));
+  assert.deepEqual(snapshot, {
+    providerKind: 'file-provider',
+    providerManaged: true,
+    ubiquitous: false,
+    materialized: true,
+    downloadStatus: 'current',
+    downloading: false,
+    uploaded: true,
+    uploading: false,
+    unresolvedConflicts: false,
+    downloadError: null,
+    uploadError: null,
+    volumeIsLocal: true,
+    volumeIsRemovable: false,
+    volumeIsReadOnly: false,
+    volumeType: 'apfs',
+    coordinationRequired: true,
+    securityScopedAccess: 'not-required-non-sandboxed',
+  });
+  assert.equal(Object.isFrozen(snapshot), true);
+  source.providerKind = 'mutated-after-snapshot';
+  assert.equal(snapshot.providerKind, 'file-provider');
 });

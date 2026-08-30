@@ -41,6 +41,7 @@ import {
 import {
   abortMacosSafePdfSave,
   finalizeMacosSafePdfSave,
+  snapshotMacosFileProviderInfo,
   stageMacosSafePdfSave,
   validateStagedOcrPdfWithPdfium,
 } from './macos-safe-save.js';
@@ -3489,8 +3490,7 @@ async function performSavePDF(saveAsPath = null, {
         stagedToken = null;
         if (finalized.status !== 'pass') throw new Error('Native atomic replacement did not report success');
         persistedOutputPath = finalized.destinationPath || outputPath;
-        safeSaveProvider = finalized.provider && typeof finalized.provider === 'object'
-          ? structuredClone(finalized.provider) : null;
+        safeSaveProvider = snapshotMacosFileProviderInfo(finalized.provider);
         const finalizedWarnings = Array.isArray(finalized.warnings) ? finalized.warnings : [];
         if (!finalized.candidateFilesCleaned
             && !finalizedWarnings.some(

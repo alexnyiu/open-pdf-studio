@@ -5,6 +5,42 @@ import { invoke, isTauri, writeBinaryFile } from '../core/platform.js';
 const NATIVE_ERROR_PREFIX = 'OPDS_SAFE_SAVE|';
 const stagedProviderByToken = new Map();
 
+function nullableBoolean(value) {
+  return typeof value === 'boolean' ? value : null;
+}
+
+/**
+ * Copy the scalar File Provider contract without structured-cloning reactive
+ * document proxies. Solid wraps assigned objects, and browser structuredClone
+ * rejects Proxy instances even though every provider field is JSON-safe.
+ */
+export function snapshotMacosFileProviderInfo(value) {
+  if (!value || typeof value !== 'object') return null;
+  const providerKind = typeof value.providerKind === 'string'
+    ? value.providerKind.trim() : '';
+  if (!providerKind) return null;
+  return Object.freeze({
+    providerKind,
+    providerManaged: value.providerManaged === true,
+    ubiquitous: value.ubiquitous === true,
+    materialized: value.materialized === true,
+    downloadStatus: value.downloadStatus == null ? null : String(value.downloadStatus),
+    downloading: value.downloading === true,
+    uploaded: nullableBoolean(value.uploaded),
+    uploading: value.uploading === true,
+    unresolvedConflicts: value.unresolvedConflicts === true,
+    downloadError: value.downloadError == null ? null : String(value.downloadError),
+    uploadError: value.uploadError == null ? null : String(value.uploadError),
+    volumeIsLocal: nullableBoolean(value.volumeIsLocal),
+    volumeIsRemovable: nullableBoolean(value.volumeIsRemovable),
+    volumeIsReadOnly: nullableBoolean(value.volumeIsReadOnly),
+    volumeType: value.volumeType == null ? null : String(value.volumeType),
+    coordinationRequired: value.coordinationRequired === true,
+    securityScopedAccess: value.securityScopedAccess == null
+      ? null : String(value.securityScopedAccess),
+  });
+}
+
 const ERROR_RECOVERY = Object.freeze({
   ICLOUD_PROVIDER_BUSY: Object.freeze({ providerKind: 'icloud', retryable: true, recoveryAction: 'retry-save' }),
   FILE_PROVIDER_BUSY: Object.freeze({ providerKind: 'file-provider', retryable: true, recoveryAction: 'retry-save' }),

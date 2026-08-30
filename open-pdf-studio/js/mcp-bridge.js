@@ -1051,8 +1051,10 @@ async function handleGetViewportState() {
       totalHeight: doc.pageGeometryIndex.totalHeight?.(doc.scale, doc.bookSpread ? 'book' : 'continuous') || 0,
     } : null;
     if (doc) {
-      safeSaveProvider = doc.lastSafeSaveProvider
-        ? structuredClone(doc.lastSafeSaveProvider) : null;
+      const safeSaveModule = await import('/js/pdf/macos-safe-save.js');
+      safeSaveProvider = safeSaveModule.snapshotMacosFileProviderInfo(
+        doc.lastSafeSaveProvider,
+      );
       const revisionModule = await import('/js/core/document-revision-state.runtime.js');
       documentSaveState = revisionModule.documentRevisionDebugSnapshot(doc);
       if (Number.isInteger(activePageNum) && activePageNum > 0) {
