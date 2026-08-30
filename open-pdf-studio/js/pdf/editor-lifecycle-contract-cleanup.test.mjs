@@ -92,3 +92,19 @@ test('annotation registration cancels the old owner before publishing the new sh
   assert.match(sourceText, /const ann = annotation;/u);
   assert.match(sourceText, /const closed = closeEditingState\('published'\);[\s\S]*closed\.status === 'superseded'/u);
 });
+
+test('asynchronous tool deactivation cannot cancel a newer editor session', async () => {
+  const [manager, textTool] = await Promise.all([
+    source('../tools/manager.js'),
+    source('../tools/text-edit-tool.js'),
+  ]);
+  assert.match(
+    manager,
+    /textEditSessionAtDeactivation = getActiveTextEditSession\(\)\?\.sessionId \?\? null/u,
+  );
+  assert.match(manager, /deactivateEditTextTool\(textEditSessionAtDeactivation\)/u);
+  assert.match(
+    textTool,
+    /const ownsActiveSession = textEditDeactivationOwnsSession\([\s\S]*if \(!ownsActiveSession\) return 'superseded';[\s\S]*state\.isEditingPdfText = false/u,
+  );
+});

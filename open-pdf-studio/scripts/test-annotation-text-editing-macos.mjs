@@ -255,6 +255,7 @@ async function runAcceptance(options) {
         lastTextPublicationResult: viewport?.lastTextPublicationResult ?? null,
         documentSaveState: viewport?.documentSaveState ?? null,
         pageEditReadiness: viewport?.pageEditReadiness ?? null,
+        editorMetrics: viewport?.editorMetrics ?? null,
       };
       error.message += `; click-away=${JSON.stringify(report.lastClickAwayFailure)}`;
       throw error;

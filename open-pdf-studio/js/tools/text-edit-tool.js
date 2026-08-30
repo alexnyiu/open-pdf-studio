@@ -100,9 +100,11 @@ import {
   applyActiveTextEditing,
   cancelActiveTextEditing,
   completeTextEditSession,
+  getActiveTextEditSession,
   registerTextEditSession,
 } from '../text/text-edit-session.js';
 import { createTextEditTargetIdentity } from '../text/text-edit-target-identity.js';
+import { textEditDeactivationOwnsSession } from '../text/text-edit-deactivation.js';
 import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-transition.js';
 import {
   awaitPageEditReady,
@@ -1640,8 +1642,18 @@ export function activateEditTextTool() {
   installTextBoxSelectionHandlers();
 }
 
-export function deactivateEditTextTool() {
-  cancelActiveTextEditing('tool-deactivated');
+export function deactivateEditTextTool(expectedSessionId = undefined) {
+  const activeSessionId = getActiveTextEditSession()?.sessionId ?? null;
+  // manager.setTool() reaches this module through a dynamic import. Retain
+  // the session that belonged to the departing tool so a delayed callback
+  // cannot cancel an annotation editor opened by the winning tool.
+  const ownsActiveSession = textEditDeactivationOwnsSession(
+    activeSessionId,
+    expectedSessionId,
+  );
+  if (ownsActiveSession) {
+    cancelActiveTextEditing('tool-deactivated');
+  }
   if (ownedEditCaptureHandler) {
     document.removeEventListener('click', ownedEditCaptureHandler, true);
     ownedEditCaptureHandler = null;
@@ -1652,9 +1664,11 @@ export function deactivateEditTextTool() {
   blockGroupsCache.clear();
   hideParagraphOutline();
   spanToBlock = new WeakMap();
+  if (!ownsActiveSession) return 'superseded';
   state.isEditingPdfText = false;
   state.pdfTextEditState = null;
   // Overlay layers are restored by setAnnotationCanvasForTextAccess() in manager.js
+  return 'closed';
 }
 
 // ── MutationObserver: re-attach when text layers are recreated ──

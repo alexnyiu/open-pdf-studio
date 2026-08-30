@@ -250,7 +250,10 @@ export function setTool(tool) {
   // Deactivate PDF text editing when switching away
   if ((state.currentTool === 'editText' || state.currentTool === 'addText')
       && tool !== state.currentTool) {
-    import('./text-edit-tool.js').then(m => m.deactivateEditTextTool());
+    const textEditSessionAtDeactivation = getActiveTextEditSession()?.sessionId ?? null;
+    import('./text-edit-tool.js').then((module) => (
+      module.deactivateEditTextTool(textEditSessionAtDeactivation)
+    ));
   }
 
   const owner = getActiveDocument();
