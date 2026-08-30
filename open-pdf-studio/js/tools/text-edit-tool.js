@@ -2103,17 +2103,24 @@ function enableTextLayerHover() {
 
     const scannedSpans = layer.querySelectorAll('span[data-ocr-owner][data-ocr-line-id]');
     scannedSpans.forEach((span) => {
-      const identityContext = ocrParagraphContext(getActiveDocument(), pageNum);
+      const documentState = getActiveDocument();
+      const identityContext = ocrParagraphContext(documentState, pageNum);
       const identityRegion = identityContext
         && paragraphRegionForLine(identityContext.regions, span.dataset.ocrLineId);
+      const regionIdentity = scannedSpanRegionIdentity(
+        documentState, pageNum, span, identityRegion,
+      );
       const recognitionGeneration = identityContext?.result?.document?.generation;
-      if (identityRegion && recognitionGeneration) {
-        span.dataset.ocrRegionId = String(identityRegion.id);
-        span.dataset.ocrRegionLineIds = identityRegion.lineIds.join(' ');
-        span.dataset.ocrRecognitionGeneration = String(recognitionGeneration);
+      if (regionIdentity) {
+        span.dataset.ocrRegionId = String(regionIdentity.id);
+        span.dataset.ocrRegionLineIds = regionIdentity.lineIds.join(' ');
       } else {
         delete span.dataset.ocrRegionId;
         delete span.dataset.ocrRegionLineIds;
+      }
+      if (recognitionGeneration) {
+        span.dataset.ocrRecognitionGeneration = String(recognitionGeneration);
+      } else {
         delete span.dataset.ocrRecognitionGeneration;
       }
       if (alreadyAttached.has(span)) return;
@@ -2239,6 +2246,24 @@ function appliedScannedSelection(doc, pageNum, lineId, selectionId = null) {
       && selection.repair?.status === 'applied'
       && ['isolated-horizontal-line', 'fixed-region-multiline', SCANNED_TEXT_REFLOW_SCOPE]
         .includes(selection.content?.scope)) || null;
+}
+
+function scannedSpanRegionIdentity(doc, pageNum, span, liveRegion = null) {
+  if (liveRegion?.id && Array.isArray(liveRegion.lineIds)) {
+    return { id: liveRegion.id, lineIds: liveRegion.lineIds };
+  }
+  const persistedSelection = appliedScannedSelection(
+    doc,
+    pageNum,
+    span?.dataset?.ocrLineId || '',
+    span?.dataset?.scannedTextEditSelectionId || null,
+  );
+  return persistedSelection?.target?.kind === 'region'
+    ? {
+        id: persistedSelection.target.targetId,
+        lineIds: persistedSelection.target.lineIds,
+      }
+    : null;
 }
 
 function explicitScannedLineSelection(span) {

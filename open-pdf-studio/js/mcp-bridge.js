@@ -993,6 +993,7 @@ async function handleGetViewportState() {
   let safeSaveProvider = null;
   let documentLoadState = null;
   let pageEditReadiness = null;
+  let scannedTextEditState = null;
   let pageSurfaceRegistry = null;
   let renderPublicationDiagnostics = null;
   try {
@@ -1052,6 +1053,16 @@ async function handleGetViewportState() {
       totalHeight: doc.pageGeometryIndex.totalHeight?.(doc.scale, doc.bookSpread ? 'book' : 'continuous') || 0,
     } : null;
     if (doc) {
+      scannedTextEditState = doc.scannedTextEdits ? {
+        stateId: doc.scannedTextEdits.stateId || null,
+        stateRevision: Number(doc.scannedTextEdits.stateRevision) || 0,
+        persistedRevision: Number(doc.scannedTextEditPersistedRevision) || 0,
+        pageCount: doc.scannedTextEdits.pages?.length || 0,
+        selectionCount: doc.scannedTextEdits.pages?.reduce(
+          (count, page) => count + (page.selections?.length || 0),
+          0,
+        ) || 0,
+      } : null;
       const safeSaveModule = await import('/js/pdf/macos-safe-save.js');
       safeSaveProvider = safeSaveModule.snapshotMacosFileProviderInfo(
         doc.lastSafeSaveProvider,
@@ -1196,6 +1207,7 @@ async function handleGetViewportState() {
     safeSaveProvider,
     documentLoadState,
     pageEditReadiness,
+    scannedTextEditState,
     pageSurfaceRegistry,
     renderPublicationDiagnostics,
     ocrWorkflowMetrics,

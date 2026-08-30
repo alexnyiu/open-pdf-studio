@@ -498,7 +498,9 @@ test('the production overlay captures before consumption and routes text replay 
 
 test('production OCR replay identity is stamped and editor activation is truthful', async () => {
   const source = await readFile(new URL('../tools/text-edit-tool.js', import.meta.url), 'utf8');
-  assert.match(source, /span\.dataset\.ocrRegionId = String\(identityRegion\.id\)/u);
+  assert.match(source, /function scannedSpanRegionIdentity\(/u);
+  assert.match(source, /persistedSelection\?\.target\?\.kind === 'region'/u);
+  assert.match(source, /span\.dataset\.ocrRegionId = String\(regionIdentity\.id\)/u);
   assert.match(source, /span\.dataset\.ocrRecognitionGeneration = String\(recognitionGeneration\)/u);
   assert.match(source, /editor\.ocrTargetIdentity = Object\.freeze/u);
   assert.match(source, /export async function startTextLayerEditAtClientPointWhenReady/u);

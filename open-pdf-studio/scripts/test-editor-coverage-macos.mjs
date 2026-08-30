@@ -920,7 +920,8 @@ async function runCoverage(options) {
     async function captureApplyDiagnostics(adapter, phase, requested = null) {
       const [applyState, nativeEditStatus, scannedEditStatus, liveRegion,
         editorState, actionsState, paragraphSection, leftAlignment, centerAlignment,
-        rightAlignment, viewportState, recentConsole] = await Promise.all([
+        rightAlignment, textLayerState, ownedOcrState, nativeTextState,
+        viewportState, recentConsole] = await Promise.all([
         ui('.pdf-text-editor-apply', false).catch(() => null),
         ui('#native-text-edit-status', false).catch(() => null),
         ui('#scanned-text-edit-status', false).catch(() => null),
@@ -931,6 +932,9 @@ async function runCoverage(options) {
         ui('#prop-paragraph-section .text-align-btn:nth-of-type(1)', false).catch(() => null),
         ui('#prop-paragraph-section .text-align-btn:nth-of-type(2)', false).catch(() => null),
         ui('#prop-paragraph-section .text-align-btn:nth-of-type(3)', false).catch(() => null),
+        ui('.textLayer', false).catch(() => null),
+        ui('.textLayer [data-ocr-owner]', false).catch(() => null),
+        ui('.textLayer span:not([data-ocr-owner])', false).catch(() => null),
         call('app_get_viewport_state').catch(() => null),
         call('app_get_recent_console', { tail: 100 }).catch(() => null),
       ]);
@@ -946,6 +950,11 @@ async function runCoverage(options) {
         properties: {
           paragraphSection,
           alignments: [leftAlignment, centerAlignment, rightAlignment],
+        },
+        textProjection: {
+          layer: textLayerState,
+          ownedOcr: ownedOcrState,
+          nativeText: nativeTextState,
         },
         viewport: viewportState,
         session: viewportState?.editorSession ?? null,
