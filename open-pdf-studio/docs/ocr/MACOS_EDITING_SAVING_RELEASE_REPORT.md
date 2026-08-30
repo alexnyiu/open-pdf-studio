@@ -4,175 +4,200 @@ Generated: 2026-08-30
 
 Branch: `ocr-release-hardening`
 
-Code-qualified SHA: `2bdc524d03157bd6d3064a01ce498c234006a16c`
+Code-qualified SHA: `a71185347eebfb21c2d9b9910a79a7791bf398fb`
 
-Report commit: this report is committed separately and does not change the packaged build identity.
+Report commit: this report is committed separately. It names the earlier code-qualified SHA and does not change the identity of the packaged application.
 
-## Scope and decision basis
+## Scope and decision
 
-This report qualifies the exact code SHA above. It does not carry forward packaged results from another SHA. The implementation and full static/unit gate passed, and substantial packaged production-UI evidence passed against the exact app. The final sequential packaged restart did not complete: native-text acceptance produced conflicting failures after an earlier pass, and subsequent app launches aborted inside macOS `_RegisterApplication` before Tauri/WebKit initialization. Blocking File Provider, external-volume, large-document performance, accessibility, and hardware checks also remain unverified.
+This report qualifies one exact code SHA and one exact packaged application. The complete static/unit gate, packaged launch preflight, four-suite browser manifest, 100-page OCR producer, and all twelve packaged macOS commands completed against that SHA. No assertion was weakened, no synthetic editor state or test-only entry point was used, and the two native lifecycle runs both passed without retry.
+
+Three blocking acceptance areas remain genuinely unverified: the shaded/image/gradient/linework visual matrix, the dedicated save-adoption zoom/pan anchor measurement, and the complete File Provider/external-volume matrix. Physical trackpad, external-display, VoiceOver, and several combined manual flows were also unavailable and were not converted to automated passes.
 
 **MACOS EDITING AND SAVING NO-GO**
 
 ## Implementation delivered
 
-The requested blank-document and raster-publication contracts are present in separate commits:
+The requested contracts were implemented in separate commits:
 
-- `d7f4c5c4` — `fix: keep new document revisions ready`
-  - adds the explicit Save-As-required document transition without advancing content, serialized, persisted, live-proxy, page, or readiness revisions;
-  - uses that transition for blank/template creation;
-  - removes the fabricated mutation and redundant readiness repair render.
-- `421c05ab` — `fix: isolate raster publication owners`
-  - keeps reusable bitmap cache identity separate from pending publication-owner identity;
-  - keys pending publication work by document, lifecycle, content, live-proxy, target-page, and published-page revisions;
-  - returns structured `published`, `superseded`, or `failed` outcomes and prevents superseded work from poisoning current readiness.
+- `48aa831c` — owner-scoped editor cleanup and immutable mount tokens;
+- `f2da8524` — packaged launch and trusted-input harness hardening;
+- `8aa36ca6` — exact-HEAD browser evidence manifest and CI wiring.
 
-Follow-up fixes found while qualifying the same release are individually committed through `2bdc524d`, including pending OCR readiness, speculative-preload suspension, and controlled 500-page fixture qualification. No commits were pushed.
+Qualification exposed additional product-path failures. Each was fixed narrowly and committed separately through the final code-qualified SHA:
 
-## Exact packaged app identity
+- deterministic physical-input targeting and caret placement;
+- delayed native, owned-record, scanned, inserted, and annotation editor cleanup ownership;
+- separate packaged RPC timeouts and retained failure evidence;
+- document-owner-pure background save alerts and serialization;
+- page-rotation ordering before asynchronous render;
+- abort-aware retirement of continuous raster streams so obsolete work releases the per-document scheduler cap.
 
-App bundle:
+The final scheduler fix is `a7118534` (`fix: settle retired continuous raster streams`). The earlier blank-document readiness and raster-publication-owner commits remain intact. No commits were pushed.
+
+## Exact packaged application identity
+
+Application bundle:
 
 `/Users/alexander/Personal Projects/open-pdf-studio/target/aarch64-apple-darwin/release/bundle/macos/Open PDF Studio.app`
 
 | Component | Architecture | SHA-256 |
 |---|---|---|
-| `Contents/MacOS/open-pdf-studio` | arm64 | `0b685eb1ec50fd0e29f3498d00d2412802cb8e3ada4b691e07ee3e20bcf345fe` |
+| `Contents/MacOS/open-pdf-studio` | arm64 | `b188c813950d8986033d7df93fcaac07d34764faed6446969ed1119622eb8f2b` |
 | `Contents/MacOS/pdfium-worker` | arm64 | `cdcfdea7579968223b0399777cfb5498bafacd4f36f586782944740e937d2366` |
-| `Contents/Resources/libpdfium.dylib` | arm64 + x86_64 universal | `4e587d08486f54f60cd95e79771e7e4067982f3985dede615fc41f59713d2a1c` |
+| `Contents/Resources/libpdfium.dylib` | x86_64 + arm64 universal | `4e587d08486f54f60cd95e79771e7e4067982f3985dede615fc41f59713d2a1c` |
 
-`codesign --verify --deep --strict` passed. The bundle identifier is `org.openaec.openpdfstudio`; the signature is ad-hoc with hardened runtime and no Team Identifier. This proves local packaged usability and integrity only. It is not Developer ID signing, notarization, updater, or DMG distribution evidence.
+The executable is 72,384,848 bytes. `codesign --verify --deep --strict` passed. The bundle identifier is `org.openaec.openpdfstudio`; CDHash is `794ecd94314c536c446795eb33fe058856b50df7`. The signature is ad-hoc with hardened runtime and no Team Identifier. It proves local integrity and usability only; it is not Developer ID, notarization, Gatekeeper, quarantine-download, updater, or DMG distribution evidence.
 
-The bundled worker probe returned `{"pdfium":"ready"}`.
+The bundled PDFium probe returned ready. The unsandboxed `/usr/bin/open -n -W` preflight reached `webviewReady` as PID 55136 and then terminated cleanly. Its retained evidence is `test-artifacts/packaged-launch-preflight/preflight.json`.
 
 ## Qualification gates
 
-The complete code gate passed on `2bdc524d` before packaging:
+The code worktree was clean at `a7118534` before packaging.
 
 | Gate | Result |
 |---|---|
 | `npm run typecheck` | PASS |
 | `npm run test` | PASS |
-| `npm run test:editor-lifecycle:unit` | PASS — 321/321 |
-| `npm run test:large-pdf-performance:unit` | PASS — 77/77 |
+| `npm run test:editor-lifecycle:unit` | PASS — 332/332 |
+| `npm run test:large-pdf-performance:unit` | PASS — 79/79 |
 | `cargo test -p open-pdf-studio -- --nocapture` | PASS — 85 passed, 3 ignored, plus integration suites |
 | `git diff --check` | PASS |
 | `npm run package:ocr-release-hardening:arm64` | PASS |
-| signature, architecture, and PDFium probe | PASS |
+| signature, architecture, executable hashes, and PDFium probe | PASS |
+| packaged launch preflight | PASS |
 
-The packaged GUI evidence is production-configured: no synthetic state seeding and no test-only editor entry point.
+The exact-HEAD browser producer wrote `test-artifacts/browser-ui/browser-acceptance.json`. Its four required suites all exited 0: native text UI, metadata editing UI, modal hardening UI, and macOS OCR browser UI.
+
+The exact-HEAD 100-page producer passed completion and cancellation. It completed 100/100 pages, bounded prefetch to one page, reaped all child processes, passed PDF.js and PDFium readers, and cancelled 45 of 100 pages without late publication. The path was the visible production UI with no synthetic OCR state or test-only OCR entry point.
 
 ## Packaged acceptance matrix
 
-All paths below refer to the exact app above. `PASS` records a completed same-SHA execution. `FAIL` records a completed failing gate or conflicting product-path result. `UNVERIFIED` means the required final execution did not complete; older-SHA evidence is not promoted.
+The commands ran serially outside the Codex sandbox against the exact bundle above. A product failure in the first 500-page run was retained, diagnosed as two aborted image streams that never settled, fixed in `a7118534`, and followed by a new package and a complete restart from command 1.
 
-| Order | Command | Result | Evidence and limitation |
+| Order | Command | Result | Exact-build evidence |
 |---:|---|---|---|
-| 1 | `npm run test:native-text-editing:macos` | FAIL | One standalone run passed fully, but the aggregate rerun lost trusted physical text insertion and a later standalone run left a live owner session while the reparented editor portal disappeared during final save/reopen re-edit. Later retries aborted before initialization. The conflicting result blocks qualification. |
-| 2 | `npm run test:annotation-text-editing:macos` | PASS | Same-SHA production pointer, click-away, Save/reopen, repeat-save, and genuine re-edit run passed. A later diagnostic retry aborted during host initialization and does not replace the completed pass. |
-| 3 | `npm run test:editor-coverage:macos` | PASS | `test-artifacts/browser-ui/editor-coverage-manifest.json`: 384 matrix cases and 72 lifecycle cases passed against executable SHA `0b685e…`. |
-| 4 | `npm run test:editor-acceptance:macos` | FAIL | `test-artifacts/packaged-editor/acceptance.json`: same-SHA aggregate failed. Its browser-outcome input was supplied as `pass` instead of the required literal `success`, and its native-text child also failed. Assertions were not weakened. |
-| 5 | `npm run test:save-render-coherence:macos` | PASS | `test-artifacts/packaged-editor/reports/save-render-coherence.json`: three edits, save/reopen, repeat-save, live render/semantic revision equality, A23 no-resize commit, blocked-draft retention, and 0% crop pixel difference. |
-| 6 | `npm run test:editor-performance:macos` | UNVERIFIED | The available performance artifact names SHA `658770ef`, not the qualified SHA, so it is excluded. |
-| 7 | `npm run test:large-pdf-performance:macos` | UNVERIFIED | The old 108-page run exposed a hard-coded fixture contract. Commit `2bdc524d` qualifies the controlled manifest-verified 500-page fixture, and focused/unit tests pass, but the packaged 500-page rerun was blocked by the macOS launch crash. |
-| 8 | `npm run test:ocr-save:macos` | PASS | Same-SHA aggregate child exited 0. |
-| 9 | `npm run test:ocr-edit-single-line:macos` | PASS | Same-SHA aggregate artifact passed. |
-| 10 | `npm run test:ocr-edit-regions:macos` | PASS | Same-SHA aggregate artifact passed. |
-| 11 | `npm run test:ocr-reflow:macos` | PASS | Same-SHA aggregate artifact passed. |
-| 12 | `npm run test:ocr-release-hardening:macos` | UNVERIFIED | A 100-page producer artifact exists for SHA `658770ef`, but no complete release-hardening run was produced for `2bdc524d`; it is excluded. |
+| 1 | `npm run test:native-text-editing:macos` | PASS | Save/reopen, repeat-save, real re-edit, interior-caret click-away, side-by-side isolation, alignment, scroll attachment, substitution width compensation, and first-save commit all passed. |
+| 2 | `npm run test:annotation-text-editing:macos` | PASS | Production pointer editing, click-away, Save/reopen, repeat-save, and genuine re-edit passed. |
+| 3 | `npm run test:editor-coverage:macos` | PASS | 384 matrix cases and 72 lifecycle cases passed; executable hash matched `b188c8…`. |
+| 4 | `npm run test:editor-acceptance:macos` | PASS | Exact browser manifest accepted; native lifecycle passed independently a second time; annotation, save/render, OCR workflow, OCR save, single-line, fixed-region, and reflow children passed. |
+| 5 | `npm run test:save-render-coherence:macos` | PASS | Three edits converged all six revisions to 3; stale publications 0; rejected stale publications 0; persisted/rendered crop difference 0%. |
+| 6 | `npm run test:editor-performance:macos` | PASS | Typing-to-paint p95 12 ms; warm exact validation 13 ms; ordinary typing task max 3 ms; idle placement reads/writes 0/0. |
+| 7 | `npm run test:large-pdf-performance:macos` | PASS | Controlled 500-page fixture passed in two fresh packaged processes after the full restart. |
+| 8 | `npm run test:ocr-save:macos` | PASS | Safe Save/Save As, original preservation, candidate cleanup, xattrs, and independent reader checks passed. |
+| 9 | `npm run test:ocr-edit-single-line:macos` | PASS | Production single-line OCR edit and persistence passed. |
+| 10 | `npm run test:ocr-edit-regions:macos` | PASS | Fixed-region OCR editing and persistence passed. |
+| 11 | `npm run test:ocr-reflow:macos` | PASS | OCR reflow editing and persistence passed. |
+| 12 | `npm run test:ocr-release-hardening:macos` | PASS | Command exited 0; applicable artifact and filesystem criteria passed. Distribution trust and unavailable provider cases remain explicitly `UNVERIFIED`. |
 
-Supplemental browser suites `test:native-text-editing:ui`, `test:metadata-editing:ui`, `test:modal-hardening:ui`, and `test:ocr-ui:browser:macos` each passed when run directly before the aggregate. The aggregate did not ingest those results because its outcome token was not the required literal `success`.
+The packaged coverage and aggregate manifests record `productionUiOnly: true`, `syntheticStateSeeding: false`, and `testOnlyEntryPoint: false`.
 
-## Host launch blocker
+## Performance and required metrics
 
-After the conflicting native result, two native-text retries and an independent annotation-text retry failed before document open. The app printed its MCP startup line and both PDFium workers became ready, but the frontend never reported ready. Direct launch then exited with status 134.
+The controlled large-document fixture is a 500-page PDF, 126,962 bytes, SHA-256 `add59dae1cdd27d2776beeaca60f79e5b330007a1ab88425ed61459f57db74ec`.
 
-The following crash reports show `SIGABRT` on the main thread in `___RegisterApplication_block_invoke` -> `_RegisterApplication` -> `NSApplication sharedApplication`, before the Tauri event loop or WebKit page is created:
+| Required metric | Result | Before | After / exact-SHA evidence |
+|---|---|---|---|
+| Ten-edit burst write count | UNVERIFIED | No trustworthy packaged baseline | Coalescing and terminal-save regressions pass, but no exact packaged ten-edit numeric write-count measurement was produced. |
+| Save-adoption zoom/PDF-anchor drift | UNVERIFIED | No trustworthy packaged baseline | Save/render coherence reproduced the editor rectangle exactly before and after reopen; the separate 500-page zoom gesture measured 0 px drift. Neither is the required noncentral save-adoption before/after measurement. |
+| Visible-page preview latency | PASS | No trustworthy packaged baseline | Visible first-preview p95 39 ms; cached-preview p95 3 ms; blank-with-source max 30 ms; full-quality max 530 ms. |
+| Typing-to-paint | PASS | Not measured | p95 12 ms, below 16 ms. |
+| Warm exact validation | PASS | Not measured | 13 ms, below 100 ms. |
+| Save/render pixel coherence | PASS | Not applicable | 0% differing pixels, below the 0.1% limit. |
+| Stale retired publication | PASS | Not applicable | 0 stale retired publications; retired native work peak 2. |
+| Placement idle work | PASS | Not applicable | 0 reads and 0 writes while idle. |
 
-- `/Users/alexander/Library/Logs/DiagnosticReports/open-pdf-studio-2026-08-30-042132.ips`
-- `/Users/alexander/Library/Logs/DiagnosticReports/open-pdf-studio-2026-08-30-042406.ips`
-- `/Users/alexander/Library/Logs/DiagnosticReports/open-pdf-studio-2026-08-30-042817.ips`
+Additional 500-page results: cold open 260 ms; scroll-handler p95 1 ms; visible cold pages suppressed 0; useful visible previews cancelled 0; mounted page surfaces peak 5; thumbnails peak 27; zoom input-to-transform p95 13 ms; 100% of zoom frames below 20 ms; final pixel difference 0%; second traversal memory growth 0; two fresh packaged process runs passed.
 
-The failure reproduced both through direct executable spawn and through `/usr/bin/open -n -W`; therefore it is not evidence for changing blank readiness, raster ownership, or the GUI assertions. A fresh interactive macOS session is required to restart the matrix.
+The 100-page OCR producer measured total OCR median 1,496 ms and p95 1,552 ms, UI median 4 ms and p95 7 ms, UI publication peak 8.06 Hz, and bookkeeping CPU 0.0023%.
 
-## Release metrics
+## Safe-save, providers, and distribution evidence
 
-| Required metric | Result | Evidence |
+The exact-SHA filesystem report is `output/ocr-release-hardening/filesystem-latest.json`.
+
+| Case | Result | Evidence or limitation |
 |---|---|---|
-| Ten-edit burst write count, before/after | UNVERIFIED | Unit coalescing regressions pass, but no exact-SHA packaged ten-edit benchmark completed. No numeric value is inferred. |
-| Save-time zoom/PDF-anchor drift, before/after | UNVERIFIED | Same-SHA coverage preserved live sessions across 100% -> 250% -> 100%, and save-render coherence preserved the editor rectangle exactly at its tested view, but the required post-save anchor-drift measurement was not completed. |
-| Visible-page preview latency, before/after | UNVERIFIED | Controlled 500-page fixture identity is now enforced, but the same-SHA packaged performance run did not launch. No old-SHA latency is reused. |
-| Save/render pixel coherence | PASS | Persisted PDF crop and mounted view differed by 0%, under the 0.1% maximum. |
-| Stale render publication | PASS | Same-SHA coherence report recorded 0 stale publications and 0 rejected stale publications. |
-| Placement idle work | PASS | Exact-SHA 384/72 coverage completed with no release-gate placement failure; focused controller tests prove no idle placement loop. |
+| Local APFS coordinated transaction | PASS | Coordinated atomic replacement, repeated save, valid PDF, candidate cleanup. |
+| Destination changed externally | PASS | Rejected with `DESTINATION_CHANGED`; external edit preserved; no blind retry. |
+| Read-only destination | PASS | Save rejected; original preserved; candidate removed. |
+| Finder-locked destination | PASS | Save rejected; original preserved; candidate removed. |
+| Advisory file lock | PASS | Save rejected; original preserved; candidate removed. |
+| External APFS | PASS | Distinct-device atomic transaction and repeat-save passed. |
+| Disk full | PASS | ENOSPC observed; original preserved; candidate removed. |
+| OneDrive File Provider | PASS | Live provider transaction and repeated save passed. |
+| iCloud cloud-only before open | PASS | Live eviction observed; typed not-materialized recovery; original preserved. |
+| iCloud upload in progress | PASS | Live upload observed and completed. |
+| Provider eviction | PASS | Live eviction and fail-closed recovery passed. |
+| iCloud Drive transaction | PASS | Live save and upload passed. |
+| External exFAT | UNVERIFIED | `hdiutil` could not create or mount the image: operation not permitted. |
+| Dropbox File Provider | UNVERIFIED | Dropbox is not configured on this host. |
+| Isolated provider network loss | UNVERIFIED | No provider-only network fault was available without changing host-wide connectivity. |
 
-## Safe-save and provider evidence
-
-The exact-SHA unit/Rust gates pass the coordinated safe-save contracts: candidate validation, hash/length checks, destination identity protection, atomic replacement, rollback/recovery, typed provider errors, and warning/recovery UI projection. Same-SHA packaged save/render coherence also proves repeated persisted edits and clean repeat-save behavior.
-
-The live provider matrix is still blocking. A detailed local/iCloud/OneDrive/APFS report exists for SHA `194cd802`, but it is deliberately not counted for `2bdc524d`. Fresh exact-SHA results are required for local APFS, iCloud states, Dropbox, OneDrive, external APFS, external exFAT, network loss, provider eviction, destination change, locked/read-only, and out-of-space behavior. In particular, exFAT, Dropbox, and isolated provider-network loss remain unavailable on this host and are not simulated into PASS.
+The artifact report passed arm64 packaging, bundled probes/assets/checksums, hardened-runtime compatibility, code-sign verification, entitlements review, cleanup, and size measurement. Developer ID signing, notarization, Gatekeeper assessment, and quarantine-download launch remain `UNVERIFIED`, as expected for the explicitly local ad-hoc package.
 
 ## Manual macOS checks
 
-| Check | Result | Notes |
+Automated evidence is cited as support only. It does not substitute for a physical observation where the runbook requires one.
+
+| Check | Result | Host observation and supporting evidence |
 |---|---|---|
-| Physical trackpad click-away and pinch | UNVERIFIED | Production pointer automation passed; no physical trackpad observation was recorded. |
-| Window blur during click-away | UNVERIFIED | No genuine manual blur run completed. |
-| Retina and scaled external display | UNVERIFIED | DPR unit coverage passed; no external-display hardware run completed. |
-| Single and continuous modes | UNVERIFIED | Automated same-SHA coverage passed, but the plan separately requires a manual check. |
-| Book and facing modes | UNVERIFIED | Automated same-SHA coverage passed, but the manual check did not complete. |
-| Inactive-tab save | UNVERIFIED | Owner-isolation tests passed; no manual background-save run completed. |
-| Save, Save As, close, and app quit | UNVERIFIED | Packaged automation covered Save, Save As, and close; the combined manual flow did not complete. |
-| iCloud/File Provider and external volumes | UNVERIFIED | Exact-SHA live matrix unavailable; no simulation accepted. |
-| Finder tags/ACL warning injection | UNVERIFIED | Safe-save unit contracts pass; exact-SHA manual warning injection did not complete. |
-| VoiceOver/focus navigation | UNVERIFIED | VoiceOver was not genuinely exercised. |
+| Physical trackpad click-away and pinch | UNVERIFIED | No `AppleMultitouchTrackpad` device was exposed. Production pointer/click-away and zoom automation passed. |
+| Window blur during click-away | UNVERIFIED | Blur/watchdog unit coverage passed; no genuine manual window-blur run was recorded. |
+| Retina and scaled external display | UNVERIFIED | The built-in 3456×2234 Retina display was present; no external display was connected. DPR coverage passed. |
+| Single and continuous modes | UNVERIFIED | Same-SHA packaged matrix coverage passed, but no manual observation was recorded. |
+| Book and facing modes | UNVERIFIED | Same-SHA packaged matrix coverage passed, but no manual observation was recorded. |
+| Inactive-tab save | UNVERIFIED | Owner-isolation and lifecycle coverage passed; no manual background-tab save was recorded. |
+| Save, Save As, close, and app quit | UNVERIFIED | Packaged automation covered the component flows; the combined manual flow was not recorded. |
+| iCloud/File Provider and external volumes | UNVERIFIED | Live iCloud, OneDrive, and external APFS passed; exFAT, Dropbox, and isolated network loss remain unavailable. |
+| Finder tags/ACL warning injection | UNVERIFIED | Finder lock, permissions, advisory lock, warning-state, and recovery tests passed; the exact manual tags/ACL flow was not recorded. |
+| VoiceOver/focus navigation | UNVERIFIED | VoiceOver was not running and no physical accessibility-navigation session was performed. |
 
 ## 39-finding acceptance matrix
 
-Status counts: 26 PASS, 1 FAIL, 12 UNVERIFIED.
+Status counts: 36 PASS, 0 FAIL, 3 UNVERIFIED.
 
 | ID | Result | Closing evidence or remaining gap |
 |---|---|---|
-| TE-01 | PASS | Same-SHA save/render coherence proves owner, visible-render, and visible-semantic revisions converge before success. |
-| TE-02 | PASS | Page-local surface registry tests and 384-case continuous-view coverage pass. |
-| TE-03 | UNVERIFIED | The exact-SHA suite did not produce the required packaged shaded/image/gradient/linework visual matrix. |
-| TE-04 | PASS | Owner/generation/page registry regressions and lifecycle coverage pass. |
-| TE-05 | PASS | DPR 1/2/3, capped-raster, surface-registry, and rotated/zoomed packaged coverage pass. |
-| TE-06 | PASS | Exact empty/whitespace persistence, undo, and deterministic replacement tests pass. |
-| TE-07 | PASS | Fault-injected cleanup/finally and lifecycle cleanup regressions pass. |
-| TE-08 | PASS | Deferred OCR publication tests and same-SHA OCR packaged children pass. |
-| TE-09 | PASS | Same/different OCR target identity regressions and packaged OCR region/reflow runs pass. |
-| TE-10 | PASS | Watchdog/gesture regressions and 72 packaged lifecycle cases pass. |
-| TE-11 | PASS | Typed editor-activation replay tests and packaged lifecycle cases pass. |
-| TE-12 | PASS | Semantic command replay regressions and real pointer click-away coverage pass. |
-| TE-13 | PASS | Terminal save-result/status tests and same-SHA save-state sequence pass. |
+| TE-01 | PASS | Exact-SHA coherence proves owner, visible-render, and visible-semantic revisions converge before save success. |
+| TE-02 | PASS | Page-local surface registry tests and 384-case packaged continuous-view coverage pass. |
+| TE-03 | UNVERIFIED | No exact packaged shaded/image/gradient/linework visual matrix was produced; generic visual coherence is insufficient for this specific gate. |
+| TE-04 | PASS | Owner/generation/page registry regressions and packaged lifecycle coverage pass. |
+| TE-05 | PASS | DPR 1/2/3, capped-raster, surface registry, rotation, and zoom coverage pass. |
+| TE-06 | PASS | Exact empty/whitespace persistence, undo, and deterministic replacement regressions pass. |
+| TE-07 | PASS | Fault-injected cleanup/finally and owner-scoped cleanup regressions pass. |
+| TE-08 | PASS | Deferred OCR projection/publication tests and all exact-SHA OCR packaged children pass. |
+| TE-09 | PASS | Same/different OCR target identity regressions and packaged region/reflow runs pass. |
+| TE-10 | PASS | Gesture watchdog regressions and both packaged native lifecycle runs pass. |
+| TE-11 | PASS | Typed activation/replay tests and deterministic trusted physical-input evidence pass. |
+| TE-12 | PASS | Semantic pointer-command replay and real packaged click-away coverage pass. |
+| TE-13 | PASS | Structured terminal save-result/status tests and the packaged save-state sequence pass. |
 | TE-14 | PASS | Authoritative page publication and 0% persisted/rendered crop difference pass. |
-| TE-15 | FAIL | The required final packaged matrix is not clean: aggregate/native acceptance failed and the restart was blocked by `_RegisterApplication` aborts. |
+| TE-15 | PASS | The complete exact-SHA packaged matrix passed, including two independent native lifecycle runs and pixel assertions. |
 | TE-16 | PASS | Clean V2 draft/no-op revision, undo, write, and byte-identity regressions pass. |
-| TE-17 | PASS | Same-SHA A23 proves typed final-layout ownership, zero resize-handle events, successful no-resize commit, and explicit retained-draft rejection. |
-| SV-01 | PASS | Save-coordinator burst/coalescing regressions and same-SHA consecutive-edit coherence pass; the numeric ten-edit performance metric remains separately unverified. |
-| SV-02 | PASS | Page-scoped invalidation/cache-retention regressions pass. |
-| SV-03 | PASS | Immutable owner-snapshot and A-save/B-active isolation regressions pass. |
-| SV-04 | UNVERIFIED | Lifecycle unit tests preserve newer editors, but the required same-SHA packaged second-editor-during-save run did not complete. |
-| SV-05 | PASS | Every save result reaches a typed terminal state in unit tests and the same-SHA packaged save sequence. |
-| SV-06 | PASS | Readiness timeout/recovery tests pass; A23 retains the full draft with actionable recovery. |
+| TE-17 | PASS | A23 binds final layout to the typed draft, records zero resize-handle events, commits a safe no-resize edit, and retains an impossible-fit draft. |
+| SV-01 | PASS | Burst coalescing, terminal-save, and no-viewport-reset regressions pass; the separately requested numeric ten-edit metric remains unverified. |
+| SV-02 | PASS | Page-scoped invalidation and unrelated warm-cache retention regressions pass. |
+| SV-03 | PASS | Immutable owner-snapshot and A-save/B-active data-isolation regressions pass. |
+| SV-04 | PASS | Owner-scoped cleanup regressions plus two packaged lifecycle runs prove an older save/cleanup cannot cancel the newer editor. |
+| SV-05 | PASS | Every save result reaches a typed terminal state in unit and packaged sequences. |
+| SV-06 | PASS | Readiness timeout/recovery tests pass; impossible layout retains the complete draft and actionable recovery. |
 | VS-01 | PASS | Per-field view mutation/conflict tests pass. |
 | VS-02 | PASS | Deferred logical-anchor restoration tests pass. |
-| VS-03 | PASS | Inactive-owner UI isolation tests and tab lifecycle coverage pass. |
-| VS-04 | UNVERIFIED | Same-document transition tests pass, but the exact packaged <=1 CSS-pixel save-adoption anchor gate did not complete. |
+| VS-03 | PASS | Inactive-owner UI isolation and packaged tab-lifecycle coverage pass. |
+| VS-04 | UNVERIFIED | Proxy transition tests pass, but the dedicated same-document save-adoption zoom/pan and ≤1 CSS-pixel anchor measurement was not produced. |
 | VS-05 | PASS | Post-restore required-page/readiness regressions and continuous-mode coverage pass. |
 | MS-01 | PASS | Saved-with-warning, recovery-action, and provider-status UI regressions pass without console-only fallback. |
-| MS-02 | UNVERIFIED | Exact-SHA live File Provider/external-volume matrix is incomplete; exFAT, Dropbox, and isolated network-loss checks remain unavailable. |
-| CV-01 | UNVERIFIED | Visible-first unit gate passes; same-SHA controlled 500-page packaged performance evidence is missing. |
-| CV-02 | UNVERIFIED | Preview coalescing unit gate passes; same-SHA sustained-scroll packaged evidence is missing. |
-| CV-03 | UNVERIFIED | Directional look-ahead unit gate passes; same-SHA packaged observer-lead evidence is missing. |
-| CV-04 | UNVERIFIED | Priority/latency unit gate passes; same-SHA visible-center packaged latency is missing. |
-| CV-05 | UNVERIFIED | Native-work accounting unit gate passes; same-SHA backend completion/cap evidence is missing. |
-| CV-06 | UNVERIFIED | Adaptive look-ahead unit gate passes; same-SHA packaged performance evidence is missing. |
-| CV-07 | UNVERIFIED | Immediate-preview unit gate passes; same-SHA cold-wrapper packaged evidence is missing. |
-| CV-08 | UNVERIFIED | Degraded-preview/error-action unit gate passes; same-SHA native-failure packaged evidence is missing. |
-| CV-09 | PASS | Page-lease/stable-target tests and packaged continuous click-away/lifecycle coverage pass. |
+| MS-02 | UNVERIFIED | Exact-SHA local APFS, iCloud, OneDrive, and external APFS passed; exFAT, Dropbox, and isolated provider-network loss remain unavailable. |
+| CV-01 | PASS | Exact packaged 500-page active-scroll run published visible first previews at p95 39 ms with no cold suppression. |
+| CV-02 | PASS | Per-page preview coalescing regressions and exact packaged sustained-scroll evidence pass with zero useful-preview cancellation. |
+| CV-03 | PASS | Directional look-ahead regressions and exact packaged active-scroll coverage pass. |
+| CV-04 | PASS | Visible-center priority regressions and exact packaged preview/full-raster latency gates pass. |
+| CV-05 | PASS | Abort-aware retirement, backend-completion regressions, peak retired-work cap 2, and zero stale publication pass. |
+| CV-06 | PASS | Adaptive look-ahead regressions and exact packaged scroll/zoom performance gates pass. |
+| CV-07 | PASS | Immediate preview-on-mount regressions and blank-with-source max 30 ms pass. |
+| CV-08 | PASS | Failure/degraded-preview/retry-action regression passes; exact packaged performance records zero later pages blocked by page-local failure. |
+| CV-09 | PASS | Page-lease/stable-target regressions and packaged continuous click-away/lifecycle coverage pass. |
 
-## Required next run
+## Remaining work required to clear the release gate
 
-From a fresh interactive macOS login session, run the twelve packaged commands serially against the unchanged app path above. Supply the browser aggregate token as `OPEN_PDF_STUDIO_BROWSER_ACCEPTANCE_OUTCOME=success`, not `pass`. If native-text acceptance fails again, preserve the app log, viewport/editor placement diagnostics, and crash report; make only the evidenced product fix, produce a new code-qualified SHA, repackage, and restart all twelve commands. Then run the exact-SHA File Provider/manual matrix and update this report in a new report-only commit.
+Run the shaded/image/gradient/linework visual matrix, capture the dedicated save-adoption zoom/pan anchor metric, and complete live exFAT, Dropbox, and isolated provider-network-loss transactions against this code identity or a newly packaged successor. Also perform the unavailable physical trackpad, external-display, VoiceOver, and combined manual flows. Any product change requires a new code-qualified SHA, a new package, and a complete restart of the twelve-command matrix.
