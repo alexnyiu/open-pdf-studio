@@ -173,7 +173,7 @@ test('structural mutation invalidates every page readiness and geometry identity
   doc.pageEditReadiness = { 1: { ready: true }, 2: { ready: true } };
   doc.revisionState.pageRenderReadyRevisions = { 1: 0, 2: 0 };
   doc.revisionState.pageSemanticReadyRevisions = { 1: 0, 2: 0 };
-  noteDocumentMutation(doc, { structural: true, reason: 'page:rotate' });
+  noteDocumentMutation(doc, { structural: true, reason: 'page:insert' });
   assert.deepEqual(doc.revisionState.pageContentRevisions, { 1: 1, 2: 1 });
   assert.deepEqual(doc.revisionState.pageRenderReadyRevisions, {});
   assert.deepEqual(doc.revisionState.pageSemanticReadyRevisions, {});

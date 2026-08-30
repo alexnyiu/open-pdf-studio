@@ -341,7 +341,17 @@ test('rotation recording does not publish the already-rendered mutation twice', 
   const rotationStart = rendererSource.indexOf('export async function rotatePage');
   const rotationEnd = rendererSource.indexOf('// Clear the PDF view', rotationStart);
   const rotation = rendererSource.slice(rotationStart, rotationEnd);
-  assert.match(rotation, /noteDocumentMutation\(doc,/u);
+  assert.match(
+    rotation,
+    /noteDocumentMutation\(doc, \{ pages: \[pageNum\], reason: 'page:rotate' \}\)/u,
+    'rotation must invalidate only its owning page',
+  );
+  assert.doesNotMatch(rotation, /structural: true/u);
+  assert.ok(
+    rotation.indexOf('noteDocumentMutation(doc,')
+      < rotation.indexOf('rebuildDocumentPageGeometryIndex(doc)'),
+    'rotation geometry must be stamped after the content revision advances',
+  );
   assert.match(
     rotation,
     /renderContinuous\(true, \{\s*synchronization: true,\s*requiredPages: \[pageNum\],\s*\}\)/u,

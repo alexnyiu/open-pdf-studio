@@ -4546,10 +4546,14 @@ export async function rotatePage(delta, targetPage) {
   rotateAnnotationsForPage(pageNum, normDelta, oldViewport.width, oldViewport.height);
 
   setPageRotation(pageNum, current + delta);
+  // Rotation changes one page's persistent content and layout identity. Record
+  // that revision before rebuilding geometry so the index is stamped with the
+  // revision that the replacement page surface will publish. Treating this as
+  // a document-structural mutation erased the just-built index and invalidated
+  // every page, leaving an active editor detached while no current host could
+  // be resolved.
+  noteDocumentMutation(doc, { pages: [pageNum], reason: 'page:rotate' });
   rebuildDocumentPageGeometryIndex(doc);
-
-  // Mark document as modified
-  noteDocumentMutation(doc, { pages: [pageNum], structural: true, reason: 'page:rotate' });
 
   // Re-render
   if (doc?.viewMode === 'continuous') {
