@@ -474,6 +474,7 @@ export async function startTextEditing(annotation, {
     }
 
     const ann = state.editingAnnotation;
+    const wasDirtyBeforeFlush = session?.isDirty?.() === true;
     const snapshot = flushPdfEditorDraftForCommit({
       sessionId: session?.sessionId,
       ownerDocumentId: ownerDocument.id,
@@ -492,7 +493,7 @@ export async function startTextEditing(annotation, {
     // transient layout caches or turn a source mismatch into a false reject.
     if (cleanTextAnnotationApplyIsNoop({
       isNew: state._textEditIsNew,
-      isDirty: session?.isDirty?.() === true,
+      isDirty: wasDirtyBeforeFlush || snapshot.authoredChangedByFlush === true,
     })) {
       hidePdfTextEditor();
       resetEditingState();

@@ -9,6 +9,7 @@ import {
 import {
   createTextEditDirtyBaseline,
   textEditRecordContentChanged,
+  textEditRichTextContentChanged,
   textEditDraftIsDirty,
   textEditGeometryChanged,
 } from './text-edit-dirty-state.js';
@@ -246,8 +247,13 @@ test('PDF-number round-trip noise stays clean while authored geometry changes re
     text: 'First line\nSecond line',
     richText: roundTripped,
   }), false);
+  assert.equal(textEditRichTextContentChanged(source, roundTripped), false);
   assert.equal(textEditGeometryChanged(78.50439146800511, 78.50439146800522), false);
   assert.equal(textEditGeometryChanged(78.50439146800511, 78.50539146800511), true);
+
+  const authoredMove = clone(roundTripped);
+  authoredMove.region.x += 0.001;
+  assert.equal(textEditRichTextContentChanged(source, authoredMove), true);
 });
 
 test('textbox record geometry ignores only PDF-number round-trip noise', () => {

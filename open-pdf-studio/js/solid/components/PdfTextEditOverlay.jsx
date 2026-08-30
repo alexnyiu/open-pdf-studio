@@ -28,6 +28,7 @@ import {
   recordValidatedFinalTextLayout,
 } from '../../text/final-text-layout.js';
 import { textApplyResultSchedulesPersistence } from '../../text/text-apply-result.js';
+import { textEditRichTextContentChanged } from '../../text/text-edit-dirty-state.js';
 import { throwIfSaveFaultInjected } from '../../pdf/save-fault-injection.js';
 import {
   applyActiveTextEditing,
@@ -1662,7 +1663,7 @@ export default function PdfTextEditOverlay() {
 
   const syncRichDocument = () => {
     const current = richTextDocument();
-    if (!current || !richEditorRef) return;
+    if (!current || !richEditorRef) return false;
     const pendingSelection = pendingInputContext?.selection || richTextSelection();
     const insertion = pendingInputContext?.context || richTextInsertionContext(
       current,
@@ -1756,7 +1757,7 @@ export default function PdfTextEditOverlay() {
       : next;
     let authoredChanged = true;
     try {
-      authoredChanged = canonicalRichTextHash(draft) !== canonicalRichTextHash(current);
+      authoredChanged = textEditRichTextContentChanged(current, draft);
     } catch {
       authoredChanged = true;
     }
@@ -1775,6 +1776,7 @@ export default function PdfTextEditOverlay() {
     if (editorOptions().reflowWidth || expandable) queueMicrotask(resizeRichToContent);
     queueMicrotask(syncRichSelection);
     pendingInputContext = null;
+    return authoredChanged;
   };
 
   createEffect(() => {
@@ -1785,9 +1787,13 @@ export default function PdfTextEditOverlay() {
     const mountGeneration = editorMountGeneration();
     setEditorDraftFlushHandler(() => {
       if (!active() || editorMountGeneration() !== mountGeneration) return false;
-      if (richEditorRef && richTextDocument()) syncRichDocument();
-      else if (textareaRef) setText(textareaRef.value);
-      return true;
+      if (richEditorRef && richTextDocument()) return syncRichDocument() === true;
+      if (textareaRef) {
+        const authoredChanged = textareaRef.value !== text();
+        setText(textareaRef.value);
+        return authoredChanged;
+      }
+      return false;
     });
     onCleanup(() => setEditorDraftFlushHandler(null));
   });

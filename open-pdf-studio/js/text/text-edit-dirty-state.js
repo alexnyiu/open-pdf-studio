@@ -94,6 +94,11 @@ function richTextFingerprint(document) {
   }
 }
 
+/** Compare persisted rich-text meaning while ignoring PDF-number round-trip noise. */
+export function textEditRichTextContentChanged(previous, candidate) {
+  return richTextFingerprint(previous) !== richTextFingerprint(candidate);
+}
+
 function recordFingerprint(record) {
   if (!record) return null;
   try {

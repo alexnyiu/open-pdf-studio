@@ -320,6 +320,7 @@ test('final commit flush returns an immutable session and draft-revision snapsho
   });
   setEditorDraftFlushHandler(() => {
     updateRichTextDraft(documentWithText('final draft'));
+    return true;
   });
   const snapshot = flushEditorDraftForCommit({
     sessionId: 'session-1',
@@ -329,6 +330,7 @@ test('final commit flush returns an immutable session and draft-revision snapsho
   assert.equal(snapshot.plainText, 'final draft');
   assert.equal(snapshot.sessionId, 'session-1');
   assert.equal(snapshot.ownerDocumentGeneration, 9);
+  assert.equal(snapshot.authoredChangedByFlush, true);
   assert.equal(snapshot.placementGeneration, editorPlacement().sessionGeneration);
   assert.equal(snapshot.layoutRevision.payload.identity.draftRevision, snapshot.draftRevision);
   assert.equal(snapshot.layoutRevision.payload.identity.editorMountGeneration, editorMountGeneration());

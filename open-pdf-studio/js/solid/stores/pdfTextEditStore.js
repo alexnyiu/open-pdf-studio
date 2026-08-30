@@ -632,7 +632,7 @@ export function flushEditorDraftForCommit({
   ownerDocumentId,
   ownerDocumentGeneration,
 } = {}) {
-  editorDraftFlushHandler?.();
+  const authoredChangedByFlush = editorDraftFlushHandler?.() === true;
   const document = richTextDocument();
   if (!document) return null;
   const snapshot = immutableJson(document);
@@ -656,6 +656,7 @@ export function flushEditorDraftForCommit({
     editorMountGeneration: identity.editorMountGeneration,
     placementGeneration: identity.placementGeneration,
     draftRevision,
+    authoredChangedByFlush,
     document: snapshot,
     plainText: richTextToPlainText(snapshot),
     options: frozenConfig,

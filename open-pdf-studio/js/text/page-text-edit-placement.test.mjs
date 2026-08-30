@@ -183,6 +183,21 @@ test('annotation editor registers immutable ownership before exact-layout mounti
     'exact layout must not mount before its immutable session identity exists');
 });
 
+test('clean annotation Apply distinguishes authored flush changes from layout normalization', async () => {
+  const source = await readFile(new URL('../tools/text-editing.js', import.meta.url), 'utf8');
+  const annotationEditor = source.slice(
+    source.indexOf('export async function startTextEditing'),
+    source.indexOf('export function finishTextEditing'),
+  );
+  const preFlushDirty = annotationEditor.indexOf('const wasDirtyBeforeFlush =');
+  const flush = annotationEditor.indexOf('const snapshot = flushPdfEditorDraftForCommit({');
+  const authoredFlush = annotationEditor.indexOf('snapshot.authoredChangedByFlush === true');
+  assert.ok(preFlushDirty >= 0 && flush >= 0 && authoredFlush >= 0,
+    'annotation Apply must retain both pre-flush and authored-flush dirty state');
+  assert.ok(preFlushDirty < flush,
+    'clean state must be captured before DOM sealing can normalize layout geometry');
+});
+
 test('keyed portal handoff clears stale editor refs before replacement sizing', async () => {
   const source = await readFile(
     new URL('../solid/components/PdfTextEditOverlay.jsx', import.meta.url),
