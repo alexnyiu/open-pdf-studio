@@ -19,7 +19,7 @@ test.afterEach(() => {
   clearVectorCache();
 });
 
-test('page-type analysis from the same path is owned by content and page revision', () => {
+test('page-type analysis survives proxy-global revision but not a page revision', () => {
   let contentRevision = 1;
   let pageRevision = 1;
   registerPageTypeCacheOwner('/analysis.pdf', 'analysis-doc', 2,
@@ -27,11 +27,12 @@ test('page-type analysis from the same path is owned by content and page revisio
   cachePageType('/analysis.pdf', 0, 'tile');
   assert.equal(getCachedPageType('/analysis.pdf', 0), 'tile');
   contentRevision = 2;
+  assert.equal(getCachedPageType('/analysis.pdf', 0), 'tile');
   pageRevision = 2;
   assert.equal(getCachedPageType('/analysis.pdf', 0), null);
 });
 
-test('vector commands and decoded-image ownership cannot cross a saved revision', () => {
+test('vector commands survive proxy-global revision but not a page revision', () => {
   let contentRevision = 7;
   let pageRevision = 7;
   registerVectorCacheOwner('/vector.pdf', 'vector-doc', 4,
@@ -40,6 +41,7 @@ test('vector commands and decoded-image ownership cannot cross a saved revision'
   assert.equal(cacheCommands('/vector.pdf', 1, commands, 0), true);
   assert.equal(hasCachedCommands('/vector.pdf', 1, 0), true);
   contentRevision = 8;
+  assert.equal(hasCachedCommands('/vector.pdf', 1, 0), true);
   pageRevision = 8;
   assert.equal(hasCachedCommands('/vector.pdf', 1, 0), false);
 });

@@ -796,6 +796,13 @@ export function clearFormLayers() {
   hideFormFieldsBar();
 }
 
+export function clearFormLayersForPages(documentState, pages) {
+  if (!documentState || getActiveDocument() !== documentState) return;
+  for (const pageNum of new Set((pages || []).map(Number))) {
+    if (Number.isSafeInteger(pageNum) && pageNum > 0) releaseFormLayer(pageNum);
+  }
+}
+
 export function releaseFormLayer(pageNum) {
   const layer = formLayers.get(Number(pageNum));
   layer?.remove();

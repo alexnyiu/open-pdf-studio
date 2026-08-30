@@ -301,6 +301,13 @@ export function clearLinkLayers() {
   linkLayers.clear();
 }
 
+export function clearLinkLayersForPages(documentState, pages) {
+  if (!documentState || getActiveDocument() !== documentState) return;
+  for (const pageNum of new Set((pages || []).map(Number))) {
+    if (Number.isSafeInteger(pageNum) && pageNum > 0) releaseLinkLayer(pageNum);
+  }
+}
+
 export function releaseLinkLayer(pageNum) {
   const layer = linkLayers.get(Number(pageNum));
   layer?.remove();

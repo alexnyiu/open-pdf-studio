@@ -8,8 +8,10 @@
  * bitmap as the page background. The vector layer is then drawn on top so
  * text and lines stay vector-crisp.
  *
- * The cache is keyed by document/lifecycle/content/page revision, path,
- * rotation, density, and quality. Density buckets bound
+ * The cache is keyed by logical document/page revision, path, rotation,
+ * density, and quality. Proxy lifecycle and document-wide content revisions
+ * deliberately do not participate: an adopted proxy may reuse an unchanged
+ * page. Strict publication tokens still own every in-flight render.
  * memory growth and limit re-renders to actually-different scales.
  */
 
@@ -87,13 +89,6 @@ function _rasterRequest(filePath, pageNum, rotation, targetRasterScale, context 
     ? RasterQuality.PREVIEW
     : RasterQuality.FINAL;
   const documentId = context.documentId || _fileOwners.get(filePath) || filePath;
-  const lifecycleGeneration = Number.isFinite(Number(context.lifecycleGeneration))
-    ? Number(context.lifecycleGeneration)
-    : (_fileOwnerGenerations.get(filePath) || 0);
-  const contentRevisionReader = _fileContentRevisionReaders.get(filePath);
-  const contentRevision = Number.isFinite(Number(context.contentRevision))
-    ? Number(context.contentRevision)
-    : (Number(contentRevisionReader?.()) || 0);
   const revisionReader = _filePageRevisionReaders.get(filePath);
   const pageRevision = Number.isFinite(Number(context.pageRevision))
     ? Number(context.pageRevision)
@@ -103,8 +98,8 @@ function _rasterRequest(filePath, pageNum, rotation, targetRasterScale, context 
   const target = Number(context.targetRasterScale) || Number(targetRasterScale) || 1;
   const key = createPageRasterKey({
     documentId,
-    lifecycleGeneration,
-    contentRevision,
+    lifecycleGeneration: 0,
+    contentRevision: pageRevision,
     pageRevision,
     filePath,
     pageNum,
@@ -200,11 +195,8 @@ function _releaseSupersededRevisionEntries(request) {
     const cached = entry?.rasterKey;
     if (!cached
         || cached.documentId !== current.documentId
-        || cached.lifecycleGeneration !== current.lifecycleGeneration) continue;
-    const obsoleteContent = cached.contentRevision !== current.contentRevision;
-    const obsoletePage = cached.pageNum === current.pageNum
-      && cached.pageRevision !== current.pageRevision;
-    if (!obsoleteContent && !obsoletePage) continue;
+        || cached.pageNum !== current.pageNum
+        || cached.pageRevision === current.pageRevision) continue;
     try { entry.bitmap?.close?.(); } catch {}
     _cache.delete(key);
     unregisterRenderResource(_resourceKey(key));
@@ -443,7 +435,6 @@ export function getBestAvailableBitmap(filePath, pageNum, rotation, targetBucket
     const candidates = _entriesForPage(filePath, pageNum, rotation)
       .filter(([, entry]) => entry?.rasterKey
         && entry.rasterKey.documentId === request.key.documentId
-        && entry.rasterKey.lifecycleGeneration === request.key.lifecycleGeneration
         && entry.rasterKey.pageRevision === request.key.pageRevision)
       .sort(([, left], [, right]) => {
         const leftDistance = Math.abs(Math.log2(left.actualRasterScale) - Math.log2(request.targetRasterScale));
@@ -519,7 +510,8 @@ function _ensureBitmapAtScale(filePath, pageNum, rotation, cacheBucket, renderSc
   if (!isTauri() || !filePath) return Promise.resolve(null);
   const expectedGlobalGeneration = _globalGeneration;
   const expectedFileGeneration = _fileGenerations.get(filePath) || 0;
-  const expectedOwnerGeneration = request?.key.lifecycleGeneration ?? null;
+  const expectedOwnerGeneration = Number.isFinite(Number(context?.lifecycleGeneration))
+    ? Number(context.lifecycleGeneration) : null;
   const expectedPageRevision = request?.key.pageRevision ?? null;
   const pageRevisionReader = _filePageRevisionReaders.get(filePath);
   const publicationToken = context?.publicationToken || null;
@@ -607,7 +599,6 @@ function _ensureBitmapAtScale(filePath, pageNum, rotation, cacheBucket, renderSc
 /// Drop ALL bitmap entries for a specific (filePath, pageNum). Use when page
 /// content changes (e.g. annotations saved into the PDF stream).
 export function invalidatePageBitmaps(filePath, pageNum) {
-  _fileGenerations.set(filePath, (_fileGenerations.get(filePath) || 0) + 1);
   for (const k of Array.from(_cache.keys())) {
     const e = _cache.get(k);
     if (!_entryMatchesPage(e, filePath, pageNum, e?.rasterKey?.rotation ?? e?.rotation ?? 0)) continue;
@@ -622,6 +613,16 @@ export function invalidatePageBitmaps(filePath, pageNum) {
     }
   }
   _recordDecodedBitmapMemory();
+}
+
+/** Drop only the requested page revisions while preserving warm neighbours. */
+export function clearBitmapsForPages(filePath, pages) {
+  if (!filePath) return;
+  for (const pageNum of new Set((pages || []).map(Number))) {
+    if (Number.isSafeInteger(pageNum) && pageNum > 0) {
+      invalidatePageBitmaps(filePath, pageNum);
+    }
+  }
 }
 
 export function clearAllBitmaps() {

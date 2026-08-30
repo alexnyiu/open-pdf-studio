@@ -32,10 +32,6 @@ export function textCacheRevisionIsCurrent(revisionIdentity, doc, pdfDoc = doc?.
   const current = captureTextCacheRevision(doc, pdfDoc, revisionIdentity.pageNum);
   return Boolean(current
     && current.documentId === revisionIdentity.documentId
-    && current.lifecycleGeneration === revisionIdentity.lifecycleGeneration
-    && current.pdfDocument === revisionIdentity.pdfDocument
-    && current.contentRevision === revisionIdentity.contentRevision
-    && current.livePdfRevision === revisionIdentity.livePdfRevision
     && current.pageRevision === revisionIdentity.pageRevision);
 }
 
@@ -91,8 +87,7 @@ export function pageTextSignature(doc, pageNum) {
 export function readPageTextCache(doc, pdfDoc, pageNum) {
   const byPage = documentTextCache.get(doc?.id);
   const entry = byPage?.get(pageNum);
-  if (!entry || entry.pdfDoc !== pdfDoc
-      || !textCacheRevisionIsCurrent(entry.revisionIdentity, doc, pdfDoc)
+  if (!entry || !textCacheRevisionIsCurrent(entry.revisionIdentity, doc, pdfDoc)
       || entry.signature !== pageTextSignature(doc, pageNum)) {
     return null;
   }

@@ -125,6 +125,15 @@ export function discardNativeTextSourcePages(documentState, pageNums) {
   for (const pageNum of pageNums || []) record.pageCache.delete(pageNum);
 }
 
+/** Preserve resolved unchanged page provenance across validated proxy adoption. */
+export function adoptNativeTextSourceRevision(documentState, changedPages = []) {
+  const record = documentState && sourceMapsByDocument.get(documentState);
+  if (!record) return false;
+  for (const pageNum of changedPages || []) record.pageCache.delete(Number(pageNum));
+  record.revisionIdentity = captureNativeTextSourceRevision(documentState);
+  return true;
+}
+
 export function nativeTextSourceCacheSnapshotForTests(documentState) {
   const record = documentState && sourceMapsByDocument.get(documentState);
   return Object.freeze({

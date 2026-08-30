@@ -151,6 +151,14 @@ function thumbnailPublicationIsCurrent(doc, publicationToken) {
     && renderPublicationTokenIsCurrent(publicationToken, doc);
 }
 
+function thumbnailPublicationIsReusable(doc, pageNum, publicationToken) {
+  if (!doc?.id || !publicationToken) return false;
+  const pageRevision = Number(doc.revisionState?.pageContentRevisions?.[pageNum]
+    ?? doc.pageRenderRevisions?.[pageNum]) || 0;
+  return String(publicationToken.documentId || '') === String(doc.id)
+    && Number(publicationToken.pageRevision) === pageRevision;
+}
+
 // Store pdfDoc references and state for each document
 const documentState = new Map(); // { pdfDoc, numPages, nextPage, startPage }
 
@@ -947,7 +955,7 @@ export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false }
   const publicationToken = captureRenderPublicationToken(doc, pageNum, 'thumbnail');
   const cached = cache.get(pageNum);
   if (cached?.publicationToken
-      && renderPublicationTokenIsCurrent(cached.publicationToken, doc)) {
+      && thumbnailPublicationIsReusable(doc, pageNum, cached.publicationToken)) {
     touchRenderResource(thumbnailEntryResourceKey(doc.id, pageNum, cached));
     return cached;
   }
@@ -1012,8 +1020,7 @@ export async function preloadThumbnailPage(doc, pageNum, { preloadOnly = false }
 export function getCachedThumbnailEntry(doc, pageNum) {
   const entry = doc ? thumbnailCache.get(doc.id)?.get(pageNum) || null : null;
   if (!entry) return null;
-  if (!entry.publicationToken
-      || !renderPublicationTokenIsCurrent(entry.publicationToken, doc)) {
+  if (!thumbnailPublicationIsReusable(doc, pageNum, entry.publicationToken)) {
     releaseThumbnailPage(doc, pageNum);
     return null;
   }
@@ -1045,6 +1052,20 @@ export function cancelDocumentThumbnailWork(doc) {
     const pageNum = Number(key.slice(prefix.length).split(':')[0]);
     if (Number.isInteger(pageNum)) bumpPageGen(doc.id, pageNum);
   }
+}
+
+export function cancelThumbnailWorkForPages(doc, pages) {
+  if (!doc?.id) return;
+  const selected = new Set((pages || []).map(Number)
+    .filter((pageNum) => Number.isSafeInteger(pageNum) && pageNum > 0));
+  for (const [key, task] of thumbnailRenderTasks) {
+    if (!key.startsWith(`${doc.id}:`)) continue;
+    const pageNum = Number(key.slice(`${doc.id}:`.length).split(':')[0]);
+    if (!selected.has(pageNum)) continue;
+    try { task.cancel(); } catch { /* ignore */ }
+    thumbnailRenderTasks.delete(key);
+  }
+  for (const pageNum of selected) bumpPageGen(doc.id, pageNum);
 }
 
 export function visibleThumbnailPages() {
@@ -1151,6 +1172,24 @@ export function invalidateThumbnails(pageNums) {
     any = true;
   }
   if (any) startProcessor();
+}
+
+/** Clear owner-scoped thumbnail pages without touching warm neighbours. */
+export function clearThumbnailsForPages(documentId, pages) {
+  const docId = String(documentId || '');
+  if (!docId) return;
+  const cache = thumbnailCache.get(docId);
+  const active = getActiveDocument()?.id === docId;
+  for (const pageNum of new Set((pages || []).map(Number))) {
+    if (!Number.isSafeInteger(pageNum) || pageNum < 1) continue;
+    const entry = cache?.get(pageNum);
+    revokeThumbnailEntry(entry);
+    cache?.delete(pageNum);
+    unregisterRenderResource(thumbnailEntryResourceKey(docId, pageNum, entry));
+    preloadOnlyPages.get(docId)?.delete(pageNum);
+    bumpPageGen(docId, pageNum);
+    if (active) removeThumbnailImage(pageNum);
+  }
 }
 
 // Clear thumbnail cache for a specific document

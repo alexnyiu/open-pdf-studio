@@ -15,11 +15,13 @@ function previewOwner(overrides = {}) {
   };
 }
 
-test('low-resolution previews distinguish lifecycle, content, page revision, and rotation', () => {
+test('low-resolution previews survive proxy adoption but distinguish page revision and rotation', () => {
   const baseline = createLowResolutionPreviewKey(previewOwner(), 1);
   for (const owner of [
     previewOwner({ lifecycleGeneration: 3 }),
     previewOwner({ revisionState: { contentRevision: 4 } }),
+  ]) assert.equal(createLowResolutionPreviewKey(owner, 1), baseline);
+  for (const owner of [
     previewOwner({ pageRenderRevisions: { 1: 4 } }),
     previewOwner({ pageRotations: { 1: 90 } }),
   ]) assert.notEqual(createLowResolutionPreviewKey(owner, 1), baseline);

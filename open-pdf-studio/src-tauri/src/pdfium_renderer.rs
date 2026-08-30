@@ -49,7 +49,7 @@ pub fn pdfium() -> &'static Pdfium {
         .expect("PDFium not initialised. Call init_pdfium() during app startup.")
 }
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 /// Serialises ALL in-proc PDFium FFI work — document loading and page / region /
@@ -405,6 +405,27 @@ impl PixmapCache {
         self.peak_bytes = 0;
     }
 
+    /// Remove only rasterized revisions for changed pages of one saved file.
+    pub fn remove_pages(&mut self, path: &str, page_indices: &HashSet<u32>) -> usize {
+        let keys: Vec<_> = self
+            .map
+            .keys()
+            .filter(|(candidate_path, page_index, _, _)| {
+                candidate_path == path && page_indices.contains(page_index)
+            })
+            .cloned()
+            .collect();
+        let mut removed = 0;
+        for key in keys {
+            if let Some(value) = self.map.remove(&key) {
+                self.current_bytes = self.current_bytes.saturating_sub(value.rgba.len());
+                removed += 1;
+            }
+            self.order.retain(|candidate| candidate != &key);
+        }
+        removed
+    }
+
     pub fn stats(&self) -> (usize, usize) {
         (self.map.len(), self.current_bytes)
     }
@@ -439,6 +460,7 @@ impl PixmapCacheState {
 #[cfg(test)]
 mod pixmap_cache_tests {
     use super::{CachedPixmap, PixmapCache};
+    use std::collections::HashSet;
     use std::sync::Arc;
 
     fn pixmap(bytes: usize) -> Arc<CachedPixmap> {
@@ -483,6 +505,22 @@ mod pixmap_cache_tests {
         assert!(cache.get(&a).is_none());
         assert!(cache.get(&b).is_some());
         assert_eq!(cache.detailed_stats().4, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn pixmap_cache_page_invalidation_preserves_warm_neighbours() {
+        let mut cache = PixmapCache::new(40, 64 * 1024 * 1024);
+        for page_index in 244..=254 {
+            cache.insert(("large.pdf".into(), page_index, 10_000, 0), pixmap(1));
+        }
+        cache.insert(("other.pdf".into(), 249, 10_000, 0), pixmap(1));
+        let changed = HashSet::from([249_u32]);
+        assert_eq!(cache.remove_pages("large.pdf", &changed), 1);
+        assert_eq!(cache.stats().0, 11);
+        assert!(cache.get(&("large.pdf".into(), 248, 10_000, 0)).is_some());
+        assert!(cache.get(&("large.pdf".into(), 250, 10_000, 0)).is_some());
+        assert!(cache.get(&("large.pdf".into(), 249, 10_000, 0)).is_none());
+        assert!(cache.get(&("other.pdf".into(), 249, 10_000, 0)).is_some());
     }
 }
 

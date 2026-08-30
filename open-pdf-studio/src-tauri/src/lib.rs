@@ -35,7 +35,7 @@ impl Default for StartupOpts {
 }
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
 use std::sync::{Arc, Mutex};
@@ -2971,6 +2971,61 @@ fn invalidate_pdf_cache(
     Ok(true)
 }
 
+/// Invalidate parsed-file ownership plus only page-keyed render derivatives
+/// for the pages changed by a nonstructural save. Parsed byte/document handles
+/// are path-scoped and must be reopened; warm page-keyed neighbours survive.
+#[tauri::command]
+fn invalidate_pdf_pages(
+    path: String,
+    page_indices: Vec<u32>,
+    bytes_cache: tauri::State<PdfBytesCache>,
+    handle_cache: tauri::State<DocHandleCache>,
+    thumb_cache: tauri::State<ThumbnailCache>,
+    page_type_cache: tauri::State<PageTypeCache>,
+    page_content_size_cache: tauri::State<PageContentSizeCache>,
+    pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
+    pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
+    transfers: tauri::State<RenderPngTransfers>,
+) -> Result<bool, String> {
+    let pages: HashSet<u32> = page_indices.into_iter().collect();
+    // The streaming endpoint currently cancels by source path. This prevents
+    // stale publication while retaining every completed unrelated cache entry.
+    transfers.cancel_for_source(&path);
+    bytes_cache
+        .0
+        .lock()
+        .map_err(|e| format!("Bytes cache lock: {}", e))?
+        .remove(&path);
+    handle_cache
+        .0
+        .lock()
+        .map_err(|e| format!("Handle cache lock: {}", e))?
+        .remove(&path);
+    if let Ok(mut cache) = thumb_cache.0.lock() {
+        cache.retain(|(candidate, page_index, _, _), _| {
+            candidate != &path || !pages.contains(page_index)
+        });
+    }
+    if let Ok(mut cache) = page_type_cache.0.lock() {
+        cache
+            .retain(|(candidate, page_index), _| candidate != &path || !pages.contains(page_index));
+    }
+    // Content-size metadata is stored as one path-owned vector, so it cannot
+    // be invalidated honestly per page without redesigning its representation.
+    if let Ok(mut cache) = page_content_size_cache.0.lock() {
+        cache.remove(&path);
+    }
+    if let Ok(mut cache) = pdfium_cache.0.lock() {
+        cache.remove(&path);
+    }
+    if let Ok(mut cache) = pixmap_cache.0.lock() {
+        if let Some(cache) = cache.as_mut() {
+            cache.remove_pages(&path, &pages);
+        }
+    }
+    Ok(true)
+}
+
 /// Clear the entire PDF bytes cache AND parsed handle cache (call on app
 /// cleanup or memory pressure).
 #[tauri::command]
@@ -3538,6 +3593,7 @@ pub fn run(opts: StartupOpts) {
             page_content_size,
             get_page_dimensions,
             invalidate_pdf_cache,
+            invalidate_pdf_pages,
             clear_pdf_cache,
             analyze_page_type,
             analyze_page_type_batch,

@@ -50,6 +50,25 @@ test('search text cache reuses only an identity-compatible revision', () => {
   assert.equal(readPageTextCache(documentState, documentState.pdfDoc, 1), newValue);
 });
 
+test('proxy adoption preserves search text for an unchanged page only', () => {
+  const documentState = documentOwner();
+  documentState.revisionState.pageContentRevisions[2] = 1;
+  documentState.pageRenderRevisions[2] = 1;
+  const first = { text: 'warm first page' };
+  const second = { text: 'changed second page' };
+  writePageTextCache(documentState, documentState.pdfDoc, 1, first);
+  writePageTextCache(documentState, documentState.pdfDoc, 2, second);
+  documentState.pdfDoc = { id: 'proxy-two' };
+  documentState.lifecycleGeneration = 2;
+  documentState.revisionState.contentRevision = 2;
+  documentState.revisionState.persistedRevision = 2;
+  documentState.revisionState.livePdfRevision = 2;
+  documentState.revisionState.pageContentRevisions[2] = 2;
+  documentState.pageRenderRevisions[2] = 2;
+  assert.equal(readPageTextCache(documentState, documentState.pdfDoc, 1), first);
+  assert.equal(readPageTextCache(documentState, documentState.pdfDoc, 2), null);
+});
+
 test('search extraction is unavailable while persisted bytes are newer than the live proxy', () => {
   const documentState = documentOwner();
   documentState.revisionState.persistedRevision = 2;

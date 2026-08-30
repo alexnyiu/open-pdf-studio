@@ -6,8 +6,6 @@ export function createLowResolutionPreviewKey(documentState, pageNum) {
   return [
     documentState.filePath || 'blank',
     `d${documentState.id}`,
-    `g${Number(documentState.lifecycleGeneration) || 0}`,
-    `c${Number(documentState.revisionState?.contentRevision) || 0}`,
     `p${page}`,
     `v${Number(documentState.pageRenderRevisions?.[page]) || 0}`,
     `r${Number(documentState.pageRotations?.[page]) || 0}`,

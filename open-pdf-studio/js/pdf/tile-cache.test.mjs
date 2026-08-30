@@ -9,6 +9,7 @@ import {
 import {
   registerTileCacheOwner,
   tileCacheClearAll,
+  tileCacheClearPages,
   tileCacheGet,
   tileCacheSet,
   tileCacheSnapshotForTests,
@@ -83,7 +84,7 @@ test('a tile decoded for an old page revision is closed instead of inserted', as
   assert.equal(closeCount, 1);
 });
 
-test('a prewarmed tile from the same path cannot serve a newer saved revision', async () => {
+test('a prewarmed tile survives proxy-global revision but not a page revision', async () => {
   let contentRevision = 1;
   let pageRevision = 1;
   let closeCount = 0;
@@ -105,9 +106,34 @@ test('a prewarmed tile from the same path cannot serve a newer saved revision', 
   await tileCacheSet('/same-path.pdf', 1, 2, 0, '0,0', { width: 10, height: 10 }, region);
   assert.ok(tileCacheGet('/same-path.pdf', 1, 2, 0, '0,0'));
   contentRevision = 2;
+  assert.ok(tileCacheGet('/same-path.pdf', 1, 2, 0, '0,0'));
   pageRevision = 2;
   assert.equal(tileCacheGet('/same-path.pdf', 1, 2, 0, '0,0'), null);
   assert.equal(closeCount, 0);
   tileCacheClearAll();
   assert.equal(closeCount, 1);
+});
+
+test('page-scoped tile clear retains neighboring pages', async () => {
+  globalThis.createImageBitmap = async (imageData) => ({
+    width: imageData.width,
+    height: imageData.height,
+    close() {},
+  });
+  configureRenderResourceBudget({
+    globalBytes: 1_000_000,
+    javascriptBytes: 1_000_000,
+    nativePixmapBytes: 1_000_000,
+    metadataBytes: 1_000_000,
+    activeDocumentShare: 0.8,
+  }, 'tile-owner');
+  registerTileCacheOwner('/scoped-tiles.pdf', 'tile-owner');
+  for (const pageNum of [249, 250, 251]) {
+    await tileCacheSet('/scoped-tiles.pdf', pageNum, 2, 0, '0,0',
+      { width: 10, height: 10 }, { renderScale: 2 });
+  }
+  tileCacheClearPages('/scoped-tiles.pdf', [250]);
+  assert.ok(tileCacheGet('/scoped-tiles.pdf', 249, 2, 0, '0,0'));
+  assert.equal(tileCacheGet('/scoped-tiles.pdf', 250, 2, 0, '0,0'), null);
+  assert.ok(tileCacheGet('/scoped-tiles.pdf', 251, 2, 0, '0,0'));
 });

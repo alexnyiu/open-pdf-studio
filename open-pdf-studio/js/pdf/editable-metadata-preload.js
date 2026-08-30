@@ -9,6 +9,7 @@ import {
   nativeTextSourceRevisionIsCurrent,
 } from '../text/native-text-provenance.js';
 import { BoundedPdfPreloadController, directionalPreloadPages } from './pdf-preload-controller.js';
+import { adoptEditableMetadataController } from './editable-metadata-adoption.js';
 import { isThumbnailPipelineIdle } from '../ui/panels/left-panel.js';
 import { isPdfForegroundIdle } from './foreground-activity.js';
 import { backgroundRenderAdmissionAllowed } from './render-resource-budget.js';
@@ -63,6 +64,42 @@ function expectedRevisionMatches(expectedRevision, doc) {
         === (Number(expectedRevision.livePdfRevision) || 0));
 }
 
+function metadataLoader(doc, revisionIdentity) {
+  return async (pageNum) => {
+    const publicationToken = captureRenderPublicationToken(doc, pageNum, 'editable-metadata');
+    const isCurrent = () => editableMetadataRevisionIsCurrent(revisionIdentity, doc)
+      && renderPublicationTokenIsCurrent(publicationToken, doc);
+    const [page, sourceMaps] = await Promise.all([
+      doc.pdfDoc.getPage(pageNum),
+      inspectNativeTextSourcesForPages([pageNum], doc, revisionIdentity),
+    ]);
+    if (!isCurrent()) {
+      discardNativeTextSourcePages(doc, [pageNum]);
+      recordRejectedRenderPublication(publicationToken, 'metadata-after-source-extraction');
+      return null;
+    }
+    const textContent = await page.getTextContent();
+    if (!isCurrent()) {
+      discardNativeTextSourcePages(doc, [pageNum]);
+      recordRejectedRenderPublication(publicationToken, 'metadata-after-text-extraction');
+      return null;
+    }
+    const sourceMap = sourceMaps.get(pageNum) || null;
+    const value = {
+      textContent,
+      sourceMap,
+      blocks: pureBlocks(textContent, sourceMap),
+      revisionIdentity,
+    };
+    if (!isCurrent()) {
+      discardNativeTextSourcePages(doc, [pageNum]);
+      recordRejectedRenderPublication(publicationToken, 'metadata-before-cache-insertion');
+      return null;
+    }
+    return { value, bytes: byteEstimate(textContent, sourceMap) };
+  };
+}
+
 function controllerFor(doc, expectedRevision = null) {
   if (!doc?.pdfDoc || !expectedRevisionMatches(expectedRevision, doc)) return null;
   const revisionIdentity = captureEditableMetadataRevision(doc);
@@ -82,39 +119,7 @@ function controllerFor(doc, expectedRevision = null) {
       logPreload(event);
       if (event.type === 'eviction') discardNativeTextSourcePages(doc, [event.page]);
     },
-    load: async (pageNum) => {
-      const publicationToken = captureRenderPublicationToken(doc, pageNum, 'editable-metadata');
-      const isCurrent = () => editableMetadataRevisionIsCurrent(revisionIdentity, doc)
-        && renderPublicationTokenIsCurrent(publicationToken, doc);
-      const [page, sourceMaps] = await Promise.all([
-        doc.pdfDoc.getPage(pageNum),
-        inspectNativeTextSourcesForPages([pageNum], doc, revisionIdentity),
-      ]);
-      if (!isCurrent()) {
-        discardNativeTextSourcePages(doc, [pageNum]);
-        recordRejectedRenderPublication(publicationToken, 'metadata-after-source-extraction');
-        return null;
-      }
-      const textContent = await page.getTextContent();
-      if (!isCurrent()) {
-        discardNativeTextSourcePages(doc, [pageNum]);
-        recordRejectedRenderPublication(publicationToken, 'metadata-after-text-extraction');
-        return null;
-      }
-      const sourceMap = sourceMaps.get(pageNum) || null;
-      const value = {
-        textContent,
-        sourceMap,
-        blocks: pureBlocks(textContent, sourceMap),
-        revisionIdentity,
-      };
-      if (!isCurrent()) {
-        discardNativeTextSourcePages(doc, [pageNum]);
-        recordRejectedRenderPublication(publicationToken, 'metadata-before-cache-insertion');
-        return null;
-      }
-      return { value, bytes: byteEstimate(textContent, sourceMap) };
-    },
+    load: metadataLoader(doc, revisionIdentity),
   });
   controllers.set(doc, { controller, revisionIdentity });
   return controller;
@@ -167,6 +172,22 @@ export function clearEditableMetadataPreload(doc = getActiveDocument()) {
   record?.controller?.clear();
   clearNativeTextSourceCache(doc);
   if (doc) controllers.delete(doc);
+}
+
+/**
+ * Move resolved unchanged metadata to a validated replacement proxy. Pending
+ * work is cancelled and changed pages are discarded before the loader is
+ * rebound to the new PDF.js owner.
+ */
+export function adoptEditableMetadataPreloadRevision(doc, changedPages = []) {
+  const record = doc && controllers.get(doc);
+  if (!record) return false;
+  const revisionIdentity = captureEditableMetadataRevision(doc);
+  return adoptEditableMetadataController(record, {
+    revisionIdentity,
+    changedPages,
+    load: metadataLoader(doc, revisionIdentity),
+  });
 }
 
 export function editableMetadataPreloadSnapshotForTests(doc) {

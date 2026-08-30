@@ -1,6 +1,7 @@
 // LRU cache for region-tile ImageBitmaps used at high zoom.
-// Keys include document/lifecycle/content/page revision plus scale, rotation,
-// and region, so a tile from an earlier save cannot satisfy the same path.
+// Keys include logical document/page revision plus scale, rotation, and region.
+// An unchanged page remains reusable across validated proxy adoption while
+// publication tokens reject stale in-flight work.
 // regionBucket = "x,y" in PDF points snapped to 25%-viewport buffer grid.
 // Entries participate in the shared byte-aware render budget. Visible tiles
 // are protected; old scale buckets and inactive-document tiles are evicted
@@ -68,8 +69,6 @@ function makeKey(filePath, pageNum, zoomBucket, rotation, regionBucket, publicat
   return [
     filePath,
     `d${identity.documentId}`,
-    `g${identity.lifecycleGeneration}`,
-    `c${identity.contentRevision}`,
     `p${pageNum}`,
     `v${identity.pageRevision}`,
     `z${Math.round(zoomBucket * 10000)}`,
@@ -130,8 +129,6 @@ export function tileCacheFindCovering(filePath, pageNum, rotation, request) {
         && entry.pageNum === Number(pageNum)
         && entry.rotation === (Number(rotation) || 0)
         && entry.documentId === expectedIdentity.documentId
-        && entry.lifecycleGeneration === expectedIdentity.lifecycleGeneration
-        && entry.contentRevision === expectedIdentity.contentRevision
         && entry.pageRevision === expectedIdentity.pageRevision) {
       candidates.push({ key, entry, regionMeta: entry.regionMeta });
     }
@@ -204,6 +201,17 @@ export function tileCacheClearForFile(filePath) {
     }
   }
   FILE_OWNERS.delete(filePath);
+}
+
+export function tileCacheClearPages(filePath, pages) {
+  if (!filePath) return;
+  const selected = new Set((pages || []).map(Number)
+    .filter((pageNum) => Number.isSafeInteger(pageNum) && pageNum > 0));
+  for (const [key, entry] of [...CACHE.entries()]) {
+    if (entry.filePath === filePath && selected.has(Number(entry.pageNum))) {
+      releaseEntry(key, entry);
+    }
+  }
 }
 
 export function tileCacheClearAll() {

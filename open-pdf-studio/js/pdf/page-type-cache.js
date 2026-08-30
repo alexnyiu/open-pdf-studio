@@ -9,8 +9,8 @@
 // is still authoritative for cold misses (first navigation before batch
 // completes); this is a perf overlay on top.
 //
-// Cache keys include document/lifecycle/content/page revision and the
-// 0-indexed Rust page index. Values are 'vector' | 'tile'.
+// Cache keys include logical document/page revision and the 0-indexed Rust
+// page index. Values are 'vector' | 'tile'.
 
 const _cache = new Map();
 const _owners = new Map();
@@ -34,8 +34,6 @@ function _key(filePath, pageIndex, publicationToken = null) {
   return [
     filePath,
     `d${identity.documentId}`,
-    `g${identity.lifecycleGeneration}`,
-    `c${identity.contentRevision}`,
     `p${pageIndex}`,
     `v${identity.pageRevision}`,
   ].join('::');
@@ -87,6 +85,19 @@ export function evictFile(filePath) {
     if (k.startsWith(prefix)) _cache.delete(k);
   }
   _owners.delete(filePath);
+}
+
+export function evictPageTypesForPages(filePath, pages) {
+  if (!filePath) return;
+  const pageIndices = new Set((pages || []).map((pageNum) => Number(pageNum) - 1)
+    .filter((pageIndex) => Number.isSafeInteger(pageIndex) && pageIndex >= 0));
+  for (const [key] of _cache) {
+    const parts = key.split('::');
+    const pagePart = parts.find((part) => /^p\d+$/u.test(part));
+    if (key.startsWith(`${filePath}::`) && pageIndices.has(Number(pagePart?.slice(1)))) {
+      _cache.delete(key);
+    }
+  }
 }
 
 /** Drop every entry (call on app shutdown or memory pressure). */

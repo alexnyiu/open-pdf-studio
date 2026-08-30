@@ -17,6 +17,7 @@ import { ownedTextEditLineTargets } from './owned-text-edit-targets.js';
 import {
   attachNativeTextProvenance,
   clearNativeTextSourceCache,
+  discardNativeTextSourcePages,
   inspectNativeTextSourcesForPage,
 } from './native-text-provenance.js';
 import {
@@ -40,6 +41,7 @@ import {
 import {
   registerPageSurface,
   resolvePageSurface,
+  resolvePageSurfaceForElement,
   unregisterPageSurface,
 } from '../pdf/page-surface-registry.js';
 
@@ -1231,16 +1233,67 @@ export function clearTextLayers() {
   clearNativeTextSourceCache(getActiveDocument());
 }
 
+export function clearTextLayersForPages(documentState, pages) {
+  if (!documentState || getActiveDocument() !== documentState) return;
+  for (const pageNum of new Set((pages || []).map(Number))) {
+    if (!Number.isSafeInteger(pageNum) || pageNum < 1) continue;
+    releaseTextLayer(pageNum, { preserveSurfaceRevision: true });
+  }
+  discardNativeTextSourcePages(documentState, pages);
+}
+
+/** Restamp unchanged mounted text layers after validated proxy adoption. */
+export function adoptTextLayersForDocument(documentState, pages) {
+  if (!documentState || getActiveDocument() !== documentState) return [];
+  const adopted = [];
+  for (const pageNum of new Set((pages || []).map(Number))) {
+    const entry = textLayers.get(pageNum);
+    const element = entry?.element || entry;
+    if (!element?.isConnected) continue;
+    const owner = captureTextLayerOwner(documentState, pageNum);
+    if (!owner) continue;
+    stampTextLayerOwner(element, owner, entry?.requestGeneration ?? null);
+    if (entry?.element) textLayers.set(pageNum, { ...entry, owner });
+    registerTextLayerPageSurface(documentState, pageNum, element.parentElement, element);
+    adopted.push(pageNum);
+  }
+  return adopted;
+}
+
 /** Release one virtualized continuous-page layer without invalidating the
  * provenance cache for every other mounted page. */
-export function releaseTextLayer(pageNum) {
+export function releaseTextLayer(pageNum, { preserveSurfaceRevision = false } = {}) {
   const entry = textLayers.get(Number(pageNum));
   const element = entry?.element || entry;
   if (element) {
+    const retainedSurface = preserveSurfaceRevision
+      ? resolvePageSurfaceForElement(element) : null;
     textLayerRequests.invalidateContainer(element.parentElement);
     const documentState = getActiveDocument();
     if (documentState) {
-      registerTextLayerPageSurface(documentState, Number(pageNum), element.parentElement, null);
+      const container = element.parentElement;
+      const input = {
+        documentState,
+        pageNum: Number(pageNum),
+        surfaceKind: retainedSurface?.surfaceKind || 'continuous-canvas',
+        container,
+        baseSurface: retainedSurface?.baseSurface
+          || container?.querySelector?.('.pdf-page-raster, canvas.pdf-canvas:not(.annotation-canvas)'),
+        geometryCanvas: retainedSurface?.geometryCanvas
+          || container?.querySelector?.('canvas.pdf-canvas-geometry'),
+        overlayCanvas: retainedSurface?.overlayCanvas
+          || container?.querySelector?.('canvas.annotation-canvas, #annotation-canvas'),
+        textLayer: null,
+        canonicalPageDimensions: retainedSurface?.canonicalPageDimensions,
+        cssScale: retainedSurface?.cssScale || Number(documentState.scale) || 1,
+        dpr: retainedSurface?.dpr || Number(globalThis.window?.devicePixelRatio) || 1,
+      };
+      if (retainedSurface) {
+        input.pageContentRevision = retainedSurface.pageContentRevision;
+        input.basePublishedRevision = retainedSurface.basePublishedRevision;
+        input.semanticPublishedRevision = retainedSurface.semanticPublishedRevision;
+      }
+      registerPageSurface(input);
     }
     element.remove();
   }

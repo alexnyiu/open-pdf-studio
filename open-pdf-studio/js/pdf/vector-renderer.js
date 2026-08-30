@@ -37,8 +37,8 @@ import {
   renderPublicationTokenIsCurrent,
 } from './render-publication-token.js';
 
-// Command and decoded-image keys include document/lifecycle/content/page
-// revision plus rotation so old saved bytes cannot satisfy a newer proxy.
+// Command and decoded-image keys include logical document/page revision plus
+// rotation. Validated proxy adoption therefore preserves unchanged pages.
 const _cache = new Map();
 const _fileOwners = new Map();
 
@@ -60,8 +60,6 @@ function _key(filePath, pageNum, rotation, publicationToken = null) {
   return [
     filePath,
     `d${identity.documentId}`,
-    `g${identity.lifecycleGeneration}`,
-    `c${identity.contentRevision}`,
     `p${pageNum}`,
     `v${identity.pageRevision}`,
     `r${((rotation || 0) % 360)}`,
@@ -163,6 +161,13 @@ export function clearVectorCacheForFile(filePath) {
 export function invalidatePageCache(filePath, pageNum) {
   for (const [key, entry] of [..._cache.entries()]) {
     if (entry.filePath === filePath && entry.pageNum === Number(pageNum)) releaseVectorEntry(key);
+  }
+}
+
+export function clearVectorCacheForPages(filePath, pages) {
+  if (!filePath) return;
+  for (const pageNum of new Set((pages || []).map(Number))) {
+    if (Number.isSafeInteger(pageNum) && pageNum > 0) invalidatePageCache(filePath, pageNum);
   }
 }
 

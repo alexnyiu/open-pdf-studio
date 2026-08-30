@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   clearAllBitmaps,
+  clearBitmapsForPages,
   consumeCachedBitmapAfterTransfer,
   computeCappedWholePageScale,
   computeZoomBucket,
@@ -169,8 +170,24 @@ test('shared registry reuses a denser final surface across view scale requests',
   clearAllBitmaps();
 });
 
-test('publishing a new global revision releases obsolete decoded rasters', () => {
+test('page 250 invalidation keeps pages 245 through 255 warm', () => {
+  const closed = [];
+  for (let pageNum = 245; pageNum <= 255; pageNum += 1) {
+    setCachedBitmapEntry('/thousand-pages.pdf', pageNum, 0, 1,
+      { close: () => closed.push(pageNum) }, 10, 10, 1);
+  }
+  clearBitmapsForPages('/thousand-pages.pdf', [250]);
+  assert.equal(getCachedBitmap('/thousand-pages.pdf', 250, 0, 1), null);
+  for (const pageNum of [245, 246, 247, 248, 249, 251, 252, 253, 254, 255]) {
+    assert.ok(getCachedBitmap('/thousand-pages.pdf', pageNum, 0, 1));
+  }
+  assert.deepEqual(closed, [250]);
+  clearAllBitmaps();
+});
+
+test('proxy-global revision preserves a page until its own revision changes', () => {
   let contentRevision = 4;
+  let pageRevision = 1;
   registerPageBitmapCacheOwner('/same-raster.pdf', 'doc-raster', 2, () => 1, () => contentRevision);
   const closed = [];
   const old = { close: () => closed.push('old') };
@@ -178,13 +195,14 @@ test('publishing a new global revision releases obsolete decoded rasters', () =>
     context({ contentRevision: 4, targetRasterScale: 4, actualRasterScale: 4 }));
   contentRevision = 5;
   assert.equal(getCachedBitmap('/same-raster.pdf', 3, 0, 2,
-    context({ contentRevision: 5 })), null);
+    context({ contentRevision: 5, pageRevision }))?.bitmap, old);
+  pageRevision = 2;
   const current = { close: () => closed.push('current') };
   setCachedBitmapEntry('/same-raster.pdf', 3, 0, 2, current, 200, 200, 2,
-    context({ contentRevision: 5, targetRasterScale: 2, actualRasterScale: 2 }));
+    context({ contentRevision: 5, pageRevision, targetRasterScale: 2, actualRasterScale: 2 }));
   assert.deepEqual(closed, ['old']);
   assert.equal(getCachedBitmap('/same-raster.pdf', 3, 0, 2,
-    context({ contentRevision: 5 }))?.bitmap, current);
+    context({ contentRevision: 5, pageRevision }))?.bitmap, current);
   clearAllBitmaps();
 });
 
