@@ -71,6 +71,7 @@ import {
   consumeOutsidePointerDownForTextEdit,
   shouldApplyTextEditForOutsideFocus,
   shouldRestoreTextEditorFocusAfterHostTransition,
+  shouldSuppressOutsideApplyFollowup,
   textEditTargetIsWithinFocusBoundary,
   textEditTargetStartsLifecycleTransition,
 } from '../../text/text-edit-focus-boundary.js';
@@ -118,6 +119,7 @@ export default function PdfTextEditOverlay() {
   let pendingInputContext = null;
   let selectionFrameId = 0;
   let outsideApplyPromise = null;
+  let outsideApplySessionId = null;
   let outsideClickAwayIntent = null;
   let outsideGestureGuard = null;
   const activeOutsidePageLeases = new Set();
@@ -940,9 +942,9 @@ export default function PdfTextEditOverlay() {
     capturedGuard = outsideGestureGuard,
     capturedLeases = [],
   ) => {
-    if (outsideApplyPromise || !active()) {
+    if (!active()) {
       releaseOutsidePageLeases(capturedLeases);
-      return outsideApplyPromise;
+      return null;
     }
     // Flush the visible control synchronously at the commit boundary. WebKit
     // can finish composition/autocorrection as focus is moving, after the last
@@ -955,6 +957,10 @@ export default function PdfTextEditOverlay() {
       releaseOutsidePageLeases(capturedLeases);
       return null;
     }
+    if (outsideApplyPromise && outsideApplySessionId === sessionId) {
+      releaseOutsidePageLeases(capturedLeases);
+      return outsideApplyPromise;
+    }
     const ownerDocumentId = session.ownerDocumentId;
     const ownerDocumentGeneration = session.ownerDocumentGeneration;
     const refocusCurrentSession = () => queueMicrotask(() => {
@@ -963,7 +969,7 @@ export default function PdfTextEditOverlay() {
       }
     });
     const settleCapturedGesture = () => capturedGuard?.settled || Promise.resolve(true);
-    outsideApplyPromise = applyActiveTextEditing('click-away')
+    const applyPromise = applyActiveTextEditing('click-away')
       .then(async (result) => {
         // Keep ownership of the initiating pointer through its compatibility
         // click even when the successful Apply already unmounted this portal.
@@ -1052,9 +1058,14 @@ export default function PdfTextEditOverlay() {
         releaseOutsidePageLeases(capturedLeases);
         if (outsideClickAwayIntent === capturedIntent) outsideClickAwayIntent = null;
         if (outsideGestureGuard === capturedGuard) outsideGestureGuard = null;
-        outsideApplyPromise = null;
+        if (outsideApplyPromise === applyPromise) {
+          outsideApplyPromise = null;
+          outsideApplySessionId = null;
+        }
       });
-    return outsideApplyPromise;
+    outsideApplyPromise = applyPromise;
+    outsideApplySessionId = sessionId;
+    return applyPromise;
   };
 
   const handleOutsidePointerDown = (event) => {
@@ -1064,6 +1075,24 @@ export default function PdfTextEditOverlay() {
     if (!session?.sessionId) return;
     if (textEditTargetIsWithinFocusBoundary(target, portalRef)
         || textEditTargetStartsLifecycleTransition(target)) return;
+    // WebKit normally delivers pointerdown followed by the compatibility
+    // mousedown, but automation, accessibility input, and older macOS paths
+    // can omit the pointer event. Accept both while consuming only one Apply
+    // operation for the immutable editor session.
+    if (shouldSuppressOutsideApplyFollowup({
+      target,
+      portal: portalRef,
+      button: event.button,
+      eventType: event.type,
+      detail: event.detail,
+      applyPending: Boolean(outsideApplyPromise),
+      consumedSessionId: outsideApplySessionId,
+      activeSessionId: session.sessionId,
+    })) {
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+      return;
+    }
     // The intended target and client coordinates must be immutable before the
     // pointerdown is consumed and before Apply can replace its DOM subtree.
     const intent = captureTextEditClickAwayIntent({ event, session });
@@ -1570,6 +1599,13 @@ export default function PdfTextEditOverlay() {
     }
     document.addEventListener('scroll', markPlacementDirty, true);
     document.addEventListener('pointerdown', handleOutsidePointerDown, true);
+    // An editor can be created by the pointerdown currently in flight. Delay
+    // the compatibility listener until that opening gesture's mousedown has
+    // passed, otherwise the new editor can immediately click away itself.
+    queueMicrotask(() => {
+      if (!active() || editorMountGeneration() !== observedMountGeneration) return;
+      document.addEventListener('mousedown', handleOutsidePointerDown, true);
+    });
     document.addEventListener('focusin', handleOutsideFocusIn, true);
     window.addEventListener('resize', markPlacementDirty);
     window.addEventListener('opds:viewport-revision', handleViewportRevision);
@@ -1583,6 +1619,7 @@ export default function PdfTextEditOverlay() {
       }
       document.removeEventListener('scroll', markPlacementDirty, true);
       document.removeEventListener('pointerdown', handleOutsidePointerDown, true);
+      document.removeEventListener('mousedown', handleOutsidePointerDown, true);
       document.removeEventListener('focusin', handleOutsideFocusIn, true);
       window.removeEventListener('resize', markPlacementDirty);
       window.removeEventListener('opds:viewport-revision', handleViewportRevision);

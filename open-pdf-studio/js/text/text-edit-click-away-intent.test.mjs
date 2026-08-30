@@ -487,6 +487,11 @@ test('the production overlay captures before consumption and routes text replay 
     'intent and coordinates are captured before pointerdown is consumed',
   );
   assert.match(handler, /guardTextEditClickAwayGesture\(intent, document\)/u);
+  assert.match(handler, /consumedSessionId: outsideApplySessionId/u);
+  assert.match(handler, /activeSessionId: session\.sessionId/u);
+  assert.match(source, /document\.addEventListener\('mousedown', handleOutsidePointerDown, true\)/u);
+  assert.match(source, /document\.removeEventListener\('mousedown', handleOutsidePointerDown, true\)/u);
+  assert.match(source, /queueMicrotask\(\(\) => \{[\s\S]*editorMountGeneration\(\) !== observedMountGeneration[\s\S]*addEventListener\('mousedown'/u);
   assert.match(source, /replayTextEditClickAwayIntent\(capturedIntent/u);
   assert.match(source, /startTextLayerEditAtClientPointWhenReady\(\{/u);
   assert.match(source, /await settleCapturedGesture\(\)/u);
