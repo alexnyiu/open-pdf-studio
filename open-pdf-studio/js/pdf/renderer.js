@@ -8,7 +8,7 @@ import { ensureAnnotationsForPage, hidePdfABar } from './loader.js';
 import { updateAllStatus } from '../ui/chrome/status-bar.js';
 import { hideProperties } from '../ui/panels/properties-panel.js';
 import { updateActiveThumbnail, pauseThumbnails, resumeThumbnails, isThumbnailPipelineIdle, getCachedThumbnailEntry } from '../ui/panels/left-panel.js';
-import { createSinglePageTextLayer, clearSinglePageTextLayer, createTextLayer, clearTextLayers, createTextLayerFromRust, releaseTextLayer } from '../text/text-layer.js';
+import { createSinglePageTextLayer, clearSinglePageTextLayer, createTextLayer, clearTextLayers, createTextLayerFromRust, releaseTextLayer, adoptTextLayersForDocument } from '../text/text-layer.js';
 import { createSinglePageLinkLayer, clearSinglePageLinkLayer, createLinkLayer, clearLinkLayers, releaseLinkLayer } from './link-layer.js';
 import { createSinglePageFormLayer, clearSinglePageFormLayer, createFormLayer, clearFormLayers, releaseFormLayer, hideFormFieldsBar } from './form-layer.js';
 import { clearPdfVectorCache, prefetchPdfVectorGeometry } from '../tools/pdf-snap-extractor.js';
@@ -89,11 +89,16 @@ import {
 import { createLowResolutionPreviewKey } from './low-resolution-preview-key.js';
 import {
   failPageEditReadiness,
+  adoptPageEditReadinessForDocumentLifecycle,
   markPageEditLayerReady,
   pageEditReadinessSatisfied,
 } from './page-edit-readiness.js';
-import { awaitRequiredPageRenders } from './visible-page-render-barrier.js';
 import {
+  awaitRequiredPageRenders,
+  planPostRestoreRequiredPages,
+} from './visible-page-render-barrier.js';
+import {
+  adoptPageSurfacesForDocumentLifecycle,
   registerPageSurface,
   unregisterPageSurface,
 } from './page-surface-registry.js';
@@ -2065,9 +2070,6 @@ async function _renderContinuousPageNow(pageNum, isCurrent = () => true, kind = 
 
   const semanticLayoutKey = [
     doc.id,
-    Number(doc.lifecycleGeneration) || 0,
-    Number(doc.revisionState?.contentRevision) || 0,
-    Number(doc.revisionState?.livePdfRevision) || 0,
     Number(doc.revisionState?.pageContentRevisions?.[pageNum]
       ?? doc.pageRenderRevisions?.[pageNum]) || 0,
     pageNum,
@@ -2319,6 +2321,71 @@ function _continuousWindowMatches(doc) {
     && _continuousWindow.container?.isConnected;
 }
 
+function _continuousWindowOwnsLogicalDocument(doc) {
+  return Boolean(_continuousWindow
+    && _continuousWindow.documentId === doc?.id
+    && _continuousWindow.container?.isConnected);
+}
+
+function _adoptContinuousWindowForSavedProxy(doc, changedPages = []) {
+  if (!doc?.id || !_continuousWindowOwnsLogicalDocument(doc) || doc.facingSpread) return false;
+  const current = _continuousWindow;
+  const nextGeneration = Number(doc.lifecycleGeneration) || 0;
+  const previousGeneration = Number(current.lifecycleGeneration) || 0;
+  const changed = new Set((changedPages || []).map(Number));
+  if (previousGeneration !== nextGeneration) {
+    _continuousRenderScheduler.cancelOwner(current.ownerKey, 'saved-proxy-adoption');
+    const previousOwner = { id: doc.id, lifecycleGeneration: previousGeneration };
+    for (const [pageNum, wrapper] of current.mounted) {
+      _untrackMountedPageCanvases(previousOwner, pageNum, wrapper);
+      _untrackMountedPageImages(previousOwner, pageNum, wrapper);
+      for (const canvas of wrapper.querySelectorAll('canvas')) {
+        const surface = canvas.dataset?.renderSurface || (canvas.classList.contains('pdf-canvas')
+          ? 'pdf' : canvas.classList.contains('annotation-canvas') ? 'annotation' : 'other');
+        _trackMountedCanvas(doc, pageNum, canvas, surface);
+      }
+      for (const image of wrapper.querySelectorAll('.pdf-page-raster')) {
+        _trackMountedRasterImage(doc, pageNum, image);
+      }
+      wrapper.dataset.documentId = String(doc.id);
+      wrapper.dataset.documentGeneration = String(nextGeneration);
+    }
+    const oldPrefix = `${doc.id}:${previousGeneration}:`;
+    for (const [key, value] of [..._renderedSurfaceStates]) {
+      if (!key.startsWith(oldPrefix)) continue;
+      _renderedSurfaceStates.delete(key);
+      if (changed.has(Number(value.pageNum))) continue;
+      _renderedSurfaceStates.set(
+        _surfaceStateKey(doc.id, nextGeneration, value.pageNum, value.source),
+        Object.freeze({ ...value, ownerGeneration: nextGeneration }),
+      );
+    }
+  }
+  current.lifecycleGeneration = nextGeneration;
+  current.ownerKey = _continuousOwnerKey(doc);
+  current.index = doc.pageGeometryIndex || current.index;
+  current.layout = _continuousLayout(doc);
+  adoptPageSurfacesForDocumentLifecycle(doc);
+  const unchangedMounted = [...current.mounted.keys()].filter((pageNum) => !changed.has(pageNum));
+  adoptTextLayersForDocument(doc, unchangedMounted);
+  adoptPageEditReadinessForDocumentLifecycle(doc, changedPages);
+  for (const pageNum of changed) _renderedPages.delete(pageNum);
+  return true;
+}
+
+/** Rebind stale-but-displayable mounted surfaces before replacement renders. */
+export function adoptSavedDocumentSurfaces(documentState, changedPages = []) {
+  if (!documentState?.id || getActiveDocument() !== documentState) return false;
+  if (_continuousWindowOwnsLogicalDocument(documentState) && !documentState.facingSpread) {
+    return _adoptContinuousWindowForSavedProxy(documentState, changedPages);
+  }
+  adoptPageSurfacesForDocumentLifecycle(documentState);
+  adoptTextLayersForDocument(documentState, [documentState.currentPage || 1]
+    .filter((pageNum) => !(changedPages || []).map(Number).includes(pageNum)));
+  adoptPageEditReadinessForDocumentLifecycle(documentState, changedPages);
+  return true;
+}
+
 function _protectedContinuousPages(doc) {
   const pages = new Set(leasedPagesForDocument(
     doc?.id,
@@ -2326,6 +2393,7 @@ function _protectedContinuousPages(doc) {
   ));
   const editorPage = _activeEditorPageForDocument(doc);
   if (editorPage) pages.add(editorPage);
+  for (const pageNum of _continuousWindow?.synchronizationPages || []) pages.add(pageNum);
   return [...pages].sort((left, right) => left - right);
 }
 
@@ -2372,7 +2440,7 @@ function _updateContinuousVirtualWindow({
     // Memory pressure first shrinks prefetch distance; it never changes the
     // resolution of a page that is actually visible.
     overscanPx: backgroundRenderAdmissionAllowed() ? scrollContainer.clientHeight * 2 : 0,
-    maxPages: 9,
+    maxPages: Math.max(9, protectedPages.length + 9),
     protectedPages,
   });
   const wantedSet = new Set(wanted);
@@ -2383,7 +2451,7 @@ function _updateContinuousVirtualWindow({
     layout,
     overscanPx: 0,
     maxPages: 9,
-    protectedPages,
+    protectedPages: [],
   }));
 
   for (const [pageNum, wrapper] of mounted) {
@@ -2445,6 +2513,11 @@ function _updateContinuousVirtualWindow({
     window.__continuousMountedPages = [...mounted.keys()].sort((a, b) => a - b);
   }
   recordPerformancePeak('mountedPageSurfaces', mounted.size);
+  return Object.freeze({
+    wanted: Object.freeze([...wanted]),
+    strictlyVisible: Object.freeze([...strictlyVisible]),
+    centerPage,
+  });
 }
 
 export function getContinuousRenderResourceStats() {
@@ -3042,6 +3115,68 @@ function _syncCurrentPageFromScroll(container) {
   }
 }
 
+async function _synchronizeExistingContinuousWindow(doc, requestedPages) {
+  if (!_continuousWindowOwnsLogicalDocument(doc) || doc.facingSpread) return null;
+  _adoptContinuousWindowForSavedProxy(doc, requestedPages);
+  const generation = Number(doc.lifecycleGeneration) || 0;
+  const index = await ensureDocumentPageGeometryIndex(doc);
+  if (!index || getActiveDocument() !== doc
+      || (Number(doc.lifecycleGeneration) || 0) !== generation
+      || !_continuousWindowMatches(doc)) return null;
+  const current = _continuousWindow;
+  current.index = index;
+  current.layout = _continuousLayout(doc);
+  current.synchronizing = true;
+  current.synchronizationPages = new Set(requestedPages);
+
+  // The pending transaction contains a logical PDF anchor, not raw pixels.
+  // Apply it before asking the geometry index which pages are now visible.
+  applyPendingContinuousRendererRestore(doc);
+  let windowResult = _updateContinuousVirtualWindow({
+    interactionSettled: true,
+    scheduleRenders: false,
+  });
+  let requiredPages = planPostRestoreRequiredPages({
+    visiblePages: windowResult?.strictlyVisible,
+    changedPages: requestedPages,
+    pageCount: doc.pdfDoc.numPages,
+  });
+  current.synchronizationPages = new Set(requiredPages);
+  windowResult = _updateContinuousVirtualWindow({
+    interactionSettled: true,
+    scheduleRenders: false,
+  });
+  requiredPages = planPostRestoreRequiredPages({
+    visiblePages: windowResult?.strictlyVisible,
+    changedPages: requestedPages,
+    pageCount: doc.pdfDoc.numPages,
+  });
+
+  const barrier = await awaitRequiredPageRenders(requiredPages, (pageNum) => (
+    renderContinuousPage(pageNum, 2_000, 'foreground')
+  ));
+  if (getActiveDocument() !== doc || !_continuousWindowMatches(doc)) {
+    return {
+      requiredPages: [],
+      renderReadyPages: [],
+      semanticReadyPages: [],
+      ready: true,
+      inactive: true,
+    };
+  }
+  current.synchronizationPages.clear();
+  current.synchronizing = false;
+  requestAnimationFrame(() => _updateContinuousVirtualWindow({ interactionSettled: true }));
+  updateAllStatus();
+  _bindContinuousScrollSync();
+  return {
+    requiredPages: barrier.requiredPages,
+    renderReadyPages: barrier.completedPages,
+    semanticReadyPages: barrier.completedPages,
+    ready: barrier.ready,
+  };
+}
+
 // Render all pages (continuous mode) — creates placeholders, lazily renders visible pages
 export async function renderContinuous(forceRebuild = false, {
   synchronization = false,
@@ -3068,6 +3203,15 @@ export async function renderContinuous(forceRebuild = false, {
     if (window.__pdfViewport) window.__pdfViewport.active = false;
   }
   if (getActiveDocument() !== doc || (Number(doc.lifecycleGeneration) || 0) !== generation) return;
+
+  const requestedPages = [...new Set((requestedRequiredPages || []).map(Number)
+    .filter((pageNum) => Number.isSafeInteger(pageNum)
+      && pageNum > 0 && pageNum <= pdfDoc.numPages))];
+  if (synchronization && !doc.facingSpread && _continuousWindowOwnsLogicalDocument(doc)
+      && _continuousWindow.layout === _continuousLayout(doc)) {
+    const synchronized = await _synchronizeExistingContinuousWindow(doc, requestedPages);
+    if (synchronized) return synchronized;
+  }
 
   // A scroll/page update can reuse the virtual shell. Rebuild only when its
   // owner, layout, or lifecycle changed.
@@ -3146,10 +3290,10 @@ export async function renderContinuous(forceRebuild = false, {
     applyPendingContinuousRendererRestore(doc);
     _renderedPagesScale = doc.scale;
     if (typeof IntersectionObserver === 'function') {
-      const ownerKey = _continuousWindow.ownerKey;
+      const observedWindow = _continuousWindow;
       _continuousObserver = new IntersectionObserver((entries) => {
         const current = _continuousWindow;
-        if (!current || current.ownerKey !== ownerKey) return;
+        if (!current || current !== observedWindow) return;
         for (const entry of entries) {
           const pageNum = Number(entry.target?.dataset?.page) || 0;
           if (!pageNum) continue;

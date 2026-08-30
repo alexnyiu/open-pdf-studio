@@ -393,7 +393,7 @@ function productionSavedTransitionCallbacks(outputPath, savedBytes) {
       return installValidatedSavedPdfDocument(owner, outputPath, savedBytes, candidate);
     },
     invalidateRevision: async () => {},
-    rebuildRequiredPages: async ({ documentState: owner, requiredPages }) => {
+    rebuildRequiredPages: async ({ documentState: owner, requiredPages, changedPages }) => {
       const visibleOwner = getActiveDocument();
       if (String(visibleOwner?.id || '') !== String(owner.id)) {
         return { renderReadyPages: [], semanticReadyPages: [] };
@@ -402,7 +402,10 @@ function productionSavedTransitionCallbacks(outputPath, savedBytes) {
       if (owner.viewMode === 'continuous' || owner.viewMode === 'book') {
         return renderer.renderContinuous(true, {
           synchronization: true,
-          requiredPages,
+          requiredPages: [...new Set([
+            ...(changedPages || []),
+            ...requiredPages,
+          ])],
         });
       }
       const page = requiredPages[0] || owner.currentPage || 1;

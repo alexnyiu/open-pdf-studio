@@ -5,6 +5,7 @@ import test from 'node:test';
 import { createInitialDocumentRevisionState } from '../core/document-revision-state.runtime.js';
 import { captureRenderPublicationToken } from './render-publication-token.js';
 import {
+  adoptPageEditReadinessForDocumentLifecycle,
   PAGE_EDIT_READY_LAYERS,
   awaitPageEditReady,
   clearPageEditReadiness,
@@ -135,6 +136,25 @@ test('lifecycle change rejects a queued readiness wait cleanly', async () => {
     lifecycleGeneration: documentState.lifecycleGeneration,
   });
   await assert.rejects(pending, { name: 'AbortError' });
+});
+
+test('validated proxy adoption preserves only unchanged page readiness', () => {
+  const documentState = owner();
+  documentState.revisionState.pageContentRevisions[2] = 1;
+  for (const pageNum of [1, 2]) {
+    const token = captureRenderPublicationToken(documentState, pageNum, 'adopt-readiness');
+    for (const layer of PAGE_EDIT_READY_LAYERS) {
+      markPageEditLayerReady(documentState, pageNum, layer, token);
+    }
+  }
+  documentState.lifecycleGeneration += 1;
+  documentState.pdfDoc = {};
+  documentState.revisionState.contentRevision = 2;
+  documentState.revisionState.livePdfRevision = 2;
+  documentState.revisionState.pageContentRevisions[2] = 2;
+  assert.deepEqual(adoptPageEditReadinessForDocumentLifecycle(documentState, [2]), [1]);
+  assert.equal(pageEditReadinessSatisfied(documentState, 1), true);
+  assert.equal(pageEditReadinessSatisfied(documentState, 2), false);
 });
 
 test('clearing an affected page invalidates its complete readiness record', () => {

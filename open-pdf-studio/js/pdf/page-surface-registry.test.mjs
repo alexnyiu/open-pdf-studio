@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  adoptPageSurfacesForDocumentLifecycle,
   clearPageSurfaceRegistryForTests,
   markPageSurfacePublication,
   mountedPageSurfaces,
@@ -171,4 +172,38 @@ test('page-local descendants and mounted-layer enumeration resolve through the r
     ...documentState,
     lifecycleGeneration: documentState.lifecycleGeneration + 1,
   }), null);
+});
+
+test('saved proxy adoption keeps a changed page visible until its replacement publishes', () => {
+  const documentState = owner();
+  const container = element('page-50');
+  const oldBase = element('old-base');
+  registerPageSurface({
+    documentState,
+    pageNum: 50,
+    pageContentRevision: 7,
+    basePublishedRevision: 7,
+    semanticPublishedRevision: 7,
+    container,
+    baseSurface: oldBase,
+    surfaceKind: 'continuous-canvas',
+  });
+  documentState.lifecycleGeneration = 4;
+  documentState.revisionState.contentRevision = 8;
+  documentState.revisionState.pageContentRevisions[50] = 8;
+  const [adopted] = adoptPageSurfacesForDocumentLifecycle(documentState);
+  assert.equal(resolvePageSurface(documentState, 50)?.baseSurface, oldBase);
+  assert.equal(adopted.pageContentRevision, 7);
+  assert.equal(container.dataset.staleDisplayRevision, '7');
+  const newBase = element('new-base');
+  assert.equal(markPageSurfacePublication(adopted, {
+    documentState,
+    revision: 8,
+    basePublished: true,
+    semanticPublished: true,
+    baseSurface: newBase,
+  }), true);
+  assert.equal(resolvePageSurface(documentState, 50)?.baseSurface, newBase);
+  assert.equal(container.dataset.staleDisplayRevision, undefined);
+  assert.equal(mountedPageSurfaces().length, 1);
 });

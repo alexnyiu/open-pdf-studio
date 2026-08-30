@@ -271,6 +271,86 @@ test('non-structural saved-document invalidation restamps geometry and cache own
   assert.deepEqual(calls, ['rebuild-geometry', 'cache-owners']);
 });
 
+test('nonstructural save sends the exact changed pages to every derived cache', async () => {
+  const document = persistedDocument();
+  document.filePath = '/large.pdf';
+  document.revisionState.livePdfRevision = 1;
+  const calls = [];
+  const scoped = (name) => (_owner, pages) => calls.push([name, pages]);
+  const noop = () => {};
+  await invalidateSavedDocumentDerivedState({
+    documentState: document,
+    requestedRevision: 1,
+    changedPages: [250],
+    filePath: '/large.pdf',
+    previousFilePath: '/large.pdf',
+    dependencies: {
+      clearReadiness: scoped('readiness'),
+      clearEditReadiness: scoped('edit-readiness'),
+      adoptReadiness: noop,
+      cancelWholePreload: noop,
+      cancelThumbnails: scoped('thumbnail-work'),
+      invalidateSemantic: async ({ changedPages, structural }) => {
+        calls.push(['semantic', changedPages, structural]);
+      },
+      clearBitmap: scoped('bitmap'),
+      clearTiles: scoped('tiles'),
+      clearVectors: scoped('vectors'),
+      clearPageTypes: scoped('page-types'),
+      invalidateNative: async (_path, pages) => calls.push(['native', pages]),
+      clearLowResolution: scoped('low-resolution'),
+      clearThumbnails: scoped('thumbnails'),
+      clearLayers: scoped('layers'),
+      clearPerformance: noop,
+      initializePerformance: async () => {},
+      rebuildGeometry: noop,
+      registerCacheOwners: async () => {},
+      adoptMountedSurfaces: noop,
+    },
+  });
+  for (const [name, pages, structural] of calls) {
+    assert.deepEqual(pages, [250], `${name} must stay page-scoped`);
+    if (name === 'semantic') assert.equal(structural, false);
+  }
+});
+
+test('structural or path-identity change uses full invalidation', async () => {
+  const document = persistedDocument();
+  document.filePath = '/new.pdf';
+  document.revisionState.livePdfRevision = 1;
+  const scopes = [];
+  const recordScope = (_owner, pages) => scopes.push(pages);
+  const noop = () => {};
+  await invalidateSavedDocumentDerivedState({
+    documentState: document,
+    requestedRevision: 1,
+    changedPages: [2],
+    filePath: '/new.pdf',
+    previousFilePath: '/old.pdf',
+    dependencies: {
+      clearReadiness: recordScope,
+      clearEditReadiness: recordScope,
+      cancelWholePreload: noop,
+      cancelThumbnails: recordScope,
+      invalidateSemantic: async ({ structural }) => assert.equal(structural, true),
+      clearBitmap: recordScope,
+      clearTiles: recordScope,
+      clearVectors: recordScope,
+      clearPageTypes: recordScope,
+      invalidateNative: async (_path, pages) => scopes.push(pages),
+      clearLowResolution: recordScope,
+      clearThumbnails: recordScope,
+      clearLayers: recordScope,
+      clearPerformance: noop,
+      initializePerformance: async () => {},
+      rebuildGeometry: () => assert.fail('structural invalidation must not reuse geometry'),
+      registerCacheOwners: async () => assert.fail('structural invalidation must not reuse owners'),
+    },
+  });
+  assert.ok(scopes.length > 0);
+  assert.ok(scopes.every((scope) => scope === null));
+});
+
 test('a disk-clean but unsynchronized document performs Phase B without persistence', async () => {
   const document = persistedDocument();
   let proxyInstalls = 0;

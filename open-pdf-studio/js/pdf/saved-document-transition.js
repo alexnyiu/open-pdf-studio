@@ -8,7 +8,6 @@ import {
   setVisibleRequiredPages,
 } from '../core/document-revision-state.runtime.js';
 import { throwIfSaveFaultInjected } from './save-fault-injection.js';
-import { clearPageEditReadiness } from './page-edit-readiness.js';
 import {
   captureSharedUiLease,
   captureViewStateTransaction,
@@ -69,6 +68,7 @@ export async function invalidateSavedDocumentSemanticState({
   documentState,
   requestedRevision,
   changedPages = null,
+  structural = changedPages === null,
 }) {
   if (!documentState?.id || !documentState.pdfDoc) {
     throw new TypeError('A live saved document is required for semantic invalidation');
@@ -82,9 +82,16 @@ export async function invalidateSavedDocumentSemanticState({
     import('../text/native-text-provenance.js'),
     import('../search/text-cache.js'),
   ]);
-  editableMetadata.clearEditableMetadataPreload(documentState);
-  provenance.clearNativeTextSourceCache(documentState);
-  searchCache.invalidateTextCache(documentState.id);
+  const pages = changedPages === null ? null : positivePages(changedPages);
+  if (structural || pages === null) {
+    editableMetadata.clearEditableMetadataPreload(documentState);
+    provenance.clearNativeTextSourceCache(documentState);
+    searchCache.invalidateTextCache(documentState.id);
+  } else {
+    provenance.adoptNativeTextSourceRevision(documentState, pages);
+    editableMetadata.adoptEditableMetadataPreloadRevision(documentState, pages);
+    for (const pageNum of pages) searchCache.invalidateTextCache(documentState.id, pageNum);
+  }
   documentState.preloadStatus = Object.freeze({
     state: 'idle',
     completed: 0,
@@ -96,7 +103,7 @@ export async function invalidateSavedDocumentSemanticState({
     pdfDocument: documentState.pdfDoc,
     contentRevision: revisions.contentRevision,
     livePdfRevision: revisions.livePdfRevision,
-    changedPages: changedPages === null ? null : Object.freeze(positivePages(changedPages)),
+    changedPages: pages === null ? null : Object.freeze(pages),
   });
   return true;
 }
@@ -104,6 +111,7 @@ export async function invalidateSavedDocumentSemanticState({
 async function loadSavedDocumentDerivedInvalidators() {
   const [
     renderer,
+    bitmaps,
     tiles,
     vectors,
     pageTypes,
@@ -118,6 +126,7 @@ async function loadSavedDocumentDerivedInvalidators() {
     pageReadiness,
   ] = await Promise.all([
     import('./renderer.js'),
+    import('./page-bitmap-cache.js'),
     import('./tile-cache.js'),
     import('./vector-renderer.js'),
     import('./page-type-cache.js'),
@@ -136,19 +145,41 @@ async function loadSavedDocumentDerivedInvalidators() {
     clearEditReadiness: (documentState, pages) => (
       pageReadiness.clearPageEditReadiness(documentState, pages)
     ),
+    adoptReadiness: (documentState, pages) => (
+      pageReadiness.adoptPageEditReadinessForDocumentLifecycle(documentState, pages)
+    ),
+    adoptMountedSurfaces: (documentState, pages) => (
+      renderer.adoptSavedDocumentSurfaces(documentState, pages)
+    ),
     cancelWholePreload: (documentState) => wholePreload.cancelWholePdfPreload(documentState),
     invalidateSemantic: invalidateSavedDocumentSemanticState,
-    clearBitmap: (filePath) => renderer.clearBitmapJSCacheForFile(filePath),
+    clearBitmap: (filePath, pages = null) => pages === null
+      ? renderer.clearBitmapJSCacheForFile(filePath)
+      : bitmaps.clearBitmapsForPages(filePath, pages),
     clearLowResolution: (documentState, pages) => (
       renderer.clearLowResCacheForDocument(documentState, pages)
     ),
-    clearTiles: (filePath) => tiles.tileCacheClearForFile(filePath),
-    clearVectors: (filePath) => vectors.clearVectorCacheForFile(filePath),
-    clearPageTypes: (filePath) => pageTypes.evictFile(filePath),
-    cancelThumbnails: (documentState) => thumbnails.cancelDocumentThumbnailWork(documentState),
-    clearThumbnails: (documentId) => thumbnails.clearThumbnailCache(documentId),
-    clearLayers: (documentState) => {
+    clearTiles: (filePath, pages = null) => pages === null
+      ? tiles.tileCacheClearForFile(filePath) : tiles.tileCacheClearPages(filePath, pages),
+    clearVectors: (filePath, pages = null) => pages === null
+      ? vectors.clearVectorCacheForFile(filePath)
+      : vectors.clearVectorCacheForPages(filePath, pages),
+    clearPageTypes: (filePath, pages = null) => pages === null
+      ? pageTypes.evictFile(filePath) : pageTypes.evictPageTypesForPages(filePath, pages),
+    cancelThumbnails: (documentState, pages = null) => pages === null
+      ? thumbnails.cancelDocumentThumbnailWork(documentState)
+      : thumbnails.cancelThumbnailWorkForPages(documentState, pages),
+    clearThumbnails: (documentId, pages = null) => pages === null
+      ? thumbnails.clearThumbnailCache(documentId)
+      : thumbnails.clearThumbnailsForPages(documentId, pages),
+    clearLayers: (documentState, pages = null) => {
       if (stateModule.getActiveDocument() !== documentState) return;
+      if (pages !== null) {
+        textLayers.clearTextLayersForPages(documentState, pages);
+        linkLayers.clearLinkLayersForPages(documentState, pages);
+        formLayers.clearFormLayersForPages(documentState, pages);
+        return;
+      }
       textLayers.clearSinglePageTextLayer();
       textLayers.clearTextLayers();
       linkLayers.clearSinglePageLinkLayer();
@@ -156,9 +187,16 @@ async function loadSavedDocumentDerivedInvalidators() {
       formLayers.clearSinglePageFormLayer();
       formLayers.clearFormLayers();
     },
-    invalidateNative: async (filePath) => {
+    invalidateNative: async (filePath, pages = null) => {
       if (filePath && platform.isTauri()) {
-        await platform.invoke('invalidate_pdf_cache', { path: filePath });
+        if (pages === null) {
+          await platform.invoke('invalidate_pdf_cache', { path: filePath });
+        } else {
+          await platform.invoke('invalidate_pdf_pages', {
+            path: filePath,
+            pageIndices: pages.map((pageNum) => pageNum - 1),
+          });
+        }
       }
     },
     clearPerformance: (documentState) => performance.clearDocumentPerformance(documentState),
@@ -187,24 +225,35 @@ export async function invalidateSavedDocumentDerivedState({
   }
   const invalidators = dependencies || await loadSavedDocumentDerivedInvalidators();
   const pages = changedPages === null ? null : positivePages(changedPages);
-  const structuralOrUncertain = pages === null || revisions.pendingStructuralChange === true;
+  const pathIdentityChanged = Boolean(previousFilePath && filePath
+    && String(previousFilePath) !== String(filePath));
+  const structuralOrUncertain = pages === null
+    || revisions.pendingStructuralChange === true
+    || pathIdentityChanged;
+  const scopedPages = structuralOrUncertain ? null : pages;
   const cachePaths = [...new Set([previousFilePath, filePath, documentState.filePath].filter(Boolean))];
 
-  invalidators.clearReadiness(documentState, pages);
-  invalidators.clearEditReadiness(documentState, pages);
+  invalidators.clearReadiness(documentState, scopedPages);
+  invalidators.clearEditReadiness(documentState, scopedPages);
+  if (scopedPages !== null) invalidators.adoptReadiness?.(documentState, scopedPages);
   invalidators.cancelWholePreload(documentState);
-  invalidators.cancelThumbnails(documentState);
-  await invalidators.invalidateSemantic({ documentState, requestedRevision, changedPages: pages });
+  invalidators.cancelThumbnails(documentState, scopedPages);
+  await invalidators.invalidateSemantic({
+    documentState,
+    requestedRevision,
+    changedPages: scopedPages,
+    structural: structuralOrUncertain,
+  });
   for (const cachePath of cachePaths) {
-    invalidators.clearBitmap(cachePath);
-    invalidators.clearTiles(cachePath);
-    invalidators.clearVectors(cachePath);
-    invalidators.clearPageTypes(cachePath);
-    await invalidators.invalidateNative(cachePath);
+    invalidators.clearBitmap(cachePath, scopedPages);
+    invalidators.clearTiles(cachePath, scopedPages);
+    invalidators.clearVectors(cachePath, scopedPages);
+    invalidators.clearPageTypes(cachePath, scopedPages);
+    await invalidators.invalidateNative(cachePath, scopedPages);
   }
-  invalidators.clearLowResolution(documentState, pages);
-  invalidators.clearThumbnails(documentState.id);
-  invalidators.clearLayers(documentState);
+  invalidators.clearLowResolution(documentState, scopedPages);
+  invalidators.clearThumbnails(documentState.id, scopedPages);
+  invalidators.clearLayers(documentState, scopedPages);
 
   if (structuralOrUncertain) {
     invalidators.clearPerformance(documentState);
@@ -212,6 +261,7 @@ export async function invalidateSavedDocumentDerivedState({
   } else {
     invalidators.rebuildGeometry(documentState);
     await invalidators.registerCacheOwners(documentState);
+    invalidators.adoptMountedSurfaces?.(documentState, pages);
   }
   return true;
 }
@@ -500,6 +550,7 @@ async function runSynchronization(record, { retry = false } = {}) {
       }
       assertOwned('after-proxy-install');
       markLivePdfRevision(documentState, requestedRevision);
+      if (!documentState.pageEditReadiness) documentState.pageEditReadiness = {};
     }
     throwIfSaveFaultInjected('after-proxy-install-before-view-restore');
     if (!record.viewRestored) {
@@ -523,22 +574,21 @@ async function runSynchronization(record, { retry = false } = {}) {
     let requiredPages = Array.isArray(installResult?.requiredPages)
       ? positivePages(installResult.requiredPages)
       : positivePages(null, viewState.pageNumber || documentState.currentPage);
-    setVisibleRequiredPages(documentState, requiredPages);
-    await invalidateRevision({ documentState, requestedRevision, requiredPages, viewState });
-    assertOwned('after-revision-invalidation');
-    clearPageEditReadiness(documentState, requiredPages);
     const readiness = await rebuildRequiredPages({
       documentState,
       requestedRevision,
       requiredPages,
+      changedPages,
       viewState,
       installResult: installResult || {},
     }) || {};
     assertOwned('after-required-page-rebuild');
     if (Array.isArray(readiness.requiredPages)) {
       requiredPages = positivePages(readiness.requiredPages);
-      setVisibleRequiredPages(documentState, requiredPages);
     }
+    setVisibleRequiredPages(documentState, requiredPages);
+    await invalidateRevision({ documentState, requestedRevision, requiredPages, viewState });
+    assertOwned('after-revision-invalidation');
     const metadataReadyPages = await rebuildEditableMetadata({
       documentState,
       requestedRevision,

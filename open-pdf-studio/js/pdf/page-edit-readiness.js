@@ -118,6 +118,23 @@ export function clearPageEditReadiness(documentState, pages = null) {
   return true;
 }
 
+/** Restamp ready unchanged pages after a validated same-document proxy swap. */
+export function adoptPageEditReadinessForDocumentLifecycle(documentState, changedPages = []) {
+  if (!documentState?.id || !documentState.pdfDoc) return [];
+  const changed = new Set((changedPages || []).map(Number));
+  const map = readinessMap(documentState);
+  const adopted = [];
+  for (const [pageText, entry] of Object.entries(map)) {
+    const pageNum = Number(pageText);
+    if (changed.has(pageNum) || !entry?.identity) continue;
+    const nextIdentity = capturePageEditReadinessIdentity(documentState, pageNum);
+    if (Number(entry.identity.pageRevision) !== nextIdentity.pageRevision) continue;
+    entry.identity = nextIdentity;
+    adopted.push(pageNum);
+  }
+  return adopted.sort((left, right) => left - right);
+}
+
 export function markPageEditLayerReady(documentState, pageNum, layer, publicationToken) {
   if (!PAGE_EDIT_READY_LAYERS.includes(layer)) throw new TypeError(`Unsupported readiness layer: ${layer}`);
   const identity = capturePageEditReadinessIdentity(documentState, pageNum);

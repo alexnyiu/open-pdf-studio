@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { awaitRequiredPageRenders } from './visible-page-render-barrier.js';
+import {
+  awaitRequiredPageRenders,
+  planPostRestoreRequiredPages,
+} from './visible-page-render-barrier.js';
 import { createInitialDocumentRevisionState } from '../core/document-revision-state.runtime.js';
 import { captureRenderPublicationToken } from './render-publication-token.js';
 import {
@@ -29,6 +32,18 @@ test('visible-page synchronization does not resolve while one required child ren
   const result = await barrier;
   assert.equal(result.ready, true);
   assert.deepEqual(result.completedPages, [1, 2]);
+});
+
+test('readiness uses the visible pages computed after logical anchor restoration', () => {
+  const preRestoreVisible = [249, 250];
+  const postRestoreVisible = [611, 612];
+  const required = planPostRestoreRequiredPages({
+    visiblePages: postRestoreVisible,
+    changedPages: [250],
+    pageCount: 1_000,
+  });
+  assert.deepEqual(required, [250, 611, 612]);
+  assert.equal(required.includes(preRestoreVisible[0]), false);
 });
 
 test('cancelled or semantically incomplete child render fails the required-page barrier', async () => {

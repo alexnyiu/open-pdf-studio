@@ -161,6 +161,9 @@ export function registerPageSurface(input = {}) {
     record.container.dataset.documentGeneration = String(record.lifecycleGeneration);
     record.container.dataset.page = String(record.pageNum);
     record.container.dataset.pageContentRevision = String(record.pageContentRevision);
+    if (record.pageContentRevision >= pageRevision(input.documentState, record.pageNum)) {
+      delete record.container.dataset.staleDisplayRevision;
+    }
   }
   emit(previous ? 'updated' : 'registered', record);
   return record;
@@ -258,6 +261,48 @@ export function mountedPageSurfaces(documentState = null) {
             === (Number(documentState.lifecycleGeneration) || 0))))
     .sort((left, right) => left.pageNum - right.pageNum
       || left.mountGeneration - right.mountGeneration));
+}
+
+/**
+ * Rebind connected same-document surfaces to a validated replacement proxy.
+ * Their published revision is intentionally preserved, so a changed page is
+ * stale-but-displayable until the replacement surface publishes atomically.
+ */
+export function adoptPageSurfacesForDocumentLifecycle(documentState) {
+  if (!documentState?.id) return Object.freeze([]);
+  const documentId = String(documentState.id);
+  const generation = nonNegativeRevision(documentState.lifecycleGeneration);
+  const candidates = [...surfacesByPage.values()]
+    .flatMap((registrations) => [...registrations.values()])
+    .filter((surface) => connected(surface)
+      && surface.documentId === documentId
+      && surface.lifecycleGeneration !== generation);
+  const adopted = [];
+  for (const surface of candidates) {
+    const next = registerPageSurface({
+      documentState,
+      pageNum: surface.pageNum,
+      pageContentRevision: surface.pageContentRevision,
+      basePublishedRevision: surface.basePublishedRevision,
+      semanticPublishedRevision: surface.semanticPublishedRevision,
+      surfaceKind: surface.surfaceKind,
+      container: surface.container,
+      baseSurface: surface.baseSurface,
+      geometryCanvas: surface.geometryCanvas,
+      overlayCanvas: surface.overlayCanvas,
+      textLayer: surface.textLayer,
+      canonicalPageDimensions: surface.canonicalPageDimensions,
+      cssScale: surface.cssScale,
+      dpr: surface.dpr,
+    });
+    if (next.container?.dataset) {
+      const targetRevision = pageRevision(documentState, next.pageNum);
+      next.container.dataset.staleDisplayRevision = next.pageContentRevision < targetRevision
+        ? String(next.pageContentRevision) : '';
+    }
+    adopted.push(next);
+  }
+  return Object.freeze(adopted);
 }
 
 export function pageSurfaceRegistrySnapshot() {

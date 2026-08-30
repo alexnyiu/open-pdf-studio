@@ -44,3 +44,19 @@ test('visible-range lookup enters a large geometry index near the requested offs
     [9_000],
   );
 });
+
+test('strict visibility stays correct across a mixed-size page boundary', () => {
+  const index = new PageGeometryIndex(pageGeometryEntries([
+    [612, 400],
+    [612, 1_200],
+    [612, 300],
+  ]));
+  const second = index.pageRect(2, { scale: 1 });
+  const pages = index.visiblePages({
+    scrollTop: second.y - 100,
+    viewportHeight: 500,
+    overscanPx: 0,
+  });
+  assert.deepEqual(pages, [1, 2]);
+  assert.equal(index.pageAtOffset(second.y + 900), 2);
+});
