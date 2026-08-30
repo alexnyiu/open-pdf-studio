@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "ย่อหน้านี้ข้ามขอบเขตคอลัมน์ต้นฉบับที่ตรวจพบ การแก้ไขถูกปิดกั้นและเอกสารไม่มีการเปลี่ยนแปลง",
       "nativeSourceUnavailable": "ไม่สามารถเชื่อมโยงข้อความที่มองเห็นกับตัวดำเนินการต้นทางที่ใช้ได้ เอกสารไม่มีการเปลี่ยนแปลง",
       "nativeDeleteUnavailable": "ไม่สามารถลบข้อความ PDF ต้นฉบับนี้อย่างปลอดภัยได้ เนื่องจากตัวดำเนินการต้นทางที่แน่นอนไม่ชัดเจน เอกสารไม่มีการเปลี่ยนแปลง",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "ข้อความที่แก้ไขไว้ก่อนหน้านี้เป็นแบบอ่านอย่างเดียว เอกสารไม่มีการเปลี่ยนแปลง"
     },
     "pathologicalPaste": {

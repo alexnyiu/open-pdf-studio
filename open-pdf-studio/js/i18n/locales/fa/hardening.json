@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "این پاراگراف از مرز شناسایی‌شدهٔ یک ستون اصلی عبور می‌کند. ویرایش مسدود شد و سند بدون تغییر باقی ماند.",
       "nativeSourceUnavailable": "متن قابل مشاهده به عملگرهای منبع واجد شرایط پیوند داده نشد. سند بدون تغییر باقی ماند.",
       "nativeDeleteUnavailable": "این متن اصلی PDF را نمی‌توان با اطمینان حذف کرد، زیرا عملگرهای دقیق منبع آن مبهم‌اند. سند بدون تغییر باقی ماند.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "متن ویرایش‌شدهٔ قبلی فقط خواندنی است. سند بدون تغییر باقی ماند."
     },
     "pathologicalPaste": {

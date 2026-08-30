@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "تعبر هذه الفقرة حدًا مكتشفًا لعمود في النص الأصلي. تم منع التحرير وترك المستند دون تغيير.",
       "nativeSourceUnavailable": "تعذر ربط النص المرئي بمعاملات مصدر مؤهلة. تُرك المستند دون تغيير.",
       "nativeDeleteUnavailable": "لا يمكن حذف نص PDF الأصلي هذا بأمان لأن معاملات المصدر الدقيقة الخاصة به ملتبسة. تُرك المستند دون تغيير.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "النص الذي سبق تحريره للقراءة فقط. تُرك المستند دون تغيير."
     },
     "pathologicalPaste": {

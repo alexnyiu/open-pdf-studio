@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Ovaj odlomak prelazi otkrivenu granicu izvornog stupca. Uređivanje je blokirano i dokument je ostao nepromijenjen.",
       "nativeSourceUnavailable": "Vidljivi tekst nije bilo moguće povezati s prihvatljivim izvornim operatorima. Dokument je ostao nepromijenjen.",
       "nativeDeleteUnavailable": "Ovaj izvorni PDF tekst nije moguće sigurno izbrisati jer su njegovi točni izvorni operatori dvosmisleni. Dokument je ostao nepromijenjen.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Prethodno uređeni tekst samo je za čitanje. Dokument je ostao nepromijenjen."
     },
     "pathologicalPaste": {

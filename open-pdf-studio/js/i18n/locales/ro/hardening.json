@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Acest paragraf traversează o limită detectată a coloanei originale. Editarea a fost blocată și documentul a rămas nemodificat.",
       "nativeSourceUnavailable": "Textul vizibil nu a putut fi asociat cu operatori sursă eligibili. Documentul a rămas nemodificat.",
       "nativeDeleteUnavailable": "Acest text PDF nativ nu poate fi șters în siguranță deoarece operatorii săi sursă exacți sunt ambigui. Documentul a rămas nemodificat.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Textul editat anterior este doar în citire. Documentul a rămas nemodificat."
     },
     "pathologicalPaste": {

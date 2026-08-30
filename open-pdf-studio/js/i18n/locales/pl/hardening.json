@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Ten akapit przekracza wykrytą granicę kolumny w oryginale. Edycja została zablokowana, a dokument pozostał bez zmian.",
       "nativeSourceUnavailable": "Widocznego tekstu nie udało się powiązać z odpowiednimi operatorami źródłowymi. Dokument pozostał bez zmian.",
       "nativeDeleteUnavailable": "Tego natywnego tekstu PDF nie można bezpiecznie usunąć, ponieważ jego dokładne operatory źródłowe są niejednoznaczne. Dokument pozostał bez zmian.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Wcześniej edytowany tekst jest tylko do odczytu. Dokument pozostał bez zmian."
     },
     "pathologicalPaste": {

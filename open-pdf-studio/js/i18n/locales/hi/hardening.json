@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "यह अनुच्छेद पहचानी गई मूल कॉलम सीमा को पार करता है। संपादन रोक दिया गया और दस्तावेज़ में कोई बदलाव नहीं किया गया।",
       "nativeSourceUnavailable": "दिखाई देने वाले टेक्स्ट को योग्य स्रोत ऑपरेटरों से नहीं जोड़ा जा सका। दस्तावेज़ में कोई बदलाव नहीं किया गया।",
       "nativeDeleteUnavailable": "इस मूल PDF टेक्स्ट को सुरक्षित रूप से हटाया नहीं जा सकता क्योंकि इसके सटीक स्रोत ऑपरेटर अस्पष्ट हैं। दस्तावेज़ में कोई बदलाव नहीं किया गया।",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "पहले संपादित किया गया टेक्स्ट केवल-पढ़ने योग्य है। दस्तावेज़ में कोई बदलाव नहीं किया गया।"
     },
     "pathologicalPaste": {

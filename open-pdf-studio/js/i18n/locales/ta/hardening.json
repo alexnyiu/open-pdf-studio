@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "இந்தப் பத்தி கண்டறியப்பட்ட அசல் நெடுவரிசை எல்லையைக் கடக்கிறது. திருத்தம் தடுக்கப்பட்டு, ஆவணம் மாற்றப்படாமல் விடப்பட்டது.",
       "nativeSourceUnavailable": "காணக்கூடிய உரையைத் தகுதியான மூல ஆபரேட்டர்களுடன் இணைக்க முடியவில்லை. ஆவணம் மாற்றப்படாமல் விடப்பட்டது.",
       "nativeDeleteUnavailable": "இந்த அசல் PDF உரையின் துல்லியமான மூல ஆபரேட்டர்கள் தெளிவற்றவை என்பதால், இதைப் பாதுகாப்பாக நீக்க முடியாது. ஆவணம் மாற்றப்படாமல் விடப்பட்டது.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "முன்பு திருத்தப்பட்ட உரை படிக்க மட்டும் உள்ளது. ஆவணம் மாற்றப்படாமல் விடப்பட்டது."
     },
     "pathologicalPaste": {

@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Ez a bekezdés átlép egy észlelt eredeti oszlophatárt. A szerkesztés le lett tiltva, és a dokumentum változatlan maradt.",
       "nativeSourceUnavailable": "A látható szöveget nem sikerült megfelelő forrásoperátorokhoz kapcsolni. A dokumentum változatlan maradt.",
       "nativeDeleteUnavailable": "Ez a natív PDF-szöveg nem törölhető biztonságosan, mert a pontos forrásoperátorai nem egyértelműek. A dokumentum változatlan maradt.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "A korábban szerkesztett szöveg írásvédett. A dokumentum változatlan maradt."
     },
     "pathologicalPaste": {

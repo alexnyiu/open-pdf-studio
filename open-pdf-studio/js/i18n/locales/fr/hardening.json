@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Ce paragraphe franchit une limite de colonne d’origine détectée. La modification a été bloquée et le document n’a pas été modifié.",
       "nativeSourceUnavailable": "Le texte visible n’a pas pu être associé à des opérateurs source admissibles. Le document n’a pas été modifié.",
       "nativeDeleteUnavailable": "Ce texte PDF natif ne peut pas être supprimé en toute sécurité, car ses opérateurs source exacts sont ambigus. Le document n’a pas été modifié.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Le texte précédemment modifié est en lecture seule. Le document n’a pas été modifié."
     },
     "pathologicalPaste": {

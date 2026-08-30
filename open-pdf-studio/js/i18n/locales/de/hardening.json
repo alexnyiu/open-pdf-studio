@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Dieser Absatz überschreitet eine erkannte Spaltengrenze im Original. Die Bearbeitung wurde blockiert und das Dokument wurde nicht verändert.",
       "nativeSourceUnavailable": "Sichtbarer Text konnte keinen geeigneten Quelloperatoren zugeordnet werden. Das Dokument wurde nicht verändert.",
       "nativeDeleteUnavailable": "Dieser native PDF-Text kann nicht sicher gelöscht werden, da seine genauen Quelloperatoren nicht eindeutig sind. Das Dokument wurde nicht verändert.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Zuvor bearbeiteter Text ist schreibgeschützt. Das Dokument wurde nicht verändert."
     },
     "pathologicalPaste": {

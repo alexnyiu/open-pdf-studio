@@ -50,6 +50,8 @@
       "nativeColumnBoundary": "This paragraph crosses a detected native column boundary. Editing was blocked and the document was left untouched.",
       "nativeSourceUnavailable": "Visible text could not be linked to eligible source operators. The document was left untouched.",
       "nativeDeleteUnavailable": "This native PDF text cannot be deleted safely because its exact source operators are ambiguous. The document was left untouched.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "lineBreakUnsupported": "Line breaks are not supported. Use Command-Enter to apply this one-line edit.",
       "ocrOneLine": "Editing one isolated scanned text line. Font properties are estimates.",
       "ocrFixed": "Editing multiple OCR lines inside one fixed original region. A single paragraph reflows inside this region; hard line breaks preserve fixed-line mode. Command-Enter applies.",

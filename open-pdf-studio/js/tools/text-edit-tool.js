@@ -3,7 +3,7 @@ import i18next from '../i18n/config.js';
 import { execute, executeForDocument } from '../core/undo-manager.js';
 import { redrawAnnotations, redrawContinuous } from '../annotations/rendering.js';
 import { showTextEditProperties, hideProperties } from '../ui/panels/properties-panel.js';
-import { canvasContainer, continuousContainer, pdfCanvas } from '../ui/dom-elements.js';
+import { canvasContainer, continuousContainer } from '../ui/dom-elements.js';
 import { showPdfTextEditor, hidePdfTextEditor, getPdfEditorText as getEditorText,
   updatePdfEditorStyle, shiftPdfEditorPosition, setPdfEditorStatus,
   getPdfEditorRichText, flushPdfEditorDraftForCommit, adoptPdfEditorFinalTextLayout,
@@ -115,6 +115,12 @@ import {
 } from '../text/final-text-layout.js';
 import { createTextApplyResult } from '../text/text-apply-result.js';
 import { createEditorLayoutRevision } from '../text/editor-layout-revision.js';
+import { publishCommittedTextEdit } from '../text/text-edit-publication.js';
+import {
+  mountedPageSurfaces,
+  resolvePageSurface,
+  resolvePageSurfaceForElement,
+} from '../pdf/page-surface-registry.js';
 
 let activeEditor = null;
 let hoverListeners = [];
@@ -148,16 +154,22 @@ function queueCurrentPageEditIntent({ documentState, pageNum, point = null, acti
   });
 }
 
-function livePageTextLayer(pageNum) {
-  return [...document.querySelectorAll(`.textLayer[data-page="${pageNum}"]`)]
-    .find((layer) => layer.isConnected) || null;
+function livePageSurface(pageNum, documentState = getActiveDocument()) {
+  return resolvePageSurface(documentState, pageNum, {
+    targetRevision: Number(documentState?.revisionState?.pageContentRevisions?.[pageNum]
+      ?? documentState?.revisionState?.contentRevision) || 0,
+  });
 }
 
-function livePageCanvas(pageNum, layer = livePageTextLayer(pageNum)) {
-  return layer?.parentElement?.querySelector('canvas.pdf-canvas')
-    || (getActiveDocument()?.viewMode === 'continuous'
-      ? document.querySelector(`.page-wrapper[data-page="${pageNum}"] canvas.pdf-canvas`)
-      : pdfCanvas || document.getElementById('pdf-canvas'));
+function livePageTextLayer(pageNum, documentState = getActiveDocument()) {
+  return livePageSurface(pageNum, documentState)?.textLayer || null;
+}
+
+function livePageCanvas(pageNum, _layer = null, documentState = getActiveDocument()) {
+  const surface = livePageSurface(pageNum, documentState);
+  if (!surface) return null;
+  if (surface.geometryCanvas) return surface.geometryCanvas;
+  return surface.baseSurface?.getContext ? surface.baseSurface : null;
 }
 
 function spanAtClientPoint(layer, point, selector = 'span') {
@@ -220,6 +232,68 @@ function textApplyResultFor(editor, status, overrides = {}) {
       ?? editor?._recordRef?.revision
       ?? null,
     ...overrides,
+  });
+}
+
+async function publishEditorCommit(editor, {
+  ownerDocument = editor?.ownerDocument,
+  pageNum = editor?.pageNum,
+  editId = null,
+  editRevision = null,
+  nativeAuthoritative = false,
+} = {}) {
+  const expectedVisible = getActiveDocument() === ownerDocument;
+  let publication;
+  try {
+    publication = await publishCommittedTextEdit({
+      documentState: ownerDocument,
+      pageNum,
+      editId,
+      editRevision,
+      expectedVisible,
+      nativeAuthoritative,
+    });
+  } catch (error) {
+    publication = Object.freeze({
+      status: 'failed',
+      visiblePublished: false,
+      semanticPublished: false,
+      error: error instanceof Error ? error.message : String(error),
+      errorCode: 'TEXT_PUBLICATION_FAILED',
+      pageRevision: Number(ownerDocument?.revisionState?.pageContentRevisions?.[pageNum]) || 0,
+    });
+  }
+  const pendingOrFailed = publication.status === 'failed'
+    || publication.status === 'deferred-unmounted';
+  if (pendingOrFailed && ownerDocument) {
+    ownerDocument.textEditPublicationState = Object.freeze({
+      ...publication,
+      editId: editId == null ? null : String(editId),
+      editRevision: editRevision == null ? null : Number(editRevision) || 0,
+      recoveryActions: Object.freeze(['retry-page-publication', 'save']),
+    });
+    if (publication.status === 'deferred-unmounted') {
+      showMessage(hardeningText('textEditor.status.previewPending'));
+    } else {
+      showMessage(hardeningText('textEditor.status.previewFailed', {
+        error: publication.error ? `\n\n${publication.error}` : '',
+      }));
+    }
+  } else if (publication.status === 'published'
+      && ownerDocument?.textEditPublicationState?.pageNum === Number(pageNum)) {
+    ownerDocument.textEditPublicationState = null;
+  }
+  return Object.freeze({
+    publication,
+    visiblePublished: publication.status === 'published'
+      && publication.visiblePublished === true,
+    semanticPublished: publication.status === 'published'
+      && publication.semanticPublished === true,
+    publicationError: publication.status === 'failed'
+      ? publication.error || publication.errorCode || 'Page publication failed'
+      : publication.status === 'superseded'
+        ? 'Page publication was superseded by a newer document revision'
+        : null,
   });
 }
 
@@ -708,8 +782,7 @@ async function openCombinedTextBoxEditor() {
   })).filter((item) => item.index >= 0);
   const mergedIndex = originalRecords.length ? Math.min(...originalRecords.map((item) => item.index)) : doc.textEdits.length;
   const layer = plan.orderedItems[0].layer;
-  const canvasEl = layer?.parentElement?.querySelector('canvas.pdf-canvas')
-    || pdfCanvas || document.getElementById('pdf-canvas');
+  const canvasEl = livePageCanvas(plan.page, layer, doc);
   if (!canvasEl) return;
   clearTextBoxSelection();
   startTextEditEditing(mergedRecord, plan.page, canvasEl, {
@@ -744,8 +817,6 @@ async function openCombinedTextBoxEditor() {
         },
       });
       if (!recorded) return false;
-      try { reRenderAddedText(plan.page); }
-      catch (error) { console.warn('[text-edit] Combined-text refresh failed:', error); }
       return true;
     },
   });
@@ -968,12 +1039,12 @@ function cssBaselineOffset(fontFamily, fontSize, lineHeight, isBold = false, isI
 // Re-inject the synthetic text-layer spans for added text on a page (after the
 // record's content/style/position changed) and repaint the annotation canvas.
 function reRenderAddedText(pageNum) {
-  const textLayer = document.querySelector(`.textLayer[data-page="${pageNum}"]`)
-    || document.querySelector('.textLayer');
-  const canvasEl = textLayer?.parentElement?.querySelector('canvas.pdf-canvas')
-    || pdfCanvas || document.getElementById('pdf-canvas');
+  const doc = getActiveDocument();
+  const surface = livePageSurface(pageNum, doc);
+  const textLayer = surface?.textLayer || null;
+  const canvasEl = surface?.geometryCanvas
+    || (surface?.baseSurface?.getContext ? surface.baseSurface : null);
   if (textLayer && canvasEl) {
-    const doc = getActiveDocument();
     const vp = window.__pdfViewport;
     const useViewport = vp?.active && doc?.filePath && vp.pageW > 0 && vp.pageH > 0;
     const sc = doc?.scale || 1.5;
@@ -1200,10 +1271,6 @@ export function startInsertedTextEditingAtPoint(
         return false;
       }
       committed = true;
-      if (getActiveDocument() === ownerDocument) {
-        try { reRenderAddedText(pageNum); }
-        catch (error) { console.warn('[text-edit] Inserted-text refresh failed:', error); }
-      }
       return true;
     },
   });
@@ -1410,16 +1477,13 @@ export function activateEditTextTool() {
       let scannedLayer = scannedSpan?.closest('.textLayer') || null;
       if (!scannedSpan && target?.matches('canvas.pdf-canvas, #pdf-canvas')) {
         const point = { x: event.clientX, y: event.clientY };
-        scannedLayer = [...document.querySelectorAll('.textLayer[data-page]')].find((layer) => {
-          const pageNum = parseInt(layer.dataset.page || '', 10);
-          return layer.isConnected
-            && livePageCanvas(pageNum, layer) === target
-            && Boolean(spanAtClientPoint(
-              layer,
-              point,
-              'span[data-ocr-owner][data-ocr-line-id]',
-            ));
-        }) || null;
+        const surface = resolvePageSurfaceForElement(target, getActiveDocument());
+        scannedLayer = surface?.textLayer || null;
+        if (!spanAtClientPoint(
+          scannedLayer,
+          point,
+          'span[data-ocr-owner][data-ocr-line-id]',
+        )) scannedLayer = null;
         scannedSpan = spanAtClientPoint(
           scannedLayer,
           point,
@@ -1460,8 +1524,7 @@ export function activateEditTextTool() {
       const record = getActiveDocument()?.textEdits?.find(
         (entry) => String(entry.id) === span.dataset.editId,
       );
-      const canvasEl = layer?.parentElement?.querySelector('canvas.pdf-canvas')
-        || pdfCanvas || document.getElementById('pdf-canvas');
+      const canvasEl = livePageCanvas(pageNum, layer);
       if (!record || !canvasEl) return;
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -1583,8 +1646,8 @@ function getBlockGroups(layer) {
 
   // ── Build group objects ──
   // Find the PDF canvas to sample text colors
-  const pdfCanvasEl = layer.parentElement?.querySelector('canvas.pdf-canvas')
-    || pdfCanvas || document.getElementById('pdf-canvas');
+  const pageNum = Number(layer.dataset.page) || getActiveDocument()?.currentPage || 1;
+  const pdfCanvasEl = livePageCanvas(pageNum, layer);
 
   const groups = blocks.map(nativeBlock => {
     const block = nativeBlock.lines;
@@ -1709,8 +1772,7 @@ function getBlockGroups(layer) {
 // ── Hover & click wiring ──
 
 function ownedTextEditAtClientPoint(clientX, clientY, pageNum, layer) {
-  const canvasEl = layer.parentElement?.querySelector('canvas.pdf-canvas')
-    || pdfCanvas || document.getElementById('pdf-canvas');
+  const canvasEl = livePageCanvas(pageNum, layer);
   if (!canvasEl) return null;
   const canvasRect = canvasEl.getBoundingClientRect();
   const documentState = getActiveDocument();
@@ -1789,7 +1851,9 @@ export function startTextLayerEditAtClientPointWhenReady({
 }
 
 function enableTextLayerHover() {
-  const textLayers = document.querySelectorAll('.textLayer');
+  const textLayers = mountedPageSurfaces(getActiveDocument())
+    .map((surface) => surface.textLayer)
+    .filter((layer, index, layers) => layer && layers.indexOf(layer) === index);
   const alreadyAttached = new Set(hoverListeners.map(h => h.span));
 
   textLayers.forEach(layer => {
@@ -1860,8 +1924,7 @@ function enableTextLayerHover() {
         }
         if (editId) {
           const ownedRecord = doc?.textEdits?.find((record) => String(record.id) === editId);
-          const ownedCanvas = layer.parentElement?.querySelector('canvas.pdf-canvas')
-            || pdfCanvas || document.getElementById('pdf-canvas');
+          const ownedCanvas = livePageCanvas(pageNum, layer, doc);
           if (ownedRecord && ownedCanvas) {
             if (e.shiftKey) {
               toggleTextBoxSelection(selectionItemForRecord(ownedRecord, pageNum, layer));
@@ -2024,7 +2087,10 @@ function disableTextLayerHover() {
   }
   layerOwnedEditListeners = [];
 
-  document.querySelectorAll('.textLayer').forEach(layer => {
+  mountedPageSurfaces(getActiveDocument())
+    .map((surface) => surface.textLayer)
+    .filter(Boolean)
+    .forEach(layer => {
     layer.style.pointerEvents = keepTextAccess ? 'auto' : '';
   });
 }
@@ -2400,8 +2466,7 @@ async function startScannedTextEditing(
     'z-index': '1000',
   };
   const textLayer = span.closest('.textLayer');
-  const pageCanvas = textLayer?.parentElement?.querySelector('canvas.pdf-canvas')
-    || pdfCanvas || document.getElementById('pdf-canvas');
+  const pageCanvas = livePageCanvas(pageNum, textLayer, doc);
   const editorContainer = textLayer?.parentElement;
   let placement = null;
   if (pageCanvas && editorContainer) {
@@ -2608,31 +2673,33 @@ async function startScannedTextEditing(
         cleanup();
         return textApplyResultFor(editor, 'superseded', { editId: editor.selectionId });
       }
-      cleanup();
-      let visiblePublished = false;
-      let semanticPublished = false;
-      let publicationError = null;
-      if (getActiveDocument() === doc) {
-        try {
-          refreshPendingOcrTextLayer(pageNum);
-          enableTextLayerHover();
-          visiblePublished = true;
-          semanticPublished = true;
-        } catch (error) {
-          publicationError = error instanceof Error ? error.message : String(error);
-          console.warn('[scanned-text-edit] Publication failed:', error);
-        }
-      }
       const committedSelection = doc.scannedTextEdits?.pages
         ?.flatMap((page) => page.selections || [])
         .find((selection) => selection.id === editor.selectionId);
-      return textApplyResultFor(editor, 'applied', {
-        ownerCommitted: true,
-        visiblePublished,
-        semanticPublished,
+      const published = await publishEditorCommit(editor, {
+        ownerDocument: doc,
+        pageNum,
         editId: editor.selectionId,
         editRevision: committedSelection?.revision ?? null,
-        publicationError,
+        nativeAuthoritative: false,
+      });
+      cleanup();
+      if (published.publication.status === 'superseded') {
+        return textApplyResultFor(editor, 'superseded', {
+          ownerCommitted: true,
+          editId: editor.selectionId,
+          editRevision: committedSelection?.revision ?? null,
+          publicationError: published.publicationError,
+        });
+      }
+      if (published.semanticPublished) enableTextLayerHover();
+      return textApplyResultFor(editor, 'applied', {
+        ownerCommitted: true,
+        visiblePublished: published.visiblePublished,
+        semanticPublished: published.semanticPublished,
+        editId: editor.selectionId,
+        editRevision: committedSelection?.revision ?? null,
+        publicationError: published.publicationError,
       });
     } catch (error) {
       editor.committing = false;
@@ -2834,8 +2901,7 @@ async function startPdfTextEditing(
   if (editId) {
     const rec = ownerDocument.textEdits?.find(e => String(e.id) === editId);
     if (rec) {
-      const canvasEl = textLayer.parentElement?.querySelector('canvas.pdf-canvas')
-        || pdfCanvas || document.getElementById('pdf-canvas');
+      const canvasEl = livePageCanvas(pageNum, textLayer, ownerDocument);
       if (canvasEl) { startTextEditEditing(rec, pageNum, canvasEl); return; }
     }
   }
@@ -2866,8 +2932,7 @@ async function startPdfTextEditing(
     && sameNativeTextOwnership(record.sourceProvenance, sourceProvenance)
   ));
   if (existingNativeEdit) {
-    const canvasEl = textLayer.parentElement?.querySelector('canvas.pdf-canvas')
-      || pdfCanvas || document.getElementById('pdf-canvas');
+    const canvasEl = livePageCanvas(pageNum, textLayer, ownerDocument);
     if (canvasEl) startTextEditEditing(existingNativeEdit, pageNum, canvasEl);
     return;
   }
@@ -2936,8 +3001,7 @@ async function startPdfTextEditing(
   const displayFontName = substituteFamily || editableFontName(lineData[0], cssFallbackFont);
   const editorBold = lineData[0].isBold || false;
   const editorItalic = lineData[0].isItalic || false;
-  const pageCanvas = textLayer.parentElement?.querySelector('canvas.pdf-canvas')
-    || pdfCanvas || document.getElementById('pdf-canvas');
+  const pageCanvas = livePageCanvas(pageNum, textLayer, ownerDocument);
   const placementGeometry = pageCanvas ? getTextEditGeometry(pageNum, pageCanvas) : null;
   if (!placementGeometry) {
     showMessage(hardeningText('textEditor.status.operationFailed'));
@@ -3083,8 +3147,7 @@ async function startPdfTextEditing(
       expandableRegion: expandableNativeEditorOptions(
         originalRichText,
         pageNum,
-        textLayer.parentElement?.querySelector('canvas.pdf-canvas')
-          || pdfCanvas || document.getElementById('pdf-canvas'),
+        livePageCanvas(pageNum, textLayer, ownerDocument),
         textLayer,
         {
           block,
@@ -3258,57 +3321,38 @@ async function finishPdfTextEditing(operation) {
       });
     }
 
-    // Only project the committed record into the transient PDF.js layer after
-    // owner persistence and its undo unit are both durable.
-    let semanticPublished = false;
-    let visiblePublished = false;
-    let publicationError = null;
-    try {
-      for (const sourceSpan of block.spans) {
-        sourceSpan.dataset.editId = String(editRecord.id);
-      }
-      const newLines = newText.split('\n');
-      for (let li = 0; li < lineData.length; li++) {
-        const lineSpans = lineData[li].spans;
-        if (li < newLines.length) {
-          lineSpans[0].textContent = newLines[li];
-          for (let si = 1; si < lineSpans.length; si++) lineSpans[si].textContent = '';
-        } else {
-          for (const s of lineSpans) s.textContent = '';
-        }
-      }
-      semanticPublished = true;
-    } catch (error) {
-      // Persistence and undo recording are already durable. A transient
-      // PDF.js projection failure must not leave a retryable session that
-      // could append the same owner record a second time.
-      console.warn('[text-edit] Native-source projection refresh failed:', error);
-      publicationError = error instanceof Error ? error.message : String(error);
-    }
-    if (getActiveDocument() === doc) {
-      try {
-        reRenderAddedText(pageNum);
-        visiblePublished = true;
-      } catch (error) {
-        console.warn('[text-edit] Native-source refresh failed:', error);
-        publicationError ||= error instanceof Error ? error.message : String(error);
-      }
-    }
+    const published = await publishEditorCommit(editor, {
+      ownerDocument: doc,
+      pageNum,
+      editId: editRecord.id,
+      editRevision: editRecord.revision,
+      nativeAuthoritative: true,
+    });
 
     hidePdfTextEditor();
-    for (const span of block.spans) span.style.visibility = '';
+    for (const span of block.spans) {
+      if (!span.dataset.nativeTextReplacedBy) span.style.visibility = '';
+    }
     completeEditorSession(editor);
     activeEditor = null;
     state.pdfTextEditState = null;
     hideProperties();
+    if (published.publication.status === 'superseded') {
+      return textApplyResultFor(editor, 'superseded', {
+        ownerCommitted: true,
+        editId: editRecord.id,
+        editRevision: editRecord.revision,
+        publicationError: published.publicationError,
+      });
+    }
     return textApplyResultFor(editor, 'applied', {
       ownerCommitted: true,
-      visiblePublished,
-      semanticPublished,
+      visiblePublished: published.visiblePublished,
+      semanticPublished: published.semanticPublished,
       editId: editRecord.id,
       editRevision: editRecord.revision,
       layoutAdjustment: layoutAdjustmentForDecision(layoutDecision),
-      publicationError,
+      publicationError: published.publicationError,
     });
   }
 }
@@ -3665,13 +3709,29 @@ export function startTextEditEditing(
           recoveryActions: ['keep-editing'],
         });
       }
-      closeEditor();
-      return textApplyResultFor(editor, 'applied', {
-        ownerCommitted: true,
-        visiblePublished: getActiveDocument() === editDoc,
-        semanticPublished: getActiveDocument() === editDoc,
+      const published = await publishEditorCommit(editor, {
+        ownerDocument: editDoc,
+        pageNum,
         editId: null,
         editRevision: null,
+        nativeAuthoritative: false,
+      });
+      closeEditor();
+      if (published.publication.status === 'superseded') {
+        return textApplyResultFor(editor, 'superseded', {
+          ownerCommitted: true,
+          editId: null,
+          editRevision: null,
+          publicationError: published.publicationError,
+        });
+      }
+      return textApplyResultFor(editor, 'applied', {
+        ownerCommitted: true,
+        visiblePublished: published.visiblePublished,
+        semanticPublished: published.semanticPublished,
+        editId: null,
+        editRevision: null,
+        publicationError: published.publicationError,
       });
     }
 
@@ -3722,9 +3782,6 @@ export function startTextEditEditing(
       newRecord: transaction?.draftOnly === true,
     }).candidate;
 
-    let visiblePublished = false;
-    let semanticPublished = false;
-    let publicationError = null;
     if (transaction && (prepared.changed || transaction.forceCommit)) {
       const commitResult = transaction.commit(cloneTextEditRecord(committedCandidate));
       if (commitResult !== true) {
@@ -3734,8 +3791,6 @@ export function startTextEditEditing(
           recoveryActions: ['keep-editing'],
         });
       }
-      visiblePublished = getActiveDocument() === editDoc;
-      semanticPublished = visiblePublished;
     } else if (prepared.changed) {
       const ownerIndex = editDoc.textEdits?.findIndex((record) => (
         String(record.id) === String(oldTextEdit.id)
@@ -3770,27 +3825,34 @@ export function startTextEditEditing(
           recoveryActions: ['keep-editing'],
         });
       }
-      if (getActiveDocument() === editDoc) {
-        try {
-          reRenderAddedText(pageNum);
-          visiblePublished = true;
-          semanticPublished = true;
-        } catch (error) {
-          console.warn('[text-edit] Owned-text refresh failed:', error);
-          publicationError = error instanceof Error ? error.message : String(error);
-        }
-      }
     }
 
+    const published = await publishEditorCommit(editor, {
+      ownerDocument: editDoc,
+      pageNum,
+      editId: committedCandidate.id ?? null,
+      editRevision: committedCandidate.revision ?? null,
+      nativeAuthoritative: Boolean(
+        committedCandidate.original && committedCandidate.sourceProvenance,
+      ),
+    });
     closeEditor();
+    if (published.publication.status === 'superseded') {
+      return textApplyResultFor(editor, 'superseded', {
+        ownerCommitted: true,
+        editId: committedCandidate.id ?? null,
+        editRevision: committedCandidate.revision ?? null,
+        publicationError: published.publicationError,
+      });
+    }
     return textApplyResultFor(editor, 'applied', {
       ownerCommitted: true,
-      visiblePublished,
-      semanticPublished,
+      visiblePublished: published.visiblePublished,
+      semanticPublished: published.semanticPublished,
       editId: committedCandidate.id ?? null,
       editRevision: committedCandidate.revision ?? null,
       layoutAdjustment: layoutAdjustmentForDecision(layoutDecision),
-      publicationError,
+      publicationError: published.publicationError,
     });
   };
 
@@ -3907,7 +3969,7 @@ export function startTextEditEditing(
         view.richText,
         pageNum,
         canvasEl,
-        canvasEl.parentElement?.querySelector('.textLayer'),
+        livePageTextLayer(pageNum, editDoc),
         {
           provenance: draftTextEdit.sourceProvenance,
           editId: draftTextEdit.id,
@@ -4052,27 +4114,37 @@ export function applyActiveTextEditStyle(key, value) {
 }
 
 // Delete the text edit that is currently open in the inline editor.
-export function deleteActiveTextEdit() {
+export async function deleteActiveTextEdit() {
   if (!activeEditor) return;
   if (activeEditor.kind === 'scannedText') {
     const editor = activeEditor;
     const doc = editor.ownerDocument;
+    if (doc && editor.existingOwnedEdit) {
+      try {
+        removeScannedTextEditForDocument(doc, editor.selectionId);
+        const reverted = doc.scannedTextEdits?.pages
+          ?.flatMap((page) => page.selections || [])
+          .find((selection) => selection.id === editor.selectionId);
+        await publishEditorCommit(editor, {
+          ownerDocument: doc,
+          pageNum: editor.pageNum,
+          editId: editor.selectionId,
+          editRevision: reverted?.revision ?? null,
+          nativeAuthoritative: false,
+        });
+      } catch (error) {
+        console.warn('[scanned-text-edit] Removal failed:', error);
+        showMessage(hardeningText('textEditor.status.operationFailed'));
+        return;
+      }
+    }
     completeEditorSession(editor);
     editor.preview?.remove();
     hidePdfTextEditor();
     activeEditor = null;
     state.pdfTextEditState = null;
     hideProperties();
-    if (doc && editor.existingOwnedEdit) {
-      try {
-        removeScannedTextEditForDocument(doc, editor.selectionId);
-        if (getActiveDocument() === doc) refreshPendingOcrTextLayer(editor.pageNum);
-        enableTextLayerHover();
-      } catch (error) {
-        console.warn('[scanned-text-edit] Removal failed:', error);
-        showMessage(hardeningText('textEditor.status.operationFailed'));
-      }
-    }
+    enableTextLayerHover();
     return;
   }
   if (activeEditor._transaction?.draftOnly) {
@@ -4087,7 +4159,15 @@ export function deleteActiveTextEdit() {
   }
   if (activeEditor._recordRef) {
     // Inserted text / existing edit record → drop the record.
-    removeTextEditRecord(activeEditor._sourceRecordRef || activeEditor._recordRef);
+    const sourceRecord = activeEditor._sourceRecordRef || activeEditor._recordRef;
+    if (!removeTextEditRecord(sourceRecord)) return;
+    await publishEditorCommit(editor, {
+      ownerDocument: editor.ownerDocument,
+      pageNum: editor.pageNum,
+      editId: null,
+      editRevision: null,
+      nativeAuthoritative: Boolean(sourceRecord.original && sourceRecord.sourceProvenance),
+    });
   } else if (activeEditor.kind === 'existingText' && activeEditor.originalText) {
     // Native source text may be removed only through exact operator ownership;
     // page-colour cover rectangles are not a safe deletion mechanism.
@@ -4104,7 +4184,7 @@ function nudgeActiveTextEdit(dxPdf, dyPdf) {
   if (!activeEditor) return;
   const scale = activeEditor.scale || (activeEditor.ownerDocument?.scale || 1.5);
   // Convert the PDF-space nudge into the rotated display frame.
-  const canvasEl = pdfCanvas || document.getElementById('pdf-canvas');
+  const canvasEl = livePageCanvas(activeEditor.pageNum, null, activeEditor.ownerDocument);
   const geometry = getTextEditGeometry(activeEditor.pageNum, canvasEl);
   const [a, b, c, d] = getPageRotationMatrix(
     geometry.pageWidth,
@@ -4155,9 +4235,5 @@ function removeTextEditRecord(rec, ownerDocument = activeEditor?.ownerDocument) 
     )),
   });
   if (!removed) return false;
-  if (getActiveDocument() === doc) {
-    try { reRenderAddedText(rec.page); }
-    catch (error) { console.warn('[text-edit] Removed-text refresh failed:', error); }
-  }
   return true;
 }

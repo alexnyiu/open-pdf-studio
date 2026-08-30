@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Aya hii inavuka mpaka wa safu wima asilia uliotambuliwa. Uhariri ulizuiwa na hati iliachwa bila kubadilishwa.",
       "nativeSourceUnavailable": "Maandishi yanayoonekana hayakuweza kuunganishwa na viendeshaji chanzo vinavyofaa. Hati iliachwa bila kubadilishwa.",
       "nativeDeleteUnavailable": "Maandishi haya asilia ya PDF hayawezi kufutwa kwa usalama kwa sababu viendeshaji vyake halisi vya chanzo vina utata. Hati iliachwa bila kubadilishwa.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Maandishi yaliyohaririwa awali ni ya kusoma pekee. Hati iliachwa bila kubadilishwa."
     },
     "pathologicalPaste": {

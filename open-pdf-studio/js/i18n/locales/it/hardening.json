@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Questo paragrafo attraversa un limite di colonna originale rilevato. La modifica è stata bloccata e il documento non è stato modificato.",
       "nativeSourceUnavailable": "Non è stato possibile collegare il testo visibile a operatori sorgente idonei. Il documento non è stato modificato.",
       "nativeDeleteUnavailable": "Questo testo PDF nativo non può essere eliminato in modo sicuro perché i suoi operatori sorgente esatti sono ambigui. Il documento non è stato modificato.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Il testo modificato in precedenza è di sola lettura. Il documento non è stato modificato."
     },
     "pathologicalPaste": {

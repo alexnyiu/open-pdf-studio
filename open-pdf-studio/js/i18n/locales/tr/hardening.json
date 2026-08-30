@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Bu paragraf algılanan özgün sütun sınırını aşıyor. Düzenleme engellendi ve belge değiştirilmeden bırakıldı.",
       "nativeSourceUnavailable": "Görünür metin uygun kaynak işleçlerine bağlanamadı. Belge değiştirilmeden bırakıldı.",
       "nativeDeleteUnavailable": "Bu yerel PDF metni, tam kaynak işleçleri belirsiz olduğundan güvenle silinemez. Belge değiştirilmeden bırakıldı.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Daha önce düzenlenmiş metin salt okunurdur. Belge değiştirilmeden bırakıldı."
     },
     "pathologicalPaste": {

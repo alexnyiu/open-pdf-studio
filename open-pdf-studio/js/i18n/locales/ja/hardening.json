@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "この段落は、検出された元の列境界を越えています。編集はブロックされ、ドキュメントは変更されていません。",
       "nativeSourceUnavailable": "表示テキストを適格なソース演算子に関連付けられませんでした。ドキュメントは変更されていません。",
       "nativeDeleteUnavailable": "このネイティブ PDF テキストは、正確なソース演算子が曖昧なため、安全に削除できません。ドキュメントは変更されていません。",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "以前に編集したテキストは読み取り専用です。ドキュメントは変更されていません。"
     },
     "pathologicalPaste": {

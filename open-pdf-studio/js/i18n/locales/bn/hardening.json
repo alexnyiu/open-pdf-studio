@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "এই অনুচ্ছেদটি শনাক্ত করা মূল কলাম সীমা অতিক্রম করেছে। সম্পাদনা বন্ধ করা হয়েছে এবং নথিটি অপরিবর্তিত রাখা হয়েছে।",
       "nativeSourceUnavailable": "দৃশ্যমান টেক্সটকে যোগ্য উৎস অপারেটরের সঙ্গে যুক্ত করা যায়নি। নথিটি অপরিবর্তিত রাখা হয়েছে।",
       "nativeDeleteUnavailable": "এই মূল PDF টেক্সটটি নিরাপদে মোছা যাবে না, কারণ এর সঠিক উৎস অপারেটরগুলি অস্পষ্ট। নথিটি অপরিবর্তিত রাখা হয়েছে।",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "আগে সম্পাদিত টেক্সট শুধু পঠনযোগ্য। নথিটি অপরিবর্তিত রাখা হয়েছে।"
     },
     "pathologicalPaste": {

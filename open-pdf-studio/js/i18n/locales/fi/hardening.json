@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Tämä kappale ylittää havaitun alkuperäisen sarakerajan. Muokkaus estettiin, eikä asiakirjaa muutettu.",
       "nativeSourceUnavailable": "Näkyvää tekstiä ei voitu yhdistää kelvollisiin lähdeoperaattoreihin. Asiakirjaa ei muutettu.",
       "nativeDeleteUnavailable": "Tätä PDF:n alkuperäistä tekstiä ei voi poistaa turvallisesti, koska sen tarkat lähdeoperaattorit ovat tulkinnanvaraisia. Asiakirjaa ei muutettu.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Aiemmin muokattu teksti on vain luku -tilassa. Asiakirjaa ei muutettu."
     },
     "pathologicalPaste": {

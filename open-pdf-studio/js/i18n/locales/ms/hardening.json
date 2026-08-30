@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Perenggan ini merentasi sempadan lajur asal yang dikesan. Pengeditan disekat dan dokumen dibiarkan tanpa perubahan.",
       "nativeSourceUnavailable": "Teks yang kelihatan tidak dapat dipautkan kepada pengendali sumber yang layak. Dokumen dibiarkan tanpa perubahan.",
       "nativeDeleteUnavailable": "Teks PDF asal ini tidak boleh dipadam dengan selamat kerana pengendali sumber tepatnya kabur. Dokumen dibiarkan tanpa perubahan.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Teks yang diedit sebelum ini adalah baca sahaja. Dokumen dibiarkan tanpa perubahan."
     },
     "pathologicalPaste": {

@@ -1,4 +1,9 @@
-import { state, getActiveDocument, getPageRotation } from '../core/state.js';
+import {
+  state,
+  getActiveDocument,
+  getPageRotation,
+  getPageRotationForDocument,
+} from '../core/state.js';
 import { isTauri, invoke } from '../core/platform.js';
 import * as pdfjsLib from 'pdfjs-dist';
 import {
@@ -32,6 +37,11 @@ import {
   textLayerElementMatchesOwner,
   textLayerOwnerMatchesDocument,
 } from './text-layer-lifecycle.js';
+import {
+  registerPageSurface,
+  resolvePageSurface,
+  unregisterPageSurface,
+} from '../pdf/page-surface-registry.js';
 
 /**
  * Text Layer Management Module
@@ -42,6 +52,53 @@ import {
 const textLayers = new Map();
 const pageFontResolutionPromises = new WeakMap();
 const textLayerRequests = createTextLayerRequestRegistry();
+const pendingCommittedTextProjections = new Map();
+
+function committedProjectionKey(documentState, pageNum, revision) {
+  return [
+    String(documentState?.id || ''),
+    Number(documentState?.lifecycleGeneration) || 0,
+    Number(pageNum) || 0,
+    Number(revision) || 0,
+  ].join(':');
+}
+
+function registerTextLayerPageSurface(documentState, pageNum, container, textLayer, dimensions = null) {
+  if (!documentState || !container) return null;
+  const authoritativePreview = container.querySelector?.('.text-edit-authoritative-preview') || null;
+  const rasterImage = container.querySelector?.('.pdf-page-raster') || null;
+  const geometryCanvas = container.querySelector?.('canvas.pdf-canvas-geometry') || null;
+  const baseCanvas = container.querySelector?.('canvas.pdf-canvas:not(.annotation-canvas)') || null;
+  const width = Number(documentState.pageDims?.[pageNum]?.widthPt ?? dimensions?.width);
+  const height = Number(documentState.pageDims?.[pageNum]?.heightPt ?? dimensions?.height);
+  const viewport = globalThis.window?.__pdfViewport;
+  const viewportOwnsPage = container.id === 'canvas-container'
+    && viewport?.active
+    && viewport.documentId === String(documentState.id)
+    && (Number(viewport.documentLifecycleGeneration) || 0)
+      === (Number(documentState.lifecycleGeneration) || 0)
+    && Number(viewport.pageNum) === Number(pageNum);
+  return registerPageSurface({
+    documentState,
+    pageNum,
+    surfaceKind: authoritativePreview
+      ? 'continuous-candidate-canvas'
+      : rasterImage
+      ? 'continuous-raster-image'
+      : documentState.viewMode === 'continuous' || documentState.viewMode === 'book'
+        ? 'continuous-canvas' : 'single-page-canvas',
+    container,
+    baseSurface: authoritativePreview || rasterImage || baseCanvas,
+    geometryCanvas,
+    overlayCanvas: container.querySelector?.('canvas.annotation-canvas, #annotation-canvas') || null,
+    textLayer,
+    canonicalPageDimensions: width > 0 && height > 0 ? { width, height } : null,
+    cssScale: viewportOwnsPage
+      ? Number(viewport.zoom) || 1
+      : Number(documentState.scale) || 1,
+    dpr: Number(globalThis.window?.devicePixelRatio) || 1,
+  });
+}
 
 function textLayerRequestIsCurrent(request) {
   return Boolean(
@@ -628,6 +685,10 @@ export async function createTextLayer(page, viewport, container, pageNum, lifecy
       owner,
       requestGeneration: request.generation,
     });
+    registerTextLayerPageSurface(activeDocument, pageNum, container, textLayerDiv, {
+      width: viewport.width / viewport.scale,
+      height: viewport.height / viewport.scale,
+    });
     setOcrTextLayerProjection(textLayerDiv, {
       kind: 'pdfjs',
       viewport,
@@ -637,6 +698,7 @@ export async function createTextLayer(page, viewport, container, pageNum, lifecy
     });
     injectPendingOcrTextSpans(textLayerDiv, pageNum);
     ensureEndOfContent(textLayerDiv);
+    await flushPendingCommittedTextProjection(activeDocument, pageNum, textLayerDiv);
     return textLayerDiv;
   }
   if (!textLayerRequestIsCurrent(request)) {
@@ -707,6 +769,10 @@ export async function createTextLayer(page, viewport, container, pageNum, lifecy
     owner,
     requestGeneration: request.generation,
   });
+  registerTextLayerPageSurface(activeDocument, pageNum, container, textLayerDiv, {
+    width: viewport.width / viewport.scale,
+    height: viewport.height / viewport.scale,
+  });
   setOcrTextLayerProjection(textLayerDiv, {
     kind: 'pdfjs',
     viewport,
@@ -735,6 +801,8 @@ export async function createTextLayer(page, viewport, container, pageNum, lifecy
   // endOfContent-marker als laatste kind (mitigatie omgekeerde sleep)
   ensureEndOfContent(textLayerDiv);
 
+  await flushPendingCommittedTextProjection(activeDocument, pageNum, textLayerDiv);
+
   return textLayerDiv;
 }
 
@@ -746,8 +814,14 @@ export async function createTextLayer(page, viewport, container, pageNum, lifecy
  * @param {number} pageWidth - Unscaled page width in PDF points
  * @param {number} pageHeight - Unscaled page height in PDF points
  */
-export function injectSyntheticTextSpans(textLayerDiv, pageNum, pageWidth, pageHeight) {
-  const doc = getActiveDocument();
+export function injectSyntheticTextSpans(
+  textLayerDiv,
+  pageNum,
+  pageWidth,
+  pageHeight,
+  documentState = getActiveDocument(),
+) {
+  const doc = documentState;
 
   // Rebuild only application-owned projections. Native PDF.js spans and OCR
   // targets are outside this cleanup boundary.
@@ -767,7 +841,7 @@ export function injectSyntheticTextSpans(textLayerDiv, pageNum, pageWidth, pageH
     .map(projectTextEditRecord)
     .filter((entry) => entry.originalText === '');
   if (addedEdits.length === 0) {
-    injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry);
+    injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry, doc);
     return;
   }
 
@@ -863,11 +937,11 @@ export function injectSyntheticTextSpans(textLayerDiv, pageNum, pageWidth, pageH
       textLayerDiv.appendChild(span);
     }
   }
-  injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry);
+  injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry, doc);
 }
 
-function injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry) {
-  const doc = getActiveDocument();
+function injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry, documentState = getActiveDocument()) {
+  const doc = documentState;
   const needsTextAccess = state.currentTool === 'select' || state.currentTool === 'editText';
   for (const rawRecord of doc?.textEdits || []) {
     if (rawRecord.page !== pageNum) continue;
@@ -894,6 +968,205 @@ function injectOwnedTextEditHitTargets(textLayerDiv, pageNum, geometry) {
       textLayerDiv.appendChild(span);
     }
   }
+}
+
+function nativeMarkerIds(record) {
+  return new Set((record?.sourceProvenance || [])
+    .map((source) => String(source?.markerId || ''))
+    .filter(Boolean));
+}
+
+function injectOwnedNativeSemanticSpans(textLayerDiv, pageNum, geometry, documentState) {
+  textLayerDiv.querySelectorAll('span[data-owned-text-semantic]')
+    .forEach((span) => span.remove());
+  textLayerDiv.querySelectorAll('span[data-native-text-replaced-by]').forEach((span) => {
+    span.style.visibility = '';
+    delete span.dataset.nativeTextReplacedBy;
+    span.removeAttribute('aria-hidden');
+  });
+  const needsTextAccess = state.currentTool === 'select' || state.currentTool === 'editText';
+  for (const rawRecord of documentState?.textEdits || []) {
+    if (rawRecord.page !== pageNum || !rawRecord.original || !rawRecord.sourceProvenance) continue;
+    let record;
+    try { record = projectTextEditRecord(rawRecord).record; }
+    catch (_) { continue; }
+    const markers = nativeMarkerIds(record);
+    for (const sourceSpan of textLayerDiv.querySelectorAll(
+      'span[data-native-text-marker-ids], span[data-native-text-provenance]',
+    )) {
+      const sourceMarkers = String(sourceSpan.dataset.nativeTextMarkerIds || '')
+        .split(/[\s,]+/u).filter(Boolean);
+      if (!sourceMarkers.some((marker) => markers.has(marker))) continue;
+      sourceSpan.style.visibility = 'hidden';
+      sourceSpan.dataset.nativeTextReplacedBy = String(record.id);
+      sourceSpan.setAttribute('aria-hidden', 'true');
+    }
+    for (const target of ownedTextEditLineTargets(record)) {
+      if (!target.text) continue;
+      const firstRun = record.richText.lines
+        .find((line) => String(line.id) === String(target.lineId))?.runs?.[0];
+      const top = geometry.pageHeight - target.baseline - target.fontSize * 0.85;
+      const span = document.createElement('span');
+      span.textContent = target.text;
+      span.setAttribute('role', 'presentation');
+      span.setAttribute('dir', 'ltr');
+      span.style.left = `${(100 * target.x / geometry.pageWidth).toFixed(4)}%`;
+      span.style.top = `${(100 * top / geometry.pageHeight).toFixed(4)}%`;
+      span.style.width = `${(100 * target.width / geometry.pageWidth).toFixed(4)}%`;
+      span.style.height = `${(100 * target.height / geometry.pageHeight).toFixed(4)}%`;
+      span.style.color = 'transparent';
+      span.style.whiteSpace = 'pre';
+      span.style.pointerEvents = needsTextAccess ? 'auto' : 'none';
+      span.style.cursor = needsTextAccess ? 'text' : 'default';
+      span.dataset.ownedTextSemantic = 'true';
+      span.dataset.editId = String(record.id);
+      span.dataset.ownedTextEditLineId = String(target.lineId);
+      span.dataset.pdfTransform = JSON.stringify([
+        target.fontSize, 0, 0, target.fontSize, target.x, target.baseline,
+      ]);
+      span.dataset.pdfWidth = String(target.width);
+      span.dataset.pdfFontFamily = firstRun?.faceId || 'Liberation Sans';
+      span.dataset.pdfFontName = '';
+      span.dataset.pdfActualFontName = firstRun?.faceId || 'Liberation Sans';
+      span.dataset.pdfLoadedFontName = '';
+      span.dataset.pdfBold = String(firstRun?.bold === true);
+      span.dataset.pdfItalic = String(firstRun?.italic === true);
+      textLayerDiv.appendChild(span);
+    }
+  }
+}
+
+function committedProjectionStamp(documentState, pageNum, revision, editRevision, textLayerDiv) {
+  return Object.freeze({
+    documentId: String(documentState.id),
+    lifecycleGeneration: Number(documentState.lifecycleGeneration) || 0,
+    pageNum: Number(pageNum),
+    requestGeneration: Number(textLayerDiv?.dataset?.textLayerRequest) || 0,
+    contentRevision: Number(documentState.revisionState?.contentRevision) || 0,
+    pageRevision: Number(revision) || 0,
+    editRevision: editRevision == null ? null : Number(editRevision) || 0,
+  });
+}
+
+function queueCommittedProjection(documentState, pageNum, revision, editRevision) {
+  const prefix = [
+    String(documentState.id),
+    Number(documentState.lifecycleGeneration) || 0,
+    Number(pageNum),
+  ].join(':') + ':';
+  for (const key of pendingCommittedTextProjections.keys()) {
+    if (key.startsWith(prefix)) pendingCommittedTextProjections.delete(key);
+  }
+  const key = committedProjectionKey(documentState, pageNum, revision);
+  pendingCommittedTextProjections.set(key, Object.freeze({
+    documentId: String(documentState.id),
+    lifecycleGeneration: Number(documentState.lifecycleGeneration) || 0,
+    pageNum: Number(pageNum),
+    revision: Number(revision) || 0,
+    editRevision: editRevision == null ? null : Number(editRevision) || 0,
+  }));
+}
+
+/** Publish all owner-aware text semantics for one exact committed page revision. */
+export async function publishOwnerAwareTextProjections({
+  documentState,
+  pageNum,
+  revision,
+  editRevision = null,
+  textLayer = null,
+} = {}) {
+  const page = Number(pageNum);
+  const targetRevision = Number(documentState?.revisionState?.pageContentRevisions?.[page]
+    ?? documentState?.revisionState?.contentRevision) || 0;
+  if (!documentState?.id || !Number.isSafeInteger(page) || page < 1
+      || Number(revision) !== targetRevision) {
+    return Object.freeze({ status: 'superseded', stamp: null });
+  }
+  const surface = resolvePageSurface(documentState, page, { targetRevision });
+  const textLayerDiv = textLayer || surface?.textLayer || null;
+  const owner = captureTextLayerOwner(documentState, page);
+  if (!textLayerDiv || !textLayerElementMatchesOwner(textLayerDiv, owner)) {
+    queueCommittedProjection(documentState, page, targetRevision, editRevision);
+    return Object.freeze({
+      status: 'deferred-unmounted',
+      stamp: committedProjectionStamp(documentState, page, targetRevision, editRevision, null),
+    });
+  }
+  const dimensions = surface?.canonicalPageDimensions || {
+    width: Number(documentState.pageDims?.[page]?.widthPt),
+    height: Number(documentState.pageDims?.[page]?.heightPt),
+  };
+  if (!(dimensions?.width > 0) || !(dimensions?.height > 0)) {
+    return Object.freeze({
+      status: 'failed',
+      error: 'TEXT_SEMANTIC_PAGE_GEOMETRY_MISSING',
+      stamp: null,
+    });
+  }
+  try {
+    injectSyntheticTextSpans(
+      textLayerDiv,
+      page,
+      dimensions.width,
+      dimensions.height,
+      documentState,
+    );
+    const geometry = resolveTextEditPageGeometry(
+      documentState.pageDims?.[page],
+      dimensions.width,
+      dimensions.height,
+      getPageRotationForDocument(documentState, page),
+    );
+    injectOwnedNativeSemanticSpans(textLayerDiv, page, geometry, documentState);
+    injectPendingOcrTextSpans(textLayerDiv, page);
+    ensureEndOfContent(textLayerDiv);
+    const stamp = committedProjectionStamp(
+      documentState,
+      page,
+      targetRevision,
+      editRevision,
+      textLayerDiv,
+    );
+    textLayerDiv.dataset.semanticContentRevision = String(stamp.contentRevision);
+    textLayerDiv.dataset.semanticPageRevision = String(stamp.pageRevision);
+    if (stamp.editRevision != null) {
+      textLayerDiv.dataset.semanticEditRevision = String(stamp.editRevision);
+    }
+    pendingCommittedTextProjections.delete(
+      committedProjectionKey(documentState, page, targetRevision),
+    );
+    return Object.freeze({ status: 'published', stamp });
+  } catch (error) {
+    return Object.freeze({
+      status: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+      stamp: null,
+    });
+  }
+}
+
+export async function flushPendingCommittedTextProjection(
+  documentState,
+  pageNum,
+  textLayer = null,
+) {
+  const revision = Number(documentState?.revisionState?.pageContentRevisions?.[pageNum]
+    ?? documentState?.revisionState?.contentRevision) || 0;
+  const pending = pendingCommittedTextProjections.get(
+    committedProjectionKey(documentState, pageNum, revision),
+  );
+  if (!pending) return null;
+  return publishOwnerAwareTextProjections({
+    documentState,
+    pageNum,
+    revision,
+    editRevision: pending.editRevision,
+    textLayer,
+  });
+}
+
+export function pendingCommittedTextProjectionSnapshot() {
+  return Object.freeze([...pendingCommittedTextProjections.values()]);
 }
 
 /**
@@ -929,6 +1202,15 @@ export function clearSinglePageTextLayer() {
   if (existingLayer) {
     existingLayer.remove();
   }
+  const activeDocument = getActiveDocument();
+  if (activeDocument) {
+    registerTextLayerPageSurface(
+      activeDocument,
+      activeDocument.currentPage || 1,
+      container,
+      null,
+    );
+  }
 
   // Clear from tracking map
   const clDoc = getActiveDocument();
@@ -941,6 +1223,7 @@ export function clearSinglePageTextLayer() {
 export function clearTextLayers() {
   textLayerRequests.invalidateAll();
   document.querySelectorAll('.textLayer').forEach(layer => {
+    unregisterPageSurface(layer.parentElement);
     layer.remove();
   });
 
@@ -955,6 +1238,10 @@ export function releaseTextLayer(pageNum) {
   const element = entry?.element || entry;
   if (element) {
     textLayerRequests.invalidateContainer(element.parentElement);
+    const documentState = getActiveDocument();
+    if (documentState) {
+      registerTextLayerPageSurface(documentState, Number(pageNum), element.parentElement, null);
+    }
     element.remove();
   }
   textLayers.delete(Number(pageNum));
@@ -1155,6 +1442,11 @@ export async function createTextLayerFromRust(container, pageNum, pageWidth, pag
       owner,
       requestGeneration: request.generation,
     });
+    registerTextLayerPageSurface(doc, pageNum, container, textLayerDiv, {
+      width: pageWidth,
+      height: pageHeight,
+    });
+    await flushPendingCommittedTextProjection(doc, pageNum, textLayerDiv);
     return true;
   } catch (e) {
     console.warn('[text-layer] Rust text extraction failed:', e);

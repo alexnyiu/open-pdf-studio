@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Tento odstavec překračuje zjištěnou hranici původního sloupce. Úpravy byly zablokovány a dokument zůstal beze změny.",
       "nativeSourceUnavailable": "Viditelný text se nepodařilo propojit se způsobilými zdrojovými operátory. Dokument zůstal beze změny.",
       "nativeDeleteUnavailable": "Tento původní text PDF nelze bezpečně odstranit, protože jeho přesné zdrojové operátory jsou nejednoznačné. Dokument zůstal beze změny.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Dříve upravený text je jen pro čtení. Dokument zůstal beze změny."
     },
     "pathologicalPaste": {

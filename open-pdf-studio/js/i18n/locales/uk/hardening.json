@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Цей абзац перетинає виявлену межу початкового стовпця. Редагування заблоковано, а документ залишився без змін.",
       "nativeSourceUnavailable": "Не вдалося пов’язати видимий текст із придатними операторами джерела. Документ залишився без змін.",
       "nativeDeleteUnavailable": "Цей початковий текст PDF не можна безпечно видалити, оскільки його точні оператори джерела неоднозначні. Документ залишився без змін.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Раніше відредагований текст доступний лише для читання. Документ залишився без змін."
     },
     "pathologicalPaste": {

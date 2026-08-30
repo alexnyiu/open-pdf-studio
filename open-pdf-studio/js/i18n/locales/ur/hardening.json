@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "یہ پیراگراف شناخت شدہ اصل کالم کی حد عبور کرتا ہے۔ ترمیم روک دی گئی اور دستاویز کو بغیر تبدیلی کے چھوڑ دیا گیا۔",
       "nativeSourceUnavailable": "نظر آنے والے متن کو موزوں ماخذ آپریٹرز سے منسلک نہیں کیا جا سکا۔ دستاویز کو بغیر تبدیلی کے چھوڑ دیا گیا۔",
       "nativeDeleteUnavailable": "اس اصل PDF متن کو محفوظ طریقے سے حذف نہیں کیا جا سکتا کیونکہ اس کے درست ماخذ آپریٹرز مبہم ہیں۔ دستاویز کو بغیر تبدیلی کے چھوڑ دیا گیا۔",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "پہلے ترمیم شدہ متن صرف پڑھنے کے لیے ہے۔ دستاویز کو بغیر تبدیلی کے چھوڑ دیا گیا۔"
     },
     "pathologicalPaste": {

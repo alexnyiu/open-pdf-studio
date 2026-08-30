@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Този абзац пресича открита граница на колона в оригинала. Редактирането беше блокирано и документът остана непроменен.",
       "nativeSourceUnavailable": "Видимият текст не можа да бъде свързан с подходящи изходни оператори. Документът остана непроменен.",
       "nativeDeleteUnavailable": "Този оригинален PDF текст не може да бъде изтрит безопасно, тъй като точните му изходни оператори са двусмислени. Документът остана непроменен.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Редактираният по-рано текст е само за четене. Документът остана непроменен."
     },
     "pathologicalPaste": {

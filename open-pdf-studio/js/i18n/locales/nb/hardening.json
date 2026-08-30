@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Dette avsnittet krysser en registrert opprinnelig kolonnegrense. Redigeringen ble blokkert og dokumentet ble ikke endret.",
       "nativeSourceUnavailable": "Synlig tekst kunne ikke kobles til kvalifiserte kildeoperatorer. Dokumentet ble ikke endret.",
       "nativeDeleteUnavailable": "Denne opprinnelige PDF-teksten kan ikke slettes på en trygg måte fordi de nøyaktige kildeoperatorene er tvetydige. Dokumentet ble ikke endret.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Tidligere redigert tekst er skrivebeskyttet. Dokumentet ble ikke endret."
     },
     "pathologicalPaste": {

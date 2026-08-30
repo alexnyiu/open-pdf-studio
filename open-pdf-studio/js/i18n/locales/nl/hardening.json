@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Deze alinea overschrijdt een gedetecteerde oorspronkelijke kolomgrens. Bewerken is geblokkeerd en het document is ongewijzigd gebleven.",
       "nativeSourceUnavailable": "Zichtbare tekst kon niet worden gekoppeld aan geschikte bronoperatoren. Het document is ongewijzigd gebleven.",
       "nativeDeleteUnavailable": "Deze oorspronkelijke PDF-tekst kan niet veilig worden verwijderd omdat de exacte bronoperatoren dubbelzinnig zijn. Het document is ongewijzigd gebleven.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Eerder bewerkte tekst is alleen-lezen. Het document is ongewijzigd gebleven."
     },
     "pathologicalPaste": {

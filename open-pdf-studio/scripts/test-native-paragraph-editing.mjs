@@ -46,6 +46,8 @@ try {
 
   await page.evaluate(async () => {
     const { state } = await import('/js/core/state.ts');
+    const { registerPageSurface } = await import('/js/pdf/page-surface-registry.js');
+    const { captureTextLayerOwner, stampTextLayerOwner } = await import('/js/text/text-layer-lifecycle.js');
     const { activateEditTextTool } = await import('/js/tools/text-edit-tool.js');
 
     // This fixture owns its page geometry. Do not inherit the application's
@@ -129,6 +131,19 @@ try {
     }];
     state.activeDocumentIndex = 0;
     state.currentTool = 'editText';
+    stampTextLayerOwner(layer, captureTextLayerOwner(state.documents[0], 1), 1);
+    registerPageSurface({
+      documentState: state.documents[0],
+      pageNum: 1,
+      container: host,
+      baseSurface: canvas,
+      geometryCanvas: canvas,
+      textLayer: layer,
+      canonicalPageDimensions: { width: 700, height: 400 },
+      cssScale: 1,
+      dpr: 1,
+      surfaceKind: 'single-viewport',
+    });
     activateEditTextTool();
     target.dataset.testTarget = 'true';
   });
@@ -185,7 +200,9 @@ try {
     const activeEditor = document.querySelector('.pdf-text-editor');
     return activeEditor && document.activeElement === activeEditor;
   });
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    const { registerPageSurface } = await import('/js/pdf/page-surface-registry.js');
     const previous = document.getElementById('canvas-container');
     previous.id = 'retired-native-page-container';
     const replacement = document.createElement('div');
@@ -196,6 +213,18 @@ try {
       if (!child.classList.contains('pdf-text-edit-layer')) replacement.appendChild(child);
     }
     previous.after(replacement);
+    registerPageSurface({
+      documentState: state.documents[state.activeDocumentIndex],
+      pageNum: 1,
+      container: replacement,
+      baseSurface: replacement.querySelector('.pdf-canvas'),
+      geometryCanvas: replacement.querySelector('.pdf-canvas'),
+      textLayer: replacement.querySelector('.textLayer'),
+      canonicalPageDimensions: { width: 700, height: 400 },
+      cssScale: 1,
+      dpr: 1,
+      surfaceKind: 'single-viewport',
+    });
   });
   await page.waitForFunction(() => (
     document.querySelector('.pdf-text-editor')?.closest('.pdf-text-edit-layer')?.parentElement?.id
@@ -749,7 +778,11 @@ try {
   assert.equal(redoText, mergedState.text);
 
   await page.evaluate(async () => {
+    const { state } = await import('/js/core/state.ts');
+    const { registerPageSurface } = await import('/js/pdf/page-surface-registry.js');
     const { injectSyntheticTextSpans } = await import('/js/text/text-layer.js');
+    const { captureTextLayerOwner, stampTextLayerOwner } = await import('/js/text/text-layer-lifecycle.js');
+    const { activateEditTextTool } = await import('/js/tools/text-edit-tool.js');
     const host = document.querySelector('[data-native-paragraph-test-host]');
     host.querySelector('.textLayer').remove();
     const layer = document.createElement('div');
@@ -757,7 +790,21 @@ try {
     layer.dataset.page = '1';
     Object.assign(layer.style, { position: 'absolute', inset: '0', width: '700px', height: '400px', transform: 'none' });
     host.appendChild(layer);
+    stampTextLayerOwner(layer, captureTextLayerOwner(state.documents[0], 1), 2);
+    registerPageSurface({
+      documentState: state.documents[0],
+      pageNum: 1,
+      container: host,
+      baseSurface: host.querySelector('.pdf-canvas'),
+      geometryCanvas: host.querySelector('.pdf-canvas'),
+      textLayer: layer,
+      canonicalPageDimensions: { width: 700, height: 400 },
+      cssScale: 1,
+      dpr: 1,
+      surfaceKind: 'single-viewport',
+    });
     injectSyntheticTextSpans(layer, 1, 700, 400);
+    activateEditTextTool();
   });
   assert.equal(await page.locator('[data-owned-text-edit-hit]').count(), 2,
     'text-layer rebuild must recreate one hit region per canonical line');
@@ -769,6 +816,8 @@ try {
 
   await page.evaluate(async () => {
     const { state } = await import('/js/core/state.ts');
+    const { registerPageSurface } = await import('/js/pdf/page-surface-registry.js');
+    const { captureTextLayerOwner, stampTextLayerOwner } = await import('/js/text/text-layer-lifecycle.js');
     const { activateEditTextTool } = await import('/js/tools/text-edit-tool.js');
     document.querySelector('[data-native-paragraph-test-host]')?.remove();
     const host = document.createElement('div');
@@ -853,6 +902,19 @@ try {
     }];
     state.activeDocumentIndex = 0;
     state.currentTool = 'editText';
+    stampTextLayerOwner(layer, captureTextLayerOwner(state.documents[0], 1), 1);
+    registerPageSurface({
+      documentState: state.documents[0],
+      pageNum: 1,
+      container: host,
+      baseSurface: canvas,
+      geometryCanvas: canvas,
+      textLayer: layer,
+      canonicalPageDimensions: { width: 700, height: 420 },
+      cssScale: 1,
+      dpr: 1,
+      surfaceKind: 'single-viewport',
+    });
     activateEditTextTool();
   });
 

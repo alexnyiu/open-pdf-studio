@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Αυτή η παράγραφος διασχίζει ένα εντοπισμένο όριο στήλης του αρχικού κειμένου. Η επεξεργασία αποκλείστηκε και το έγγραφο παρέμεινε αμετάβλητο.",
       "nativeSourceUnavailable": "Το ορατό κείμενο δεν μπόρεσε να συνδεθεί με κατάλληλους τελεστές προέλευσης. Το έγγραφο παρέμεινε αμετάβλητο.",
       "nativeDeleteUnavailable": "Αυτό το εγγενές κείμενο PDF δεν μπορεί να διαγραφεί με ασφάλεια, επειδή οι ακριβείς τελεστές προέλευσής του είναι ασαφείς. Το έγγραφο παρέμεινε αμετάβλητο.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Το κείμενο που είχε επεξεργαστεί προηγουμένως είναι μόνο για ανάγνωση. Το έγγραφο παρέμεινε αμετάβλητο."
     },
     "pathologicalPaste": {

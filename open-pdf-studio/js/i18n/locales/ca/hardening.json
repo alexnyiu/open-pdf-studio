@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Aquest paràgraf travessa un límit de columna original detectat. S'ha bloquejat l'edició i el document no s'ha modificat.",
       "nativeSourceUnavailable": "El text visible no s'ha pogut associar a operadors d'origen aptes. El document no s'ha modificat.",
       "nativeDeleteUnavailable": "Aquest text PDF natiu no es pot suprimir de manera segura perquè els operadors d'origen exactes són ambigus. El document no s'ha modificat.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "El text editat anteriorment és només de lectura. El document no s'ha modificat."
     },
     "pathologicalPaste": {

@@ -59,6 +59,8 @@ import {
 } from '../text/final-text-layout.js';
 import { createTextApplyResult } from '../text/text-apply-result.js';
 import { createEditorLayoutRevision } from '../text/editor-layout-revision.js';
+import { publishCommittedTextEdit } from '../text/text-edit-publication.js';
+import { showMessage } from '../solid/stores/dialogStore.js';
 
 function annotationApplyResult(ownerDocument, ownerGeneration, annotation, status, overrides = {}) {
   const pageNum = Number(annotation?.page) || 1;
@@ -73,6 +75,45 @@ function annotationApplyResult(ownerDocument, ownerGeneration, annotation, statu
     editRevision: null,
     ...overrides,
   });
+}
+
+async function publishAnnotationCommit(ownerDocument, annotation) {
+  let publication;
+  try {
+    publication = await publishCommittedTextEdit({
+      documentState: ownerDocument,
+      pageNum: annotation.page,
+      editId: annotation.id ?? null,
+      editRevision: null,
+      expectedVisible: getActiveDocument() === ownerDocument,
+      nativeAuthoritative: false,
+    });
+  } catch (error) {
+    publication = Object.freeze({
+      status: 'failed',
+      visiblePublished: false,
+      semanticPublished: false,
+      error: error instanceof Error ? error.message : String(error),
+      errorCode: 'TEXT_PUBLICATION_FAILED',
+    });
+  }
+  if (publication.status === 'failed' || publication.status === 'deferred-unmounted') {
+    ownerDocument.textEditPublicationState = Object.freeze({
+      ...publication,
+      editId: annotation.id == null ? null : String(annotation.id),
+      recoveryActions: Object.freeze(['retry-page-publication', 'save']),
+    });
+    showMessage(publication.status === 'deferred-unmounted'
+      ? i18next.t('textEditor.status.previewPending', { ns: 'hardening' })
+      : i18next.t('textEditor.status.previewFailed', {
+        ns: 'hardening',
+        error: publication.error ? `\n\n${publication.error}` : '',
+      }));
+  } else if (publication.status === 'published'
+      && ownerDocument.textEditPublicationState?.pageNum === Number(annotation.page)) {
+    ownerDocument.textEditPublicationState = null;
+  }
+  return publication;
 }
 
 async function waitForExactAnnotationLayout({ operation, snapshot }) {
@@ -547,9 +588,10 @@ export async function startTextEditing(annotation, {
         recoveryActions: ['keep-editing'],
       });
     }
+    const publication = await publishAnnotationCommit(ownerDocument, ann);
     hidePdfTextEditor();
     resetEditingState();
-    redrawOwnerIfVisible();
+    if (publication.status !== 'published') redrawOwnerIfVisible();
     const adjustment = layoutDecision.status === 'auto-fitted'
       ? {
           kind: 'auto-grow-width',
@@ -559,11 +601,22 @@ export async function startTextEditing(annotation, {
             - layoutDecision.autoFit.priorBounds.height,
         }
       : null;
+    if (publication.status === 'superseded') {
+      return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'superseded', {
+        ownerCommitted: true,
+        publicationError: publication.error || 'Page publication was superseded',
+      });
+    }
     return annotationApplyResult(ownerDocument, ownerGeneration, ann, 'applied', {
       ownerCommitted: true,
-      visiblePublished: getActiveDocument() === ownerDocument,
-      semanticPublished: getActiveDocument() === ownerDocument,
+      visiblePublished: publication.status === 'published'
+        && publication.visiblePublished === true,
+      semanticPublished: publication.status === 'published'
+        && publication.semanticPublished === true,
       layoutAdjustment: adjustment,
+      publicationError: publication.status === 'failed'
+        ? publication.error || publication.errorCode || 'Page publication failed'
+        : null,
     });
   };
 

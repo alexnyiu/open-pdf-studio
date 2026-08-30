@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Paragraf ini melintasi batas kolom asli yang terdeteksi. Pengeditan diblokir dan dokumen dibiarkan tanpa perubahan.",
       "nativeSourceUnavailable": "Teks yang terlihat tidak dapat ditautkan ke operator sumber yang memenuhi syarat. Dokumen dibiarkan tanpa perubahan.",
       "nativeDeleteUnavailable": "Teks PDF asli ini tidak dapat dihapus dengan aman karena operator sumber persisnya ambigu. Dokumen dibiarkan tanpa perubahan.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Teks yang sebelumnya diedit bersifat hanya baca. Dokumen dibiarkan tanpa perubahan."
     },
     "pathologicalPaste": {

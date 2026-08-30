@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "此段落跨越了检测到的原始列边界。编辑已被阻止，文档未发生更改。",
       "nativeSourceUnavailable": "无法将可见文本关联到符合条件的源操作符。文档未发生更改。",
       "nativeDeleteUnavailable": "无法安全删除此原生 PDF 文本，因为无法明确确定其确切的源操作符。文档未发生更改。",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "之前编辑的文本为只读。文档未发生更改。"
     },
     "pathologicalPaste": {

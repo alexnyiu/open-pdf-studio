@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Det här stycket korsar en identifierad ursprunglig kolumngräns. Redigeringen blockerades och dokumentet lämnades oförändrat.",
       "nativeSourceUnavailable": "Synlig text kunde inte kopplas till giltiga källoperatorer. Dokumentet lämnades oförändrat.",
       "nativeDeleteUnavailable": "Den här ursprungliga PDF-texten kan inte tas bort på ett säkert sätt eftersom dess exakta källoperatorer är tvetydiga. Dokumentet lämnades oförändrat.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Tidigare redigerad text är skrivskyddad. Dokumentet lämnades oförändrat."
     },
     "pathologicalPaste": {

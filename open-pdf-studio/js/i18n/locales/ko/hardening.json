@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "이 단락은 감지된 원본 열 경계를 가로지릅니다. 편집이 차단되었으며 문서는 변경되지 않았습니다.",
       "nativeSourceUnavailable": "표시된 텍스트를 적합한 소스 연산자에 연결할 수 없습니다. 문서는 변경되지 않았습니다.",
       "nativeDeleteUnavailable": "이 기본 PDF 텍스트는 정확한 소스 연산자가 모호하므로 안전하게 삭제할 수 없습니다. 문서는 변경되지 않았습니다.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "이전에 편집한 텍스트는 읽기 전용입니다. 문서는 변경되지 않았습니다."
     },
     "pathologicalPaste": {

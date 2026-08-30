@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Đoạn này vượt qua ranh giới cột gốc đã phát hiện. Việc chỉnh sửa đã bị chặn và tài liệu không bị thay đổi.",
       "nativeSourceUnavailable": "Không thể liên kết văn bản hiển thị với các toán tử nguồn đủ điều kiện. Tài liệu không bị thay đổi.",
       "nativeDeleteUnavailable": "Không thể xóa an toàn văn bản PDF gốc này vì các toán tử nguồn chính xác của nó không rõ ràng. Tài liệu không bị thay đổi.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Văn bản đã chỉnh sửa trước đó ở chế độ chỉ đọc. Tài liệu không bị thay đổi."
     },
     "pathologicalPaste": {

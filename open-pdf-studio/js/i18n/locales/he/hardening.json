@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "פסקה זו חוצה גבול שזוהה בין עמודות בטקסט המקורי. העריכה נחסמה והמסמך נשאר ללא שינוי.",
       "nativeSourceUnavailable": "לא ניתן היה לקשר את הטקסט הגלוי לאופרטורים מתאימים במקור. המסמך נשאר ללא שינוי.",
       "nativeDeleteUnavailable": "לא ניתן למחוק בבטחה טקסט PDF מקורי זה משום שאופרטורי המקור המדויקים שלו אינם חד-משמעיים. המסמך נשאר ללא שינוי.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "טקסט שנערך בעבר הוא לקריאה בלבד. המסמך נשאר ללא שינוי."
     },
     "pathologicalPaste": {

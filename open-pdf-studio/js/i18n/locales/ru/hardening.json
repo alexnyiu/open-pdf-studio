@@ -53,6 +53,8 @@
       "nativeColumnBoundary": "Этот абзац пересекает обнаруженную границу исходного столбца. Редактирование заблокировано, и документ остался без изменений.",
       "nativeSourceUnavailable": "Не удалось связать видимый текст с подходящими операторами источника. Документ остался без изменений.",
       "nativeDeleteUnavailable": "Этот исходный текст PDF нельзя безопасно удалить, поскольку его точные операторы источника неоднозначны. Документ остался без изменений.",
+      "previewPending": "The edit was applied. Its page preview will finish when the page is visible again.",
+      "previewFailed": "The edit was applied, but its page preview could not be refreshed. Save or revisit the page to retry.{{error}}",
       "readOnly": "Ранее отредактированный текст доступен только для чтения. Документ остался без изменений."
     },
     "pathologicalPaste": {
