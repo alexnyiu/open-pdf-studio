@@ -79,6 +79,7 @@ import {
 import { planVisiblePageTiles } from './page-tile-plan.js';
 import { singlePageOverlaySurfaceDimensions } from './canvas-dpr.js';
 import { applyContinuousPageSurfaceLayout } from './continuous-page-surface-layout.js';
+import { loadContinuousRasterImage } from './continuous-raster-image.js';
 import { noteDocumentMutation } from '../core/document-revision-state.runtime.js';
 import { publishPageModelRevision } from '../text/text-edit-publication.js';
 import { publishPendingOcrReadiness } from './pending-ocr-readiness-publication.js';
@@ -1299,41 +1300,6 @@ function _untrackMountedPageImages(doc, pageNum, wrapper, { release = false } = 
   }
 }
 
-function _loadContinuousRasterImage(lease) {
-  return new Promise((resolve, reject) => {
-    const image = document.createElement('img');
-    image.className = 'pdf-page-raster';
-    image.alt = '';
-    image.draggable = false;
-    image.crossOrigin = 'anonymous';
-    image.decoding = 'async';
-    image.loading = 'eager';
-    if (!lease.attach(image)) {
-      reject(new DOMException('Raster stream lease is no longer current', 'AbortError'));
-      return;
-    }
-    const cleanup = () => {
-      image.onload = null;
-      image.onerror = null;
-    };
-    image.onload = () => {
-      cleanup();
-      if (image.naturalWidth !== lease.width || image.naturalHeight !== lease.height) {
-        try { image.removeAttribute('src'); } catch {}
-        reject(new Error('direct raster image dimensions do not match its stream descriptor'));
-        return;
-      }
-      resolve(image);
-    };
-    image.onerror = () => {
-      cleanup();
-      try { image.removeAttribute('src'); } catch {}
-      reject(new Error('direct raster image stream failed to decode'));
-    };
-    image.src = lease.url;
-  });
-}
-
 function _publishContinuousRasterImage(doc, pageNum, oldCanvas, image) {
   if (!oldCanvas?.isConnected || !image?.naturalWidth || !image?.naturalHeight) return null;
   const container = oldCanvas.parentElement;
@@ -2259,7 +2225,7 @@ async function _renderContinuousPageNow(
         requestId: publicationToken.requestId,
       });
       if (directImageLease && !signal?.aborted) {
-        directRasterImage = await _loadContinuousRasterImage(directImageLease);
+        directRasterImage = await loadContinuousRasterImage(directImageLease, { signal });
         rasterEntry = {
           image: directRasterImage,
           w: directRasterImage.naturalWidth,
