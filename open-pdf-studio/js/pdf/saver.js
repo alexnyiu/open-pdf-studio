@@ -668,6 +668,7 @@ export async function savePDF(saveAsPath = null, options = {}) {
             expectedDocumentId: owner.id,
             expectedDocumentGeneration: generation,
             coordinatorContext,
+            sharedUiOwnerStillCurrent: () => documentLifecycleOwnerMatches(owner, getActiveDocument()),
           });
       },
     });
@@ -694,6 +695,7 @@ async function performSavePDF(saveAsPath = null, {
   expectedDocumentId = null,
   expectedDocumentGeneration = null,
   coordinatorContext = null,
+  sharedUiOwnerStillCurrent = () => true,
 } = {}) {
   let activeDoc = expectedDocumentId
     ? getDocumentById(String(expectedDocumentId))
@@ -849,7 +851,7 @@ async function performSavePDF(saveAsPath = null, {
         signed: modificationPolicy.signed === true,
         pdfa: convertsPdfA,
       }, 'save-as-required');
-      if (documentLifecycleOwnerMatches(activeDoc, getActiveDocument())) {
+      if (sharedUiOwnerStillCurrent()) {
         showMessage(savePolicy.warning);
       }
       return await savePDFAs({ coordinatorContext, expectedDocumentId, expectedDocumentGeneration });
@@ -858,7 +860,7 @@ async function performSavePDF(saveAsPath = null, {
       throw new Error('Signed and PDF/A documents must be saved to a different path so the original remains unchanged.');
     }
     if (savePolicy.protectedOriginal) {
-      if (documentLifecycleOwnerMatches(activeDoc, getActiveDocument())) {
+      if (sharedUiOwnerStillCurrent()) {
         showMessage(savePolicy.warning);
       }
     }
@@ -3661,7 +3663,7 @@ async function performSavePDF(saveAsPath = null, {
       coordinatorContext?.diagnostic('saved-refresh-failed', {
         error: error instanceof Error ? error.message : String(error),
       });
-      if (documentLifecycleOwnerMatches(activeDoc, getActiveDocument())) {
+      if (sharedUiOwnerStillCurrent()) {
         showMessage(`The PDF was saved, but the in-app document refresh failed: ${error?.message || String(error)}. Reopen the file to refresh the view.`);
       }
       return ownerSaveResult(activeDoc, 'saved-refresh-failed', {
@@ -3682,7 +3684,7 @@ async function performSavePDF(saveAsPath = null, {
           ? error.recovery : null,
       });
     }
-    if (documentLifecycleOwnerMatches(activeDoc, getActiveDocument())) {
+    if (sharedUiOwnerStillCurrent()) {
       showMessage(i18next.t('failedToSavePdf', { error: error?.message || String(error) }));
     }
     return rejectSave('serialization-or-write-failed', {
@@ -3769,6 +3771,7 @@ export async function savePDFAs({
         expectedDocumentId: doc.id,
         expectedDocumentGeneration: Number(expectedDocumentGeneration ?? doc.lifecycleGeneration) || 0,
         coordinatorContext,
+        sharedUiOwnerStillCurrent: () => documentLifecycleOwnerMatches(doc, getActiveDocument()),
       })
       : await savePDF(savePath);
 

@@ -236,8 +236,7 @@ test('asynchronous save failures cannot publish blocking UI for a stale document
   const refreshMessageIndex = source.indexOf(refreshMessage);
   assert.notEqual(refreshMessageIndex, -1);
   const guardedRefreshMessage = source.slice(refreshMessageIndex - 180, refreshMessageIndex + 180);
-  assert.match(guardedRefreshMessage,
-    /documentLifecycleOwnerMatches\(activeDoc, getActiveDocument\(\)\)/u);
+  assert.match(guardedRefreshMessage, /sharedUiOwnerStillCurrent\(\)/u);
 
   const coordinatedFailureIndex = source.indexOf("console.warn('[saver] Coordinated save failed:'");
   assert.notEqual(coordinatedFailureIndex, -1);
