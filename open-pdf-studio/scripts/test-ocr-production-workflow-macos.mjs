@@ -206,10 +206,22 @@ async function ui(selector) {
 }
 
 async function waitUi(selector, predicate = (value) => value.found && value.visible, timeoutMs = 30_000) {
-  return waitUntil(selector, async () => {
-    const value = await ui(selector);
-    return predicate(value) ? value : null;
-  }, timeoutMs);
+  let observed = null;
+  try {
+    return await waitUntil(selector, async () => {
+      observed = await ui(selector);
+      return predicate(observed) ? observed : null;
+    }, timeoutMs);
+  } catch (error) {
+    const [viewport, recentConsole] = await Promise.all([
+      callTool('app_get_viewport_state').catch((cause) => ({ error: cause.message })),
+      callTool('app_get_recent_console', { tail: 100 }).catch((cause) => ({ error: cause.message })),
+    ]);
+    throw new Error(`${error.message}; observed UI ${JSON.stringify(observed)}; `
+      + `document history ${JSON.stringify(viewport?.documentHistory ?? null)}; `
+      + `document ${JSON.stringify(viewport?.doc ?? null)}; `
+      + `console ${JSON.stringify(recentConsole?.entries ?? recentConsole)}`);
+  }
 }
 
 const OCR_OWNERSHIP_STATES = [

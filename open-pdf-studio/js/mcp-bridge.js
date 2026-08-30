@@ -992,6 +992,7 @@ async function handleGetViewportState() {
   let documentSaveState = null;
   let safeSaveProvider = null;
   let documentLoadState = null;
+  let documentHistory = null;
   let pageEditReadiness = null;
   let scannedTextEditState = null;
   let pageSurfaceRegistry = null;
@@ -1053,6 +1054,19 @@ async function handleGetViewportState() {
       totalHeight: doc.pageGeometryIndex.totalHeight?.(doc.scale, doc.bookSpread ? 'book' : 'continuous') || 0,
     } : null;
     if (doc) {
+      const summarizeCommand = (command) => command ? {
+        type: command.type || null,
+        operationId: command.operationId || null,
+        pageNumbers: Array.isArray(command.pageNumbers) ? [...command.pageNumbers] : null,
+      } : null;
+      documentHistory = {
+        undoDepth: Array.isArray(doc.undoStack) ? doc.undoStack.length : 0,
+        redoDepth: Array.isArray(doc.redoStack) ? doc.redoStack.length : 0,
+        savedUndoStackLength: Number.isSafeInteger(doc.savedUndoStackLength)
+          ? doc.savedUndoStackLength : null,
+        undoTop: summarizeCommand(doc.undoStack?.at(-1)),
+        redoTop: summarizeCommand(doc.redoStack?.at(-1)),
+      };
       scannedTextEditState = doc.scannedTextEdits ? {
         stateId: doc.scannedTextEdits.stateId || null,
         stateRevision: Number(doc.scannedTextEdits.stateRevision) || 0,
@@ -1211,6 +1225,7 @@ async function handleGetViewportState() {
     documentSaveState,
     safeSaveProvider,
     documentLoadState,
+    documentHistory,
     pageEditReadiness,
     scannedTextEditState,
     pageSurfaceRegistry,
