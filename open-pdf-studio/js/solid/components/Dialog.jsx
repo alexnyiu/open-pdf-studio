@@ -157,13 +157,16 @@ export default function Dialog(props) {
     }
     if (top && !wasTop) {
       if (focusFrame !== null) cancelAnimationFrame(focusFrame);
+      const initial = props.initialFocusSelector
+        ? dialogRef?.querySelector(props.initialFocusSelector)
+        : null;
+      // Establish modal focus in the same reactive turn. A fast asynchronous
+      // readiness update must not make the dialog actionable while focus is
+      // still parked on the document body waiting for the next frame.
+      (initial || focusableElements()[0] || dialogRef)?.focus?.();
       focusFrame = requestAnimationFrame(() => {
         focusFrame = null;
         clampToViewport();
-        const initial = props.initialFocusSelector
-          ? dialogRef?.querySelector(props.initialFocusSelector)
-          : null;
-        (initial || focusableElements()[0] || dialogRef)?.focus?.();
       });
     }
     if (!top) isDragging = false;
