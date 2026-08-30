@@ -1,4 +1,4 @@
-import { state, getPageRotation, getActiveDocument, getDocumentById } from '../core/state.js';
+import { state, getActiveDocument, getDocumentById } from '../core/state.js';
 import fontkit from '@pdf-lib/fontkit';
 import { showLoading, hideLoading } from '../ui/chrome/dialogs.js';
 import { hexToColorArray } from '../utils/colors.js';
@@ -21,7 +21,7 @@ import {
 } from './save-state.js';
 import { PDFDocument, PDFString, PDFHexString, PDFName, PDFArray, PDFStream, degrees,
   PDFTextField, PDFCheckBox, PDFDropdown, PDFRadioGroup, PDFOptionList } from 'pdf-lib';
-import { getAnnotationStorage, getAnnotIdToFieldName } from './form-layer.js';
+import { captureFormPersistenceState } from './form-persistence-state.js';
 import { getAnnotationType } from '../plugins/annotation-type-registry.js';
 import i18next from '../i18n/config.js';
 import { showMessage } from '../bridge.js';
@@ -56,6 +56,7 @@ import { pageEditIntentPendingForDocument } from '../text/page-edit-intent.js';
 import { isPdfForegroundIdle, notePdfForegroundActivity } from './foreground-activity.js';
 import { createSaveCoordinator, SaveRequestSupersededError } from './save-coordinator.js';
 import { throwIfSaveFaultInjected } from './save-fault-injection.js';
+import { createSaveDocumentSnapshot } from './save-document-snapshot.js';
 import {
   documentRevisionReadinessSatisfied,
   documentNeedsSynchronization,
@@ -376,6 +377,7 @@ async function synchronizePersistedOwner({
   previousFilePath = owner?.filePath,
   savedBytes,
   preparedPdfJsDocument,
+  changedPages,
   diagnostic,
   coordinatorContext,
 }) {
@@ -387,6 +389,7 @@ async function synchronizePersistedOwner({
     previousFilePath,
     bytes: savedBytes,
     preparedPdfJsDocument,
+    changedPages,
     diagnostic,
     adoptDocumentGeneration: coordinatorContext?.adoptDocumentGeneration,
     assertSynchronizationOwnership: coordinatorContext?.assertSynchronizationOwnership,
@@ -634,6 +637,19 @@ async function performSavePDF(saveAsPath = null, {
     return true;
   }
 
+  const requestedRevision = coordinatorContext?.requestedRevision
+    ?? initializeDocumentRevisionState(activeDoc).contentRevision;
+  if (requestedRevision !== initializeDocumentRevisionState(activeDoc).contentRevision) {
+    throw new SaveRequestSupersededError('before-snapshot');
+  }
+  const saveSnapshot = createSaveDocumentSnapshot({
+    documentState: activeDoc,
+    outputPath,
+    requestedRevision,
+    expectedDocumentGeneration: expectedDocumentGeneration ?? activeDoc.lifecycleGeneration,
+    formState: captureFormPersistenceState(activeDoc),
+  });
+
   window.__pdfSaveInProgress = true;
   notePdfForegroundActivity('save', 250);
   try {
@@ -653,7 +669,7 @@ async function performSavePDF(saveAsPath = null, {
     if (!existingPdfBytes?.length) throw new Error('The source PDF bytes are unavailable or empty');
 
     const modificationPolicy = await inspectPdfModificationPolicy(existingPdfBytes);
-    const convertsPdfA = Boolean(activeDoc?.pdfaCompliance);
+    const convertsPdfA = Boolean(saveSnapshot.pdfaCompliance);
     const savePolicy = evaluatePdfModificationSavePolicy({
       signed: modificationPolicy.signed,
       pdfa: convertsPdfA,
@@ -680,13 +696,13 @@ async function performSavePDF(saveAsPath = null, {
     // Native source operators are neutralized first, with exact Rust-created
     // provenance and hash verification. The existing owned rich-text layer is
     // then built on top of those bytes by pdf-lib below.
-    const nativeTextCandidate = await applyNativeTextEditsToBytes(existingPdfBytes, activeDoc);
+    const nativeTextCandidate = await applyNativeTextEditsToBytes(existingPdfBytes, saveSnapshot);
     existingPdfBytes = nativeTextCandidate.pdfBytes;
     textEditRecordsCandidate = nativeTextCandidate.updatedRecords;
     nativeTextEditReportCandidate = nativeTextCandidate.report;
 
     const pdfDocLib = await PDFDocument.load(existingPdfBytes, { updateMetadata: false });
-    applyDocumentMetadataToPdf(pdfDocLib, activeDoc.metadata);
+    applyDocumentMetadataToPdf(pdfDocLib, saveSnapshot.metadata);
 
     // Explicit policy: edited PDF/A output is a standard PDF copy. Application
     // compliance state changes only after the native replacement succeeds.
@@ -710,14 +726,11 @@ async function performSavePDF(saveAsPath = null, {
     };
 
     // Persist interactive form field values from AnnotationStorage
-    const storage = getAnnotationStorage();
-    const fieldNameMap = getAnnotIdToFieldName();
-    if (storage && storage.size > 0 && fieldNameMap.size > 0) {
+    const formFields = saveSnapshot.formState?.fields || [];
+    if (formFields.length > 0) {
       try {
         const form = pdfDocLib.getForm();
-        for (const [annotId, fieldName] of fieldNameMap.entries()) {
-          const storedValue = storage.getRawValue(annotId);
-          if (storedValue === undefined) continue;
+        for (const { fieldName, storedValue } of formFields) {
           try {
             const field = form.getField(fieldName);
             if (field instanceof PDFTextField) {
@@ -745,8 +758,7 @@ async function performSavePDF(saveAsPath = null, {
 
     // Ensure AcroForm DR (Default Resources) has fonts for FreeText annotations.
     // PDF viewers resolve font names in DA strings through these resources.
-    const doc = getActiveDocument();
-    const docAnnotations = doc?.annotations || [];
+    const docAnnotations = saveSnapshot.annotations;
     const ftAnnotations = docAnnotations.filter(a => a.type === 'textbox' || a.type === 'callout');
     if (ftAnnotations.length > 0) {
       // Collect all font names actually used
@@ -775,7 +787,7 @@ async function performSavePDF(saveAsPath = null, {
       const page = pages[pageIndex];
 
       // Apply page rotation if set (combine with existing PDF rotation)
-      const appRotation = getPageRotation(pageNum);
+      const appRotation = saveSnapshot.pageRotations[pageNum] || 0;
       if (appRotation) {
         const existingDeg = page.getRotation().angle;
         page.setRotation(degrees(existingDeg + appRotation));
@@ -3183,16 +3195,21 @@ async function performSavePDF(saveAsPath = null, {
 
     // Build one replaceable, application-owned rich-text layer per page.
     // The active state is rebased only after the completed PDF passes validation.
-    textEditManifestCandidate = await saveTextEditsToPages(pdfDocLib, pages, textEditRecordsCandidate);
+    textEditManifestCandidate = await saveTextEditsToPages(
+      pdfDocLib,
+      pages,
+      saveSnapshot,
+      textEditRecordsCandidate,
+    );
 
     // Burn watermarks into the PDF
-    await saveWatermarksToPages(pdfDocLib, pages);
+    await saveWatermarksToPages(pdfDocLib, pages, saveSnapshot);
 
     // Save bookmarks to PDF outline
-    saveBookmarksToOutline(pdfDocLib);
+    saveBookmarksToOutline(pdfDocLib, saveSnapshot);
 
     // Save named line-style presets into the catalog (travel with the PDF)
-    saveStylePresetsToCatalog(pdfDocLib);
+    saveStylePresetsToCatalog(pdfDocLib, saveSnapshot);
 
     // First serialize every ordinary application mutation. OCR is then added
     // as one separately owned invisible stream per eligible page, so its pixel
@@ -3200,21 +3217,18 @@ async function performSavePDF(saveAsPath = null, {
     const preOcrBytes = new Uint8Array(await pdfDocLib.save());
     let savedBytes = preOcrBytes;
     let scannedTextEditPersistence = null;
-    const scannedState = activeDoc?.scannedTextEdits || null;
+    const scannedState = saveSnapshot.scannedTextState.state;
     const scannedStateRevision = scannedState?.stateRevision ?? 0;
     const persistScannedTextEdits = isMacosTauri()
-      && (activeDoc?.scannedTextEditRemovalPending === true
-        || scannedStateRevision !== (activeDoc?.scannedTextEditPersistedRevision ?? 0));
+      && (saveSnapshot.scannedTextState.removalPending === true
+        || scannedStateRevision !== saveSnapshot.scannedTextState.persistedRevision);
     if (persistScannedTextEdits) {
-      const date = new Date().toISOString().replace(/[-:T]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
-      const pageGeometries = Object.values(activeDoc?.ocr?.pages || {})
-        .map((pageState) => pageState?.recognition?.geometry)
-        .filter(Boolean);
+      const date = saveSnapshot.capturedAt.replace(/[-:T]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
       scannedTextEditPersistence = await buildAndValidateScannedTextEditPdfCandidate({
         baseBytes: preOcrBytes,
         lineagePdfBytes: existingPdfBytes,
         state: scannedState,
-        pageGeometries,
+        pageGeometries: saveSnapshot.ocrState.pageGeometries,
         expectedPageCount: pages.length,
         modifiedAt: `D:${date}`,
       });
@@ -3222,11 +3236,12 @@ async function performSavePDF(saveAsPath = null, {
       preparedPdfJsDocument = scannedTextEditPersistence.candidatePdfJsDocument;
     }
     let ocrPersistence = null;
-    const persistOcr = isMacosTauri() && activeDoc?.ocr?.dirty === true;
+    const persistOcr = isMacosTauri() && saveSnapshot.ocrState.dirty === true;
     if (persistOcr) {
-      const date = new Date().toISOString().replace(/[-:T]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
+      const date = saveSnapshot.capturedAt.replace(/[-:T]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
       ocrPersistence = await buildAndValidateOcrPdfCandidate({
-        document: activeDoc,
+        writerPages: saveSnapshot.ocrState.writerPages,
+        removePageIndexes: saveSnapshot.ocrState.removePageIndexes,
         baseBytes: savedBytes,
         expectedPageCount: pages.length,
         modifiedAt: `D:${date}`,
@@ -3237,9 +3252,7 @@ async function performSavePDF(saveAsPath = null, {
     } else if (!preparedPdfJsDocument) {
       preparedPdfJsDocument = await preparePdfJsSaveCandidate(savedBytes, pages.length);
     }
-    await assertDocumentMetadataRoundTrip(preparedPdfJsDocument, activeDoc.metadata);
-    const requestedRevision = coordinatorContext?.requestedRevision
-      ?? initializeDocumentRevisionState(activeDoc).contentRevision;
+    await assertDocumentMetadataRoundTrip(preparedPdfJsDocument, saveSnapshot.metadata);
     markRevisionSerialized(activeDoc, requestedRevision);
     coordinatorContext?.diagnostic('validating');
     throwIfSaveFaultInjected('after-serialization-before-persistence');
@@ -3377,6 +3390,7 @@ async function performSavePDF(saveAsPath = null, {
       previousFilePath: currentPath,
       savedBytes,
       preparedPdfJsDocument: transitionCandidate,
+      changedPages: saveSnapshot.changedPages,
       diagnostic: (event, details) => coordinatorContext?.diagnostic(event, details),
       coordinatorContext,
     });

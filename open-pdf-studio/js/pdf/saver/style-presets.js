@@ -1,4 +1,3 @@
-import { getActiveDocument } from '../../core/state.js';
 import { PDFName, PDFString, PDFHexString } from 'pdf-lib';
 
 /**
@@ -19,14 +18,12 @@ import { PDFName, PDFString, PDFHexString } from 'pdf-lib';
 export const STYLE_PRESETS_CATALOG_KEY = 'OPS_StylePresets';
 
 /**
- * Write the active document's presets into the pdf-lib document's catalog.
- * Deletes the entry when there are no presets. Pass `presetsArg` to bypass
- * the active document (used by tests).
+ * Write one immutable owner's presets into the pdf-lib document's catalog.
+ * Deletes the entry when there are no presets.
  */
-export function saveStylePresetsToCatalog(pdfDocLib, presetsArg) {
-  const presets = presetsArg !== undefined
-    ? presetsArg
-    : (getActiveDocument()?.stylePresets || null);
+export function saveStylePresetsToCatalog(pdfDocLib, snapshot) {
+  if (!snapshot?.documentId) throw new TypeError('An owner save snapshot is required');
+  const presets = snapshot.stylePresets || null;
   const context = pdfDocLib.context;
   const catalog = context.lookup(context.trailerInfo.Root);
   if (!catalog) return;

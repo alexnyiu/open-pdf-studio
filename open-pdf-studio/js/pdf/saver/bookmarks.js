@@ -1,10 +1,9 @@
-import { getActiveDocument } from '../../core/state.js';
 import { PDFName, PDFString } from 'pdf-lib';
 
 // Save bookmarks to PDF outline structure
-export function saveBookmarksToOutline(pdfDocLib) {
-  const doc = getActiveDocument();
-  const bookmarks = doc ? doc.bookmarks : [];
+export function saveBookmarksToOutline(pdfDocLib, snapshot) {
+  if (!snapshot?.documentId) throw new TypeError('An owner save snapshot is required');
+  const bookmarks = snapshot.bookmarks || [];
   const context = pdfDocLib.context;
   const catalog = context.lookup(context.trailerInfo.Root);
   if (!catalog) return;

@@ -207,6 +207,11 @@ try {
         drawText: (value, options) => calls.text.push({ value, options }),
         drawLine: options => calls.line.push(options),
       }],
+      {
+        documentId: state.documents[0].id,
+        textEdits: state.documents[0].textEdits,
+        textEditManifest: state.documents[0].textEditManifest || null,
+      },
     );
     return {
       record: {

@@ -338,6 +338,22 @@ export function getPageRotation(pageNum: number): number {
   return doc?.pageRotations?.[pageNum] || 0;
 }
 
+export function getPageRotationForDocument(documentState: DocumentState | null, pageNum: number): number {
+  return documentState?.pageRotations?.[pageNum] || 0;
+}
+
+export function getAnnotationsForDocument(documentState: DocumentState | null): Annotation[] {
+  return documentState?.annotations || [];
+}
+
+export function getWatermarksForDocument(documentState: DocumentState | null): any[] {
+  return documentState?.watermarks || [];
+}
+
+export function getBookmarksForDocument(documentState: DocumentState | null): any[] {
+  return documentState?.bookmarks || [];
+}
+
 export function setPageRotation(pageNum: number, degrees: number): void {
   const doc = state.documents[state.activeDocumentIndex];
   if (doc) {

@@ -1065,7 +1065,11 @@ try {
       });
       return drawText(value, options);
     };
-    await saveTextEditsToPages(output, [outputPage], [source]);
+    await saveTextEditsToPages(output, [outputPage], {
+      documentId: 'saved-format-operators',
+      textEdits: [source],
+      textEditManifest: null,
+    });
     const operators = [...outputPage.getContentStream().getContentsString().matchAll(
       /([0-9.]+) ([0-9.]+) ([0-9.]+) rg\n\/([^\s]+) ([0-9.]+) Tf/gu,
     )].map((match) => ({

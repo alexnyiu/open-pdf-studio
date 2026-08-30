@@ -1,6 +1,5 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFArray, PDFName, PDFRawStream, PDFString, rgb } from 'pdf-lib';
-import { getActiveDocument } from '../../core/state.js';
 import {
   loadPackagedFaceBytes,
   shapeOwnedTextEditForPersistence,
@@ -67,13 +66,16 @@ async function prepareRecords(records) {
 /** Neutralize provenance-linked native operators before pdf-lib mutates the document. */
 export async function applyNativeTextEditsToBytes(
   documentBytes,
-  documentState,
+  snapshot,
   { invokeNative = invoke } = {},
 ) {
   // Document collections are Solid proxies in the browser. Detach all native
   // IPC payloads up front, including the no-native-edit return value, so no
   // reactive object can cross the Tauri structured-clone boundary.
-  const { records, previousManifest } = cloneOwnedTextEditPersistenceState(documentState);
+  const { records, previousManifest } = cloneOwnedTextEditPersistenceState({
+    textEdits: snapshot?.textEdits || [],
+    textEditManifest: snapshot?.textEditManifest || null,
+  });
   const nativeRecords = records.filter((record) => record.original && record.sourceProvenance);
   const currentIds = new Set(records.map((record) => String(record.id)));
   const removedNativeRecords = (previousManifest?.pages || [])
@@ -102,10 +104,15 @@ export async function applyNativeTextEditsToBytes(
 
 // Persist V2 rich text as one replaceable application-owned content layer per page.
 // Every face is embedded/subsetted; the Standard 14 fabricated-font path is not used.
-export async function saveTextEditsToPages(pdfDocument, pages, recordsOverride = null) {
-  const documentState = getActiveDocument();
-  const sourceRecords = recordsOverride || documentState?.textEdits || [];
-  if (!sourceRecords.length && !documentState?.textEditManifest) return null;
+export async function saveTextEditsToPages(
+  pdfDocument,
+  pages,
+  snapshot,
+  recordsOverride = null,
+) {
+  if (!snapshot?.documentId) throw new TypeError('An owner save snapshot is required');
+  const sourceRecords = recordsOverride || snapshot.textEdits || [];
+  if (!sourceRecords.length && !snapshot.textEditManifest) return null;
 
   const records = await prepareRecords(sourceRecords);
   pdfDocument.registerFontkit(fontkit);
@@ -128,7 +135,7 @@ export async function saveTextEditsToPages(pdfDocument, pages, recordsOverride =
 
   // Removing the last persisted edit must also remove its previously owned
   // replacement stream; restoration of the source operator happens in Rust.
-  for (const manifestPage of documentState?.textEditManifest?.pages || []) {
+  for (const manifestPage of snapshot.textEditManifest?.pages || []) {
     if (recordsByPage.has(manifestPage.page)) continue;
     const page = pages[manifestPage.page - 1];
     if (page) removePreviouslyOwnedLayer(pdfDocument, page, manifestPage.layerId);
@@ -180,12 +187,12 @@ export async function saveTextEditsToPages(pdfDocument, pages, recordsOverride =
     page.getContentStream().dict.set(OWNED_LAYER_KEY, PDFString.of(layerId));
   }
 
-  const documentId = documentState.textEditManifest?.documentId || documentState.id || `document-${Date.now().toString(36)}`;
+  const documentId = snapshot.textEditManifest?.documentId || snapshot.documentId;
   const manifest = await writeOwnedTextEditManifest(
     pdfDocument,
     documentId,
     records,
-    documentState.textEditManifest || 0,
+    snapshot.textEditManifest || 0,
   );
   return manifest;
 }

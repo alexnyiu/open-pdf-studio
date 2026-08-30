@@ -6,6 +6,13 @@ import {
   captureRenderPublicationToken,
   renderPublicationTokenIsCurrent,
 } from './render-publication-token.js';
+import {
+  formAnnotationStorageForDocument,
+  formFieldNameMapForDocument,
+  resetFormPersistenceState,
+} from './form-persistence-state.js';
+
+export { captureFormPersistenceState } from './form-persistence-state.js';
 
 // Sub-module imports
 import { parseJSConstants, parseJSFunctions, decodeJSString, getMessagesForBlurAction } from './form-layer/js-parser.js';
@@ -13,9 +20,6 @@ import {
   showValidationDialog, validateBSN, validateDatePart, detectDatePartByName,
   detectKeystrokeRestriction, parseAFNumberDecimals, parseAFSpecialType, parseAFRangeValidate
 } from './form-layer/validation-ui.js';
-
-// Map of annotation ID → field name (for saving)
-const annotIdToFieldName = new Map();
 
 // Store references to form layers for cleanup
 const formLayers = new Map();
@@ -69,30 +73,29 @@ const simpleLinkService = {
 /**
  * Reset annotation storage for a new document.
  */
-export function resetAnnotationStorage() {
-  annotIdToFieldName.clear();
+export function resetAnnotationStorage(documentState = getActiveDocument()) {
+  const documentId = String(documentState?.id || '');
+  if (documentId) resetFormPersistenceState(documentState);
   initializedRadioGroups.clear();
   annotButtonValues.clear();
   documentJS = null;
   jsConstants = null;
   jsFunctions = null;
 
-  const annotationStorage = getAnnotationStorage();
+  const annotationStorage = getAnnotationStorage(documentState);
   if (annotationStorage) {
     annotationStorage.onSetModified = () => {
-      const doc = state.documents[state.activeDocumentIndex];
-      if (doc) noteDocumentMutation(doc, { reason: 'form:value-change' });
+      if (documentState) noteDocumentMutation(documentState, { reason: 'form:value-change' });
     };
   }
 }
 
-export function getAnnotationStorage() {
-  const doc = getActiveDocument();
-  return doc?.pdfDoc ? doc.pdfDoc.annotationStorage : null;
+export function getAnnotationStorage(documentState = getActiveDocument()) {
+  return formAnnotationStorageForDocument(documentState);
 }
 
-export function getAnnotIdToFieldName() {
-  return annotIdToFieldName;
+export function getAnnotIdToFieldName(documentState = getActiveDocument()) {
+  return formFieldNameMapForDocument(documentState);
 }
 
 /**
@@ -109,7 +112,8 @@ export async function createFormLayer(page, viewport, container, pageNum) {
 
   for (const ann of widgetAnnotations) {
     if (ann.fieldName) {
-      annotIdToFieldName.set(ann.id, ann.fieldName);
+      formFieldNameMapForDocument(publication.documentState, { create: true })
+        .set(ann.id, ann.fieldName);
     }
     // Store button/export value for radios and checkboxes
     if (ann.buttonValue || ann.exportValue) {
@@ -117,7 +121,7 @@ export async function createFormLayer(page, viewport, container, pageNum) {
     }
   }
 
-  const annotationStorage = getAnnotationStorage();
+  const annotationStorage = getAnnotationStorage(publication.documentState);
   if (!annotationStorage) return null;
 
   const formLayerDiv = document.createElement('div');
@@ -525,12 +529,13 @@ function applyFieldChanges(changes) {
   if (changes.length === 0) return;
 
   isTogglingFields = true;
+  const activeFieldNames = getAnnotIdToFieldName();
 
   for (const change of changes) {
     let found = false;
     const allLayers = document.querySelectorAll('.formLayer');
     for (const layer of allLayers) {
-      for (const [annId, fieldName] of annotIdToFieldName.entries()) {
+      for (const [annId, fieldName] of activeFieldNames.entries()) {
         if (fieldName !== change.fieldName && !fieldName.startsWith(change.fieldName + '.')) continue;
 
         const section = layer.querySelector(`[data-annotation-id="${annId}"]`);

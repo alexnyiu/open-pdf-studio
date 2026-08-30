@@ -1,11 +1,10 @@
-import { getActiveDocument } from '../../core/state.js';
 import { StandardFonts, degrees, rgb } from 'pdf-lib';
 import { parsePageRange } from '../exporter.js';
 
 // Save watermarks into PDF pages
-export async function saveWatermarksToPages(pdfDocLib, pages) {
-  const doc = getActiveDocument();
-  const watermarks = doc?.watermarks;
+export async function saveWatermarksToPages(pdfDocLib, pages, snapshot) {
+  if (!snapshot?.documentId) throw new TypeError('An owner save snapshot is required');
+  const watermarks = snapshot.watermarks;
   if (!watermarks || watermarks.length === 0) return;
 
   const totalPages = pages.length;
@@ -132,9 +131,8 @@ export async function saveWatermarksToPages(pdfDocLib, pages) {
           const ml = wm.marginLeft || 40;
           const mr = wm.marginRight || 40;
 
-          const doc = getActiveDocument();
-          const filename = doc ? doc.fileName : '';
-          const now = new Date();
+          const filename = snapshot.fileName || '';
+          const now = new Date(snapshot.capturedAt);
           const subst = (t) => (t || '')
             .replace(/\{page\}/g, String(pageNum))
             .replace(/\{pages\}/g, String(totalPages))
