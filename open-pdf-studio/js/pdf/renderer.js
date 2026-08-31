@@ -37,6 +37,7 @@ import {
 import { createRenderWorkScheduler } from './render-work-scheduler.js';
 import {
   CONTINUOUS_RENDER_LANES,
+  continuousMountedRenderCanReuse,
   continuousScrollRenderRetentionPages,
   continuousRenderJobKey,
   planContinuousMountRetention,
@@ -1631,6 +1632,13 @@ function _publishContinuousPreview(doc, pageNum, canvas) {
 
 function scheduleContinuousPreview(doc, pageNum, priority = 2_000, kind = 'foreground') {
   if (!doc?.pdfDoc) return Promise.resolve({ status: 'cancelled', reason: 'no-document' });
+  if (_continuousMountedPageCanReuse(doc, pageNum)) {
+    incrementPerformanceCounter('stableContinuousPreviewSkips');
+    return Promise.resolve({
+      status: 'complete',
+      value: { pageNum, published: false, reused: true, source: 'mounted-surface' },
+    });
+  }
   const pageRevision = Number(doc.pageRenderRevisions?.[pageNum]
     ?? doc.revisionState?.pageContentRevisions?.[pageNum]) || 0;
   const ownerKey = _continuousOwnerKey(doc);
@@ -1748,6 +1756,46 @@ function _continuousOwnerKey(doc) {
   return `${doc?.id || 'none'}:${Number(doc?.lifecycleGeneration) || 0}`;
 }
 
+function _continuousSemanticLayoutKey(doc, pageNum) {
+  return [
+    doc.id,
+    Number(doc.revisionState?.pageContentRevisions?.[pageNum]
+      ?? doc.pageRenderRevisions?.[pageNum]) || 0,
+    pageNum,
+    Math.round(doc.scale * 10_000),
+    getPageRotation(pageNum) || 0,
+  ].join(':');
+}
+
+function _continuousMountedPageCanReuse(doc, pageNum) {
+  if (!_continuousWindowMatches(doc)) return false;
+  const wrapper = _continuousWindow.mounted.get(pageNum);
+  if (!wrapper?.isConnected) return false;
+  const rasterCanvas = wrapper.querySelector('.pdf-canvas');
+  const rasterImage = wrapper.querySelector('.pdf-page-raster');
+  const hasRasterSurface = Boolean(
+    (rasterCanvas && rasterCanvas.width > 0 && rasterCanvas.height > 0)
+    || (rasterImage && rasterImage.isConnected
+      && (rasterImage.naturalWidth > 0 || Boolean(rasterImage.currentSrc || rasterImage.src))),
+  );
+  return continuousMountedRenderCanReuse({
+    documentId: String(doc.id),
+    ownerDocumentId: String(wrapper.dataset.documentId || ''),
+    lifecycleGeneration: Number(doc.lifecycleGeneration) || 0,
+    ownerLifecycleGeneration: Number(wrapper.dataset.documentGeneration) || 0,
+    renderState: wrapper.dataset.renderState,
+    rasterQuality: wrapper.dataset.rasterQuality,
+    targetRasterScale: wrapper.dataset.rasterTargetScale,
+    expectedRasterScale: requestedRasterScale(doc.scale, getCanvasDPR()),
+    semanticLayoutKey: wrapper.dataset.semanticLayoutKey,
+    expectedSemanticLayoutKey: _continuousSemanticLayoutKey(doc, pageNum),
+    readinessSatisfied: pageEditReadinessSatisfied(doc, pageNum, {
+      requiredLayers: RENDER_EDIT_READY_LAYERS,
+    }),
+    hasRasterSurface,
+  });
+}
+
 // Schedule one full-quality foreground render. A single scheduler is shared by
 // every continuous page so rapid scrolling cannot launch a PDFium render storm.
 function renderContinuousPage(
@@ -1760,6 +1808,14 @@ function renderContinuousPage(
 ) {
   const doc = getActiveDocument();
   if (!doc?.pdfDoc) return Promise.resolve();
+  if (_continuousMountedPageCanReuse(doc, pageNum)) {
+    _renderedPages.add(pageNum);
+    incrementPerformanceCounter('stableContinuousSurfaceReuses');
+    return Promise.resolve({
+      status: 'complete',
+      value: { pageNum, ready: true, reused: true, source: 'mounted-surface' },
+    });
+  }
   if (_renderedPages.has(pageNum)) {
     const wrapper = document.querySelector(
       `#continuous-container .page-wrapper[data-page="${pageNum}"]`,
@@ -2399,14 +2455,7 @@ async function _renderContinuousPageNow(
   }
   incrementPerformanceCounter(visibleFinal ? 'fullQualityPublishes' : 'previewPublishes');
 
-  const semanticLayoutKey = [
-    doc.id,
-    Number(doc.revisionState?.pageContentRevisions?.[pageNum]
-      ?? doc.pageRenderRevisions?.[pageNum]) || 0,
-    pageNum,
-    Math.round(doc.scale * 10_000),
-    extraRotation || 0,
-  ].join(':');
+  const semanticLayoutKey = _continuousSemanticLayoutKey(doc, pageNum);
   const needsSemanticRebuild = pageWrapper.dataset.semanticLayoutKey !== semanticLayoutKey;
   if (needsSemanticRebuild) {
     // DPR-only raster refreshes keep semantic layers and page coordinates
@@ -2574,6 +2623,8 @@ function _createContinuousWrapper(doc, pageNum, rect) {
   const pageWrapper = document.createElement('div');
   pageWrapper.className = 'page-wrapper';
   pageWrapper.dataset.page = String(pageNum);
+  pageWrapper.dataset.documentId = String(doc.id);
+  pageWrapper.dataset.documentGeneration = String(Number(doc.lifecycleGeneration) || 0);
   pageWrapper.dataset.mountedAt = String(performance.now());
   pageWrapper.style.position = 'absolute';
   pageWrapper.style.margin = '0';

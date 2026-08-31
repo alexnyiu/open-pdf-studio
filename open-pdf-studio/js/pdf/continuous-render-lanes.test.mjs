@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import {
   CONTINUOUS_RENDER_LANES,
+  continuousMountedRenderCanReuse,
   continuousScrollRenderRetentionPages,
   continuousRenderJobKey,
   planContinuousMountRetention,
@@ -92,6 +93,36 @@ test('scroll interaction preserves visible work and one mounted page in the trav
   }), [4, 5, 3]);
 });
 
+test('a small same-page scroll reuses an exact mounted final surface', () => {
+  const current = {
+    documentId: 'doc-a',
+    ownerDocumentId: 'doc-a',
+    lifecycleGeneration: 4,
+    ownerLifecycleGeneration: 4,
+    renderState: 'ready',
+    rasterQuality: 'final',
+    targetRasterScale: 2.7,
+    expectedRasterScale: 2.7,
+    semanticLayoutKey: 'doc-a:8:3:13500:0',
+    expectedSemanticLayoutKey: 'doc-a:8:3:13500:0',
+    readinessSatisfied: true,
+    hasRasterSurface: true,
+  };
+  assert.equal(continuousMountedRenderCanReuse(current), true);
+  for (const stale of [
+    { ownerDocumentId: 'doc-b' },
+    { ownerLifecycleGeneration: 5 },
+    { renderState: 'loading' },
+    { rasterQuality: 'preview' },
+    { targetRasterScale: 2.6 },
+    { expectedSemanticLayoutKey: 'doc-a:9:3:13500:0' },
+    { readinessSatisfied: false },
+    { hasRasterSurface: false },
+  ]) {
+    assert.equal(continuousMountedRenderCanReuse({ ...current, ...stale }), false);
+  }
+});
+
 test('continuous renderer applies mount hysteresis and promotes directional work on scroll', async () => {
   const source = await readFile(new URL('./renderer.js', import.meta.url), 'utf8');
   const retentionAt = source.indexOf('const retainedMountPages = planContinuousMountRetention({');
@@ -105,4 +136,5 @@ test('continuous renderer applies mount hysteresis and promotes directional work
   );
   assert.ok(retentionAt >= 0 && retentionAt < releaseAt);
   assert.ok(scrollRetentionAt >= 0 && scrollRetentionAt < schedulerAt);
+  assert.match(source, /if \(_continuousMountedPageCanReuse\(doc, pageNum\)\)/u);
 });

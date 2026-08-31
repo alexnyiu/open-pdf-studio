@@ -56,6 +56,46 @@ function normalizedPages(pages) {
 }
 
 /**
+ * Decide whether a mounted continuous-view page is already the exact surface
+ * the current document owner needs. The renderer's in-memory page set is only
+ * a scheduling hint: resource accounting and lifecycle adoption may rebuild
+ * that set independently of a still-connected, current raster. Reusing the
+ * validated surface prevents a same-page scroll from scheduling fresh preview
+ * or full-raster work and flashing a "Rendering page" status.
+ */
+export function continuousMountedRenderCanReuse({
+  documentId = '',
+  ownerDocumentId = '',
+  lifecycleGeneration = 0,
+  ownerLifecycleGeneration = 0,
+  renderState = '',
+  rasterQuality = '',
+  targetRasterScale = 0,
+  expectedRasterScale = 0,
+  semanticLayoutKey = '',
+  expectedSemanticLayoutKey = '',
+  readinessSatisfied = false,
+  hasRasterSurface = false,
+} = {}) {
+  const targetScale = Number(targetRasterScale);
+  const expectedScale = Number(expectedRasterScale);
+  return Boolean(
+    documentId
+    && documentId === ownerDocumentId
+    && (Number(lifecycleGeneration) || 0) === (Number(ownerLifecycleGeneration) || 0)
+    && renderState === 'ready'
+    && rasterQuality === 'final'
+    && Number.isFinite(targetScale)
+    && Number.isFinite(expectedScale)
+    && Math.abs(targetScale - expectedScale) <= 0.0001
+    && semanticLayoutKey
+    && semanticLayoutKey === expectedSemanticLayoutKey
+    && readinessSatisfied
+    && hasRasterSurface
+  );
+}
+
+/**
  * Keep a bounded hysteresis window around the pages selected by the current
  * overscan calculation. Only already-mounted pages are retained, so this does
  * not create speculative DOM or raster work; it prevents a one-frame shift in

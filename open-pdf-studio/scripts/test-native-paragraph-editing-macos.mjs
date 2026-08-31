@@ -866,6 +866,59 @@ try {
         && value.pageTextEditHost?.attached && value.pageTextEditHost?.page === '3'
         && String(value.pageTextEditHost?.parentClass).includes('canvas-container-cont')
     ), 30_000);
+    const samePageScrollBefore = await waitUntil(
+      'settled page-3 continuous raster before a small same-page scroll',
+      async () => {
+        const [viewport, renderingStatus] = await Promise.all([
+          callTool('app_get_viewport_state'),
+          ui('.page-wrapper[data-page="3"] .page-render-status'),
+        ]);
+        const surface = viewport.renderedSurfaceStates?.find((entry) => (
+          Number(entry.pageNum) === 3 && entry.quality === 'final'
+        ));
+        return viewport.doc?.currentPage === 3
+          && viewport.pageEditReadiness?.ready === true
+          && renderingStatus.found === false
+          && surface ? { viewport, surface } : null;
+      },
+      30_000,
+    );
+    await callTool('app_scroll', {
+      x: Math.round(realContinuousEditor.rect.x + realContinuousEditor.rect.width / 2),
+      y: Math.round(realContinuousEditor.rect.y + realContinuousEditor.rect.height / 2),
+      dy: 18,
+    });
+    await delay(500);
+    const [samePageScrollAfter, samePageRenderingStatus] = await Promise.all([
+      callTool('app_get_viewport_state'),
+      ui('.page-wrapper[data-page="3"] .page-render-status'),
+    ]);
+    const samePageSurfaceAfter = samePageScrollAfter.renderedSurfaceStates?.find((entry) => (
+      Number(entry.pageNum) === 3 && entry.quality === 'final'
+    ));
+    assert.equal(samePageScrollAfter.doc?.currentPage, 3,
+      'a small continuous scroll unexpectedly changed the current page');
+    assert.ok(Number(samePageScrollAfter.container?.scrollTop)
+      > Number(samePageScrollBefore.viewport.container?.scrollTop),
+    'the small continuous scroll did not move within page 3');
+    assert.equal(samePageRenderingStatus.found, false,
+      'a small same-page scroll displayed the page rendering status');
+    assert.equal(samePageSurfaceAfter?.publicationRevision,
+      samePageScrollBefore.surface.publicationRevision,
+      'a small same-page scroll republished the already-current page raster');
+    const samePageScrollReuse = {
+      scrollTopBefore: samePageScrollBefore.viewport.container?.scrollTop,
+      scrollTopAfter: samePageScrollAfter.container?.scrollTop,
+      pageBefore: samePageScrollBefore.viewport.doc?.currentPage,
+      pageAfter: samePageScrollAfter.doc?.currentPage,
+      publicationRevisionBefore: samePageScrollBefore.surface.publicationRevision,
+      publicationRevisionAfter: samePageSurfaceAfter?.publicationRevision,
+      renderingStatusVisible: samePageRenderingStatus.found,
+      stableSurfaceReuses:
+        samePageScrollAfter.performanceMetrics?.counters?.stableContinuousSurfaceReuses || 0,
+      stablePreviewSkips:
+        samePageScrollAfter.performanceMetrics?.counters?.stableContinuousPreviewSkips || 0,
+    };
     const realSourceBeforeScroll = await waitUi(firstLineSelector, (value) => (
       value.found && value.rect?.width > 0 && value.rect?.height > 0
     ), 30_000);
@@ -1075,6 +1128,7 @@ try {
       widthCompensation: realWidthLayout.result.widthCompensation,
       sourceWidth: realWidthLayout.result.sourceWidth,
       effectiveContentWidth: realWidthLayout.result.effectiveContentWidth,
+      samePageScrollReuse,
       relativeBeforeScroll: realRelativeBeforeScroll,
       relativeAfterScroll: realRelativeAfterScroll,
       clickAwayCommit: true,
