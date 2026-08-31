@@ -2751,7 +2751,16 @@ function _adoptContinuousWindowForSavedProxy(doc, changedPages = []) {
   const unchangedMounted = [...current.mounted.keys()].filter((pageNum) => !changed.has(pageNum));
   adoptTextLayersForDocument(doc, unchangedMounted);
   adoptPageEditReadinessForDocumentLifecycle(doc, changedPages);
-  for (const pageNum of changed) _renderedPages.delete(pageNum);
+  for (const pageNum of changed) {
+    _renderedPages.delete(pageNum);
+    const wrapper = current.mounted.get(pageNum);
+    // Persisting a page does not advance its logical page revision again, but
+    // its PDF.js proxy and semantic layer sources have changed. Derived-state
+    // invalidation removes those layers before this synchronization render; if
+    // the old layout key survives, the renderer incorrectly skips rebuilding
+    // text/link/form layers and edit readiness waits until timeout.
+    if (wrapper) delete wrapper.dataset.semanticLayoutKey;
+  }
   return true;
 }
 

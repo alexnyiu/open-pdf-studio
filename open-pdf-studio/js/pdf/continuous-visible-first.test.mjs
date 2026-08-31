@@ -89,3 +89,16 @@ test('a virtualized page retiring before its render starts is superseded, not a 
   assert.match(renderNow, /reason: 'page-unmounted'/u);
   assert.match(renderNow, /superseded: true/u);
 });
+
+test('saved proxy synchronization rebuilds semantic layers for every changed page', () => {
+  const start = source.indexOf('function _adoptContinuousWindowForSavedProxy');
+  const end = source.indexOf('\n/** Rebind stale-but-displayable mounted surfaces', start);
+  const adoption = source.slice(start, end);
+
+  assert.match(adoption, /for \(const pageNum of changed\)/u);
+  assert.match(adoption, /delete wrapper\.dataset\.semanticLayoutKey/u);
+  assert.ok(
+    adoption.indexOf('delete wrapper.dataset.semanticLayoutKey')
+      < adoption.indexOf('return true;'),
+  );
+});
