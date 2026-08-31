@@ -366,17 +366,38 @@ async function runCoverage(options) {
       const selector = mode === 'single' ? '#single-page' : '#continuous';
       const before = await call('app_get_viewport_state');
       const action = await click(selector, true);
-      const viewport = await waitUntil(`view mode ${mode}`, async () => {
-        const state = await call('app_get_viewport_state');
-        if (state.doc?.viewMode !== mode || state.doc?.bookSpread !== false) return null;
-        if (!before.editorSession) return state;
-        if (state.editorSession?.sessionId !== before.editorSession.sessionId) return null;
-        const editor = await ui('.pdf-text-editor', false);
-        const expectedHostReady = mode === 'single'
-          ? editor.pageTextEditHost?.parentId === 'canvas-container'
-          : editor.pageTextEditHost?.parentClass?.includes('canvas-container-cont');
-        return editor.found && editor.visible && expectedHostReady ? state : null;
-      });
+      let viewport;
+      try {
+        viewport = await waitUntil(`view mode ${mode}`, async () => {
+          const state = await call('app_get_viewport_state');
+          if (state.doc?.viewMode !== mode || state.doc?.bookSpread !== false) return null;
+          if (!before.editorSession) return state;
+          if (state.editorSession?.sessionId !== before.editorSession.sessionId) return null;
+          const editor = await ui('.pdf-text-editor', false);
+          const expectedHostReady = mode === 'single'
+            ? editor.pageTextEditHost?.parentId === 'canvas-container'
+            : editor.pageTextEditHost?.parentClass?.includes('canvas-container-cont');
+          return editor.found && editor.visible && expectedHostReady ? state : null;
+        });
+      } catch (error) {
+        const [after, editor, focused] = await Promise.all([
+          call('app_get_viewport_state').catch(() => null),
+          ui('.pdf-text-editor', false).catch(() => null),
+          ui(':focus', false).catch(() => null),
+        ]);
+        throw new Error(`${error.message}; view-transfer=${JSON.stringify({
+          requestedMode: mode,
+          action,
+          beforeSession: before.editorSession ?? null,
+          afterDocument: after?.doc ?? null,
+          afterSession: after?.editorSession ?? null,
+          readiness: after?.pageEditReadiness ?? null,
+          surfaceRegistry: after?.pageSurfaceRegistry ?? null,
+          placement: after?.editorMetrics?.placementDebug ?? null,
+          editor,
+          focused,
+        })}`);
+      }
       return { selector, action, observed: viewport.doc.viewMode };
     }
 
@@ -514,8 +535,31 @@ async function runCoverage(options) {
 
     async function focusEditor() {
       const editor = await waitUi('.pdf-text-editor');
-      if (!editor.focused) await click('.pdf-text-editor', false);
-      return waitUi('.pdf-text-editor', (value) => value.found && value.visible && value.focused);
+      const focusAction = editor.focused ? null : await click('.pdf-text-editor', false);
+      try {
+        return await waitUi(
+          '.pdf-text-editor',
+          (value) => value.found && value.visible && value.focused,
+          options.editorOpenTimeoutMs,
+        );
+      } catch (error) {
+        const [after, focused, viewport, recentConsole] = await Promise.all([
+          ui('.pdf-text-editor', false).catch(() => null),
+          ui(':focus', false).catch(() => null),
+          call('app_get_viewport_state').catch(() => null),
+          call('app_get_recent_console', { tail: 80 }).catch(() => null),
+        ]);
+        throw new Error(`${error.message}; editor-focus=${JSON.stringify({
+          before: editor,
+          focusAction,
+          after,
+          focused,
+          session: viewport?.editorSession ?? null,
+          document: viewport?.doc ?? null,
+          editorLifecycle: viewport?.editorMetrics?.lifecycle ?? null,
+          recentConsole,
+        })}`);
+      }
     }
 
     async function replaceDraft(text) {
@@ -538,9 +582,26 @@ async function runCoverage(options) {
     }
 
     async function cancelEditor() {
-      await focusEditor();
-      await call('app_key', { key: 'Escape' });
-      await waitUi('.pdf-text-editor', (value) => !value.found);
+      const focused = await focusEditor();
+      const escaped = await call('app_key', { key: 'Escape' });
+      try {
+        await waitUi('.pdf-text-editor', (value) => !value.found);
+      } catch (error) {
+        const [editor, viewport, recentConsole] = await Promise.all([
+          ui('.pdf-text-editor', false).catch(() => null),
+          call('app_get_viewport_state').catch(() => null),
+          call('app_get_recent_console', { tail: 80 }).catch(() => null),
+        ]);
+        throw new Error(`${error.message}; escape-cancel=${JSON.stringify({
+          focused,
+          escaped,
+          editor,
+          session: viewport?.editorSession ?? null,
+          document: viewport?.doc ?? null,
+          editorLifecycle: viewport?.editorMetrics?.lifecycle ?? null,
+          recentConsole,
+        })}`);
+      }
       const viewport = await call('app_get_viewport_state');
       assert.equal(viewport.editorSession, null, 'Escape left an editor session registered');
     }
@@ -619,6 +680,11 @@ async function runCoverage(options) {
 
       const blank = await call('app_new_blank_pdf', { widthPt: 612, heightPt: 792, pages: 1 });
       assert.equal(blank.ok, true, blank.error);
+      // New documents intentionally inherit the product's continuous-view
+      // default. Fixture placement below uses the single-page canvas geometry,
+      // so make that production UI state explicit instead of probing the
+      // hidden #pdf-canvas while continuous view is active.
+      await establishBaseViewport();
       await createInsertedText('Coverage inserted text');
       await createAnnotationText('textbox', 'Coverage textbox text', [0.18, 0.22], [0.48, 0.32]);
       await createAnnotationText('callout', 'Coverage callout text', [0.56, 0.42], [0.82, 0.55]);

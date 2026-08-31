@@ -63,35 +63,117 @@ function normalizedPages(pages) {
  * validated surface prevents a same-page scroll from scheduling fresh preview
  * or full-raster work and flashing a "Rendering page" status.
  */
-export function continuousMountedRenderCanReuse({
+export function continuousMountedRasterCanReuse({
   documentId = '',
   ownerDocumentId = '',
   lifecycleGeneration = 0,
   ownerLifecycleGeneration = 0,
+  rasterSourceRevision = null,
+  expectedSourceRevision = null,
+  rasterRotation = null,
+  expectedRotation = null,
   renderState = '',
   rasterQuality = '',
   targetRasterScale = 0,
   expectedRasterScale = 0,
-  semanticLayoutKey = '',
-  expectedSemanticLayoutKey = '',
-  readinessSatisfied = false,
   hasRasterSurface = false,
 } = {}) {
   const targetScale = Number(targetRasterScale);
   const expectedScale = Number(expectedRasterScale);
+  const sourceRevision = Number(rasterSourceRevision);
+  const currentSourceRevision = Number(expectedSourceRevision);
+  const rotation = Number(rasterRotation);
+  const currentRotation = Number(expectedRotation);
   return Boolean(
     documentId
     && documentId === ownerDocumentId
     && (Number(lifecycleGeneration) || 0) === (Number(ownerLifecycleGeneration) || 0)
+    && rasterSourceRevision !== null && rasterSourceRevision !== undefined
+    && expectedSourceRevision !== null && expectedSourceRevision !== undefined
+    && Number.isSafeInteger(sourceRevision) && sourceRevision >= 0
+    && sourceRevision === currentSourceRevision
+    && rasterRotation !== null && rasterRotation !== undefined
+    && expectedRotation !== null && expectedRotation !== undefined
+    && Number.isFinite(rotation) && rotation === currentRotation
     && renderState === 'ready'
     && rasterQuality === 'final'
     && Number.isFinite(targetScale)
     && Number.isFinite(expectedScale)
     && Math.abs(targetScale - expectedScale) <= 0.0001
-    && semanticLayoutKey
-    && semanticLayoutKey === expectedSemanticLayoutKey
-    && readinessSatisfied
     && hasRasterSurface
+  );
+}
+
+/**
+ * A PDF-proxy render can only acknowledge the live serialized revision. When
+ * model-owned edits or page rotation are newer, the freshly mounted surface
+ * must be republished through the model coordinator after every required
+ * visual/semantic layer has succeeded.
+ */
+export function continuousModelReadinessReconciliationRequired({
+  pageRevision = 0,
+  livePdfRevision = 0,
+  readinessSatisfied = false,
+  completedLayers = [],
+  requiredLayers = [],
+} = {}) {
+  const completed = new Set(completedLayers || []);
+  return Number(pageRevision) > Number(livePdfRevision)
+    && readinessSatisfied !== true
+    && [...(requiredLayers || [])].every((layer) => completed.has(layer));
+}
+
+/**
+ * Restamp diagnostic metadata for a retained raster only after the mounted
+ * page registry proves that the current model-owned base and semantic layers
+ * are both published. This is metadata reconciliation, not a raster
+ * publication: callers must preserve the original publication identity.
+ */
+export function continuousRenderedSurfaceRevisionUpdate({
+  surfaceState = null,
+  documentId = '',
+  lifecycleGeneration = 0,
+  pageNum = 0,
+  contentRevision = 0,
+  livePdfRevision = 0,
+  pageRevision = 0,
+  registryPageRevision = null,
+  basePublishedRevision = null,
+  semanticPublishedRevision = null,
+  readinessSatisfied = false,
+} = {}) {
+  const normalizedPage = Number(pageNum);
+  const normalizedPageRevision = Number(pageRevision);
+  const normalizedRegistryRevision = Number(registryPageRevision);
+  const normalizedBaseRevision = Number(basePublishedRevision);
+  const normalizedSemanticRevision = Number(semanticPublishedRevision);
+  if (!surfaceState
+      || readinessSatisfied !== true
+      || !documentId
+      || surfaceState.documentId !== String(documentId)
+      || Number(surfaceState.ownerGeneration) !== (Number(lifecycleGeneration) || 0)
+      || !Number.isSafeInteger(normalizedPage) || normalizedPage <= 0
+      || Number(surfaceState.pageNum) !== normalizedPage
+      || !Number.isSafeInteger(normalizedPageRevision) || normalizedPageRevision < 0
+      || registryPageRevision === null || registryPageRevision === undefined
+      || basePublishedRevision === null || basePublishedRevision === undefined
+      || semanticPublishedRevision === null || semanticPublishedRevision === undefined
+      || normalizedRegistryRevision !== normalizedPageRevision
+      || normalizedBaseRevision < normalizedPageRevision
+      || normalizedSemanticRevision < normalizedPageRevision) return null;
+  return Object.freeze({
+    contentRevision: Math.max(0, Number(contentRevision) || 0),
+    livePdfRevision: Math.max(0, Number(livePdfRevision) || 0),
+    pageRevision: normalizedPageRevision,
+  });
+}
+
+export function continuousMountedRenderCanReuse(input = {}) {
+  return Boolean(
+    continuousMountedRasterCanReuse(input)
+    && input.semanticLayoutKey
+    && input.semanticLayoutKey === input.expectedSemanticLayoutKey
+    && input.readinessSatisfied
   );
 }
 

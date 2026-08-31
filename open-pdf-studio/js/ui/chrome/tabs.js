@@ -156,6 +156,8 @@ export function switchToTab(index) {
   if (newDoc && newDoc !== curDoc) noteDocumentViewActivation(newDoc);
   const placeholder = document.getElementById('placeholder');
   const pdfContainer = document.getElementById('pdf-container');
+  const singleContainer = document.getElementById('canvas-container');
+  const continuousContainer = document.getElementById('continuous-container');
 
   if (newDoc && newDoc.pdfDoc) {
     // Show PDF container, hide placeholder
@@ -168,8 +170,20 @@ export function switchToTab(index) {
     }
 
     if (newDoc.viewMode === 'continuous') {
+      // View containers are shared by every tab. Restore the incoming tab's
+      // layout before rendering; otherwise a single-page tab opened after a
+      // continuous tab (or vice versa) renders successfully into a surface
+      // that the previous tab left display:none.
+      if (singleContainer) singleContainer.style.display = 'none';
+      if (continuousContainer) {
+        continuousContainer.style.display = (newDoc.bookSpread || newDoc.facingSpread)
+          ? 'grid' : 'flex';
+      }
+      if (pdfContainer) pdfContainer.style.overflow = '';
       renderContinuous();
     } else {
+      if (singleContainer) singleContainer.style.display = 'inline-block';
+      if (continuousContainer) continuousContainer.style.display = 'none';
       renderPage(newDoc.currentPage);
     }
 

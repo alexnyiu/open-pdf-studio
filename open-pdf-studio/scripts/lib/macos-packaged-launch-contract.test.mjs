@@ -52,14 +52,21 @@ test('trusted insertion re-queries, clicks, verifies focus ownership, then emits
     producer.indexOf('async function realTextEditorInteraction'),
     producer.indexOf('\nasync function openPdf'),
   );
+  const positioning = producer.slice(
+    producer.indexOf('async function positionEditorForPhysicalInput'),
+    producer.indexOf('\nasync function realTextEditorInteraction'),
+  );
   assert.match(interaction, /await waitUi\('\.pdf-text-editor'/u);
   assert.match(interaction, /pageTextEditHost\?\.editorMountGeneration/u);
   assert.match(interaction, /afterText === beforeText/u);
   assert.match(interaction, /trusted input delivery failed/u);
 
   const insertion = swiftHelper.slice(swiftHelper.indexOf('if mode == "insert"'));
-  assert.ok(insertion.indexOf('postMouseClick(point)') < insertion.indexOf('postKey(0, flags: .maskCommand)'));
+  assert.ok(insertion.indexOf('postMouseClick(point)') < insertion.indexOf('postKey(pid, 0, flags: .maskCommand)'));
   assert.match(insertion, /frontmostApplication\?\.processIdentifier == pid/u);
+  assert.match(swiftHelper, /frontmostApplication\?\.processIdentifier == targetPid/u);
+  assert.match(swiftHelper, /\.post\(tap: \.cghidEventTap\)/u);
+  assert.doesNotMatch(swiftHelper, /\.postToPid\(/u);
   assert.match(swiftHelper, /focusedAccessibilityRole/u);
   assert.match(swiftHelper, /eventSequence/u);
   assert.equal(JSON.parse(tauriConfiguration).app.windows[0].decorations, false);
@@ -68,7 +75,8 @@ test('trusted insertion re-queries, clicks, verifies focus ownership, then emits
   assert.match(swiftHelper, /outerOrigin\.y \+ 28/u);
   assert.match(producer, /expandRibbonForPhysicalInput/u);
   assert.match(producer, /app_set_zoom', \{ scale: 3 \}/u);
-  assert.match(producer, /physicalInputScroll.*app_scroll/u);
-  assert.match(producer, /dy: -430/u);
+  assert.match(positioning, /app_mouse_drag/u);
+  assert.match(positioning, /button: 'middle'/u);
+  assert.match(positioning, /occluder\.rect\.bottom \+ 12/u);
   assert.match(producer, /physicalInputOccluder\.rect\.bottom \+ 12/u);
 });

@@ -6,6 +6,7 @@ import { createInitialDocumentRevisionState } from '../core/document-revision-st
 import { captureRenderPublicationToken } from './render-publication-token.js';
 import {
   adoptPageEditReadinessForDocumentLifecycle,
+  beginPageEditReadinessAttempt,
   PAGE_EDIT_READY_LAYERS,
   awaitPageEditReady,
   clearPageEditReadiness,
@@ -202,6 +203,43 @@ test('a failed current layer cannot be overwritten by later layer completions', 
   assert.equal(pageEditReadinessSatisfied(documentState, 1), false);
   assert.equal(pageEditReadinessSnapshot(documentState, 1).ready, false,
     'diagnostics must not report ready while the fail-closed barrier retains an error');
+});
+
+test('a new current render attempt clears a transient failure and resets rebuilt layers', () => {
+  const documentState = owner();
+  const token = captureRenderPublicationToken(documentState, 1, 'retry-readiness');
+  for (const layer of PAGE_EDIT_READY_LAYERS) {
+    markPageEditLayerReady(documentState, 1, layer, token);
+  }
+  failPageEditReadiness(documentState, 1, 'superseded text layer', token);
+  assert.equal(pageEditReadinessSnapshot(documentState, 1).failure, 'superseded text layer');
+
+  assert.equal(beginPageEditReadinessAttempt(documentState, 1, token), true);
+  assert.deepEqual(pageEditReadinessSnapshot(documentState, 1).layers, {});
+  assert.equal(pageEditReadinessSnapshot(documentState, 1).failure, null);
+  for (const layer of PAGE_EDIT_READY_LAYERS) {
+    markPageEditLayerReady(documentState, 1, layer, token);
+  }
+  assert.equal(pageEditReadinessSatisfied(documentState, 1), true);
+});
+
+test('a raster-only render attempt can retain current semantic layer markers', () => {
+  const documentState = owner();
+  const token = captureRenderPublicationToken(documentState, 1, 'raster-only-readiness');
+  for (const layer of PAGE_EDIT_READY_LAYERS) {
+    markPageEditLayerReady(documentState, 1, layer, token);
+  }
+  failPageEditReadiness(documentState, 1, 'superseded raster publication', token);
+
+  assert.equal(beginPageEditReadinessAttempt(documentState, 1, token, {
+    preserveLayers: true,
+  }), true);
+  assert.deepEqual(
+    Object.keys(pageEditReadinessSnapshot(documentState, 1).layers).sort(),
+    [...PAGE_EDIT_READY_LAYERS].sort(),
+  );
+  assert.equal(pageEditReadinessSnapshot(documentState, 1).failure, null);
+  assert.equal(pageEditReadinessSatisfied(documentState, 1), true);
 });
 
 test('a waiter started after a current failure rejects immediately', async () => {

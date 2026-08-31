@@ -743,9 +743,17 @@ try {
   assert.match(combinedDraft, /Re-edited first line/u);
   assert.match(combinedDraft, /Right cell/u);
   await editor.fill('Combined paragraph one');
+  await page.waitForFunction(async (expected) => {
+    const { getEditorText } = await import('/js/solid/stores/pdfTextEditStore.js');
+    return getEditorText() === expected;
+  }, 'Combined paragraph one');
   await editor.press('Enter');
-  await page.keyboard.type('Combined paragraph two');
-  await page.keyboard.press('Control+Enter');
+  await editor.pressSequentially('Combined paragraph two');
+  await page.waitForFunction(async (expected) => {
+    const { getEditorText } = await import('/js/solid/stores/pdfTextEditStore.js');
+    return getEditorText() === expected;
+  }, 'Combined paragraph one\nCombined paragraph two');
+  await editor.press('Control+Enter');
   await editor.waitFor({ state: 'detached' });
 
   const mergedState = await page.evaluate(async () => {

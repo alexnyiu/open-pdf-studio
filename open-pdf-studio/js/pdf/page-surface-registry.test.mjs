@@ -87,6 +87,30 @@ test('a continuous raster image retains its page-local geometry and overlay canv
   assert.equal(resolvePageSurface(documentState, 50).surfaceKind, 'continuous-raster-image');
 });
 
+test('a newer hidden stale mount cannot shadow the current visible page revision', () => {
+  const documentState = owner();
+  const current = registerPageSurface({
+    documentState,
+    pageNum: 50,
+    pageContentRevision: 7,
+    surfaceKind: 'continuous-canvas',
+    container: element('visible-continuous-page'),
+    baseSurface: element('current-base'),
+    geometryCanvas: element('current-geometry'),
+  });
+  const stale = registerPageSurface({
+    documentState,
+    pageNum: 50,
+    pageContentRevision: 6,
+    surfaceKind: 'single-page-canvas',
+    container: element('hidden-single-page'),
+    baseSurface: null,
+    geometryCanvas: null,
+  });
+  assert.ok(stale.mountGeneration > current.mountGeneration);
+  assert.equal(resolvePageSurface(documentState, 50), current);
+});
+
 test('text-layer replacement updates one mount and stale publication cannot advance it', () => {
   const documentState = owner();
   const container = element('page');
@@ -132,6 +156,33 @@ test('text-layer replacement updates one mount and stale publication cannot adva
     revision: 7,
     basePublished: true,
   }), false);
+});
+
+test('atomic authoritative base replacement acknowledges the connected new surface', () => {
+  const documentState = owner();
+  const oldBase = element('old-authoritative-preview');
+  const surface = registerPageSurface({
+    documentState,
+    pageNum: 50,
+    container: element('page'),
+    surfaceKind: 'continuous-candidate-canvas',
+    baseSurface: oldBase,
+    overlayCanvas: element('overlay'),
+    textLayer: element('text-layer'),
+  });
+  const nextBase = element('next-authoritative-preview');
+  oldBase.isConnected = false;
+  assert.equal(markPageSurfacePublication(surface, {
+    documentState,
+    revision: 7,
+    basePublished: true,
+    semanticPublished: true,
+    baseSurface: nextBase,
+  }), true);
+  const resolved = resolvePageSurface(documentState, 50);
+  assert.equal(resolved.baseSurface, nextBase);
+  assert.equal(resolved.basePublishedRevision, 7);
+  assert.equal(resolved.semanticPublishedRevision, 7);
 });
 
 test('unmount removes the exact registration without touching a replacement mount', () => {

@@ -213,6 +213,105 @@ async function runOnce(options) {
     return value;
   };
 
+  async function checkSmallScrollContinuity(pageNum) {
+    const pageLabel = String(pageNum).padStart(3, '0');
+    const navigation = await callTool('app_go_to_page', { page: pageNum });
+    assert.equal(navigation.ok, true, navigation.error);
+    await waitForRenderIdle(`page ${pageNum} render before small-scroll continuity check`);
+    await delay(500);
+    const before = await waitUntil(`page ${pageNum} settled final surface`, async () => {
+      const [viewport, renderingStatus, capture] = await Promise.all([
+        callTool('app_get_viewport_state'),
+        callTool('app_ui_state', {
+          selector: `.page-wrapper[data-page="${pageNum}"] .page-render-status`,
+          searchTabs: false,
+        }),
+        callTool('app_screenshot_rendered_page', {
+          pageNum, xPt: 36, yPt: 36, widthPt: 540, heightPt: 120,
+        }),
+      ]);
+      const surface = viewport.renderedSurfaceStates?.find((entry) => (
+        Number(entry.pageNum) === pageNum && entry.quality === 'final'
+      ));
+      return viewport.doc?.currentPage === pageNum
+        && renderingStatus.found === false
+        && capture.ok === true
+        && capture.quality === 'final'
+        && surface ? { viewport, renderingStatus, capture, surface } : null;
+    }, 30_000);
+    const scrollX = before.viewport.container.left + before.viewport.container.width / 2;
+    const scrollY = before.viewport.container.top + before.viewport.container.height / 2;
+    const scroll = await callTool('app_scroll', { x: scrollX, y: scrollY, dy: 18 });
+    assert.equal(scroll.ok, true, scroll.error);
+    assert.equal(scroll.defaultScrollApplied, true,
+      `page ${pageNum} small scroll did not use the production continuous-scroll path`);
+    await delay(500);
+    const [afterViewport, afterRenderingStatus, afterCapture, afterView] = await Promise.all([
+      callTool('app_get_viewport_state'),
+      callTool('app_ui_state', {
+        selector: `.page-wrapper[data-page="${pageNum}"] .page-render-status`,
+        searchTabs: false,
+      }),
+      callTool('app_screenshot_rendered_page', {
+        pageNum, xPt: 36, yPt: 36, widthPt: 540, heightPt: 120,
+      }),
+      callTool('app_screenshot_view', { width: 1_440 }),
+    ]);
+    const afterSurface = afterViewport.renderedSurfaceStates?.find((entry) => (
+      Number(entry.pageNum) === pageNum && entry.quality === 'final'
+    ));
+    const pixelDifference = afterCapture.ok
+      ? await pixelDifferencePercent(
+        Buffer.from(before.capture.png_base64, 'base64'),
+        Buffer.from(afterCapture.png_base64, 'base64'),
+      ) : 100;
+    const scrollMoved = Number(afterViewport.container?.scrollTop)
+      > Number(before.viewport.container?.scrollTop);
+    const pageStable = afterViewport.doc?.currentPage === pageNum;
+    const publicationStable = afterSurface?.publicationRevision === before.surface.publicationRevision;
+    const renderingStatusHidden = afterRenderingStatus.found === false;
+    const finalRasterVisible = afterCapture.ok === true
+      && afterCapture.quality === 'final'
+      && afterView.ok === true
+      && afterView.source === 'continuous-viewport';
+    const passed = scrollMoved && pageStable && publicationStable
+      && renderingStatusHidden && finalRasterVisible && pixelDifference <= 0.1;
+    assert.equal(pageStable, true, `small scroll changed current page ${pageNum}`);
+    assert.equal(scrollMoved, true, `small scroll did not move within page ${pageNum}`);
+    assert.equal(renderingStatusHidden, true,
+      `small scroll displayed the page rendering status on page ${pageNum}`);
+    assert.equal(publicationStable, true,
+      `small scroll republished the final raster on page ${pageNum}`);
+    assert.equal(finalRasterVisible, true,
+      `small scroll left page ${pageNum} without a visible final raster`);
+    assert.ok(pixelDifference <= 0.1,
+      `small scroll changed page ${pageNum} raster pixels by ${pixelDifference}%`);
+
+    const cropArtifact = `small-scroll-page-${pageLabel}-after-crop.png`;
+    const viewportArtifact = `small-scroll-page-${pageLabel}-after-view.png`;
+    await Promise.all([
+      writeFile(path.join(outputDir, cropArtifact), Buffer.from(afterCapture.png_base64, 'base64')),
+      writeFile(path.join(outputDir, viewportArtifact), Buffer.from(afterView.png_base64, 'base64')),
+    ]);
+    reportBase.artifacts.push(cropArtifact, viewportArtifact);
+    return {
+      pageNum,
+      deltaY: 18,
+      scrollTopBefore: before.viewport.container?.scrollTop ?? null,
+      scrollTopAfter: afterViewport.container?.scrollTop ?? null,
+      currentPageBefore: before.viewport.doc?.currentPage ?? null,
+      currentPageAfter: afterViewport.doc?.currentPage ?? null,
+      publicationRevisionBefore: before.surface.publicationRevision,
+      publicationRevisionAfter: afterSurface?.publicationRevision ?? null,
+      renderingStatusVisible: afterRenderingStatus.found === true,
+      quality: afterCapture.quality ?? null,
+      viewportSource: afterView.source ?? null,
+      pixelDifferencePercent: pixelDifference,
+      passed,
+      artifacts: [cropArtifact, viewportArtifact],
+    };
+  }
+
   try {
     application = await startPackagedApp({
       appBundle: options.appBundle,
@@ -274,6 +373,11 @@ async function runOnce(options) {
     });
     await waitForRenderIdle('initial continuous render');
     await sampleRss('continuous-initial-settled');
+
+    const smallScrollChecks = [];
+    for (const pageNum of [1, middlePage, lastPage - 1]) {
+      smallScrollChecks.push(await checkSmallScrollContinuity(pageNum));
+    }
 
     // Page 3 contains deterministic vector text and is a stable sharpness
     // target. Capture the actual mounted raster and a
@@ -530,6 +634,7 @@ async function runOnce(options) {
         },
         continuous: {
           scrollEvents,
+          smallScrollChecks,
           scroll: scrollCapture,
           zoom: finalCapture,
           settled: settledCapture,
@@ -593,6 +698,12 @@ async function runOnce(options) {
         pageRenderFailureBlockedLaterPagesCount:
           (scrollMetric?.counters?.pageRenderFailureBlockedLaterPagesCount || 0)
           + (zoomMetric?.counters?.pageRenderFailureBlockedLaterPagesCount || 0),
+        smallScrollPagesChecked: smallScrollChecks.length,
+        smallScrollLaterPagesChecked: smallScrollChecks.filter(({ pageNum }) => pageNum > 1).length,
+        smallScrollContinuityFailures: smallScrollChecks.filter(({ passed }) => !passed).length,
+        smallScrollMaxPixelDifferencePercent: maximum(
+          ...smallScrollChecks.map(({ pixelDifferencePercent }) => pixelDifferencePercent),
+        ),
         mountedPageSurfacesPeak: mountedPagePeak,
         mountedThumbnailsPeak: thumbnailPeak,
         zoomInputToTransformP95Ms: sample(finalCapture, 'zoomInputToTransformMs'),
@@ -699,6 +810,11 @@ function aggregateMetrics(reports) {
       sum + (metrics.retiredNativeStalePublicationCount || 0), 0),
     pageRenderFailureBlockedLaterPagesCount: values.reduce((sum, metrics) =>
       sum + (metrics.pageRenderFailureBlockedLaterPagesCount || 0), 0),
+    smallScrollPagesChecked: minField('smallScrollPagesChecked'),
+    smallScrollLaterPagesChecked: minField('smallScrollLaterPagesChecked'),
+    smallScrollContinuityFailures: values.reduce((sum, metrics) =>
+      sum + (metrics.smallScrollContinuityFailures || 0), 0),
+    smallScrollMaxPixelDifferencePercent: maxField('smallScrollMaxPixelDifferencePercent'),
     mountedPageSurfacesPeak: maxField('mountedPageSurfacesPeak'),
     mountedThumbnailsPeak: maxField('mountedThumbnailsPeak'),
     zoomInputToTransformP95Ms: maxField('zoomInputToTransformP95Ms'),
@@ -756,6 +872,10 @@ async function run(options) {
     completedAt: new Date().toISOString(),
     metrics: aggregateMetrics(reports),
     measurements: {
+      smallScrollChecks: reports.map((report, index) => ({
+        run: index + 1,
+        checks: report.measurements?.continuous?.smallScrollChecks || [],
+      })),
       processRuns: reports.map((report, index) => ({
         run: index + 1,
         statusIgnoringFreshProcessCount: report.failures?.every?.((failure) =>

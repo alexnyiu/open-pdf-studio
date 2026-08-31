@@ -5,7 +5,7 @@ import { isPdfAReadOnly } from '../../pdf/loader.js';
 import {
   highlightIcon, freehandIcon, lineIcon, arrowIcon, polylineIcon,
   rectIcon, ellipseIcon, polygonIcon, cloudIcon, cloudPolylineIcon,
-  textboxIcon, calloutIcon, noteIcon,
+  editTextIcon, textboxIcon, calloutIcon, noteIcon,
   stampIcon, signatureIcon,
   measureDistanceIcon, measureAreaIcon, measurePerimeterIcon
 } from '../data/ribbonIcons.js';
@@ -102,6 +102,7 @@ const DOCK_SNAP = 60;
 const tools = [
   { tool: 'hand', key: 'home.hand', icon: handIcon, group: 0 },
   { tool: 'select', key: 'home.select', icon: selectIcon, group: 0 },
+  { tool: 'editText', key: 'home.editText', icon: editTextIcon, group: 0 },
   { tool: 'highlight', key: 'comment.highlight', icon: highlightIcon, group: 1 },
   { tool: 'draw', key: 'comment.freehand', icon: freehandIcon, group: 1 },
   { tool: 'line', key: 'comment.line', icon: lineIcon, group: 1 },
@@ -251,9 +252,12 @@ function ToolBtn(props) {
   return (
     <button
       class={`tp-btn ${isActive() ? 'active' : ''}`}
+      data-tool={props.tool}
       disabled={!alwaysEnabled && toolDisabled()}
       onClick={() => setTool(props.tool)}
       title={props.title}
+      aria-label={props.title}
+      aria-pressed={isActive()}
       innerHTML={props.icon}
     />
   );
@@ -279,8 +283,8 @@ function ToolList() {
 }
 
 // Height needed for all tools in a single column
-const SINGLE_COL_HEIGHT_SMALL = 635;  // 20 btns × 30px + 5 seps × 7px
-const SINGLE_COL_HEIGHT_LARGE = 935;  // 20 btns × 44px + 5 seps × 7px
+const SINGLE_COL_HEIGHT_SMALL = 791;  // 21 btns × 36px + 5 seps × 7px
+const SINGLE_COL_HEIGHT_LARGE = 1043; // 21 btns × 48px + 5 seps × 7px
 
 // Docked strip — sits in the flex layout
 export function DockedToolPalette(props) {
@@ -317,13 +321,15 @@ export function DockedToolPalette(props) {
         <div class={`tp-docked-tools${twoCol() ? ' two-col' : ''}`}>
           <ToolList />
         </div>
-        <button class="tp-close" title="Settings" style={{ color: 'var(--theme-text-secondary)' }}
+        <button class="tp-close" title="Settings" aria-label="Tool palette settings"
+          style={{ color: 'var(--theme-text-secondary)' }}
           onClick={(e) => showPaletteCtxMenu({ preventDefault: () => {}, clientX: e.clientX, clientY: e.clientY })}>
           <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="8" cy="8" r="2"/><path d="M8 1v2m0 10v2M1 8h2m10 0h2M3 3l1.5 1.5m7 7L13 13M3 13l1.5-1.5m7-7L13 3"/>
           </svg>
         </button>
-        <button class="tp-close" onClick={() => { setPaletteVisible(false); unregisterPaletteDock('tool'); savePaletteState(); }}>
+        <button class="tp-close" aria-label="Close tool palette"
+          onClick={() => { setPaletteVisible(false); unregisterPaletteDock('tool'); savePaletteState(); }}>
           <svg width="8" height="8" viewBox="0 0 10 10">
             <line x1="2" y1="2" x2="8" y2="8" stroke="currentColor" stroke-width="1.5"/>
             <line x1="8" y1="2" x2="2" y2="8" stroke="currentColor" stroke-width="1.5"/>
@@ -353,7 +359,8 @@ export function FloatingToolPalette() {
           startDrag(e, false);
         }}>
           <span class="tp-float-title">{t('view.toolPaletteLabel')}</span>
-          <button class="tp-float-close" onClick={() => { setPaletteVisible(false); savePaletteState(); }}>
+          <button class="tp-float-close" aria-label="Close tool palette"
+            onClick={() => { setPaletteVisible(false); savePaletteState(); }}>
             <svg width="8" height="8" viewBox="0 0 10 10">
               <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" stroke-width="1.5"/>
               <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" stroke-width="1.5"/>

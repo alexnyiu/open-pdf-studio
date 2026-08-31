@@ -435,9 +435,13 @@ function productionSavedTransitionCallbacks(outputPath, savedBytes) {
     restoreViewState: async (owner, snapshot) => {
       const ownerActive = getActiveDocument() === owner;
       const conflicts = [];
+      const toolManager = ownerActive ? await import('../tools/manager.js') : null;
       const report = restoreSavedDocumentViewState(owner, snapshot, {
         appState: state,
         ownerActive,
+        restoreActiveTool: toolManager
+          ? (tool) => toolManager.setTool(tool)
+          : null,
         diagnostic: (_event, conflict) => conflicts.push(conflict),
       });
       const renderer = await import('./renderer.js');

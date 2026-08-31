@@ -62,6 +62,17 @@ export function evaluateLargePdfPerformanceReport(report) {
       metrics.retiredNativeStalePublicationCount, 'zero stale pixel publications'),
     threshold('pageFailureBlocksLaterPages', metrics.pageRenderFailureBlockedLaterPagesCount === 0,
       metrics.pageRenderFailureBlockedLaterPagesCount, 'zero later pages blocked by a page-local failure'),
+    threshold('smallScrollSurfaceContinuity', metrics.smallScrollPagesChecked >= 3
+      && metrics.smallScrollLaterPagesChecked >= 2
+      && metrics.smallScrollContinuityFailures === 0
+      && finite(metrics.smallScrollMaxPixelDifferencePercent)
+      && metrics.smallScrollMaxPixelDifferencePercent <= 0.1,
+    {
+      pagesChecked: metrics.smallScrollPagesChecked,
+      laterPagesChecked: metrics.smallScrollLaterPagesChecked,
+      failures: metrics.smallScrollContinuityFailures,
+      maxPixelDifferencePercent: metrics.smallScrollMaxPixelDifferencePercent,
+    }, 'page 1 plus at least two later pages retain one final raster with <= 0.1% pixel difference'),
     threshold('mountedPageSurfaces', finite(metrics.mountedPageSurfacesPeak)
       && metrics.mountedPageSurfacesPeak <= 9, metrics.mountedPageSurfacesPeak, '<= 9'),
     threshold('mountedThumbnails', finite(metrics.mountedThumbnailsPeak)

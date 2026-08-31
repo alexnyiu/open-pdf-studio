@@ -105,6 +105,15 @@ async function openPdf(pdfPath) {
     const viewport = await callTool('app_get_viewport_state');
     return viewport.doc?.filePath === pdfPath && viewport.pageCount === 1 ? viewport : null;
   }, 60_000);
+  const singleView = await callTool('app_set_view_mode', { mode: 'single' });
+  assert.equal(singleView.ok, true, singleView.error);
+  await waitUntil(`single-page viewport for ${pdfPath}`, async () => {
+    const viewport = await callTool('app_get_viewport_state');
+    return viewport.doc?.filePath === pdfPath
+      && viewport.doc?.viewMode === 'single'
+      && viewport.canvas?.cssWidth > 0
+      && viewport.canvas?.cssHeight > 0 ? viewport : null;
+  }, 60_000);
 }
 
 async function closeActiveTab(force = false) {

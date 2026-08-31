@@ -413,6 +413,7 @@ export function captureSavedDocumentViewState(documentState, {
 export function restoreSavedDocumentViewState(documentState, snapshot, {
   appState = null,
   restorePanelState = null,
+  restoreActiveTool = null,
   ownerActive = null,
   sharedUiLease = null,
   diagnostic = null,
@@ -468,7 +469,8 @@ export function restoreSavedDocumentViewState(documentState, snapshot, {
           .map((id) => byId.get(String(id))).filter(Boolean);
         documentState.selectedAnnotation = documentState.selectedAnnotations[0] || null;
       } else if (field === 'tool' && appState && value) {
-        appState.currentTool = value;
+        if (typeof restoreActiveTool === 'function') restoreActiveTool(value);
+        else appState.currentTool = value;
       } else if (field === 'search' && appState?.search && value) {
         Object.assign(appState.search, value, {
           results: [], currentIndex: -1, totalMatches: 0, isSearching: false,

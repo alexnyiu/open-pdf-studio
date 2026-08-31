@@ -4,7 +4,10 @@ import test from 'node:test';
 
 import {
   CONTINUOUS_RENDER_LANES,
+  continuousModelReadinessReconciliationRequired,
+  continuousMountedRasterCanReuse,
   continuousMountedRenderCanReuse,
+  continuousRenderedSurfaceRevisionUpdate,
   continuousScrollRenderRetentionPages,
   continuousRenderJobKey,
   planContinuousMountRetention,
@@ -99,6 +102,10 @@ test('a small same-page scroll reuses an exact mounted final surface', () => {
     ownerDocumentId: 'doc-a',
     lifecycleGeneration: 4,
     ownerLifecycleGeneration: 4,
+    rasterSourceRevision: 7,
+    expectedSourceRevision: 7,
+    rasterRotation: 90,
+    expectedRotation: 90,
     renderState: 'ready',
     rasterQuality: 'final',
     targetRasterScale: 2.7,
@@ -109,9 +116,17 @@ test('a small same-page scroll reuses an exact mounted final surface', () => {
     hasRasterSurface: true,
   };
   assert.equal(continuousMountedRenderCanReuse(current), true);
+  assert.equal(continuousMountedRasterCanReuse({
+    ...current,
+    semanticLayoutKey: '',
+    expectedSemanticLayoutKey: 'stale',
+    readinessSatisfied: false,
+  }), true, 'a current final raster remains visually reusable while semantics refresh');
   for (const stale of [
     { ownerDocumentId: 'doc-b' },
     { ownerLifecycleGeneration: 5 },
+    { rasterSourceRevision: 6 },
+    { rasterRotation: 0 },
     { renderState: 'loading' },
     { rasterQuality: 'preview' },
     { targetRasterScale: 2.6 },
@@ -121,6 +136,95 @@ test('a small same-page scroll reuses an exact mounted final surface', () => {
   ]) {
     assert.equal(continuousMountedRenderCanReuse({ ...current, ...stale }), false);
   }
+  assert.equal(continuousMountedRasterCanReuse({ ...current, hasRasterSurface: false }), false);
+});
+
+test('a mounted proxy surface reconciles a newer model revision only after every layer succeeds', () => {
+  const requiredLayers = ['raster', 'annotations', 'text', 'links', 'forms'];
+  assert.equal(continuousModelReadinessReconciliationRequired({
+    pageRevision: 9,
+    livePdfRevision: 7,
+    completedLayers: requiredLayers,
+    requiredLayers,
+  }), true);
+  assert.equal(continuousModelReadinessReconciliationRequired({
+    pageRevision: 9,
+    livePdfRevision: 7,
+    completedLayers: requiredLayers.filter((layer) => layer !== 'links'),
+    requiredLayers,
+  }), false, 'a failed semantic layer cannot be hidden by model publication');
+  assert.equal(continuousModelReadinessReconciliationRequired({
+    pageRevision: 7,
+    livePdfRevision: 7,
+    completedLayers: requiredLayers,
+    requiredLayers,
+  }), false);
+  assert.equal(continuousModelReadinessReconciliationRequired({
+    pageRevision: 9,
+    livePdfRevision: 7,
+    readinessSatisfied: true,
+    completedLayers: requiredLayers,
+    requiredLayers,
+  }), false);
+});
+
+test('retained raster metadata advances without claiming a new raster publication', () => {
+  const surfaceState = {
+    documentId: 'doc-a',
+    ownerGeneration: 4,
+    pageNum: 3,
+    contentRevision: 7,
+    livePdfRevision: 7,
+    pageRevision: 7,
+    publicationRevision: 21,
+    publishedAt: 1234,
+  };
+  assert.deepEqual(continuousRenderedSurfaceRevisionUpdate({
+    surfaceState,
+    documentId: 'doc-a',
+    lifecycleGeneration: 4,
+    pageNum: 3,
+    contentRevision: 9,
+    livePdfRevision: 7,
+    pageRevision: 9,
+    registryPageRevision: 9,
+    basePublishedRevision: 9,
+    semanticPublishedRevision: 9,
+    readinessSatisfied: true,
+  }), {
+    contentRevision: 9,
+    livePdfRevision: 7,
+    pageRevision: 9,
+  });
+  for (const incomplete of [
+    { readinessSatisfied: false },
+    { registryPageRevision: null },
+    { basePublishedRevision: null },
+    { semanticPublishedRevision: null },
+    { registryPageRevision: 8 },
+    { basePublishedRevision: 8 },
+    { semanticPublishedRevision: 8 },
+    { documentId: 'doc-b' },
+    { lifecycleGeneration: 5 },
+    { pageNum: 4 },
+  ]) {
+    assert.equal(continuousRenderedSurfaceRevisionUpdate({
+      surfaceState,
+      documentId: 'doc-a',
+      lifecycleGeneration: 4,
+      pageNum: 3,
+      contentRevision: 9,
+      livePdfRevision: 7,
+      pageRevision: 9,
+      registryPageRevision: 9,
+      basePublishedRevision: 9,
+      semanticPublishedRevision: 9,
+      readinessSatisfied: true,
+      ...incomplete,
+    }), null);
+  }
+  assert.equal(surfaceState.publicationRevision, 21);
+  assert.equal(surfaceState.publishedAt, 1234);
 });
 
 test('continuous renderer applies mount hysteresis and promotes directional work on scroll', async () => {
@@ -137,4 +241,7 @@ test('continuous renderer applies mount hysteresis and promotes directional work
   assert.ok(retentionAt >= 0 && retentionAt < releaseAt);
   assert.ok(scrollRetentionAt >= 0 && scrollRetentionAt < schedulerAt);
   assert.match(source, /if \(_continuousMountedPageCanReuse\(doc, pageNum\)\)/u);
+  assert.match(source, /reuseMountedRaster/u);
+  assert.match(source, /CONTINUOUS_RENDER_LANES\.SEMANTIC/u);
+  assert.doesNotMatch(source, /protectedPages\.length \+ 9/u);
 });

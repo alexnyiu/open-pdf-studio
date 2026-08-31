@@ -33,6 +33,10 @@ function passingReport() {
       retiredNativeWorkPeak: 2,
       retiredNativeStalePublicationCount: 0,
       pageRenderFailureBlockedLaterPagesCount: 0,
+      smallScrollPagesChecked: 3,
+      smallScrollLaterPagesChecked: 2,
+      smallScrollContinuityFailures: 0,
+      smallScrollMaxPixelDifferencePercent: 0.1,
       mountedPageSurfacesPeak: 9,
       mountedThumbnailsPeak: 32,
       zoomInputToTransformP95Ms: 15,
@@ -77,6 +81,14 @@ test('large-PDF performance evaluator fails a slow first visible preview', () =>
   const result = evaluateLargePdfPerformanceReport(report);
   assert.equal(result.status, 'FAIL');
   assert.ok(result.failures.includes('strictlyVisibleFirstPreview'));
+});
+
+test('large-PDF performance evaluator rejects a small-scroll raster discontinuity', () => {
+  const report = passingReport();
+  report.metrics.smallScrollContinuityFailures = 1;
+  const result = evaluateLargePdfPerformanceReport(report);
+  assert.equal(result.status, 'FAIL');
+  assert.ok(result.failures.includes('smallScrollSurfaceContinuity'));
 });
 
 test('large-PDF performance evaluator rejects the retired uploaded 108-page identity', () => {

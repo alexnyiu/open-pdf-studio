@@ -187,7 +187,10 @@ export function resolvePageSurface(documentState, pageNum, { targetRevision = nu
     : nonNegativeRevision(targetRevision);
   return [...registrations.values()]
     .filter((surface) => connected(surface) && surface.pageContentRevision <= target)
-    .sort((left, right) => right.mountGeneration - left.mountGeneration)[0] || null;
+    .sort((left, right) => (
+      right.pageContentRevision - left.pageContentRevision
+      || right.mountGeneration - left.mountGeneration
+    ))[0] || null;
 }
 
 /** Restamp the exact live mount after base and/or semantic publication. */
@@ -210,21 +213,32 @@ export function markPageSurfacePublication(surface, {
       || currentRevision !== publishedRevision) return false;
   const registrations = surfacesByPage.get(surface._pageKey);
   const live = registrations?.get(surface.mountGeneration);
-  if (!live || live._surfaceId !== surface._surfaceId || !connected(live)) return false;
+  if (!live || live._surfaceId !== surface._surfaceId) return false;
+  const nextBaseSurface = baseSurface ?? live.baseSurface;
+  const nextTextLayer = newestConnectedTextLayer(textLayer, live.textLayer);
+  // An atomic base swap connects the replacement before removing the prior
+  // authoritative preview. Validate the supplied replacement against the
+  // still-current mount instead of rejecting it because the old base node was
+  // deliberately disconnected during that swap.
+  if (!connected({
+    ...live,
+    baseSurface: nextBaseSurface,
+    textLayer: nextTextLayer,
+  })) return false;
   registerPageSurface({
     documentState,
     pageNum: surface.pageNum,
     pageContentRevision: publishedRevision,
     surfaceKind: surfaceKind || live.surfaceKind,
     container: live.container,
-    baseSurface: baseSurface ?? live.baseSurface,
+    baseSurface: nextBaseSurface,
     geometryCanvas: geometryCanvas ?? live.geometryCanvas,
     overlayCanvas: overlayCanvas ?? live.overlayCanvas,
     // A later text-layer request can register while an older publication is
     // awaiting its final raster/semantic barrier. Never let that older
     // acknowledgement replace the newer connected layer with a detached or
     // lower-request-generation node.
-    textLayer: newestConnectedTextLayer(textLayer, live.textLayer),
+    textLayer: nextTextLayer,
     canonicalPageDimensions: live.canonicalPageDimensions,
     cssScale: live.cssScale,
     dpr: live.dpr,

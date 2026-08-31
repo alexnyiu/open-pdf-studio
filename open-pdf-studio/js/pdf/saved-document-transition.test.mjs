@@ -524,6 +524,31 @@ test('Save As transition preserves path-owned view, selection, rotations, and se
   assert.deepEqual(appState.search.results, []);
 });
 
+test('active tool restoration can re-run the tool lifecycle after proxy replacement', () => {
+  const document = persistedDocument();
+  const appState = {
+    documents: [document],
+    activeDocumentIndex: 0,
+    currentTool: 'editText',
+    search: { isOpen: false, query: '', results: [] },
+  };
+  const snapshot = captureSavedDocumentViewState(document, {
+    appState,
+    ownerActive: true,
+  });
+  const restoredTools = [];
+  restoreSavedDocumentViewState(document, snapshot, {
+    appState,
+    ownerActive: true,
+    restoreActiveTool(tool) {
+      restoredTools.push(tool);
+      appState.currentTool = tool;
+    },
+  });
+  assert.deepEqual(restoredTools, ['editText']);
+  assert.equal(appState.currentTool, 'editText');
+});
+
 test('saved view merge preserves newer zoom and search while restoring untouched fields', () => {
   const document = persistedDocument();
   const appState = {

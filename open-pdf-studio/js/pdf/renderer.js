@@ -31,13 +31,17 @@ import { shouldPreloadEntireDocument, shouldPreloadNearby } from './preload-poli
 import { ensureDocumentPageGeometryIndex, rebuildDocumentPageGeometryIndex } from './document-performance.js';
 import {
   resolveContinuousHorizontalAnchor,
+  resolveContinuousHorizontalQuantization,
   resolveContinuousHorizontalScrollSpace,
   resolveContinuousVerticalAnchor,
 } from './continuous-zoom-anchor.js';
 import { createRenderWorkScheduler } from './render-work-scheduler.js';
 import {
   CONTINUOUS_RENDER_LANES,
+  continuousModelReadinessReconciliationRequired,
+  continuousMountedRasterCanReuse,
   continuousMountedRenderCanReuse,
+  continuousRenderedSurfaceRevisionUpdate,
   continuousScrollRenderRetentionPages,
   continuousRenderJobKey,
   planContinuousMountRetention,
@@ -102,6 +106,7 @@ import {
 } from './tile-cache.js';
 import { createLowResolutionPreviewKey } from './low-resolution-preview-key.js';
 import {
+  beginPageEditReadinessAttempt,
   failPageEditReadiness,
   adoptPageEditReadinessForDocumentLifecycle,
   markPageEditLayerReady,
@@ -1173,6 +1178,47 @@ function _recordRenderedSurface(doc, pageNum, source, detail) {
   return stateForSurface;
 }
 
+function _reconcileRenderedSurfaceModelRevision(doc, pageNum) {
+  const pageRevision = Number(doc.revisionState?.pageContentRevisions?.[pageNum]
+    ?? doc.pageRenderRevisions?.[pageNum]
+    ?? doc.revisionState?.contentRevision) || 0;
+  const registrySurface = resolvePageSurface(doc, pageNum, {
+    targetRevision: pageRevision,
+  });
+  const pagePrefix = `${doc.id}:${Number(doc.lifecycleGeneration) || 0}:${pageNum}:`;
+  let reconciled = false;
+  for (const [key, surfaceState] of [..._renderedSurfaceStates]) {
+    if (!key.startsWith(pagePrefix)) continue;
+    const revisionUpdate = continuousRenderedSurfaceRevisionUpdate({
+      surfaceState,
+      documentId: doc.id,
+      lifecycleGeneration: doc.lifecycleGeneration,
+      pageNum,
+      contentRevision: doc.revisionState?.contentRevision,
+      livePdfRevision: doc.revisionState?.livePdfRevision,
+      pageRevision,
+      registryPageRevision: registrySurface?.pageContentRevision,
+      basePublishedRevision: registrySurface?.basePublishedRevision,
+      semanticPublishedRevision: registrySurface?.semanticPublishedRevision,
+      readinessSatisfied: pageEditReadinessSatisfied(doc, pageNum, {
+        requiredLayers: RENDER_EDIT_READY_LAYERS,
+      }),
+    });
+    if (!revisionUpdate) continue;
+    if (surfaceState.contentRevision === revisionUpdate.contentRevision
+        && surfaceState.livePdfRevision === revisionUpdate.livePdfRevision
+        && surfaceState.pageRevision === revisionUpdate.pageRevision) continue;
+    _renderedSurfaceStates.set(key, createRenderedSurfaceState({
+      ...surfaceState,
+      ...revisionUpdate,
+      publicationRevision: surfaceState.publicationRevision,
+      publishedAt: surfaceState.publishedAt,
+    }));
+    reconciled = true;
+  }
+  return reconciled;
+}
+
 export function getRenderedSurfaceStates() {
   const active = getActiveDocument();
   if (!active) return [];
@@ -1632,7 +1678,7 @@ function _publishContinuousPreview(doc, pageNum, canvas) {
 
 function scheduleContinuousPreview(doc, pageNum, priority = 2_000, kind = 'foreground') {
   if (!doc?.pdfDoc) return Promise.resolve({ status: 'cancelled', reason: 'no-document' });
-  if (_continuousMountedPageCanReuse(doc, pageNum)) {
+  if (_continuousMountedRasterCanReuse(doc, pageNum)) {
     incrementPerformanceCounter('stableContinuousPreviewSkips');
     return Promise.resolve({
       status: 'complete',
@@ -1767,7 +1813,7 @@ function _continuousSemanticLayoutKey(doc, pageNum) {
   ].join(':');
 }
 
-function _continuousMountedPageCanReuse(doc, pageNum) {
+function _continuousMountedPageReuseInput(doc, pageNum) {
   if (!_continuousWindowMatches(doc)) return false;
   const wrapper = _continuousWindow.mounted.get(pageNum);
   if (!wrapper?.isConnected) return false;
@@ -1778,11 +1824,15 @@ function _continuousMountedPageCanReuse(doc, pageNum) {
     || (rasterImage && rasterImage.isConnected
       && (rasterImage.naturalWidth > 0 || Boolean(rasterImage.currentSrc || rasterImage.src))),
   );
-  return continuousMountedRenderCanReuse({
+  return {
     documentId: String(doc.id),
     ownerDocumentId: String(wrapper.dataset.documentId || ''),
     lifecycleGeneration: Number(doc.lifecycleGeneration) || 0,
     ownerLifecycleGeneration: Number(wrapper.dataset.documentGeneration) || 0,
+    rasterSourceRevision: wrapper.dataset.rasterSourceRevision,
+    expectedSourceRevision: Number(doc.revisionState?.livePdfRevision) || 0,
+    rasterRotation: wrapper.dataset.rasterRotation,
+    expectedRotation: getPageRotation(pageNum) || 0,
     renderState: wrapper.dataset.renderState,
     rasterQuality: wrapper.dataset.rasterQuality,
     targetRasterScale: wrapper.dataset.rasterTargetScale,
@@ -1793,7 +1843,17 @@ function _continuousMountedPageCanReuse(doc, pageNum) {
       requiredLayers: RENDER_EDIT_READY_LAYERS,
     }),
     hasRasterSurface,
-  });
+  };
+}
+
+function _continuousMountedRasterCanReuse(doc, pageNum) {
+  const input = _continuousMountedPageReuseInput(doc, pageNum);
+  return input ? continuousMountedRasterCanReuse(input) : false;
+}
+
+function _continuousMountedPageCanReuse(doc, pageNum) {
+  const input = _continuousMountedPageReuseInput(doc, pageNum);
+  return input ? continuousMountedRenderCanReuse(input) : false;
 }
 
 // Schedule one full-quality foreground render. A single scheduler is shared by
@@ -1816,6 +1876,8 @@ function renderContinuousPage(
       value: { pageNum, ready: true, reused: true, source: 'mounted-surface' },
     });
   }
+  const reuseMountedRaster = _continuousMountedRasterCanReuse(doc, pageNum);
+  const scheduledLane = reuseMountedRaster ? CONTINUOUS_RENDER_LANES.SEMANTIC : lane;
   if (_renderedPages.has(pageNum)) {
     const wrapper = document.querySelector(
       `#continuous-container .page-wrapper[data-page="${pageNum}"]`,
@@ -1854,12 +1916,12 @@ function renderContinuousPage(
       lifecycleGeneration: doc.lifecycleGeneration,
       pageNum,
       pageRevision,
-      quality: 'full',
+      quality: reuseMountedRaster ? 'semantic' : 'full',
       scaleRevision: scaleRevision * 100_000 + densityRevision,
     }),
     ownerKey,
     pageNum,
-    lane,
+    lane: scheduledLane,
     quality: RasterQuality.FINAL,
     priority,
     kind,
@@ -1888,6 +1950,7 @@ function renderContinuousPage(
           kind,
           signal,
           (cancel) => { cancelBackend = cancel; },
+          { reuseMountedRaster },
         );
       } finally {
         releaseInFlight();
@@ -1912,7 +1975,9 @@ function renderContinuousPage(
     failRendererReadiness(doc, pageNum, error, publicationToken);
     const wrapper = _continuousWindowMatches(doc)
       ? _continuousWindow.mounted.get(pageNum) : null;
-    if (wrapper?.isConnected) {
+    if (wrapper?.isConnected && reuseMountedRaster) {
+      _continuousPageStatus(wrapper, 'ready');
+    } else if (wrapper?.isConnected) {
       _continuousPageStatus(wrapper, 'error', {
         message: 'Page render failed',
         error,
@@ -2114,6 +2179,7 @@ async function _renderContinuousPageNow(
   kind = 'foreground',
   signal = null,
   registerBackendCancellation = () => {},
+  options = {},
 ) {
   const pageWrapper = document.querySelector(`#continuous-container .page-wrapper[data-page="${pageNum}"]`);
   if (!pageWrapper) {
@@ -2128,14 +2194,18 @@ async function _renderContinuousPageNow(
   const canvasContainer = pageWrapper.querySelector('.canvas-container-cont');
   if (!canvasContainer) throw new Error(`Required page ${pageNum} has no canvas container`);
   if (signal?.aborted) return { pageNum, ready: false, cancelled: true };
+  const doc = state.documents[state.activeDocumentIndex];
+  if (!doc || !doc.pdfDoc) throw new Error(`Required page ${pageNum} lost its document owner`);
+  const reuseMountedRaster = options.reuseMountedRaster === true
+    && _continuousMountedRasterCanReuse(doc, pageNum);
   if (canvasContainer.querySelector('.page-preview-image, .page-preview-canvas')) {
     _continuousPageStatus(pageWrapper, 'preview');
+  } else if (reuseMountedRaster) {
+    _continuousPageStatus(pageWrapper, 'ready');
   } else {
     _continuousPageStatus(pageWrapper, 'loading', { message: 'Rendering page…' });
   }
 
-  const doc = state.documents[state.activeDocumentIndex];
-  if (!doc || !doc.pdfDoc) throw new Error(`Required page ${pageNum} lost its document owner`);
   const publicationToken = captureRenderPublicationToken(doc, pageNum, 'continuous-page');
   const completedLayers = new Set();
   const markLayer = (layer) => {
@@ -2156,6 +2226,12 @@ async function _renderContinuousPageNow(
     vpOpts.rotation = (page.rotate + extraRotation) % 360;
   }
   const viewport = page.getViewport(vpOpts);
+  const semanticLayoutKey = _continuousSemanticLayoutKey(doc, pageNum);
+  const needsSemanticRebuild = reuseMountedRaster
+    || pageWrapper.dataset.semanticLayoutKey !== semanticLayoutKey;
+  beginPageEditReadinessAttempt(doc, pageNum, publicationToken, {
+    preserveLayers: !needsSemanticRebuild,
+  });
 
   canvasContainer.style.setProperty('--scale-factor', viewport.scale);
   canvasContainer.style.setProperty('--total-scale-factor', viewport.scale);
@@ -2222,6 +2298,7 @@ async function _renderContinuousPageNow(
     annotationCanvasEl.style.pointerEvents = 'none';
   }
 
+  if (!reuseMountedRaster) {
   // RUST-ONLY: continuous-mode page render. Used to dual-fallback to
   // PDF.js — removed per project policy. Rust failure surfaced via console
   // + state.renderEngine = 'ERROR' (the page stays blank rather than
@@ -2409,6 +2486,10 @@ async function _renderContinuousPageNow(
   pageWrapper.dataset.rasterQuality = publishedQuality;
   pageWrapper.dataset.rasterTargetScale = String(targetRasterScale);
   pageWrapper.dataset.rasterActualScale = String(visibleFinal ? targetRasterScale : renderScale);
+  pageWrapper.dataset.rasterSourceRevision = String(
+    Number(doc.revisionState?.livePdfRevision) || 0,
+  );
+  pageWrapper.dataset.rasterRotation = String(extraRotation || 0);
   _recordRenderedSurface(
     doc,
     pageNum,
@@ -2454,10 +2535,12 @@ async function _renderContinuousPageNow(
     recordPerformanceSample('visiblePageFullRasterLatencyMs', visibleLatency);
   }
   incrementPerformanceCounter(visibleFinal ? 'fullQualityPublishes' : 'previewPublishes');
+  } else {
+    markLayer('raster');
+  }
 
-  const semanticLayoutKey = _continuousSemanticLayoutKey(doc, pageNum);
-  const needsSemanticRebuild = pageWrapper.dataset.semanticLayoutKey !== semanticLayoutKey;
   if (needsSemanticRebuild) {
+    let semanticLayersPublished = true;
     // DPR-only raster refreshes keep semantic layers and page coordinates
     // intact. Zoom/rotation/content revisions rebuild them once.
     releaseTextLayer(pageNum);
@@ -2472,6 +2555,7 @@ async function _renderContinuousPageNow(
     markLayer('text');
     if (doc.revisionState?.saveState !== 'synchronizing') markLayer('editableMetadata');
   } catch (e) {
+    semanticLayersPublished = false;
     console.warn(`Failed to create text layer for page ${pageNum}:`, e);
     failReadiness(e);
   }
@@ -2482,6 +2566,7 @@ async function _renderContinuousPageNow(
     await createLinkLayer(page, viewport, canvasContainer, pageNum);
     markLayer('links');
   } catch (e) {
+    semanticLayersPublished = false;
     console.warn(`Failed to create link layer for page ${pageNum}:`, e);
     failReadiness(e);
   }
@@ -2492,6 +2577,7 @@ async function _renderContinuousPageNow(
     await createFormLayer(page, viewport, canvasContainer, pageNum);
     markLayer('forms');
   } catch (e) {
+    semanticLayersPublished = false;
     console.warn(`Failed to create form layer for page ${pageNum}:`, e);
     failReadiness(e);
   }
@@ -2503,7 +2589,11 @@ async function _renderContinuousPageNow(
         el.style.pointerEvents = 'none';
       });
     }
-    pageWrapper.dataset.semanticLayoutKey = semanticLayoutKey;
+    if (semanticLayersPublished) {
+      pageWrapper.dataset.semanticLayoutKey = semanticLayoutKey;
+    } else {
+      delete pageWrapper.dataset.semanticLayoutKey;
+    }
   }
 
   // Render annotations
@@ -2519,13 +2609,17 @@ async function _renderContinuousPageNow(
   if (isNewPage) {
     setupContinuousPageEvents(annotationCanvasEl, pageNum);
   }
-  recordForegroundRenderSample(doc.performanceProfile, {
-    elapsedMs: performance.now() - startedAt,
-    surfaceBytes: (pdfCanvasEl.width || 0) * (pdfCanvasEl.height || 0) * 4,
-  });
+  if (!reuseMountedRaster) {
+    recordForegroundRenderSample(doc.performanceProfile, {
+      elapsedMs: performance.now() - startedAt,
+      surfaceBytes: (pdfCanvasEl.width || 0) * (pdfCanvasEl.height || 0) * 4,
+    });
+  }
   const completedAt = performance.now();
   recordPerformanceSample(
-    kind === 'foreground' ? 'foregroundRenderMs' : 'backgroundRenderMs',
+    reuseMountedRaster
+      ? 'semanticRefreshMs'
+      : kind === 'foreground' ? 'foregroundRenderMs' : 'backgroundRenderMs',
     completedAt - startedAt,
   );
   recordPerformanceSample('pageInteractiveReadyMs', completedAt - startedAt);
@@ -2538,6 +2632,40 @@ async function _renderContinuousPageNow(
   if (pendingOcrPublication.status === 'superseded'
       || pendingOcrPublication.terminalFailure) {
     return { pageNum, ready: false };
+  }
+  const currentPageRevision = Number(doc.revisionState?.pageContentRevisions?.[pageNum]
+    ?? doc.pageRenderRevisions?.[pageNum]
+    ?? doc.revisionState?.contentRevision) || 0;
+  const livePdfRevision = Number(doc.revisionState?.livePdfRevision) || 0;
+  if (continuousModelReadinessReconciliationRequired({
+    pageRevision: currentPageRevision,
+    livePdfRevision,
+    readinessSatisfied: pageEditReadinessSatisfied(doc, pageNum, {
+      requiredLayers: RENDER_EDIT_READY_LAYERS,
+    }),
+    completedLayers,
+    requiredLayers: RENDER_EDIT_READY_LAYERS,
+  })) {
+    const modelPublication = await publishPageModelRevision({
+      documentState: doc,
+      pageNum,
+      expectedPageRevision: currentPageRevision,
+      expectedVisible: true,
+      nativeAuthoritative: (doc.textEdits || []).some(
+        (record) => Number(record?.page) === pageNum,
+      ),
+      publicationSource: 'continuous-model-readiness',
+    });
+    if (modelPublication.status === 'superseded') {
+      return { pageNum, ready: false, superseded: true };
+    }
+    if (modelPublication.status !== 'published') {
+      failReadiness(modelPublication.error || 'Current model page publication failed');
+      return { pageNum, ready: false };
+    }
+  }
+  if (reuseMountedRaster) {
+    _reconcileRenderedSurfaceModelRevision(doc, pageNum);
   }
   return {
     pageNum,
@@ -2600,7 +2728,8 @@ function _continuousRectWithOffset(rect, continuousState = _continuousWindow) {
   });
   return {
     ...rect,
-    x: rect.x + horizontalSpace.pageTranslationX,
+    x: rect.x + horizontalSpace.pageTranslationX
+      + (Number(continuousState?.horizontalQuantizationPx) || 0),
     y: rect.y + (Number(continuousState?.verticalOffsetPx) || 0),
   };
 }
@@ -2916,14 +3045,14 @@ function _updateContinuousVirtualWindow({
     // resolution of a page that is actually visible.
     overscanBeforePx: overscan.overscanBeforePx,
     overscanAfterPx: overscan.overscanAfterPx,
-    maxPages: Math.max(9, protectedPages.length + 9),
+    maxPages: Math.max(9, protectedPages.length),
     protectedPages,
   });
   const retainedMountPages = planContinuousMountRetention({
     wantedPages: wanted,
     mountedPages: [...mounted.keys()],
     centerPage,
-    maxPages: Math.max(9, protectedPages.length + 9),
+    maxPages: Math.max(9, protectedPages.length),
     // A force rebuild (zoom, rotation, proxy transition) must not retain a
     // surface whose geometry or pixels belong to the previous renderer state.
     // Ordinary scrolling gets bounded hysteresis while memory pressure still
@@ -3177,7 +3306,8 @@ export async function captureRendererViewState(doc = getActiveDocument()) {
     viewportWidth: scrollContainer.clientWidth,
     viewportHeight: scrollContainer.clientHeight,
     horizontalOffsetPx: _continuousWindowMatches(doc)
-      ? _continuousHorizontalSpace(contentWidth, scrollContainer).pageTranslationX : 0,
+      ? _continuousHorizontalSpace(contentWidth, scrollContainer).pageTranslationX
+        + (Number(_continuousWindow.horizontalQuantizationPx) || 0) : 0,
     verticalOffsetPx: _continuousWindowMatches(doc)
       ? _continuousWindow.verticalOffsetPx : 0,
     viewportRevision: doc.viewportRevision,
@@ -3337,7 +3467,10 @@ function _applyContinuousZoomInstant(oldScale, anchorInput = null) {
       pageNum = Number(pointed?.dataset?.page) || null;
     }
     pageNum ||= index.pageAtOffset(container.scrollTop + localY, { scale: oldScale, layout });
-    if (!Number.isFinite(input.clientX)) _continuousWindow.horizontalOffsetPx = 0;
+    if (!Number.isFinite(input.clientX)) {
+      _continuousWindow.horizontalOffsetPx = 0;
+      _continuousWindow.horizontalQuantizationPx = 0;
+    }
     const oldRect = _continuousRectWithOffset(
       index.pageRect(pageNum, { scale: oldScale, layout, contentWidth: oldContentWidth }),
     );
@@ -3357,13 +3490,15 @@ function _applyContinuousZoomInstant(oldScale, anchorInput = null) {
     const maximumScrollLeft = Math.max(0, newContentWidth - container.clientWidth);
     const horizontalAnchor = resolveContinuousHorizontalAnchor({
       basePageX: nextBaseRect?.x || 0,
-      currentPageOffsetX: _continuousWindow.horizontalOffsetPx,
+      currentPageOffsetX: _continuousWindow.horizontalOffsetPx
+        + (Number(_continuousWindow.horizontalQuantizationPx) || 0),
       pdfX,
       scale: newScale,
       localX,
       maximumScrollLeft,
     });
     _continuousWindow.horizontalOffsetPx = horizontalAnchor.pageOffsetX;
+    _continuousWindow.horizontalQuantizationPx = 0;
     const horizontalSpace = _continuousHorizontalSpace(
       newContentWidth,
       container,
@@ -3375,6 +3510,15 @@ function _applyContinuousZoomInstant(oldScale, anchorInput = null) {
     // page remains anchored now and both edges remain reachable after zooming.
     cont.style.width = `${horizontalSpace.contentWidth}px`;
     container.scrollLeft = horizontalSpace.scrollLeft;
+    const horizontalQuantization = resolveContinuousHorizontalQuantization({
+      basePageX: nextBaseRect?.x || 0,
+      pageTranslationX: horizontalSpace.pageTranslationX,
+      pdfX,
+      scale: newScale,
+      localX,
+      appliedScrollLeft: container.scrollLeft,
+    });
+    _continuousWindow.horizontalQuantizationPx = horizontalQuantization.pageQuantizationX;
     const maximumScrollTop = Math.max(
       0,
       index.totalHeight(newScale, layout) - container.clientHeight,
@@ -3853,6 +3997,7 @@ export async function renderContinuous(forceRebuild = false, {
       mounted: new Map(),
       intersecting: new Set(),
       horizontalOffsetPx: 0,
+      horizontalQuantizationPx: 0,
       verticalOffsetPx: 0,
       direction: 1,
       scrollVelocityPxPerMs: 0,

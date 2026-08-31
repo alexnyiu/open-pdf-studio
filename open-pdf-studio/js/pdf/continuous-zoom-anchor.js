@@ -69,6 +69,31 @@ export function resolveContinuousHorizontalScrollSpace({
   });
 }
 
+/** Carry fractional horizontal scroll quantization in page-layout space. */
+export function resolveContinuousHorizontalQuantization({
+  basePageX,
+  pageTranslationX = 0,
+  pdfX,
+  scale,
+  localX,
+  appliedScrollLeft = 0,
+} = {}) {
+  const base = numberOrZero(basePageX);
+  const translation = numberOrZero(pageTranslationX);
+  const point = numberOrZero(pdfX);
+  const nextScale = numberOrZero(scale);
+  const client = numberOrZero(localX);
+  const applied = numberOrZero(appliedScrollLeft);
+  const pageQuantizationX = client + applied - base - translation - point * nextScale;
+  const projectedClientX = base + translation + pageQuantizationX
+    + point * nextScale - applied;
+  return Object.freeze({
+    pageQuantizationX,
+    projectedClientX,
+    driftPx: Math.abs(projectedClientX - client),
+  });
+}
+
 /** Resolve the vertical part of a continuous-view zoom anchor.
  *
  * WebKit may quantize scrollTop even when the requested value is fractional.

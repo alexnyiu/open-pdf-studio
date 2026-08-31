@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   resolveContinuousHorizontalAnchor,
+  resolveContinuousHorizontalQuantization,
   resolveContinuousHorizontalScrollSpace,
   resolveContinuousVerticalAnchor,
 } from './continuous-zoom-anchor.js';
@@ -111,4 +112,31 @@ test('continuous zoom carries WebKit scroll quantization in page-layout space', 
 
   assert.equal(applied.driftPx, 0);
   assert.ok(Math.abs(applied.pageOffsetY) < 1);
+});
+
+test('continuous zoom carries horizontal scroll quantization after padding materialization', () => {
+  const anchor = resolveContinuousHorizontalAnchor({
+    basePageX: 126.25,
+    pdfX: 248.375,
+    scale: 1.327,
+    localX: 212.5,
+    maximumScrollLeft: 500,
+  });
+  const space = resolveContinuousHorizontalScrollSpace({
+    baseContentWidth: 1_200,
+    viewportWidth: 700,
+    pageOffsetX: anchor.pageOffsetX,
+    logicalScrollLeft: anchor.scrollLeft,
+  });
+  const correction = resolveContinuousHorizontalQuantization({
+    basePageX: 126.25,
+    pageTranslationX: space.pageTranslationX,
+    pdfX: 248.375,
+    scale: 1.327,
+    localX: 212.5,
+    appliedScrollLeft: Math.round(space.scrollLeft),
+  });
+
+  assert.equal(correction.driftPx, 0);
+  assert.ok(Math.abs(correction.pageQuantizationX) < 1);
 });

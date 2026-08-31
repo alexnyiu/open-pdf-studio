@@ -140,6 +140,30 @@ export function clearPageEditReadiness(documentState, pages = null) {
   return true;
 }
 
+/** Start one current render attempt without inheriting an older transient failure. */
+export function beginPageEditReadinessAttempt(
+  documentState,
+  pageNum,
+  publicationToken,
+  { preserveLayers = false } = {},
+) {
+  const page = pageNumber(pageNum);
+  const identity = capturePageEditReadinessIdentity(documentState, page);
+  if (!tokenMatchesIdentity(publicationToken, identity)) return false;
+  const map = readinessMap(documentState);
+  const existing = map[page];
+  const entry = {
+    identity,
+    layers: preserveLayers && identityMatchesDocument(existing?.identity, documentState)
+      ? { ...existing.layers }
+      : {},
+    failure: null,
+  };
+  map[page] = entry;
+  dispatchReadinessEvent('opds:page-edit-readiness', detailFor(entry));
+  return true;
+}
+
 /** Restamp ready unchanged pages after a validated same-document proxy swap. */
 export function adoptPageEditReadinessForDocumentLifecycle(documentState, changedPages = []) {
   if (!documentState?.id || !documentState.pdfDoc) return [];

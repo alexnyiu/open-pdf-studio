@@ -265,19 +265,55 @@ async function positionEditorForPhysicalInput(selector, occluder) {
 
 async function realTextEditorInteraction(mode, offset, insertedText) {
   assert.equal(mode, 'insert', 'trusted editor helper only accepts deterministic insertion mode');
-  const editorBefore = await waitUi('.pdf-text-editor', (value) => (
+  const initialEditor = await waitUi('.pdf-text-editor', (value) => (
     value.found && value.visible && value.focused
       && value.rect?.width > 2 && value.rect?.height > 2
       && value.pageTextEditHost?.editorMountGeneration != null
   ), 5_000);
-  const beforeText = String(editorBefore.value ?? editorBefore.text ?? '');
-  const mountGeneration = String(editorBefore.pageTextEditHost.editorMountGeneration);
-  const focusTarget = await waitUi(
+  const initialTarget = await waitUi(
     '.pdf-text-editor [data-rich-line-index="0"] [data-rich-run]',
     (value) => value.found && value.visible
       && value.rect?.width > 2 && value.rect?.height > 2,
     5_000,
   );
+  // Launch Services can make the WebView ready before macOS has made its
+  // window frontmost. Activate it with a trusted, non-mutating editor click,
+  // then re-query geometry: page centering may settle when the window becomes
+  // key, and stale client coordinates must never be used for text delivery.
+  const initialX = initialTarget.rect.x + initialTarget.rect.width / 2;
+  const initialY = initialTarget.rect.y + initialTarget.rect.height / 2;
+  const { stdout: activationStdout } = await execFileAsync(realTextEditHelper, [
+    String(applicationPid), 'click', String(initialX), String(initialY),
+  ], { maxBuffer: 1024 * 1024 });
+  const activation = JSON.parse(activationStdout);
+  assert.equal(activation.authorization?.accessibilityTrusted, true,
+    'trusted editor activation requires macOS Accessibility permission');
+  assert.equal(activation.authorization?.postEventTrusted, true,
+    'trusted editor activation requires macOS Input Monitoring permission');
+
+  let priorGeometry = null;
+  const stabilized = await waitUntil('stable frontmost editor geometry', async () => {
+    const [editor, target] = await Promise.all([
+      ui('.pdf-text-editor'),
+      ui('.pdf-text-editor [data-rich-line-index="0"] [data-rich-run]'),
+    ]);
+    if (!editor.found || !editor.visible || !editor.focused
+        || !target.found || !target.visible
+        || target.rect?.width <= 2 || target.rect?.height <= 2
+        || editor.pageTextEditHost?.editorMountGeneration == null) return null;
+    const geometry = [
+      editor.rect.x, editor.rect.y, editor.rect.width, editor.rect.height,
+      target.rect.x, target.rect.y, target.rect.width, target.rect.height,
+    ].map(Number);
+    const stable = priorGeometry
+      && geometry.every((value, index) => Math.abs(value - priorGeometry[index]) <= 0.5);
+    priorGeometry = geometry;
+    return stable ? { editor, target } : null;
+  }, 5_000);
+  const editorBefore = stabilized.editor;
+  const focusTarget = stabilized.target;
+  const beforeText = String(editorBefore.value ?? editorBefore.text ?? '');
+  const mountGeneration = String(editorBefore.pageTextEditHost.editorMountGeneration);
   const x = focusTarget.rect.x + focusTarget.rect.width / 2;
   const y = focusTarget.rect.y + focusTarget.rect.height / 2;
   const { stdout } = await execFileAsync(realTextEditHelper, [
@@ -295,6 +331,11 @@ async function realTextEditorInteraction(mode, offset, insertedText) {
     targetPid: applicationPid,
     mountGeneration,
     coordinateOrigin: result.coordinateSpace,
+    activation: {
+      helper: activation,
+      initialEditor,
+      initialTarget,
+    },
     focusTarget,
     editorBefore,
     helper: result,
@@ -429,6 +470,7 @@ const report = {
   syntheticStateSeeding: false,
   testOnlyEntryPoint: false,
   checks: {
+    leftToolbarEditText: 'PENDING',
     saveReopen: 'PENDING',
     genuineReeditPointerAction: 'PENDING',
     repeatSaveIdempotence: 'PENDING',
@@ -481,7 +523,21 @@ try {
   await callTool('app_set_window_size', { width: 1320, height: 900 });
   await openPdf(workingPdf);
   await expandRibbonForPhysicalInput();
-  await setEditTool();
+  const editToolSelector = '.tp-docked-left .tp-btn[data-tool="editText"]';
+  const editToolButton = await waitUi(editToolSelector, (value) => (
+    value.found && value.visible && !value.disabled
+  ), 30_000);
+  assert.equal(editToolButton.accessibility?.label, 'Edit Text');
+  await click(editToolSelector);
+  const activeEditToolButton = await waitUi(editToolSelector, (value) => value.active, 10_000);
+  assert.equal((await callTool('app_get_viewport_state')).currentTool, 'editText');
+  report.checks.leftToolbarEditText = 'PASS';
+  report.leftToolbarEditTextEvidence = {
+    selector: editToolSelector,
+    dock: 'left',
+    accessibilityLabel: editToolButton.accessibility.label,
+    active: activeEditToolButton.active,
+  };
 
   const nativeSelector = '.textLayer span[data-item-index="2"]';
   await waitUi(
@@ -502,11 +558,32 @@ try {
       && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
   ), 30_000);
   await callTool('app_set_view_mode', { mode: 'continuous' });
-  const continuousEditor = await waitUi('.pdf-text-editor', (value) => (
+  let continuousEditor;
+  try {
+    continuousEditor = await waitUi('.pdf-text-editor', (value) => (
+      value.found && value.visible && value.pageTextEditHost?.attached
+        && String(value.pageTextEditHost?.parentClass).includes('canvas-container-cont')
+        && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
+    ), 30_000);
+  } catch (error) {
+    const [editorState, sourceState, viewport, consoleLog] = await Promise.all([
+      ui('.pdf-text-editor').catch(() => null),
+      ui(nativeSelector).catch(() => null),
+      callTool('app_get_viewport_state').catch(() => null),
+      callTool('app_get_recent_console', { tail: 100 }).catch(() => null),
+    ]);
+    throw new Error(`editor did not survive continuous-view transfer: ${JSON.stringify({
+      editorState, sourceState, viewport, consoleLog,
+    })}`, { cause: error });
+  }
+  // View-only controls are part of the editing focus boundary and may retain
+  // keyboard focus by design. Prove the same session survived the host swap,
+  // then resume editing through an ordinary user click.
+  await click('.pdf-text-editor');
+  continuousEditor = await waitUi('.pdf-text-editor', (value) => (
     value.found && value.visible && value.focused && value.pageTextEditHost?.attached
       && String(value.pageTextEditHost?.parentClass).includes('canvas-container-cont')
-      && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
-  ), 30_000);
+  ), 10_000);
   const continuousSourceBefore = await ui(nativeSelector);
   const relativeBeforeScroll = {
     left: continuousEditor.rect.left - continuousSourceBefore.rect.left,
@@ -534,10 +611,12 @@ try {
   await callTool('app_set_view_mode', { mode: 'single' });
   await callTool('app_set_zoom', { scale: 1 });
   await waitUi('.pdf-text-editor', (value) => (
-    value.found && value.visible && value.focused && value.pageTextEditHost?.attached
+    value.found && value.visible && value.pageTextEditHost?.attached
       && value.pageTextEditHost?.parentId === 'canvas-container'
       && String(value.value ?? value.text ?? '').includes('ARCALYST penetration')
   ), 30_000);
+  await click('.pdf-text-editor');
+  await waitUi('.pdf-text-editor', (value) => value.found && value.visible && value.focused, 10_000);
   const firstReplacement = 'Packaged first line\nPackaged second line';
   const fixtureSha256 = await sha256(workingPdf);
   await replaceAndCommit(firstReplacement);
@@ -815,6 +894,33 @@ try {
       callTool('app_get_recent_console').catch(() => null),
     ]);
     throw new Error(`first Save click committed but did not write width fixture: ${JSON.stringify({
+      tabs, viewport, loading, consoleLog,
+    })}`, { cause: error });
+  }
+  try {
+    await waitUntil('first Save click synchronizes width fixture', async () => {
+      const viewport = await callTool('app_get_viewport_state');
+      const revision = viewport.documentSaveState;
+      const page = String(viewport.doc?.currentPage || 1);
+      return revision?.saveState === 'saved'
+        && revision.activeSaveRequestId === null
+        && revision.serializedRevision === revision.contentRevision
+        && revision.persistedRevision === revision.contentRevision
+        && revision.livePdfRevision === revision.contentRevision
+        && revision.pageRenderReadyRevisions?.[page] === revision.contentRevision
+        && revision.pageSemanticReadyRevisions?.[page] === revision.contentRevision
+        && viewport.pageEditReadiness?.ready === true
+        && viewport.renderPublicationDiagnostics?.activePdfJsTasks === 0
+        ? viewport : null;
+    }, 60_000);
+  } catch (error) {
+    const [tabs, viewport, loading, consoleLog] = await Promise.all([
+      callTool('app_list_tabs').catch(() => null),
+      callTool('app_get_viewport_state').catch(() => null),
+      ui('.loading-overlay').catch(() => null),
+      callTool('app_get_recent_console').catch(() => null),
+    ]);
+    throw new Error(`first Save click did not finish live synchronization: ${JSON.stringify({
       tabs, viewport, loading, consoleLog,
     })}`, { cause: error });
   }

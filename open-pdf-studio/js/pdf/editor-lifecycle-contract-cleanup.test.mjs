@@ -110,3 +110,17 @@ test('asynchronous tool deactivation cannot cancel a newer editor session', asyn
     /const ownsActiveSession = textEditDeactivationOwnsSession\([\s\S]*if \(!ownsActiveSession\) return 'superseded';[\s\S]*state\.isEditingPdfText = false/u,
   );
 });
+
+test('tab activation restores shared single and continuous containers before rendering', async () => {
+  const tabs = await source('../ui/chrome/tabs.js');
+  const branch = tabs.indexOf("if (newDoc.viewMode === 'continuous')");
+  const hideSingle = tabs.indexOf("singleContainer.style.display = 'none'", branch);
+  const showContinuous = tabs.indexOf('continuousContainer.style.display =', hideSingle);
+  const renderContinuous = tabs.indexOf('renderContinuous();', showContinuous);
+  const showSingle = tabs.indexOf("singleContainer.style.display = 'inline-block'", renderContinuous);
+  const hideContinuous = tabs.indexOf("continuousContainer.style.display = 'none'", showSingle);
+  const renderSingle = tabs.indexOf('renderPage(newDoc.currentPage);', hideContinuous);
+  assert.ok(branch >= 0 && branch < hideSingle);
+  assert.ok(hideSingle < showContinuous && showContinuous < renderContinuous);
+  assert.ok(renderContinuous < showSingle && showSingle < hideContinuous && hideContinuous < renderSingle);
+});

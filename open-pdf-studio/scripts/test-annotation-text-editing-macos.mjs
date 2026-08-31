@@ -289,6 +289,13 @@ async function runAcceptance(options) {
   }
 
   async function canvasState() {
+    // Newly created and reopened documents intentionally default to
+    // continuous view. This flow places annotations from single-page canvas
+    // geometry, so establish that production view every time the active
+    // document changes instead of inheriting the prior tab's DOM state.
+    const singleView = await callTool('app_set_view_mode', { mode: 'single' });
+    assert.equal(singleView.ok, true, singleView.error);
+    assert.equal(singleView.viewMode, 'single');
     await callTool('app_fit_page');
     return waitUntil('blank document page canvas', async () => {
       const viewport = await callTool('app_get_viewport_state');
@@ -298,7 +305,8 @@ async function runAcceptance(options) {
         pageEditReadiness: viewport.pageEditReadiness,
         renderPublicationDiagnostics: viewport.renderPublicationDiagnostics,
       };
-      return viewport.canvas?.cssWidth > 200 && viewport.canvas?.cssHeight > 200
+      return viewport.doc?.viewMode === 'single'
+        && viewport.canvas?.cssWidth > 200 && viewport.canvas?.cssHeight > 200
         && viewport.pageEditReadiness?.ready === true
         && viewport.renderPublicationDiagnostics?.activePdfJsTasks === 0
         ? viewport : null;

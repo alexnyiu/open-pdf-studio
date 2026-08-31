@@ -864,6 +864,8 @@ try {
   assert.equal((await listTabs()).tabs.some((tab) => tab.filePath === imageOnlySaveAs), false,
     'saved document remained open before reopen proof');
   await openPdf(imageOnlySaveAs);
+  const reopenedSingleView = await callTool('app_set_view_mode', { mode: 'single' });
+  assert.equal(reopenedSingleView.ok, true, reopenedSingleView.error);
   assert.equal(await search(correction, 1), 1);
   const reopenedViewport = await waitUntil('PDFium reopened viewport', async () => {
     const value = await callTool('app_get_viewport_state');

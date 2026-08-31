@@ -91,19 +91,25 @@ func postMouseClick(_ point: CGPoint) {
 }
 
 func postKey(_ targetPid: pid_t, _ keyCode: CGKeyCode, flags: CGEventFlags = []) {
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPid else {
+        fail("target application lost frontmost status before keyboard event")
+    }
     guard let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
           let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else {
         fail("could not create keyboard event")
     }
     down.flags = flags
     up.flags = flags
-    down.postToPid(targetPid)
+    down.post(tap: .cghidEventTap)
     usleep(25_000)
-    up.postToPid(targetPid)
+    up.post(tap: .cghidEventTap)
     usleep(25_000)
 }
 
 func postUnicode(_ targetPid: pid_t, _ string: String) {
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPid else {
+        fail("target application lost frontmost status before Unicode event")
+    }
     let utf16 = Array(string.utf16)
     guard !utf16.isEmpty,
           let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
@@ -115,9 +121,9 @@ func postUnicode(_ targetPid: pid_t, _ string: String) {
         down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
         up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
     }
-    down.postToPid(targetPid)
+    down.post(tap: .cghidEventTap)
     usleep(40_000)
-    up.postToPid(targetPid)
+    up.post(tap: .cghidEventTap)
 }
 
 guard CommandLine.arguments.count >= 5 else {
@@ -230,7 +236,11 @@ if mode == "insert" {
     payload["point"] = ["x": point.x, "y": point.y]
     postMouseClick(point)
     eventSequence.append("physical-click-editor-point")
-    usleep(100_000)
+    // Give WebKit one complete focus/selection cycle after the trusted click.
+    // Posting the full caret sequence in a few tens of milliseconds can make
+    // macOS coalesce the final Unicode event even though AX still reports the
+    // correct focused text area.
+    usleep(250_000)
     guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
         fail("target application lost frontmost status after editor click")
     }
@@ -238,13 +248,19 @@ if mode == "insert" {
     payload["focusedAccessibilityElement"] = elementEvidence(focusedElement())
     postKey(pid, 0, flags: .maskCommand) // Command+A selects the current editor.
     eventSequence.append("command-a")
+    usleep(200_000)
     postKey(pid, 123) // Left collapses the selection to the start.
     eventSequence.append("left-to-selection-start")
-    for _ in 0..<offset { postKey(pid, 124) } // Right advances to the interior caret.
+    usleep(120_000)
+    for _ in 0..<offset {
+        postKey(pid, 124) // Right advances to the interior caret.
+        usleep(40_000)
+    }
     eventSequence.append("right-by-\(offset)")
+    usleep(180_000)
     postUnicode(pid, text)
     eventSequence.append("unicode-insert")
-    payload["keyboardDelivery"] = "CGEventPostToPid"
+    payload["keyboardDelivery"] = "CGEventPost(.cghidEventTap)"
     payload["offset"] = offset
     payload["text"] = text
 } else if mode == "click" {
