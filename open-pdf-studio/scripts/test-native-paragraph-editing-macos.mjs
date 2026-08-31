@@ -966,13 +966,19 @@ try {
     const realSourceBeforeScroll = await waitUi(firstLineSelector, (value) => (
       value.found && value.rect?.width > 0 && value.rect?.height > 0
     ), 30_000);
+    const realEditorBeforeAttachmentScroll = await waitUi('.pdf-text-editor', (value) => (
+      value.found && value.visible && value.focused
+        && value.pageTextEditHost?.attached && value.pageTextEditHost?.page === '3'
+    ), 30_000);
     const realRelativeBeforeScroll = {
-      left: realContinuousEditor.rect.left - realSourceBeforeScroll.rect.left,
-      top: realContinuousEditor.rect.top - realSourceBeforeScroll.rect.top,
+      left: realEditorBeforeAttachmentScroll.rect.left - realSourceBeforeScroll.rect.left,
+      top: realEditorBeforeAttachmentScroll.rect.top - realSourceBeforeScroll.rect.top,
     };
     await callTool('app_scroll', {
-      x: Math.round(realContinuousEditor.rect.x + realContinuousEditor.rect.width / 2),
-      y: Math.round(realContinuousEditor.rect.y + realContinuousEditor.rect.height / 2),
+      x: Math.round(realEditorBeforeAttachmentScroll.rect.x
+        + realEditorBeforeAttachmentScroll.rect.width / 2),
+      y: Math.round(realEditorBeforeAttachmentScroll.rect.y
+        + realEditorBeforeAttachmentScroll.rect.height / 2),
       dy: 120,
     });
     await delay(500);
