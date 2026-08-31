@@ -184,11 +184,27 @@ async function blankPagePointerClick() {
     value.found && value.visible && value.rect?.width > 50 && value.rect?.height > 50
   ), 30_000);
   const viewport = await callTool('app_get_viewport_state');
-  const x = viewport.canvas.cssLeft + viewport.canvas.cssWidth - 24;
-  const y = Math.min(
-    viewport.canvas.cssTop + viewport.canvas.cssHeight - 24,
-    viewport.container.top + viewport.container.height - 24,
-  );
+  const visiblePage = {
+    left: Math.max(textLayer.rect.left, viewport.container.left),
+    top: Math.max(textLayer.rect.top, viewport.container.top),
+    right: Math.min(
+      textLayer.rect.right,
+      viewport.container.left + viewport.container.width,
+    ),
+    bottom: Math.min(
+      textLayer.rect.bottom,
+      viewport.container.top + viewport.container.height,
+    ),
+  };
+  assert.ok(visiblePage.right - visiblePage.left > 48
+      && visiblePage.bottom - visiblePage.top > 48,
+  `visible blank-page click region was unavailable: ${JSON.stringify({ textLayer, viewport, visiblePage })}`);
+  // The single-page canvas is intentionally released while continuous view is
+  // active, so its zero-sized MCP geometry cannot identify a click point. Use
+  // the live page/text-layer intersection instead; this remains a real pointer
+  // event and the target assertion below still rejects off-window/body clicks.
+  const x = visiblePage.right - 24;
+  const y = visiblePage.bottom - 24;
   const clickResult = await callTool('app_mouse_click', { x, y });
   assert.equal(clickResult.ok, true, clickResult.error);
   assert.equal(['canvas', 'div'].includes(clickResult.target?.tag), true,
