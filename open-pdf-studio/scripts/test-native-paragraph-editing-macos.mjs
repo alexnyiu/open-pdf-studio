@@ -212,6 +212,57 @@ async function blankPagePointerClick() {
   return { clickResult, textLayer, viewport };
 }
 
+async function positionEditorForPhysicalInput(selector, occluder) {
+  const movements = [];
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const [target, viewport] = await Promise.all([
+      ui(selector),
+      callTool('app_get_viewport_state'),
+    ]);
+    const container = viewport.container;
+    const minimumTop = Math.max(occluder.rect.bottom + 12, container.top + 12);
+    const maximumBottom = container.top + container.height - 12;
+    if (target.found && target.visible
+        && target.rect?.top >= minimumTop
+        && target.rect?.bottom <= maximumBottom) {
+      return { target, viewport, movements };
+    }
+    assert.ok(target.found && target.rect && container?.height > 100,
+      `physical input target cannot be panned into view: ${JSON.stringify({ target, viewport })}`);
+    const availableHeight = maximumBottom - minimumTop;
+    const desiredTop = minimumTop + Math.max(0, (availableHeight - target.rect.height) / 2);
+    const maximumDrag = Math.max(1, container.height - 72);
+    const requestedShift = desiredTop - target.rect.top;
+    const appliedShift = Math.max(-maximumDrag, Math.min(maximumDrag, requestedShift));
+    const x = Math.round(container.left + container.width / 2);
+    const startY = appliedShift >= 0
+      ? Math.round(container.top + 36)
+      : Math.round(container.top + container.height - 36);
+    const endY = Math.round(startY + appliedShift);
+    const drag = await callTool('app_mouse_drag', {
+      x1: x,
+      y1: startY,
+      x2: x,
+      y2: endY,
+      button: 'middle',
+      steps: 16,
+    });
+    assert.equal(drag.ok, true, drag.error);
+    movements.push({
+      requestedShift,
+      appliedShift,
+      targetTopBefore: target.rect.top,
+      drag,
+    });
+    await delay(200);
+  }
+  const [target, viewport] = await Promise.all([
+    ui(selector),
+    callTool('app_get_viewport_state'),
+  ]);
+  return { target, viewport, movements };
+}
+
 async function realTextEditorInteraction(mode, offset, insertedText) {
   assert.equal(mode, 'insert', 'trusted editor helper only accepts deterministic insertion mode');
   const editorBefore = await waitUi('.pdf-text-editor', (value) => (
@@ -515,22 +566,15 @@ try {
   const ownedSelector = '.textLayer span[data-owned-text-edit-hit="true"]';
   await openEditor(ownedSelector, 'Packaged first line');
   await callTool('app_set_zoom', { scale: 3 });
-  const [physicalInputViewport, physicalInputOccluder] = await Promise.all([
-    callTool('app_get_viewport_state'),
-    ui('#actual-size-ribbon'),
-  ]);
+  const physicalInputOccluder = await ui('#actual-size-ribbon');
   assert.ok(physicalInputOccluder.found && physicalInputOccluder.visible,
     `physical input ribbon geometry was unavailable: ${JSON.stringify(physicalInputOccluder)}`);
-  const physicalInputScroll = await callTool('app_scroll', {
-    x: Math.round(physicalInputViewport.container.left + physicalInputViewport.container.width / 2),
-    y: Math.round(physicalInputViewport.container.top + physicalInputViewport.container.height / 2),
-    dy: -430,
-  });
-  assert.equal(physicalInputScroll.ok, true, physicalInputScroll.error);
-  await delay(1_000);
-  const zoomedPhysicalTarget = await ui(
+  const physicalInputPosition = await positionEditorForPhysicalInput(
     '.pdf-text-editor [data-rich-line-index="0"] [data-rich-run]',
+    physicalInputOccluder,
   );
+  const zoomedPhysicalTarget = physicalInputPosition.target;
+  const physicalInputViewport = physicalInputPosition.viewport;
   assert.ok(zoomedPhysicalTarget.found && zoomedPhysicalTarget.visible
       && zoomedPhysicalTarget.rect?.top >= physicalInputOccluder.rect.bottom + 12
       && zoomedPhysicalTarget.rect?.bottom < physicalInputViewport.container.top
@@ -539,7 +583,7 @@ try {
       zoomedPhysicalTarget,
       physicalInputOccluder,
       physicalInputViewport,
-      physicalInputScroll,
+      physicalInputPosition,
     })}`);
   const beforeInteriorSha256 = await sha256(workingPdf);
   const physicalInsert = await realTextEditorInteraction(
