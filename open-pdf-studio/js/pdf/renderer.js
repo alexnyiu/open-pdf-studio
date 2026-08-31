@@ -3209,6 +3209,8 @@ function applyContinuousRendererRestore(doc, snapshot, options = {}) {
     restoreScroll,
     currentScrollLeft: scrollContainer.scrollLeft,
     currentScrollTop: scrollContainer.scrollTop,
+    viewportWidth: scrollContainer.clientWidth,
+    viewportHeight: scrollContainer.clientHeight,
   });
   if (restored.status !== 'restored') return false;
   doc.scale = restored.scale;

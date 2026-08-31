@@ -133,6 +133,35 @@ test('continuous state restores its logical PDF anchor and defers when geometry 
   assert.ok(Math.abs(screenY - snapshot.anchor.viewportPoint.y) <= 1);
 });
 
+test('unchanged continuous representation restores exact native scroll coordinates', () => {
+  const pageRect = { x: 60, y: 4_000, width: 900, height: 1_200 };
+  const snapshot = captureContinuousRendererState({
+    documentId: 'doc-a',
+    pageNum: 6,
+    scale: 1.35,
+    pageRect,
+    scrollLeft: 217.5,
+    scrollTop: 4_320.25,
+    viewportWidth: 775,
+    viewportHeight: 697,
+    horizontalOffsetPx: -18,
+    verticalOffsetPx: 0.25,
+  });
+  const restored = restoreContinuousRendererState(snapshot, {
+    pageRect: { ...pageRect },
+    scale: 1.35,
+    horizontalOffsetPx: -18,
+    verticalOffsetPx: 0.25,
+    viewportWidth: 775,
+    viewportHeight: 697,
+    currentScrollLeft: 0,
+    currentScrollTop: 0,
+  });
+  assert.equal(restored.source, 'exact-representation');
+  assert.equal(restored.scrollLeft, 217.5);
+  assert.equal(restored.scrollTop, 4_320.25);
+});
+
 test('inactive owners and invalidated activation leases cannot restore shared UI', () => {
   const document = owner();
   const snapshot = captureViewStateTransaction(document, {

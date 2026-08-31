@@ -180,6 +180,8 @@ export function captureContinuousRendererState({
   const anchorViewportY = Math.max(0, Number(viewportHeight) || 0) / 2;
   const pageX = (Number(rect.x) || 0) + (Number(horizontalOffsetPx) || 0);
   const pageY = (Number(rect.y) || 0) + (Number(verticalOffsetPx) || 0);
+  const normalizedViewportWidth = Math.max(0, Number(viewportWidth) || 0);
+  const normalizedViewportHeight = Math.max(0, Number(viewportHeight) || 0);
   return Object.freeze({
     kind: 'continuous-renderer',
     documentId: String(documentId),
@@ -187,6 +189,20 @@ export function captureContinuousRendererState({
     scale: normalizedScale,
     layout: String(layout || 'continuous'),
     viewportRevision: Number(viewportRevision) || 0,
+    exactRepresentation: Object.freeze({
+      pageRect: Object.freeze({
+        x: Number(rect.x) || 0,
+        y: Number(rect.y) || 0,
+        width: Number(rect.width) || 0,
+        height: Number(rect.height) || 0,
+      }),
+      horizontalOffsetPx: Number(horizontalOffsetPx) || 0,
+      verticalOffsetPx: Number(verticalOffsetPx) || 0,
+      viewportWidth: normalizedViewportWidth,
+      viewportHeight: normalizedViewportHeight,
+      scrollLeft: Math.max(0, Number(scrollLeft) || 0),
+      scrollTop: Math.max(0, Number(scrollTop) || 0),
+    }),
     anchor: Object.freeze({
       pageNum: Number(pageNum),
       pdfPoint: Object.freeze({
@@ -207,6 +223,8 @@ export function restoreContinuousRendererState(snapshot, {
   restoreScroll = true,
   currentScrollLeft = 0,
   currentScrollTop = 0,
+  viewportWidth = 0,
+  viewportHeight = 0,
 } = {}) {
   if (snapshot?.kind !== 'continuous-renderer') {
     throw new TypeError('Continuous renderer snapshot is required');
@@ -221,6 +239,27 @@ export function restoreContinuousRendererState(snapshot, {
       scale: nextScale,
       scrollLeft: Number(currentScrollLeft) || 0,
       scrollTop: Number(currentScrollTop) || 0,
+    });
+  }
+  const exact = snapshot.exactRepresentation;
+  const same = (left, right) => Math.abs((Number(left) || 0) - (Number(right) || 0)) <= 0.001;
+  const exactRepresentationIsCurrent = Boolean(exact
+    && same(nextScale, snapshot.scale)
+    && same(pageRect.x, exact.pageRect?.x)
+    && same(pageRect.y, exact.pageRect?.y)
+    && same(pageRect.width, exact.pageRect?.width)
+    && same(pageRect.height, exact.pageRect?.height)
+    && same(horizontalOffsetPx, exact.horizontalOffsetPx)
+    && same(verticalOffsetPx, exact.verticalOffsetPx)
+    && same(viewportWidth, exact.viewportWidth)
+    && same(viewportHeight, exact.viewportHeight));
+  if (exactRepresentationIsCurrent) {
+    return Object.freeze({
+      status: 'restored',
+      scale: nextScale,
+      scrollLeft: exact.scrollLeft,
+      scrollTop: exact.scrollTop,
+      source: 'exact-representation',
     });
   }
   const pageX = (Number(pageRect.x) || 0) + (Number(horizontalOffsetPx) || 0);
