@@ -119,7 +119,116 @@ async function waitForActiveLoad(targetDoc, timeoutMs = 30000) {
  *  We deliberately do NOT capture the surrounding chrome (toolbars, panels)
  *  — the regression-test harness only cares about the page view. For a
  *  full-window grab the caller can use OS-level screenshotting. */
+function rectIntersection(...rects) {
+  const left = Math.max(...rects.map((rect) => rect.left));
+  const top = Math.max(...rects.map((rect) => rect.top));
+  const right = Math.min(...rects.map((rect) => rect.right));
+  const bottom = Math.min(...rects.map((rect) => rect.bottom));
+  return right > left && bottom > top ? { left, top, right, bottom } : null;
+}
+
+function drawContinuousSurface(ctx, surface, containerRect, pageRect, outputScale) {
+  const surfaceRect = surface.getBoundingClientRect();
+  const visible = rectIntersection(surfaceRect, pageRect, containerRect);
+  if (!visible || surfaceRect.width <= 0 || surfaceRect.height <= 0) return false;
+  const style = getComputedStyle(surface);
+  if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
+    return false;
+  }
+  const sourceWidth = surface instanceof HTMLCanvasElement
+    ? surface.width : Number(surface.naturalWidth) || 0;
+  const sourceHeight = surface instanceof HTMLCanvasElement
+    ? surface.height : Number(surface.naturalHeight) || 0;
+  if (sourceWidth <= 0 || sourceHeight <= 0) return false;
+  const sourceX = (visible.left - surfaceRect.left) / surfaceRect.width * sourceWidth;
+  const sourceY = (visible.top - surfaceRect.top) / surfaceRect.height * sourceHeight;
+  const croppedWidth = (visible.right - visible.left) / surfaceRect.width * sourceWidth;
+  const croppedHeight = (visible.bottom - visible.top) / surfaceRect.height * sourceHeight;
+  try {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, Number(style.opacity) || 1));
+    ctx.drawImage(
+      surface,
+      sourceX,
+      sourceY,
+      croppedWidth,
+      croppedHeight,
+      (visible.left - containerRect.left) * outputScale,
+      (visible.top - containerRect.top) * outputScale,
+      (visible.right - visible.left) * outputScale,
+      (visible.bottom - visible.top) * outputScale,
+    );
+    ctx.restore();
+    return true;
+  } catch {
+    ctx.restore();
+    return false;
+  }
+}
+
+function compositeContinuousView(maxWidth) {
+  const scrollContainer = document.getElementById('pdf-container');
+  const continuousContainer = document.getElementById('continuous-container');
+  const wrappers = [...(continuousContainer?.querySelectorAll('.page-wrapper[data-page]') || [])];
+  if (!scrollContainer || !continuousContainer || !wrappers.length
+      || getComputedStyle(continuousContainer).display === 'none') return null;
+  const containerRect = scrollContainer.getBoundingClientRect();
+  if (containerRect.width <= 0 || containerRect.height <= 0) return null;
+  const deviceScale = Math.max(1, Number(window.devicePixelRatio) || 1);
+  const longest = Math.max(containerRect.width, containerRect.height) * deviceScale;
+  const boundedScale = longest > maxWidth ? maxWidth / longest : 1;
+  const outputScale = deviceScale * boundedScale;
+  const outW = Math.max(1, Math.round(containerRect.width * outputScale));
+  const outH = Math.max(1, Math.round(containerRect.height * outputScale));
+  const out = document.createElement('canvas');
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = getComputedStyle(scrollContainer).backgroundColor || '#d7d7d7';
+  ctx.fillRect(0, 0, outW, outH);
+  let paintedSurfaces = 0;
+  const surfaceSelectors = [
+    '.page-preview-image',
+    '.page-preview-canvas',
+    '.pdf-canvas',
+    '.pdf-page-raster',
+    '.page-sharp-tile',
+    '.text-highlight-canvas',
+    '.annotation-canvas',
+  ];
+  for (const wrapper of wrappers) {
+    const pageRect = wrapper.getBoundingClientRect();
+    const visiblePage = rectIntersection(pageRect, containerRect);
+    if (!visiblePage) continue;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(
+      (visiblePage.left - containerRect.left) * outputScale,
+      (visiblePage.top - containerRect.top) * outputScale,
+      (visiblePage.right - visiblePage.left) * outputScale,
+      (visiblePage.bottom - visiblePage.top) * outputScale,
+    );
+    for (const selector of surfaceSelectors) {
+      for (const surface of wrapper.querySelectorAll(selector)) {
+        if (drawContinuousSurface(ctx, surface, containerRect, pageRect, outputScale)) {
+          paintedSurfaces += 1;
+        }
+      }
+    }
+  }
+  if (!paintedSurfaces) throw new Error('continuous page surface not visible');
+  const dataURL = out.toDataURL('image/png');
+  return {
+    png_base64: dataURL.startsWith('data:') ? dataURL.split(',', 2)[1] : dataURL,
+    width: outW,
+    height: outH,
+    source: 'continuous-viewport',
+    painted_surfaces: paintedSurfaces,
+  };
+}
+
 async function compositeCurrentView(maxWidth = 2000) {
+  const continuous = compositeContinuousView(maxWidth);
+  if (continuous) return continuous;
   const pdfCanvas = document.getElementById('pdf-canvas');
   const annCanvas = document.getElementById('annotation-canvas');
   const hlCanvas  = document.getElementById('text-highlight-canvas');
@@ -152,7 +261,7 @@ async function compositeCurrentView(maxWidth = 2000) {
   // Strip the `data:image/png;base64,` prefix so the returned string is
   // pure base64 (matches the existing `screenshot_page` tool's shape).
   const b64 = dataURL.startsWith('data:') ? dataURL.split(',', 2)[1] : dataURL;
-  return { png_base64: b64, width: outW, height: outH };
+  return { png_base64: b64, width: outW, height: outH, source: 'single-page-canvas' };
 }
 
 // ─── Per-event handlers ─────────────────────────────────────────────────
