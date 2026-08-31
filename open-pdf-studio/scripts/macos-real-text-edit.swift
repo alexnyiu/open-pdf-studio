@@ -90,20 +90,20 @@ func postMouseClick(_ point: CGPoint) {
     }
 }
 
-func postKey(_ keyCode: CGKeyCode, flags: CGEventFlags = []) {
+func postKey(_ targetPid: pid_t, _ keyCode: CGKeyCode, flags: CGEventFlags = []) {
     guard let down = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
           let up = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) else {
         fail("could not create keyboard event")
     }
     down.flags = flags
     up.flags = flags
-    down.post(tap: .cghidEventTap)
+    down.postToPid(targetPid)
     usleep(25_000)
-    up.post(tap: .cghidEventTap)
+    up.postToPid(targetPid)
     usleep(25_000)
 }
 
-func postUnicode(_ string: String) {
+func postUnicode(_ targetPid: pid_t, _ string: String) {
     let utf16 = Array(string.utf16)
     guard !utf16.isEmpty,
           let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
@@ -115,9 +115,9 @@ func postUnicode(_ string: String) {
         down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
         up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
     }
-    down.post(tap: .cghidEventTap)
+    down.postToPid(targetPid)
     usleep(40_000)
-    up.post(tap: .cghidEventTap)
+    up.postToPid(targetPid)
 }
 
 guard CommandLine.arguments.count >= 5 else {
@@ -236,14 +236,15 @@ if mode == "insert" {
     }
     payload["focusedAccessibilityRole"] = focusedRole() ?? NSNull()
     payload["focusedAccessibilityElement"] = elementEvidence(focusedElement())
-    postKey(0, flags: .maskCommand) // Command+A selects the current editor.
+    postKey(pid, 0, flags: .maskCommand) // Command+A selects the current editor.
     eventSequence.append("command-a")
-    postKey(123) // Left collapses the selection to the start.
+    postKey(pid, 123) // Left collapses the selection to the start.
     eventSequence.append("left-to-selection-start")
-    for _ in 0..<offset { postKey(124) } // Right advances to the interior caret.
+    for _ in 0..<offset { postKey(pid, 124) } // Right advances to the interior caret.
     eventSequence.append("right-by-\(offset)")
-    postUnicode(text)
+    postUnicode(pid, text)
     eventSequence.append("unicode-insert")
+    payload["keyboardDelivery"] = "CGEventPostToPid"
     payload["offset"] = offset
     payload["text"] = text
 } else if mode == "click" {
