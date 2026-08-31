@@ -3991,7 +3991,10 @@ function _prevSpreadAnchor(anchor) {
 }
 
 // Switch view mode
-export async function setViewMode(mode, { origin = 'user' } = {}) {
+export async function setViewMode(mode, {
+  origin = 'user',
+  preserveScroll = false,
+} = {}) {
   const doc = getActiveDocument();
   if (!doc?.pdfDoc) return;
   const liveViewport = window.__pdfViewport;
@@ -4067,7 +4070,7 @@ export async function setViewMode(mode, { origin = 'user' } = {}) {
     await renderContinuous();
     // Stay on the page the user was reading without requiring its wrapper to
     // have been mounted before the jump.
-    _scrollContinuousPageIntoView(doc.currentPage);
+    if (!preserveScroll) _scrollContinuousPageIntoView(doc.currentPage);
   }
   scheduleBackgroundMetadata(doc.currentPage, 1);
 }

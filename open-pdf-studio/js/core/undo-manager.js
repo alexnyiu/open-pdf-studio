@@ -176,7 +176,10 @@ function scheduleRevisionReadinessRebuild(doc, expectedRevision) {
       const { setViewMode } = await import('../pdf/renderer.js');
       if (getActiveDocument()?.id !== doc.id
           || Number(doc.revisionState?.contentRevision) !== Number(expectedRevision)) return;
-      await setViewMode(doc.viewMode);
+      await setViewMode(doc.viewMode, {
+        origin: 'system',
+        preserveScroll: true,
+      });
     } catch (error) {
       console.warn('[undo] current-revision edit-readiness rebuild failed:', error);
     }

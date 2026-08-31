@@ -1125,7 +1125,11 @@ try {
       assert.ok(Math.abs(
         Number(realSettledViewAfterClickAway.container?.[field])
           - Number(realViewBeforeClickAway.container?.[field]),
-      ) <= 0.5, `click-away save changed container ${field}`);
+      ) <= 0.5, `click-away save changed container ${field}: ${JSON.stringify({
+        before: realViewBeforeClickAway.container?.[field],
+        after: realSettledViewAfterClickAway.container?.[field],
+        restore: realSettledViewAfterClickAway.lastTextClickAwayViewportRestore,
+      })}`);
     }
     assert.ok(
       ['restored', 'unchanged'].includes(

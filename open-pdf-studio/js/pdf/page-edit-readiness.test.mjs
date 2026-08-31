@@ -341,6 +341,14 @@ test('persistent undo commands schedule readiness rebuilding for their new revis
     mutationHelper,
     /scheduleRevisionReadinessRebuild\(doc, contentRevision\)/u,
   );
+  const rebuildStart = source.indexOf('function scheduleRevisionReadinessRebuild');
+  const rebuildEnd = source.indexOf('const _pendingThumbPages', rebuildStart);
+  const rebuild = source.slice(rebuildStart, rebuildEnd);
+  assert.match(
+    rebuild,
+    /setViewMode\(doc\.viewMode, \{\s*origin: 'system',\s*preserveScroll: true,\s*\}\)/u,
+    'an internal readiness rebuild must not masquerade as navigation or move the viewport',
+  );
 });
 
 test('rotation recording does not publish the already-rendered mutation twice', async () => {
