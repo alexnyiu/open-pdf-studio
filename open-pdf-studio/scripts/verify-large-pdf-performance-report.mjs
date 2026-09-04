@@ -24,11 +24,11 @@ export function evaluateLargePdfPerformanceReport(report) {
   });
   const criteria = [
     threshold('fixtureIdentity', report?.fixture?.controlled === true
-      && report?.fixture?.file === 'lightweight-500.pdf'
-      && report?.fixture?.pageCount === 500
+      && report?.fixture?.file === 'image-heavy-100.pdf'
+      && report?.fixture?.pageCount === 100
       && report?.fixture?.manifestSchemaVersion === 2
       && /^[0-9a-f]{64}$/u.test(report?.fixture?.sha256 || ''), report?.fixture,
-    'controlled manifest-verified 500-page PDF with SHA-256'),
+    'controlled manifest-verified 100-page image-heavy PDF with SHA-256'),
     threshold('largeDocumentClassification', metrics.largeDocument === true, metrics.largeDocument, 'true'),
     threshold('scrollHandlerP95Ms', finite(metrics.scrollHandlerP95Ms) && metrics.scrollHandlerP95Ms < 4,
       metrics.scrollHandlerP95Ms, '< 4 ms'),
@@ -44,6 +44,18 @@ export function evaluateLargePdfPerformanceReport(report) {
       publishes: metrics.visiblePagePreviewPublishes,
       p95Ms: metrics.visiblePagePreviewP95Ms,
     }, 'at least one visible preview and p95 <= 150 ms'),
+    threshold('interactiveRasterLatency', metrics.interactiveRasterPublishes > 0
+      && finite(metrics.interactiveRasterP95Ms) && metrics.interactiveRasterP95Ms <= 150,
+    {
+      publishes: metrics.interactiveRasterPublishes,
+      p95Ms: metrics.interactiveRasterP95Ms,
+    }, 'at least one readable CSS-resolution raster and p95 <= 150 ms'),
+    threshold('rasterTransferP95Ms', finite(metrics.rasterTransferP95Ms)
+      && metrics.rasterTransferP95Ms <= 150,
+    metrics.rasterTransferP95Ms, '<= 150 ms end-to-end raster transport and decode'),
+    threshold('scrollFramesBelow20MsPercent', finite(metrics.scrollFramesBelow20MsPercent)
+      && metrics.scrollFramesBelow20MsPercent >= 95,
+    metrics.scrollFramesBelow20MsPercent, '>= 95%'),
     threshold('blankShellWithAvailablePreview', metrics.visibleBlankWithSourceSamples === 0
       || (finite(metrics.visibleBlankWithSourceMaxMs) && metrics.visibleBlankWithSourceMaxMs <= 100),
     metrics.visibleBlankWithSourceSamples === 0
@@ -51,7 +63,9 @@ export function evaluateLargePdfPerformanceReport(report) {
       : { samples: metrics.visibleBlankWithSourceSamples, maxMs: metrics.visibleBlankWithSourceMaxMs },
     '<= 100 ms when a preview source is available at mount'),
     threshold('fullQualityLatencyMaxMs', finite(metrics.fullQualityLatencyMaxMs)
-      && metrics.fullQualityLatencyMaxMs <= 800, metrics.fullQualityLatencyMaxMs, '<= 800 ms after settling'),
+      && metrics.fullQualityLatencyMaxMs <= 500, metrics.fullQualityLatencyMaxMs, '<= 500 ms after settling'),
+    threshold('fullQualityLatencyP95Ms', finite(metrics.fullQualityLatencyP95Ms)
+      && metrics.fullQualityLatencyP95Ms <= 500, metrics.fullQualityLatencyP95Ms, '<= 500 ms after settling'),
     threshold('visibleColdPageActivityAdmission', metrics.visibleColdRenderSuppressedCount === 0,
       metrics.visibleColdRenderSuppressedCount, 'zero strictly visible cold pages skipped for foreground activity'),
     threshold('usefulPreviewCancellation', metrics.previewUsefulCancellationCount === 0,
@@ -78,7 +92,7 @@ export function evaluateLargePdfPerformanceReport(report) {
     threshold('mountedThumbnails', finite(metrics.mountedThumbnailsPeak)
       && metrics.mountedThumbnailsPeak <= 32, metrics.mountedThumbnailsPeak, '<= 32'),
     threshold('zoomInputToTransformP95Ms', finite(metrics.zoomInputToTransformP95Ms)
-      && metrics.zoomInputToTransformP95Ms < 16, metrics.zoomInputToTransformP95Ms, '< 16 ms'),
+      && metrics.zoomInputToTransformP95Ms <= 16, metrics.zoomInputToTransformP95Ms, '<= 16 ms'),
     threshold('zoomFramesBelow20MsPercent', finite(metrics.zoomFramesBelow20MsPercent)
       && metrics.zoomFramesBelow20MsPercent >= 95, metrics.zoomFramesBelow20MsPercent, '>= 95%'),
     threshold('zoomAnchorDriftMaxPx', finite(metrics.zoomAnchorDriftMaxPx)

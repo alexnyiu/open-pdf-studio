@@ -9,11 +9,13 @@ test('strictly visible pages bypass the foreground-idle admission gate', () => {
   const end = source.indexOf('\nexport function getContinuousRenderResourceStats', start);
   const virtualWindow = source.slice(start, end);
   const visibleBranch = virtualWindow.slice(
-    virtualWindow.indexOf('if (visible || editRequired)'),
-    virtualWindow.indexOf('if (!backgroundRenderAdmissionAllowed()', virtualWindow.indexOf('if (visible || editRequired)')),
+    virtualWindow.indexOf('if (strictlyVisiblePage || editRequired)'),
+    virtualWindow.indexOf('if (!backgroundRenderAdmissionAllowed()', virtualWindow.indexOf('if (strictlyVisiblePage || editRequired)')),
   );
   assert.match(visibleBranch, /scheduleContinuousPreview/u);
+  assert.match(visibleBranch, /renderContinuousInteractivePage/u);
   assert.match(visibleBranch, /renderContinuousPage/u);
+  assert.match(visibleBranch, /if \(interactionSettled \|\| editRequired\)/u);
   assert.doesNotMatch(visibleBranch, /isPdfForegroundIdle/u);
   assert.match(virtualWindow, /planContinuousRenderOverscan/u);
   assert.match(virtualWindow, /overscanBeforePx/u);
@@ -22,10 +24,13 @@ test('strictly visible pages bypass the foreground-idle admission gate', () => {
 
 test('visible previews and full renders use explicit bounded lanes', () => {
   assert.match(source, /_continuousPreviewScheduler = createRenderWorkScheduler\(\{[\s\S]*?concurrency: 2/u);
-  assert.match(source, /_continuousRenderScheduler = createRenderWorkScheduler\(\{[\s\S]*?concurrency: 1/u);
-  assert.match(source, /maxRetiredPerOwner: 2/u);
+  assert.match(source, /_continuousRenderScheduler = createRenderWorkScheduler\(\{[\s\S]*?concurrency: 2/u);
+  assert.match(source, /_continuousSemanticScheduler = createRenderWorkScheduler\(\{[\s\S]*?concurrency: 1/u);
+  assert.match(source, /maxRetiredPerOwner: 1/u);
   assert.match(source, /CONTINUOUS_RENDER_LANES\.VISIBLE_PREVIEW/u);
+  assert.match(source, /CONTINUOUS_RENDER_LANES\.VISIBLE_INTERACTIVE/u);
   assert.match(source, /CONTINUOUS_RENDER_LANES\.VISIBLE_FULL/u);
+  assert.match(source, /CONTINUOUS_RENDER_LANES\.DIRECTIONAL_INTERACTIVE/u);
   assert.match(source, /CONTINUOUS_RENDER_LANES\.DIRECTIONAL_OVERSCAN/u);
   assert.match(source, /CONTINUOUS_RENDER_LANES\.SEMANTIC/u);
   assert.doesNotMatch(source, /_lowResPreloadGeneration/u);

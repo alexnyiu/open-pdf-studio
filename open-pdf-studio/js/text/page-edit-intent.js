@@ -1,3 +1,5 @@
+import { initializeDocumentRevisionState } from '../core/document-revision-state.runtime.js';
+
 function positivePage(value) {
   const pageNum = Number(value);
   if (!Number.isSafeInteger(pageNum) || pageNum < 1) {
@@ -17,6 +19,12 @@ function frozenPoint(point) {
 }
 
 const pendingIntentCounts = new Map();
+
+const TERMINAL_SYNCHRONIZATION_FAILURES = new Set([
+  'failed',
+  'save-as-required',
+  'saved-refresh-failed',
+]);
 
 function readinessFailure(error) {
   const errorCode = String(error?.code || 'PAGE_EDIT_READINESS_FAILED');
@@ -48,6 +56,71 @@ function endIntent(documentId) {
 
 export function pageEditIntentPendingForDocument(documentId) {
   return (pendingIntentCounts.get(String(documentId || '')) || 0) > 0;
+}
+
+/**
+ * A click-away save may deliberately persist without replacing the live PDF.js
+ * proxy. Native provenance still belongs to that live byte revision, so the
+ * next text-edit activation must finish the deferred synchronization first.
+ */
+export function textEditActivationNeedsSynchronization(
+  documentState,
+  saveCoordinatorSnapshot = null,
+) {
+  if (!documentState?.id) return false;
+  const revisions = initializeDocumentRevisionState(documentState);
+  return Boolean(
+    saveCoordinatorSnapshot?.active
+    || saveCoordinatorSnapshot?.pending
+    || revisions.persistedRevision > revisions.livePdfRevision,
+  );
+}
+
+/**
+ * Wait for any active saved-document transition, then join/upgrade an in-flight
+ * save or run the synchronization-only path. The bounded retry covers joining
+ * an automatic persistence request that finishes with proxy adoption deferred.
+ */
+export async function synchronizeTextEditActivation({
+  documentId,
+  waitForSynchronization,
+  resolveDocument,
+  getSaveCoordinatorSnapshot,
+  requestSynchronization,
+  maxAttempts = 3,
+} = {}) {
+  const id = String(documentId || '');
+  if (!id) throw new TypeError('A text-edit synchronization owner is required');
+  for (const [name, callback] of Object.entries({
+    waitForSynchronization,
+    resolveDocument,
+    getSaveCoordinatorSnapshot,
+    requestSynchronization,
+  })) {
+    if (typeof callback !== 'function') throw new TypeError(`${name} is required`);
+  }
+  if ((await waitForSynchronization(id)) !== true) return false;
+  const attempts = Math.max(1, Number(maxAttempts) || 1);
+  for (let attempt = 0; attempt <= attempts; attempt += 1) {
+    const owner = resolveDocument(id);
+    if (!owner) return false;
+    const coordinator = await getSaveCoordinatorSnapshot(id);
+    if (!textEditActivationNeedsSynchronization(owner, coordinator)) return true;
+    if (attempt === attempts) return false;
+    const result = await requestSynchronization({
+      documentId: id,
+      documentGeneration: Number(owner.lifecycleGeneration) || 0,
+      requestedRevision: initializeDocumentRevisionState(owner).contentRevision,
+    });
+    const currentOwner = resolveDocument(id);
+    const currentCoordinator = await getSaveCoordinatorSnapshot(id);
+    if (currentOwner
+        && !textEditActivationNeedsSynchronization(currentOwner, currentCoordinator)) {
+      return true;
+    }
+    if (TERMINAL_SYNCHRONIZATION_FAILURES.has(result?.status)) return false;
+  }
+  return false;
 }
 
 /**

@@ -54,7 +54,10 @@ const _filePageRevisionReaders = new Map();
 const _fileGenerations = new Map();
 let _globalGeneration = 0;
 
-export const LARGE_DOCUMENT_IDLE_BITMAP_BYTES = 32 * 1024 * 1024;
+// Keep a small, explicit display-ready window for reverse scroll. This is a
+// byte ceiling, not a page count; ordinary A4 pages retain more neighbours
+// than large drawings while the global resource budget remains authoritative.
+export const LARGE_DOCUMENT_IDLE_BITMAP_BYTES = 64 * 1024 * 1024;
 
 export function registerPageBitmapCacheOwner(
   filePath,
@@ -86,8 +89,8 @@ function _legacyKey(filePath, pageNum, rotation, zoomBucket) {
 }
 
 function _rasterRequest(filePath, pageNum, rotation, targetRasterScale, context = {}) {
-  const quality = context.quality === RasterQuality.PREVIEW
-    ? RasterQuality.PREVIEW
+  const quality = Object.values(RasterQuality).includes(context.quality)
+    ? context.quality
     : RasterQuality.FINAL;
   const documentId = context.documentId || _fileOwners.get(filePath) || filePath;
   const revisionReader = _filePageRevisionReaders.get(filePath);
@@ -109,7 +112,12 @@ function _rasterRequest(filePath, pageNum, rotation, targetRasterScale, context 
     devicePixelRatio,
     quality,
   });
-  return Object.freeze({ key, quality, targetRasterScale: target });
+  return Object.freeze({
+    key,
+    quality,
+    targetRasterScale: target,
+    transport: context.transport === 'rgba' ? 'rgba' : 'png',
+  });
 }
 
 function _rasterCacheKey(request) {
@@ -567,6 +575,7 @@ function _ensureBitmapAtScale(filePath, pageNum, rotation, cacheBucket, renderSc
         ownerGeneration: request?.key.lifecycleGeneration || 0,
         rasterKey: request ? serializePageRasterKey(request.key) : key,
         requestId: publicationToken?.requestId || '',
+        transport: request?.transport || 'png',
       });
       if (!stillCurrent()) {
         releaseStaleRenderResult(rendered);
@@ -737,7 +746,9 @@ export function trimIdlePageBitmaps({
           || wrapper.dataset?.rasterQuality === RasterQuality.PREVIEW);
       if (hasPublishedCanvas) {
         canvasBackedPages.add(pageNum);
-        if (wrapper.dataset?.strictlyVisible !== 'true') {
+        if (wrapper.dataset?.strictlyVisible === 'true') {
+          protectedPages.add(pageNum);
+        } else {
           mountedDirectionalPreviewReady = true;
         }
       } else if (wrapper.dataset?.strictlyVisible === 'true') {
@@ -772,9 +783,14 @@ export function trimIdlePageBitmaps({
   // The page-local canvas is now the immutable owner of these already-drawn
   // pixels. Release every decoded zoom bucket even when the cache is below
   // its general byte ceiling; otherwise a short, sharp zoom can permanently
-  // retain both a canvas backing store and an equivalent ImageBitmap.
+  // retain both a canvas backing store and an equivalent ImageBitmap. A
+  // strictly-visible interactive bitmap is the deliberate exception: it is
+  // the bounded warm source for immediate reverse-scroll publication.
   for (const { key, entry, pageNum } of entries) {
-    if (canvasBackedPages.has(pageNum)) evict(key, entry, true);
+    if (canvasBackedPages.has(pageNum)
+        && (entry.quality !== RasterQuality.INTERACTIVE || !protectedPages.has(pageNum))) {
+      evict(key, entry, true);
+    }
   }
 
   // Keep one ready page beyond the mounted range. In a tie, prefer the more

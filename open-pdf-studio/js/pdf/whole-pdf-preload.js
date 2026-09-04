@@ -14,7 +14,11 @@ import {
   visibleThumbnailPages,
 } from '../ui/panels/left-panel.js';
 import { wholeDocumentPreloadPages } from './pdf-preload-controller.js';
-import { documentPreloadMode, shouldPreloadEntireDocument } from './preload-policy.js';
+import {
+  documentPreloadMode,
+  shouldDeepPreloadDocument,
+  shouldPreloadEntireDocument,
+} from './preload-policy.js';
 import { isPdfForegroundIdle } from './foreground-activity.js';
 import { backgroundRenderAdmissionAllowed } from './render-resource-budget.js';
 import {
@@ -53,6 +57,8 @@ function status(doc, patch) {
     completed: 0,
     total: doc.pdfDoc?.numPages || 0,
     retainedBytes: 0,
+    scope: shouldDeepPreloadDocument(doc) ? 'deep' : 'navigation',
+    finalRasterReady: 0,
     limitReason: null,
     ...(doc.preloadStatus || {}),
     documentId: String(doc.id || ''),
@@ -220,7 +226,10 @@ export class WholePdfPreloadCoordinator {
           recordRejectedRenderPublication(publicationToken, 'whole-preload-after-thumbnail');
           return;
         }
-        const vector = await preloadVectorCommands(this.doc, pageNum, publicationToken);
+        const deepPreload = shouldDeepPreloadDocument(this.doc);
+        const vector = deepPreload
+          ? await preloadVectorCommands(this.doc, pageNum, publicationToken)
+          : { bytes: 0, skipped: true };
         if (generation !== this.generation || vector?.stale
             || !preloadTokenIsCurrent(publicationToken, this.doc)) {
           releaseThumbnailPage(this.doc, pageNum);
@@ -231,11 +240,13 @@ export class WholePdfPreloadCoordinator {
           recordRejectedRenderPublication(publicationToken, 'whole-preload-after-vector');
           return;
         }
-        const editable = await preloadEditableMetadataPage(
-          this.doc,
-          pageNum,
-          publicationToken,
-        );
+        const editable = deepPreload
+          ? await preloadEditableMetadataPage(
+            this.doc,
+            pageNum,
+            publicationToken,
+          )
+          : { bytes: 0, skipped: true };
         if (generation !== this.generation || !preloadTokenIsCurrent(publicationToken, this.doc)) {
           releaseThumbnailPage(this.doc, pageNum);
           releaseEditableMetadataPage(this.doc, pageNum);
@@ -265,6 +276,7 @@ export class WholePdfPreloadCoordinator {
           status(this.doc, {
             completed: this.completedPages.size,
             retainedBytes: this.retainedBytes,
+            scope: shouldDeepPreloadDocument(this.doc) ? 'deep' : 'navigation',
           });
         }
       }

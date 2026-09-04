@@ -1,6 +1,8 @@
 export const CONTINUOUS_RENDER_LANES = Object.freeze({
   VISIBLE_PREVIEW: 'visible-preview',
+  VISIBLE_INTERACTIVE: 'visible-interactive',
   VISIBLE_FULL: 'visible-full',
+  DIRECTIONAL_INTERACTIVE: 'directional-interactive',
   DIRECTIONAL_OVERSCAN: 'directional-overscan',
   SEMANTIC: 'semantic',
 });

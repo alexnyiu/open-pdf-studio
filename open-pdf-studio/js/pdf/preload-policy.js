@@ -22,3 +22,11 @@ export function shouldPreloadEntireDocument(documentState, preferences) {
   if (mode === 'off') return false;
   return shouldFullyPrewarmAdaptiveDocument(documentState?.performanceProfile);
 }
+
+/**
+ * Whole-document navigation preload is safe for large files, but decoded
+ * vector images and editable metadata are intentionally viewport-bounded.
+ */
+export function shouldDeepPreloadDocument(documentState) {
+  return documentState?.performanceProfile?.largeDocument !== true;
+}

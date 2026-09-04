@@ -62,7 +62,13 @@ test('render work keys isolate page revision, scale, and quality lanes', () => {
     pageRevision: 7, quality: CONTINUOUS_RENDER_LANES.VISIBLE_FULL,
     scaleRevision: 15000,
   });
+  const interactive = continuousRenderJobKey({
+    documentId: 'doc-a', lifecycleGeneration: 2, pageNum: 5,
+    pageRevision: 7, quality: CONTINUOUS_RENDER_LANES.VISIBLE_INTERACTIVE,
+    scaleRevision: 12500,
+  });
   assert.notEqual(preview, full);
+  assert.notEqual(interactive, full);
   assert.match(preview, /doc-a:2:5:7:visible-preview/u);
 });
 
@@ -235,7 +241,7 @@ test('continuous renderer applies mount hysteresis and promotes directional work
     'const retainedRenderPages = new Set(continuousScrollRenderRetentionPages({',
   );
   const schedulerAt = source.indexOf(
-    '_continuousRenderScheduler.noteInteraction(250, { preserve: preserveUsefulRender });',
+    '_continuousRenderScheduler.noteInteraction(CONTINUOUS_SCROLL_SETTLE_MS, { preserve: preserveUsefulRender });',
     scrollRetentionAt,
   );
   assert.ok(retentionAt >= 0 && retentionAt < releaseAt);
@@ -243,5 +249,7 @@ test('continuous renderer applies mount hysteresis and promotes directional work
   assert.match(source, /if \(_continuousMountedPageCanReuse\(doc, pageNum\)\)/u);
   assert.match(source, /reuseMountedRaster/u);
   assert.match(source, /CONTINUOUS_RENDER_LANES\.SEMANTIC/u);
+  assert.match(source, /beginPdfPageImageStream/u);
+  assert.match(source, /CONTINUOUS_SCROLL_SETTLE_MS = 400/u);
   assert.doesNotMatch(source, /protectedPages\.length \+ 9/u);
 });

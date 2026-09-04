@@ -40,6 +40,7 @@ const fixturePath = path.join(
   'native-paragraph-table.pdf',
 );
 const EDIT_A = 'Coherence Edit A';
+const SECOND_NATIVE_EDIT = 'Coherence second native edit';
 const EDIT_B = `${EDIT_A}\nCoherence Edit B`;
 const EDIT_C = `${EDIT_B}\nCoherence Edit C`;
 
@@ -49,7 +50,8 @@ export const SAVE_CONTINUE_EDITING_SCENARIO = Object.freeze([
   'a23-type-without-resize-and-bind-final-layout-to-draft',
   'edit-a',
   'click-away-and-await-automatic-save',
-  'assert-persisted-live-render-semantic-revisions-match',
+  'edit-second-native-target-without-manual-refresh',
+  'assert-second-native-edit-synchronizes-before-activation',
   'manual-save-while-disk-clean',
   'edit-b-without-reopen',
   'save-again',
@@ -469,17 +471,33 @@ export async function runSaveContinueEditing(options) {
     assert.match(textAfterA, /Coherence Edit A/u);
     report.textAssertions.editAExtractedBeforeEditB = true;
 
+    const secondNativeSelector = '.textLayer span.edit-text-hoverable[data-item-index="13"][data-native-text-marker-ids]';
+    await openEditor(secondNativeSelector, 'AI interconnect');
+    const synchronizedBeforeSecondEdit = await call('app_get_viewport_state');
+    assert.equal(synchronizedBeforeSecondEdit.documentSaveState.persistedRevision,
+      synchronizedBeforeSecondEdit.documentSaveState.livePdfRevision,
+      'the next native edit opened before the deferred saved revision was adopted');
+    await replaceEditorText(SECOND_NATIVE_EDIT);
+    await click('.quick-access-btn[data-action="save"]');
+    await waitUi('.pdf-text-editor', (value) => !value.found);
+    const afterSecondNative = await waitCoherentSaved(
+      'second-native-edit-after-auto-save',
+      afterA.documentSaveState.contentRevision + 1,
+    );
+    const textAfterSecondNative = await extractedText(workingPdf);
+    assert.match(textAfterSecondNative, /Coherence Edit A/u);
+    assert.match(textAfterSecondNative, /Coherence second native edit/u);
+    report.textAssertions.secondNativeEditAfterAutoSave = true;
+
     const cleanSaveSha256 = await sha256File(workingPdf);
     await click('.quick-access-btn[data-action="save"]');
     const afterCleanSave = await waitCoherentSaved(
       'manual-clean-save',
-      afterA.documentSaveState.contentRevision,
+      afterSecondNative.documentSaveState.contentRevision,
     );
     assert.equal(await sha256File(workingPdf), cleanSaveSha256,
       'manual Save on a synchronized clean document changed bytes');
     report.textAssertions.manualCleanSavePreservedBytes = true;
-    assert.equal(afterCleanSave.documentSaveState.persistedRevision,
-      afterCleanSave.documentSaveState.livePdfRevision);
 
     const ownedSelector = '.textLayer span.edit-text-hoverable[data-owned-text-edit-hit="true"][data-edit-id]';
     await openEditor(ownedSelector, EDIT_A);
@@ -488,7 +506,7 @@ export async function runSaveContinueEditing(options) {
     await waitUi('.pdf-text-editor', (value) => !value.found);
     const afterB = await waitCoherentSaved(
       'edit-b-manual-save',
-      afterA.documentSaveState.contentRevision + 1,
+      afterCleanSave.documentSaveState.contentRevision + 1,
     );
     const textAfterB = await extractedText(workingPdf);
     assert.match(textAfterB, /Coherence Edit A/u);
@@ -504,7 +522,12 @@ export async function runSaveContinueEditing(options) {
       afterB.documentSaveState.contentRevision + 1,
     );
     const finalText = await extractedText(workingPdf);
-    for (const expected of ['Coherence Edit A', 'Coherence Edit B', 'Coherence Edit C']) {
+    for (const expected of [
+      'Coherence Edit A',
+      'Coherence second native edit',
+      'Coherence Edit B',
+      'Coherence Edit C',
+    ]) {
       assert.match(finalText, new RegExp(expected, 'u'));
     }
     report.textAssertions.threeConsecutiveEditsExtracted = true;

@@ -58,16 +58,21 @@ function evictCategory(category) {
 
 function enforce() {
   evictCategory('javascript');
+  evictCategory('native');
   evictCategory('metadata');
   const current = totals();
   const activeShare = Number(budget.activeDocumentShare) || 0.8;
   overBudget = current.javascript > budget.javascriptBytes
+    || current.native > budget.nativePixmapBytes
     || current.metadata > budget.metadataBytes
     || current.active.javascript > budget.javascriptBytes * activeShare
     || current.inactive.javascript > budget.javascriptBytes * (1 - activeShare)
+    || current.active.native > budget.nativePixmapBytes * activeShare
+    || current.inactive.native > budget.nativePixmapBytes * (1 - activeShare)
     || current.active.metadata > budget.metadataBytes * activeShare
     || current.inactive.metadata > budget.metadataBytes * (1 - activeShare);
   recordPerformancePeak('javascriptResourceBytes', current.javascript);
+  recordPerformancePeak('nativeResourceBytes', current.native);
   recordPerformancePeak('metadataResourceBytes', current.metadata);
   recordPerformancePeak('trackedResourceBytes', current.total);
   recordPerformancePeak('trackedResourceCount', resources.size);

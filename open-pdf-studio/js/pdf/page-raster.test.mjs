@@ -57,6 +57,30 @@ test('preview never satisfies a settled final request', () => {
   assert.equal(rasterCanSatisfy(preview, request), false);
 });
 
+test('interactive quality is readable fallback but cannot impersonate final DPR pixels', () => {
+  const interactiveRequest = {
+    key: key({ quality: RasterQuality.INTERACTIVE, devicePixelRatio: 1 }),
+    quality: RasterQuality.INTERACTIVE,
+    targetRasterScale: 1.25,
+  };
+  const interactive = {
+    key: interactiveRequest.key,
+    quality: RasterQuality.INTERACTIVE,
+    actualRasterScale: 1.25,
+  };
+  assert.equal(rasterCanSatisfy(interactive, interactiveRequest), true);
+  assert.equal(rasterCanSatisfy({
+    ...interactive,
+    key: key({ quality: RasterQuality.FINAL, devicePixelRatio: 1 }),
+    quality: RasterQuality.FINAL,
+  }, interactiveRequest), true);
+  assert.equal(rasterCanSatisfy(interactive, {
+    key: interactive.key,
+    quality: RasterQuality.FINAL,
+    targetRasterScale: 1.25,
+  }), false);
+});
+
 test('page content invalidation increments only the affected page', () => {
   const documentState = { pageRenderRevisions: {} };
   assert.equal(pageRenderRevision(documentState, 3), 0);

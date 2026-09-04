@@ -19,7 +19,7 @@ const defaultBundle = path.join(
   repoDir, 'target', 'aarch64-apple-darwin', 'release', 'bundle', 'macos', 'Open PDF Studio.app',
 );
 const defaultPdf = path.join(
-  projectDir, 'test-artifacts', 'generated-large-pdf-fixtures', 'lightweight-500.pdf',
+  projectDir, 'test-artifacts', 'generated-large-pdf-fixtures', 'image-heavy-100.pdf',
 );
 
 function parseArguments(argv) {
@@ -78,6 +78,26 @@ async function sha256(filePath) {
 }
 
 async function controlledFixtureIdentity(pdfPath) {
+  if (process.env.OPEN_PDF_STUDIO_DIAGNOSTIC_PDF === '1') {
+    const information = await stat(pdfPath);
+    const { stdout } = await execFileAsync('pdfinfo', [pdfPath]);
+    const pageCount = Number(stdout.match(/^Pages:\s+(\d+)$/mu)?.[1]);
+    if (!Number.isSafeInteger(pageCount) || pageCount <= 0) {
+      throw new Error(`diagnostic PDF page count is unavailable: ${pdfPath}`);
+    }
+    return {
+      path: pdfPath,
+      manifestPath: null,
+      manifestSchemaVersion: null,
+      file: path.basename(pdfPath),
+      controlled: false,
+      committed: false,
+      bytes: information.size,
+      sha256: await sha256(pdfPath),
+      pageCount,
+      diagnostic: true,
+    };
+  }
   const manifestPath = path.join(path.dirname(pdfPath), 'manifest.json');
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
   const file = path.basename(pdfPath);
@@ -87,9 +107,9 @@ async function controlledFixtureIdentity(pdfPath) {
   }
   const information = await stat(pdfPath);
   const digest = await sha256(pdfPath);
-  if (file !== 'lightweight-500.pdf' || entry.pageCount !== 500
+  if (file !== 'image-heavy-100.pdf' || entry.pageCount !== 100
       || entry.bytes !== information.size || entry.sha256 !== digest) {
-    throw new Error(`controlled 500-page fixture does not match its manifest: ${file}`);
+    throw new Error(`controlled 100-page image-heavy fixture does not match its manifest: ${file}`);
   }
   return {
     path: pdfPath,
@@ -560,6 +580,10 @@ async function runOnce(options) {
       scrollMetric?.peaks?.javascriptResourceBytes,
       zoomMetric?.peaks?.javascriptResourceBytes,
     );
+    const nativeResourcePeak = maximum(
+      scrollMetric?.peaks?.nativeResourceBytes,
+      zoomMetric?.peaks?.nativeResourceBytes,
+    );
     const thumbnailPeak = maximum(
       scrollMetric?.peaks?.mountedThumbnails,
       zoomMetric?.peaks?.mountedThumbnails,
@@ -663,23 +687,23 @@ async function runOnce(options) {
           && zoomMetric?.longTaskSupported === true,
         cachedPreviewPaints: scrollMetric?.counters?.cachedPreviewPaints || 0,
         cachedPreviewP95Ms: sample(scrollCapture, 'cachedPreviewLatencyMs'),
-        visiblePagePreviewPublishes: (scrollMetric?.counters?.visiblePreviewPublishes || 0)
-          + (zoomMetric?.counters?.visiblePreviewPublishes || 0),
-        visiblePagePreviewP95Ms: maximum(
-          sample(scrollCapture, 'visiblePagePreviewLatencyMs'),
-          sample(finalCapture, 'visiblePagePreviewLatencyMs'),
+        visiblePagePreviewPublishes: scrollMetric?.counters?.visiblePreviewPublishes || 0,
+        visiblePagePreviewP95Ms: sample(scrollCapture, 'visiblePagePreviewLatencyMs'),
+        interactiveRasterPublishes: scrollMetric?.counters?.interactiveRasterPublishes || 0,
+        interactiveRasterP95Ms: sample(scrollCapture, 'visiblePageInteractiveRasterLatencyMs'),
+        rasterTransferP95Ms: sample(scrollCapture, 'rasterTransferMs'),
+        scrollFramesBelow20MsPercent: sample(
+          scrollCapture,
+          'scrollFrameWorkMs',
+          'below20MsPercent',
         ),
         visibleBlankWithSourceSamples:
-          (scrollMetric?.measurements?.visibleBlankWithSourceDurationMs?.count || 0)
-          + (zoomMetric?.measurements?.visibleBlankWithSourceDurationMs?.count || 0),
-        visibleBlankWithSourceMaxMs: maximum(
+          scrollMetric?.measurements?.visibleBlankWithSourceDurationMs?.count || 0,
+        visibleBlankWithSourceMaxMs:
           sample(scrollCapture, 'visibleBlankWithSourceDurationMs', 'max'),
-          sample(finalCapture, 'visibleBlankWithSourceDurationMs', 'max'),
-        ),
-        fullQualityLatencyMaxMs: maximum(
+        fullQualityLatencyMaxMs:
           sample(scrollCapture, 'visiblePageFullRasterLatencyMs', 'max'),
-          sample(finalCapture, 'visiblePageFullRasterLatencyMs', 'max'),
-        ),
+        fullQualityLatencyP95Ms: sample(scrollCapture, 'visiblePageFullRasterLatencyMs'),
         visibleColdRenderSuppressedCount:
           (scrollMetric?.counters?.visibleColdRenderSuppressedCount || 0)
           + (zoomMetric?.counters?.visibleColdRenderSuppressedCount || 0),
@@ -707,7 +731,7 @@ async function runOnce(options) {
         mountedPageSurfacesPeak: mountedPagePeak,
         mountedThumbnailsPeak: thumbnailPeak,
         zoomInputToTransformP95Ms: sample(finalCapture, 'zoomInputToTransformMs'),
-        zoomFramesBelow20MsPercent: sample(finalCapture, 'zoomFrameIntervalMs', 'below20MsPercent'),
+        zoomFramesBelow20MsPercent: sample(finalCapture, 'zoomTransformWorkMs', 'below20MsPercent'),
         zoomAnchorDriftMaxPx: sample(finalCapture, 'zoomAnchorDriftPx', 'max'),
         zoomStopsAfterGesture,
         crispRenderRevisions: zoomMetric?.counters?.crispRenderRevisions || 0,
@@ -720,7 +744,7 @@ async function runOnce(options) {
         zoomRenderCancellations: (zoomSchedulerEnd.cancelled || 0) - (zoomSchedulerStart.cancelled || 0),
         javascriptResourcePeakBytes: resourcePeak,
         javascriptResourceBudgetBytes: budget.javascriptBytes ?? null,
-        nativePixmapPeakBytes: native.nativePixmapPeakBytes ?? null,
+        nativePixmapPeakBytes: maximum(native.nativePixmapPeakBytes, nativeResourcePeak),
         nativePixmapBudgetBytes: native.nativePixmapBudgetBytes ?? null,
         baselineRssBytes,
         processStartRssBytes,
@@ -797,10 +821,16 @@ function aggregateMetrics(reports) {
     visiblePagePreviewPublishes: values.reduce((sum, metrics) =>
       sum + (metrics.visiblePagePreviewPublishes || 0), 0),
     visiblePagePreviewP95Ms: maxField('visiblePagePreviewP95Ms'),
+    interactiveRasterPublishes: values.reduce((sum, metrics) =>
+      sum + (metrics.interactiveRasterPublishes || 0), 0),
+    interactiveRasterP95Ms: maxField('interactiveRasterP95Ms'),
+    rasterTransferP95Ms: maxField('rasterTransferP95Ms'),
+    scrollFramesBelow20MsPercent: minField('scrollFramesBelow20MsPercent'),
     visibleBlankWithSourceSamples: values.reduce((sum, metrics) =>
       sum + (metrics.visibleBlankWithSourceSamples || 0), 0),
     visibleBlankWithSourceMaxMs: maxField('visibleBlankWithSourceMaxMs'),
     fullQualityLatencyMaxMs: maxField('fullQualityLatencyMaxMs'),
+    fullQualityLatencyP95Ms: maxField('fullQualityLatencyP95Ms'),
     visibleColdRenderSuppressedCount: values.reduce((sum, metrics) =>
       sum + (metrics.visibleColdRenderSuppressedCount || 0), 0),
     previewUsefulCancellationCount: values.reduce((sum, metrics) =>

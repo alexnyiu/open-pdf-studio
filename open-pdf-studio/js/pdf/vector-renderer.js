@@ -231,7 +231,22 @@ const LINE_JOIN = ['miter', 'round', 'bevel'];
 // Image cache key includes the command owner plus byte offset. A bare byte
 // offset collides across pages and documents.
 const _imageCache = new Map();
-let _imagePreparing = false;
+const MAX_DECODED_VECTOR_IMAGE_BYTES = 64 * 1024 * 1024;
+const MAX_DECODED_VECTOR_IMAGE_AXIS = 4096;
+
+function decodedImageDimensions(width, height) {
+  const w = Math.max(1, Number(width) || 1);
+  const h = Math.max(1, Number(height) || 1);
+  const scale = Math.min(
+    1,
+    MAX_DECODED_VECTOR_IMAGE_AXIS / Math.max(w, h),
+    Math.sqrt(MAX_DECODED_VECTOR_IMAGE_BYTES / (w * h * 4)),
+  );
+  return {
+    width: Math.max(1, Math.floor(w * scale)),
+    height: Math.max(1, Math.floor(h * scale)),
+  };
+}
 
 /// Pre-decode all images in the command buffer before rendering.
 /// Returns a promise that resolves when all images are ready.
@@ -245,7 +260,7 @@ export async function prepareImages(filePath, pageNum, rotation, publication = n
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let pos = 16; // skip header
 
-  const promises = [];
+  const imageTasks = [];
 
   while (pos < bytes.length) {
     const op = bytes[pos++];
@@ -290,18 +305,14 @@ export async function prepareImages(filePath, pageNum, rotation, publication = n
 
         const imageKey = _imageKey(commandKey, imgPos);
         if (!_imageCache.has(imageKey)) {
-          const imgBytes = bytes.slice(imgStart, imgStart + dataLen);
-          promises.push(_decodeImage(
+          imageTasks.push({
             imageKey,
             w,
             h,
-            imgBytes,
-            () => _cache.get(commandKey) === entry
-              && (!publication?.token
-                || renderPublicationTokenIsCurrent(publication.token, publication.documentState)),
-            filePath,
-            pageNum,
-          ));
+            // A view keeps the immutable command buffer alive without another
+            // potentially multi-megabyte allocation.
+            imgBytes: bytes.subarray(imgStart, imgStart + dataLen),
+          });
         }
         break;
       }
@@ -310,10 +321,22 @@ export async function prepareImages(filePath, pageNum, rotation, publication = n
     }
   }
 
-  if (promises.length > 0) {
-    _imagePreparing = true;
-    await Promise.all(promises);
-    _imagePreparing = false;
+  const isCurrent = () => _cache.get(commandKey) === entry
+    && (!publication?.token
+      || renderPublicationTokenIsCurrent(publication.token, publication.documentState));
+  for (const task of imageTasks) {
+    if (!isCurrent()) break;
+    await _decodeImage(
+      task.imageKey,
+      task.w,
+      task.h,
+      task.imgBytes,
+      isCurrent,
+      filePath,
+      pageNum,
+    );
+    // Give visible raster and input events an admission point between images.
+    await Promise.resolve();
   }
   if (publication?.token
       && !renderPublicationTokenIsCurrent(publication.token, publication.documentState)) {
@@ -342,14 +365,24 @@ function _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum) {
 
 async function _decodeImage(cacheKey, w, h, imgBytes, isCurrent, filePath, pageNum) {
   try {
+    const target = decodedImageDimensions(w, h);
+    const resize = target.width === w && target.height === h
+      ? undefined
+      : { resizeWidth: target.width, resizeHeight: target.height, resizeQuality: 'high' };
     // Check for RGBA raw format (header: "RGBA" + u16 w + u16 h + pixels)
     if (imgBytes.length > 8 &&
         imgBytes[0] === 0x52 && imgBytes[1] === 0x47 &&
         imgBytes[2] === 0x42 && imgBytes[3] === 0x41) {
       // Raw RGBA pixels
-      const pixelData = imgBytes.slice(8);
-      const imageData = new ImageData(new Uint8ClampedArray(pixelData), w, h);
-      const bitmap = await createImageBitmap(imageData);
+      const pixelData = new Uint8ClampedArray(
+        imgBytes.buffer,
+        imgBytes.byteOffset + 8,
+        imgBytes.byteLength - 8,
+      );
+      const imageData = new ImageData(pixelData, w, h);
+      const bitmap = resize
+        ? await createImageBitmap(imageData, resize)
+        : await createImageBitmap(imageData);
       _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum);
       return;
     }
@@ -357,7 +390,7 @@ async function _decodeImage(cacheKey, w, h, imgBytes, isCurrent, filePath, pageN
     // Check for JPEG (starts with FF D8)
     if (imgBytes[0] === 0xFF && imgBytes[1] === 0xD8) {
       const blob = new Blob([imgBytes], { type: 'image/jpeg' });
-      const bitmap = await createImageBitmap(blob);
+      const bitmap = resize ? await createImageBitmap(blob, resize) : await createImageBitmap(blob);
       _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum);
       return;
     }
@@ -365,14 +398,14 @@ async function _decodeImage(cacheKey, w, h, imgBytes, isCurrent, filePath, pageN
     // Check for PNG (starts with 89 50 4E 47)
     if (imgBytes[0] === 0x89 && imgBytes[1] === 0x50) {
       const blob = new Blob([imgBytes], { type: 'image/png' });
-      const bitmap = await createImageBitmap(blob);
+      const bitmap = resize ? await createImageBitmap(blob, resize) : await createImageBitmap(blob);
       _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum);
       return;
     }
 
     // Unknown format — try as generic image blob
     const blob = new Blob([imgBytes]);
-    const bitmap = await createImageBitmap(blob);
+    const bitmap = resize ? await createImageBitmap(blob, resize) : await createImageBitmap(blob);
     _storeDecodedImage(cacheKey, bitmap, isCurrent, filePath, pageNum);
   } catch (e) {
     console.warn(`[vector-renderer] Failed to decode image at offset ${cacheKey}:`, e);

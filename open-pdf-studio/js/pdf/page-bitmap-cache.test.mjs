@@ -214,6 +214,42 @@ test('idle trim releases visible and current decoded rasters after their canvase
   }
 });
 
+test('idle trim retains the visible interactive raster as a bounded reverse-scroll source', () => {
+  const priorDocument = globalThis.document;
+  registerPageBitmapCacheOwner('/interactive.pdf', 'doc-raster', 2, () => 1);
+  setActiveRenderDocument('doc-raster');
+  setCachedBitmapEntry(
+    '/interactive.pdf', 1, 0, 1,
+    { close() {} }, 100, 100, 1,
+    context({ quality: 'interactive', devicePixelRatio: 1, targetRasterScale: 1 }),
+  );
+  globalThis.document = {
+    querySelectorAll: () => [{
+      dataset: { page: '1', strictlyVisible: 'true', rasterQuality: 'interactive' },
+      querySelector: () => ({
+        width: 100,
+        height: 100,
+        dataset: { renderSurface: 'pdf' },
+      }),
+    }],
+  };
+  try {
+    const result = trimIdlePageBitmaps({
+      filePath: '/interactive.pdf', maximumBytes: 256 * 1024 * 1024, currentPageNum: 1,
+    });
+    assert.equal(result.evictedEntries, 0);
+    assert.ok(getCachedBitmap(
+      '/interactive.pdf', 1, 0, 1,
+      context({ quality: 'interactive', devicePixelRatio: 1, targetRasterScale: 1 }),
+    ));
+  } finally {
+    clearAllBitmaps();
+    setActiveRenderDocument(null);
+    if (priorDocument === undefined) delete globalThis.document;
+    else globalThis.document = priorDocument;
+  }
+});
+
 test('shared registry reuses a denser final surface across view scale requests', () => {
   registerPageBitmapCacheOwner('/registry.pdf', 'doc-raster', 2, () => 1);
   const bitmap = { close() {} };

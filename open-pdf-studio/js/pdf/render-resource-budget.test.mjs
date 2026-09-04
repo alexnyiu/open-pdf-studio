@@ -36,3 +36,18 @@ test('a protected visible surface may exceed its share but closes background adm
   });
   assert.equal(renderResourceBudgetSnapshot().overBudget, true);
 });
+
+test('in-flight native raster bytes participate in admission pressure', () => {
+  resetRenderResourceBudgetForTests();
+  configureRenderResourceBudget({
+    globalBytes: 100, javascriptBytes: 60, nativePixmapBytes: 30,
+    metadataBytes: 10, activeDocumentShare: 0.8,
+  }, 'active');
+  registerRenderResource({
+    key: 'native-visible', category: 'native', documentId: 'active',
+    bytes: 25, protected: () => true,
+  });
+  const snapshot = renderResourceBudgetSnapshot();
+  assert.equal(snapshot.usage.native, 25);
+  assert.equal(snapshot.overBudget, true, '25 bytes exceed the 24-byte active native share');
+});

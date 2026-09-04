@@ -23,6 +23,10 @@ import {
   recordPerformanceSample,
 } from './performance-metrics.js';
 import { validateRenderStreamDescriptor } from './render-stream-descriptor.js';
+import {
+  registerRenderResource,
+  unregisterRenderResource,
+} from './render-resource-budget.js';
 
 const activeRasterTransfers = new Map();
 let nextRasterTransferId = 0;
@@ -131,6 +135,7 @@ export async function beginPdfPageImageStream({
   const transferId = `${requestId || rasterKey || `${path}:${pageIndex}`}:image:${++nextRasterTransferId}`;
   const controller = new AbortController();
   const activeTransfer = { path, token: null, controller, image: null, onAbort: null };
+  const resourceKey = `native-raster-transfer:${transferId}`;
   activeRasterTransfers.set(transferId, activeTransfer);
   let descriptor = null;
   let finished = false;
@@ -139,6 +144,7 @@ export async function beginPdfPageImageStream({
     if (finished) return false;
     finished = true;
     activeRasterTransfers.delete(transferId);
+    unregisterRenderResource(resourceKey);
     const elapsed = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
     if (published) {
       incrementPerformanceCounter('rasterCompleted');
@@ -186,6 +192,13 @@ export async function beginPdfPageImageStream({
     });
     descriptor = validateRenderStreamDescriptor(rawDescriptor);
     activeTransfer.token = descriptor.token;
+    registerRenderResource({
+      key: resourceKey,
+      category: 'native',
+      documentId: rasterKey.split('|', 1)[0] || path,
+      bytes: descriptor.width * descriptor.height * 4,
+      protected: () => activeRasterTransfers.has(transferId),
+    });
     if (controller.signal.aborted) {
       await invoke('cancel_render_pdf_page_png_transfer', { token: descriptor.token }).catch(() => {});
       throw new DOMException('Raster transfer cancelled', 'AbortError');
@@ -263,6 +276,7 @@ export async function renderPdfPageBitmap({
   ownerGeneration = 0,
   rasterKey = '',
   requestId = '',
+  transport = 'png',
 }) {
   const startedAt = globalThis.performance?.now?.() ?? Date.now();
   incrementPerformanceCounter('rasterRequested');
@@ -276,9 +290,12 @@ export async function renderPdfPageBitmap({
     rasterKey,
     requestId,
   });
-  if (state?.renderEngineOverride === 'rust-skia') {
+  if (state?.renderEngineOverride === 'rust-skia' || transport === 'rgba') {
+    const command = state?.renderEngineOverride === 'rust-skia'
+      ? 'render_pdf_page_skia'
+      : 'render_pdf_page';
     try {
-      const result = await bitmapFromRgbaResponse(await invoke('render_pdf_page_skia', {
+      const result = await bitmapFromRgbaResponse(await invoke(command, {
         path, pageIndex, scale, rotation, requestId,
       }));
       const elapsed = (globalThis.performance?.now?.() ?? Date.now()) - startedAt;
@@ -293,7 +310,7 @@ export async function renderPdfPageBitmap({
         ownerGeneration,
         rasterKey,
         requestId,
-        transferMethod: 'tauri-rgba',
+        transferMethod: 'tauri-binary-rgba',
         bytes: result.width * result.height * 4,
         calls: 1,
         elapsedMs: elapsed,
@@ -308,9 +325,17 @@ export async function renderPdfPageBitmap({
         ownerGeneration,
         rasterKey,
         requestId,
-        transferMethod: 'tauri-rgba',
+        transferMethod: 'tauri-binary-rgba',
       });
-      throw error;
+      if (state?.renderEngineOverride === 'rust-skia') throw error;
+      recordPerformanceEvent('raster:stream-fallback', {
+        pageNum: Number(pageIndex) + 1,
+        ownerGeneration,
+        rasterKey,
+        reason: error?.message || String(error),
+        from: 'tauri-binary-rgba',
+        to: 'loopback-png-stream',
+      });
     }
   }
   const transferId = `${requestId || rasterKey || `${path}:${pageIndex}`}:${++nextRasterTransferId}`;

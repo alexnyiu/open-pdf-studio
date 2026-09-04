@@ -333,6 +333,21 @@ export function getDocumentSaveCoordinatorSnapshot(documentId) {
   return saveCoordinator.debugSnapshot(documentId);
 }
 
+/**
+ * Join any pending persistence and adopt the resulting bytes before another
+ * native text target is resolved. This is intentionally silent: the page-edit
+ * intent retains the pointer target while the saved transition preserves view.
+ */
+export function requestTextEditDocumentSynchronization(documentId, documentGeneration) {
+  return savePDF(null, {
+    allowSaveAsPrompt: false,
+    automaticTextEditSave: false,
+    expectedDocumentId: String(documentId || ''),
+    expectedDocumentGeneration: Number(documentGeneration) || 0,
+    textEditSynchronization: true,
+  });
+}
+
 export function retryDocumentSave(documentId, documentGeneration) {
   const owner = getDocumentById(String(documentId || ''));
   if (!owner || (Number(owner.lifecycleGeneration) || 0) !== (Number(documentGeneration) || 0)) {
@@ -628,6 +643,7 @@ export async function savePDF(saveAsPath = null, options = {}) {
   const {
     allowSaveAsPrompt = true,
     automaticTextEditSave = false,
+    textEditSynchronization = false,
     expectedDocumentId = null,
     expectedDocumentGeneration = null,
     delayMs = 0,
@@ -669,6 +685,7 @@ export async function savePDF(saveAsPath = null, options = {}) {
           : performSavePDF(saveAsPath, {
             allowSaveAsPrompt,
             automaticTextEditSave,
+            textEditSynchronization,
             expectedDocumentId: owner.id,
             expectedDocumentGeneration: generation,
             coordinatorContext,
@@ -696,6 +713,7 @@ export async function savePDF(saveAsPath = null, options = {}) {
 async function performSavePDF(saveAsPath = null, {
   allowSaveAsPrompt = true,
   automaticTextEditSave = false,
+  textEditSynchronization = false,
   expectedDocumentId = null,
   expectedDocumentGeneration = null,
   coordinatorContext = null,
@@ -704,7 +722,8 @@ async function performSavePDF(saveAsPath = null, {
   let activeDoc = expectedDocumentId
     ? getDocumentById(String(expectedDocumentId))
     : getActiveDocument();
-  const showSaveProgress = automaticTextEditSave !== true;
+  const showSaveProgress = automaticTextEditSave !== true
+    && textEditSynchronization !== true;
   const rejectSave = (reason, details = {}, status = 'failed') => {
     if (automaticTextEditSave && typeof window !== 'undefined') {
       window.__textEditAutoSaveFailure = Object.freeze({
@@ -3605,7 +3624,10 @@ async function performSavePDF(saveAsPath = null, {
       liveTextSession: String(activeSession?.ownerDocumentId || '') === String(activeDoc.id),
       dirtyTextDraft: String(activeSession?.ownerDocumentId || '') === String(activeDoc.id)
         && activeSession?.isDirty?.() === true,
-      pendingPageEditIntent: pageEditIntentPendingForDocument(activeDoc.id),
+      // The synchronization request is owned by the pending page-edit intent;
+      // that intent is the reason adoption is safe and necessary here.
+      pendingPageEditIntent: textEditSynchronization !== true
+        && pageEditIntentPendingForDocument(activeDoc.id),
       ownerActiveForSharedUi: String(getActiveDocument()?.id || '') === String(activeDoc.id),
     });
     if (!adoptionDecision.adopt) {

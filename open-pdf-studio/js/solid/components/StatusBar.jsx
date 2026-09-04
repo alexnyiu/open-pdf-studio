@@ -216,10 +216,11 @@ export default function StatusBar() {
   const preloadText = () => {
     const preload = preloadStatus();
     if (!preload) return '';
+    const activity = preload.scope === 'navigation' ? 'Indexing' : 'Preloading';
     if (preload.state === 'limited') {
-      return `Preload paused at ${localizeNumber(preload.completed)}/${localizeNumber(preload.total)} (${preload.limitReason} limit)`;
+      return `${activity} paused at ${localizeNumber(preload.completed)}/${localizeNumber(preload.total)} (${preload.limitReason} limit)`;
     }
-    return `Preloading ${localizeNumber(preload.completed)}/${localizeNumber(preload.total)}`;
+    return `${activity} ${localizeNumber(preload.completed)}/${localizeNumber(preload.total)}`;
   };
 
   return (

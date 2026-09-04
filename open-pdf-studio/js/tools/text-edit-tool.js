@@ -109,9 +109,11 @@ import { waitForSavedDocumentSynchronization } from '../pdf/saved-document-trans
 import {
   awaitPageEditReady,
   PAGE_EDIT_READINESS_TIMEOUT_MS,
-  pageEditReadinessSatisfied,
 } from '../pdf/page-edit-readiness.js';
-import { runPageEditIntent } from '../text/page-edit-intent.js';
+import {
+  runPageEditIntent,
+  synchronizeTextEditActivation,
+} from '../text/page-edit-intent.js';
 import { acquirePageLease, releasePageLease } from '../pdf/page-lease-registry.js';
 import {
   authoredFinalTextLayoutInput,
@@ -163,12 +165,25 @@ function textEditActivationResult({
   });
 }
 
+async function waitForTextEditDocumentSynchronization(documentId) {
+  const saver = await import('../pdf/saver.js');
+  return synchronizeTextEditActivation({
+    documentId,
+    waitForSynchronization: waitForSavedDocumentSynchronization,
+    resolveDocument: getDocumentById,
+    getSaveCoordinatorSnapshot: saver.getDocumentSaveCoordinatorSnapshot,
+    requestSynchronization: ({ documentId: id, documentGeneration }) => (
+      saver.requestTextEditDocumentSynchronization(id, documentGeneration)
+    ),
+  });
+}
+
 function queueCurrentPageEditIntent({ documentState, pageNum, point = null, activate }) {
   return runPageEditIntent({
     documentState,
     pageNum,
     point,
-    waitForSynchronization: waitForSavedDocumentSynchronization,
+    waitForSynchronization: waitForTextEditDocumentSynchronization,
     resolveDocument: getDocumentById,
     awaitReadiness: awaitPageEditReady,
     acquireLease: acquirePageLease,
@@ -823,9 +838,17 @@ async function openCombinedTextBoxEditor() {
   if (rejectInvalidOwnedTextState()) return;
   let ownerDocument = getActiveDocument();
   if (!ownerDocument) return;
-  if (!(await waitForSavedDocumentSynchronization(ownerDocument.id))) return;
+  const selectedDocumentGeneration = Number(ownerDocument.lifecycleGeneration) || 0;
+  if (!(await waitForTextEditDocumentSynchronization(ownerDocument.id))) return;
   ownerDocument = getDocumentById(ownerDocument.id);
   if (!ownerDocument) return;
+  if ((Number(ownerDocument.lifecycleGeneration) || 0) !== selectedDocumentGeneration) {
+    // The selected DOM items belonged to the retired PDF.js proxy. Make the
+    // user reselect against the synchronized layer instead of combining stale
+    // source identities.
+    clearTextBoxSelection();
+    return;
+  }
   const items = [...selectedTextItems.values()];
   const unsupported = [...new Set(items.flatMap((item) => item.unsupportedFonts || []))];
   if (unsupported.length) {
@@ -1291,8 +1314,7 @@ export function startInsertedTextEditingAtPoint(
   if (rejectInvalidOwnedTextState()) return false;
   const ownerDocument = getActiveDocument();
   if (!ownerDocument || !canvasEl || !canvasEl.parentElement) return false;
-  if (ownerDocument.pdfDoc && !readinessGranted
-      && !pageEditReadinessSatisfied(ownerDocument, pageNum)) {
+  if (ownerDocument.pdfDoc && !readinessGranted) {
     void queueCurrentPageEditIntent({
       documentState: ownerDocument,
       pageNum,
@@ -1952,7 +1974,7 @@ export async function startTextLayerEditAtClientPointWhenReady({
     );
   };
   const point = { x: clientX, y: clientY };
-  if (!ownerDocument.pdfDoc || pageEditReadinessSatisfied(ownerDocument, pageNum)) {
+  if (!ownerDocument.pdfDoc) {
     const activated = await activate({ documentState: ownerDocument, pageNum, point });
     return textEditActivationResult({
       activated: activated === true,
@@ -2475,7 +2497,7 @@ async function startScannedTextEditing(
   let doc = getActiveDocument();
   const preferredLineId = span?.dataset?.ocrLineId || '';
   if (!doc || !preferredLineId) return false;
-  if (doc.pdfDoc && !readinessGranted && !pageEditReadinessSatisfied(doc, pageNum)) {
+  if (doc.pdfDoc && !readinessGranted) {
     const fallbackPoint = clientPoint || (() => {
       const rect = span.getBoundingClientRect?.();
       return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
@@ -3023,8 +3045,7 @@ async function startPdfTextEditing(
   if (!ownerDocument) return false;
   const preferredEditId = span?.dataset?.editId || '';
   const preferredMarkerIds = span?.dataset?.nativeTextMarkerIds || '';
-  if (ownerDocument.pdfDoc && !readinessGranted
-      && !pageEditReadinessSatisfied(ownerDocument, pageNum)) {
+  if (ownerDocument.pdfDoc && !readinessGranted) {
     const fallbackPoint = clientPoint || (() => {
       const rect = span?.getBoundingClientRect?.();
       return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
@@ -3677,7 +3698,7 @@ export function startTextEditingAtPointWhenReady({ x, y, pageNum, canvasEl } = {
     startTextEditEditing(hitEdit, readyPage, readyCanvas, null, { readinessGranted: true });
     return true;
   };
-  if (!ownerDocument.pdfDoc || pageEditReadinessSatisfied(ownerDocument, pageNum)) {
+  if (!ownerDocument.pdfDoc) {
     return activate({ documentState: ownerDocument, pageNum, point: { x, y } });
   }
   void queueCurrentPageEditIntent({
@@ -3699,8 +3720,7 @@ export function startTextEditEditing(
   if (rejectInvalidOwnedTextState()) return false;
   const ownerDocument = getActiveDocument();
   if (!ownerDocument) return false;
-  if (ownerDocument?.pdfDoc && !readinessGranted
-      && !pageEditReadinessSatisfied(ownerDocument, pageNum)) {
+  if (ownerDocument?.pdfDoc && !readinessGranted) {
     void queueCurrentPageEditIntent({
       documentState: ownerDocument,
       pageNum,

@@ -345,12 +345,15 @@ test('single and continuous render completion reconcile pending OCR at its model
   const singleEnd = source.indexOf('// Render page offscreen', singleStart);
   const continuousStart = source.indexOf('async function _renderContinuousPageNow');
   const continuousEnd = source.indexOf('function _continuousLayout', continuousStart);
+  const semanticStart = source.indexOf('async function _runContinuousSemanticLayers');
+  const semanticEnd = source.indexOf('function _scheduleContinuousSemanticLayers', semanticStart);
   const single = source.slice(singleStart, singleEnd);
   const continuous = source.slice(continuousStart, continuousEnd);
+  const semantic = source.slice(semanticStart, semanticEnd);
 
   assert.match(single, /reconcilePendingOcrReadiness\(\s*doc,\s*pageNum,\s*publicationToken,\s*completedLayers/u);
   assert.match(continuous, /const completedLayers = new Set\(\)/u);
-  assert.match(continuous, /reconcilePendingOcrReadiness\(\s*doc,\s*pageNum,\s*publicationToken,\s*completedLayers/u);
+  assert.match(semantic, /reconcilePendingOcrReadiness\(\s*doc,\s*pageNum,\s*publicationToken,\s*completedLayers/u);
 });
 
 test('first-page FreeText hydration waits for exact ownership and callout metadata', async () => {

@@ -4,7 +4,10 @@ import test from 'node:test';
 import {
   pageEditIntentPendingForDocument,
   runPageEditIntent,
+  synchronizeTextEditActivation,
+  textEditActivationNeedsSynchronization,
 } from './page-edit-intent.js';
+import { createInitialDocumentRevisionState } from '../core/document-revision-state.runtime.js';
 
 function deferred() {
   let resolve;
@@ -15,6 +18,112 @@ function deferred() {
   });
   return { promise, resolve, reject };
 }
+
+function revisionedDocument({ content = 0, persisted = 0, live = 0 } = {}) {
+  const revisionState = createInitialDocumentRevisionState();
+  Object.assign(revisionState, {
+    contentRevision: content,
+    serializedRevision: persisted,
+    persistedRevision: persisted,
+    livePdfRevision: live,
+    saveState: persisted > live ? 'saved-refresh-pending' : 'saved',
+  });
+  return {
+    id: 'text-edit-sync-owner',
+    lifecycleGeneration: 1,
+    revisionState,
+  };
+}
+
+test('a persisted native edit requires synchronization before another target resolves', () => {
+  const documentState = revisionedDocument({ content: 2, persisted: 2, live: 1 });
+  assert.equal(textEditActivationNeedsSynchronization(documentState), true);
+  documentState.revisionState.livePdfRevision = 2;
+  assert.equal(textEditActivationNeedsSynchronization(documentState), false);
+  assert.equal(textEditActivationNeedsSynchronization(documentState, {
+    pending: { requestId: 'save-pending' },
+  }), true);
+});
+
+test('the next edit silently adopts a deferred automatic-save revision', async () => {
+  const documentState = revisionedDocument({ content: 1, persisted: 1, live: 0 });
+  const requests = [];
+  const ready = await synchronizeTextEditActivation({
+    documentId: documentState.id,
+    waitForSynchronization: async () => true,
+    resolveDocument: () => documentState,
+    getSaveCoordinatorSnapshot: () => null,
+    requestSynchronization: async (request) => {
+      requests.push(request);
+      documentState.lifecycleGeneration += 1;
+      documentState.revisionState.livePdfRevision = 1;
+      documentState.revisionState.saveState = 'saved';
+      return { status: 'saved' };
+    },
+  });
+  assert.equal(ready, true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].requestedRevision, 1);
+  assert.equal(documentState.lifecycleGeneration, 2);
+});
+
+test('an edit joining active automatic persistence follows with proxy synchronization', async () => {
+  const documentState = revisionedDocument({ content: 1, persisted: 0, live: 0 });
+  let saveActive = true;
+  let requests = 0;
+  const ready = await synchronizeTextEditActivation({
+    documentId: documentState.id,
+    waitForSynchronization: async () => true,
+    resolveDocument: () => documentState,
+    getSaveCoordinatorSnapshot: () => saveActive
+      ? { active: { requestId: 'automatic-save' } }
+      : null,
+    requestSynchronization: async () => {
+      requests += 1;
+      if (requests === 1) {
+        saveActive = false;
+        documentState.revisionState.serializedRevision = 1;
+        documentState.revisionState.persistedRevision = 1;
+        documentState.revisionState.saveState = 'saved-refresh-pending';
+        return { status: 'saved-refresh-pending' };
+      }
+      documentState.revisionState.livePdfRevision = 1;
+      documentState.revisionState.saveState = 'saved';
+      return { status: 'saved' };
+    },
+  });
+  assert.equal(ready, true);
+  assert.equal(requests, 2);
+  assert.equal(documentState.revisionState.persistedRevision, 1);
+  assert.equal(documentState.revisionState.livePdfRevision, 1);
+});
+
+test('an unsaved same-gesture handoff does not force persistence', async () => {
+  const documentState = revisionedDocument({ content: 1, persisted: 0, live: 0 });
+  let requests = 0;
+  const ready = await synchronizeTextEditActivation({
+    documentId: documentState.id,
+    waitForSynchronization: async () => true,
+    resolveDocument: () => documentState,
+    getSaveCoordinatorSnapshot: () => null,
+    requestSynchronization: async () => { requests += 1; },
+  });
+  assert.equal(ready, true);
+  assert.equal(requests, 0);
+});
+
+test('a failed deferred synchronization blocks stale text activation', async () => {
+  const documentState = revisionedDocument({ content: 1, persisted: 1, live: 0 });
+  const ready = await synchronizeTextEditActivation({
+    documentId: documentState.id,
+    waitForSynchronization: async () => true,
+    resolveDocument: () => documentState,
+    getSaveCoordinatorSnapshot: () => null,
+    requestSynchronization: async () => ({ status: 'saved-refresh-failed' }),
+  });
+  assert.equal(ready, false);
+  assert.equal(documentState.revisionState.livePdfRevision, 0);
+});
 
 test('a text click during synchronization preserves its page and point and replays once', async () => {
   const documentState = { id: 'intent-owner', lifecycleGeneration: 3 };

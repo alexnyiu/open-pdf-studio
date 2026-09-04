@@ -9,6 +9,7 @@ import {
 
 export const RasterQuality = Object.freeze({
   PREVIEW: 'preview',
+  INTERACTIVE: 'interactive',
   FINAL: 'final',
 });
 
@@ -114,12 +115,18 @@ function sameContent(left, right) {
 }
 
 /**
- * A final, denser raster may satisfy a lower-density request. A preview may
- * only satisfy another preview request, regardless of its pixel dimensions.
+ * Quality is monotonic: final may satisfy interactive or preview work, and an
+ * interactive raster may satisfy preview work. Lower-quality pixels never
+ * satisfy a sharper request even when their nominal dimensions are larger.
  */
 export function rasterCanSatisfy(candidate, request, tolerance = RASTER_DENSITY_TOLERANCE) {
   if (!candidate || !request || !sameContent(candidate.key, request.key)) return false;
-  if (request.quality === RasterQuality.FINAL && candidate.quality !== RasterQuality.FINAL) return false;
+  const qualityRank = {
+    [RasterQuality.PREVIEW]: 0,
+    [RasterQuality.INTERACTIVE]: 1,
+    [RasterQuality.FINAL]: 2,
+  };
+  if ((qualityRank[candidate.quality] ?? -1) < (qualityRank[request.quality] ?? 0)) return false;
   return finitePositive(candidate.actualRasterScale, 0)
     + Math.max(0, Number(tolerance) || 0)
     >= finitePositive(request.targetRasterScale);

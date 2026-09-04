@@ -2017,9 +2017,18 @@ async fn begin_render_pdf_page_png(
         use image::ImageEncoder;
         let file = std::fs::File::create(&transfer_path)
             .map_err(|error| format!("create PNG transfer: {error}"))?;
-        image::codecs::png::PngEncoder::new(file)
+        let mut writer = std::io::BufWriter::with_capacity(16 * 1024, file);
+        image::codecs::png::PngEncoder::new_with_quality(
+            &mut writer,
+            image::codecs::png::CompressionType::Fast,
+            image::codecs::png::FilterType::NoFilter,
+        )
             .write_image(&rgba, width, height, image::ExtendedColorType::Rgba8)
             .map_err(|error| format!("PNG encode: {error}"))?;
+        use std::io::Write as _;
+        writer
+            .flush()
+            .map_err(|error| format!("flush PNG transfer: {error}"))?;
         let transfer_bytes = std::fs::metadata(&transfer_path)
             .map_err(|error| format!("stat PNG transfer: {error}"))?
             .len();
