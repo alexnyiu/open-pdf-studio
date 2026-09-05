@@ -1,3 +1,4 @@
+import { annotationsForPage } from '../annotations/page-index.js';
 const PASSIVE_TOOLS = new Set([
   '', 'none', 'select', 'editText', 'hand', 'pan', 'textSelect', 'selectText',
 ]);
@@ -12,7 +13,9 @@ const belongsToPage = (record, pageNum) => Number(record?.page) === pageNum;
 export function continuousOverlayBackingRequired(documentState, pageNum, uiState = {}) {
   const page = Number(pageNum);
   if (!documentState || !Number.isInteger(page) || page <= 0) return false;
-  if ((documentState.annotations || []).some((record) => belongsToPage(record, page))) return true;
+  if (documentState.revisionState
+      ? annotationsForPage(documentState, page).length > 0
+      : (documentState.annotations || []).some((record) => belongsToPage(record, page))) return true;
   if ((documentState.textEdits || []).some((record) => belongsToPage(record, page))) return true;
   // Watermarks may target ranges or every page. Retain the conservative full
   // backing store whenever the document owns at least one watermark.

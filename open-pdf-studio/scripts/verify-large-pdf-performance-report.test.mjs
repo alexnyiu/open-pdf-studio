@@ -19,6 +19,11 @@ function passingReport() {
     provenance: { execution: 'packaged-production-ui', realClock: true, stateSeeding: false },
     metrics: {
       largeDocument: true,
+      fullQualityPublishes: 4,
+      sharpScenarios: [1, 3].flatMap((zoom) => [1, 3].map((speed) => ({
+        zoom, speed, warmupComplete: true, frames: 300, missedFrames: 0, missedEntries: 0,
+        captureCount: 30, video: 'motion.mov', framesBelow20MsPercent: 98, tileShadowFree: true,
+      }))),
       scrollHandlerP95Ms: 3,
       ordinaryMainThreadTaskMaxMs: 40,
       cachedPreviewPaints: 1,
@@ -102,4 +107,41 @@ test('large-PDF performance evaluator rejects the retired uploaded 108-page iden
   const result = evaluateLargePdfPerformanceReport(report);
   assert.equal(result.status, 'FAIL');
   assert.ok(result.failures.includes('fixtureIdentity'));
+});
+
+test('direct sharp rendering needs no redundant interactive publication', () => {
+  const report = passingReport();
+  report.metrics.interactiveRasterPublishes = 0;
+  report.metrics.interactiveRasterP95Ms = null;
+  assert.equal(evaluateLargePdfPerformanceReport(report).status, 'PASS');
+});
+
+test('settled sharpness cannot mask missed frames during motion', () => {
+  const report = passingReport();
+  report.metrics.sharpScenarios[0].missedFrames = 1;
+  assert.ok(evaluateLargePdfPerformanceReport(report).failures.includes('sharpDuringMotion'));
+});
+
+test('tile shadows fail sharp-motion acceptance despite complete raster coverage', () => {
+  const report = passingReport();
+  report.metrics.sharpScenarios.find((scenario) => scenario.zoom === 3).tileShadowFree = false;
+  assert.ok(evaluateLargePdfPerformanceReport(report).failures.includes('sharpDuringMotion'));
+});
+
+test('missing frame evidence never passes sharp-motion acceptance', () => {
+  const report = passingReport();
+  delete report.metrics.sharpScenarios;
+  assert.ok(evaluateLargePdfPerformanceReport(report).failures.includes('sharpDuringMotion'));
+});
+
+test('a completely prepared short document needs no additional raster or preview publications', () => {
+  const report = passingReport();
+  Object.assign(report.metrics, { visiblePagePreviewPublishes: 0, visiblePagePreviewP95Ms: null,
+    interactiveRasterPublishes: 0, interactiveRasterP95Ms: null, fullQualityPublishes: 0,
+    sharpPreparedEntries: 4, sharpPreparationMisses: 0 });
+  assert.equal(evaluateLargePdfPerformanceReport(report).status, 'PASS');
+  report.metrics.sharpPreparedEntries = 0;
+  const failure = evaluateLargePdfPerformanceReport(report);
+  assert.ok(failure.failures.includes('strictlyVisibleFirstPreview'));
+  assert.ok(failure.failures.includes('interactiveRasterLatency'));
 });

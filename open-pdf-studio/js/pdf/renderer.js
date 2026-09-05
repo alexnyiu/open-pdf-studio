@@ -84,7 +84,10 @@ import {
   requestedRasterScale,
   serializePageRasterKey,
 } from './page-raster.js';
+import { planSharpWindow, sharpLeadDistance, sharpRenderPriority, sharpCoverageContains } from './continuous-sharp-window.js';
+import { releaseTileAfterCanvasCopy } from './tile-cache.js';
 import { planVisiblePageTiles } from './page-tile-plan.js';
+import { unrotatedTileRegion, rotateTileRgba } from './page-tile-rotation.js';
 import { singlePageOverlaySurfaceDimensions } from './canvas-dpr.js';
 import { applyContinuousPageSurfaceLayout } from './continuous-page-surface-layout.js';
 import { loadContinuousRasterImage } from './continuous-raster-image.js';
@@ -384,7 +387,7 @@ function _startJankDetector() {
     _jankLast = now;
   }, 500);
 }
-_startJankDetector();
+if (import.meta.env?.DEV || window.__OPDS_RENDER_DIAGNOSTICS__ === true) _startJankDetector();
 
 // Render PDF page (single page mode)
 export async function renderPage(pageNum, options = {}) {
@@ -1115,6 +1118,7 @@ let _continuousSettleTimer = null;
 const CONTINUOUS_SCROLL_SETTLE_MS = 400;
 const _continuousPreviewScheduler = createRenderWorkScheduler({
   concurrency: 2,
+  maxActualRunning: 2,
   idleDelayMs: 250,
   maxRetiredPerOwner: 2,
 });
@@ -1123,11 +1127,14 @@ const _continuousRenderScheduler = createRenderWorkScheduler({
   // Native work is still bounded by maxRetiredPerOwner when cancellation
   // cannot interrupt an FFI call immediately.
   concurrency: 2,
+  maxActualRunning: 2,
+  maxDirectionalRunning: 1,
   idleDelayMs: 120,
   maxRetiredPerOwner: 1,
 });
 const _continuousSemanticScheduler = createRenderWorkScheduler({
   concurrency: 1,
+  maxActualRunning: 1,
   idleDelayMs: 120,
   maxRetiredPerOwner: 1,
 });
@@ -1267,6 +1274,11 @@ function _trackMountedCanvas(doc, pageNum, canvas, surface) {
     },
     release: () => {
       if (canvas.isConnected && canvas.closest?.('.page-wrapper')?.dataset?.strictlyVisible === 'true') return;
+      const wrapper = canvas.closest?.('.page-wrapper');
+      if (wrapper && (surface === 'pdf' || surface.startsWith('sharp'))) {
+        wrapper.dataset.rasterQuality = RasterQuality.PREVIEW;
+        wrapper._sharpCoverage = null;
+      }
       canvas.width = 0;
       canvas.height = 0;
       _mountedCanvasByteSizes.delete(key);
@@ -1299,6 +1311,8 @@ function _trackMountedRasterImage(doc, pageNum, image) {
     release: () => {
       if (image.isConnected
           && image.closest?.('.page-wrapper')?.dataset?.strictlyVisible === 'true') return;
+      const wrapper = image.closest?.('.page-wrapper');
+      if (wrapper) wrapper.dataset.rasterQuality = RasterQuality.PREVIEW;
       try { image.removeAttribute('src'); } catch {}
       image.remove();
       _mountedImageByteSizes.delete(key);
@@ -1615,6 +1629,8 @@ function _recordContinuousPreviewAvailable(doc, pageNum, pageWrapper, {
   publishedAt = performance.now(),
   source = 'preview',
 } = {}) {
+  const previewImage = pageWrapper?.querySelector('.page-preview-image');
+  if (source === 'thumbnail' && (!previewImage?.complete || !previewImage?.naturalWidth)) return false;
   const visibleAtText = pageWrapper?.dataset?.visibleAt;
   const visibleAt = Number(visibleAtText);
   if (!pageWrapper || pageWrapper.dataset.strictlyVisible !== 'true'
@@ -1664,6 +1680,10 @@ function _publishContinuousThumbnailPreview(doc, pageNum, src) {
     preview.style.zIndex = '0';
     container.appendChild(preview);
   }
+  preview.onload = async () => {
+    try { await preview.decode?.(); } catch { return; }
+    if (preview.isConnected) _recordContinuousPreviewAvailable(doc, pageNum, wrapper, { source: 'thumbnail' });
+  };
   preview.src = src;
   _continuousPageStatus(wrapper, 'preview');
   _recordContinuousPreviewAvailable(doc, pageNum, wrapper, {
@@ -1842,7 +1862,7 @@ function _continuousMountedPageReuseInput(doc, pageNum) {
   const rasterCanvas = wrapper.querySelector('.pdf-canvas');
   const rasterImage = wrapper.querySelector('.pdf-page-raster');
   const hasRasterSurface = Boolean(
-    (rasterCanvas && rasterCanvas.width > 0 && rasterCanvas.height > 0)
+    (rasterCanvas && !rasterCanvas.classList.contains('pdf-canvas-geometry') && rasterCanvas.width > 0 && rasterCanvas.height > 0)
     || (rasterImage && rasterImage.isConnected
       && (rasterImage.naturalWidth > 0 || Boolean(rasterImage.currentSrc || rasterImage.src))),
   );
@@ -1868,14 +1888,46 @@ function _continuousMountedPageReuseInput(doc, pageNum) {
   };
 }
 
-function _continuousMountedRasterCanReuse(doc, pageNum) {
+function _sharpRegion(doc, wrapper, predicted = false) {
+  if (!_continuousWindowMatches(doc)) return null;
+  const page = wrapper.getBoundingClientRect();
+  const viewport = _continuousWindow.scrollContainer.getBoundingClientRect();
+  const lead = predicted ? (_continuousWindow.sharpLeadPx || viewport.height * 2) : 0;
+  const reverse = predicted ? viewport.height : 0;
+  const direction = _continuousWindow.direction || 1;
+  const top = viewport.top - (direction < 0 ? lead : reverse);
+  const bottom = viewport.bottom + (direction < 0 ? reverse : lead);
+  const rect = { left: Math.max(0, viewport.left - page.left),
+    right: Math.min(page.width, viewport.right - page.left),
+    top: Math.max(0, top - page.top), bottom: Math.min(page.height, bottom - page.top) };
+  if (rect.bottom <= rect.top || rect.right <= rect.left) return null;
+  return rect;
+}
+
+function _sharpIdentity(doc, pageNum) {
+  return `${_continuousSemanticLayoutKey(doc, pageNum)}:${Number(doc.revisionState?.livePdfRevision) || 0}`;
+}
+
+function _tileCoverageCanReuse(doc, pageNum, wrapper, predicted = false) {
+  if (wrapper.dataset.rasterTiled !== 'true') return true;
+  const required = _sharpRegion(doc, wrapper, predicted);
+  if (!required) return true;
+  const tiles = [...wrapper.querySelectorAll('.page-sharp-tile')];
+  return tiles.length > 0 && tiles.every((tile) => tile.width > 0 && tile.height > 0)
+    && sharpCoverageContains(wrapper._sharpCoverage, required,
+      requestedRasterScale(doc.scale, getCanvasDPR()), _sharpIdentity(doc, pageNum));
+}
+
+function _continuousMountedRasterCanReuse(doc, pageNum, predicted = false) {
   const input = _continuousMountedPageReuseInput(doc, pageNum);
-  return input ? continuousMountedRasterCanReuse(input) : false;
+  return input ? continuousMountedRasterCanReuse(input)
+    && _tileCoverageCanReuse(doc, pageNum, _continuousWindow.mounted.get(pageNum), predicted) : false;
 }
 
 function _continuousMountedPageCanReuse(doc, pageNum) {
   const input = _continuousMountedPageReuseInput(doc, pageNum);
-  return input ? continuousMountedRenderCanReuse(input) : false;
+  return input ? continuousMountedRenderCanReuse(input)
+    && _tileCoverageCanReuse(doc, pageNum, _continuousWindow.mounted.get(pageNum), true) : false;
 }
 
 function _continuousMountedInteractiveCanReuse(doc, pageNum) {
@@ -1894,7 +1946,7 @@ function _continuousMountedInteractiveCanReuse(doc, pageNum) {
   const canvas = wrapper.querySelector('.pdf-canvas');
   const rasterImage = wrapper.querySelector('.pdf-page-raster');
   const hasRasterSurface = Boolean(
-    (canvas && canvas.width > 0 && canvas.height > 0)
+    (canvas && !canvas.classList.contains('pdf-canvas-geometry') && canvas.width > 0 && canvas.height > 0)
     || (rasterImage && rasterImage.isConnected
       && (rasterImage.naturalWidth > 0 || Boolean(rasterImage.currentSrc || rasterImage.src))),
   );
@@ -2179,13 +2231,16 @@ function renderContinuousPage(
       value: { pageNum, ready: true, reused: true, source: 'mounted-surface' },
     });
   }
-  const reuseMountedRaster = _continuousMountedRasterCanReuse(doc, pageNum);
+  const reuseMountedRaster = _continuousMountedRasterCanReuse(doc, pageNum, true);
+  if (kind === 'directional' && reuseMountedRaster) return Promise.resolve({
+    status: 'complete', value: { pageNum, rasterReady: true, reused: true },
+  });
   const scheduledLane = reuseMountedRaster ? CONTINUOUS_RENDER_LANES.SEMANTIC : lane;
   if (_renderedPages.has(pageNum)) {
     const wrapper = document.querySelector(
       `#continuous-container .page-wrapper[data-page="${pageNum}"]`,
     );
-    const needsVisibleSharpness = wrapper?.dataset?.rasterQuality !== RasterQuality.FINAL
+    const needsVisibleSharpness = !reuseMountedRaster || wrapper?.dataset?.rasterQuality !== RasterQuality.FINAL
       && (kind === 'foreground' || wrapper.dataset.strictlyVisible === 'true');
     if (!needsVisibleSharpness && pageEditReadinessSatisfied(doc, pageNum, {
       requiredLayers: RENDER_EDIT_READY_LAYERS,
@@ -2247,7 +2302,7 @@ function renderContinuousPage(
         window.__pdfRenderInFlight = (window.__pdfRenderInFlight || 0) + 1;
       }
       try {
-        return await _renderContinuousPageNow(
+        const result = await _renderContinuousPageNow(
           pageNum,
           isCurrent,
           kind,
@@ -2255,6 +2310,16 @@ function renderContinuousPage(
           (cancel) => { cancelBackend = cancel; },
           { reuseMountedRaster, awaitSemantic },
         );
+        if (result?.rasterReady && !reuseMountedRaster && _continuousWindowMatches(doc)) {
+          const elapsed = performance.now() - queuedAt;
+          const samples = _continuousWindow.sharpLatencySamples ||= [];
+          samples.push(elapsed);
+          if (samples.length > 20) samples.shift();
+          const sorted = [...samples].sort((a, b) => a - b);
+          _continuousWindow.recentSharpLatencyMs = sorted[Math.ceil(sorted.length * 0.95) - 1];
+          recordPerformanceSample('sharpRenderEndToEndMs', elapsed);
+        }
+        return result;
       } finally {
         releaseInFlight();
         if (retiredAt != null) {
@@ -2331,20 +2396,28 @@ async function _ensureContinuousSharpTiles({
   if (!scrollContainer || !pageWrapper.isConnected) return false;
   const pageRect = pageWrapper.getBoundingClientRect();
   const viewportRect = scrollContainer.getBoundingClientRect();
+  const predicted = _sharpRegion(doc, pageWrapper, true);
+  const predictedRect = predicted ? {
+    left: pageRect.left + predicted.left, right: pageRect.left + predicted.right,
+    top: pageRect.top + predicted.top, bottom: pageRect.top + predicted.bottom,
+  } : viewportRect;
   const plans = planVisiblePageTiles({
     pageRect,
     viewportRect,
+    predictedRect,
     cssScale: expectedScale,
     devicePixelRatio,
     pageWidthPt: viewport.width / expectedScale,
     pageHeightPt: viewport.height / expectedScale,
-    maxBitmapAxisPx: CONTINUOUS_MAX_AXIS_PX,
+    maxBitmapAxisPx: 1024,
     seamOverscanPx: 2,
   });
   if (!plans.length) return false;
 
   const revision = ++_surfacePublicationRevision;
   const created = [];
+  const retained = new Set();
+  const identity = _sharpIdentity(doc, pageNum);
   const abort = () => {
     for (const canvas of created) {
       _forgetMountedCanvas(doc, pageNum, canvas, 'sharp-aborted');
@@ -2360,19 +2433,20 @@ async function _ensureContinuousSharpTiles({
         || doc.scale !== expectedScale || getCanvasDPR() !== devicePixelRatio) return abort();
     const regionBucket = [plan.regionXpt, plan.regionYpt, plan.regionWpt, plan.regionHpt]
       .map((value) => Math.round(value * 1_000) / 1_000).join(',');
-    const request = {
-      regionXpt: plan.regionXpt,
-      regionYpt: plan.regionYpt,
-      regionWpt: plan.regionWpt,
-      regionHpt: plan.regionHpt,
-      requiredScale: plan.targetScale,
-    };
-    let entry = tileCacheFindCovering(doc.filePath, pageNum, rotation, request)
-      || tileCacheGet(doc.filePath, pageNum, plan.targetScale, rotation, regionBucket);
+    const existing = [...canvasContainer.querySelectorAll('.page-sharp-tile')].find((tile) =>
+      tile.dataset.tileKey === `${identity}:${plan.targetScale}:${regionBucket}`
+      && tile.width > 0 && tile.height > 0);
+    if (existing) {
+      retained.add(existing);
+      touchRenderResource(_mountedCanvasResourceKey(doc, pageNum, existing.dataset.renderSurface));
+      continue;
+    }
+    let entry = tileCacheGet(doc.filePath, pageNum, plan.targetScale, rotation, regionBucket);
 
     const tileCanvas = document.createElement('canvas');
     tileCanvas.className = 'page-sharp-tile';
     tileCanvas.dataset.page = String(pageNum);
+    tileCanvas.dataset.tileKey = `${identity}:${plan.targetScale}:${regionBucket}`;
     tileCanvas.dataset.sharpRevision = String(revision);
     tileCanvas.dataset.renderSurface = `sharp-${revision}-${index}`;
     tileCanvas.dataset.regionXpt = String(plan.regionXpt);
@@ -2386,7 +2460,6 @@ async function _ensureContinuousSharpTiles({
     tileCanvas.style.height = `${plan.cssHeight}px`;
     tileCanvas.style.pointerEvents = 'none';
     tileCanvas.style.zIndex = '1';
-    canvasContainer.appendChild(tileCanvas);
     created.push(tileCanvas);
 
     if (!entry || Number(entry.regionMeta?.renderScale) + 0.01 < plan.targetScale) {
@@ -2401,15 +2474,17 @@ async function _ensureContinuousSharpTiles({
       });
       try {
         const { invokeTileRegion } = await import('./progressive-render.js');
+        const nativeRegion = unrotatedTileRegion(plan,
+          viewport.width / expectedScale, viewport.height / expectedScale, rotation);
         const raw = await invokeTileRegion({
           path: doc.filePath,
           pageIndex: pageNum - 1,
           scale: plan.targetScale,
-          rotation,
-          regionXPt: plan.regionXpt,
-          regionYPt: plan.regionYpt,
-          regionWPt: plan.regionWpt,
-          regionHPt: plan.regionHpt,
+          rotation: 0,
+          regionXPt: nativeRegion.x,
+          regionYPt: nativeRegion.y,
+          regionWPt: nativeRegion.width,
+          regionHPt: nativeRegion.height,
           requestId: publicationToken.requestId,
         });
         if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected
@@ -2426,17 +2501,15 @@ async function _ensureContinuousSharpTiles({
         if (!width || !height || byteLength !== bytes.length - 8) {
           throw new Error('continuous sharp-tile dimensions do not match response bytes');
         }
+        const rotated = rotateTileRgba(new Uint8ClampedArray(
+          bytes.buffer, bytes.byteOffset + 8, byteLength), width, height, rotation);
         await tileCacheSet(
           doc.filePath,
           pageNum,
           plan.targetScale,
           rotation,
           regionBucket,
-          new ImageData(new Uint8ClampedArray(
-            bytes.buffer,
-            bytes.byteOffset + 8,
-            byteLength,
-          ), width, height),
+          new ImageData(rotated.pixels, rotated.width, rotated.height),
           {
             regionXpt: plan.regionXpt,
             regionYpt: plan.regionYpt,
@@ -2467,17 +2540,32 @@ async function _ensureContinuousSharpTiles({
     tileCanvas.width = entry.w;
     tileCanvas.height = entry.h;
     tileCanvas.getContext('2d')?.drawImage(entry.bitmap, 0, 0);
-    _trackMountedCanvas(doc, pageNum, tileCanvas, tileCanvas.dataset.renderSurface);
+    releaseTileAfterCanvasCopy(entry);
+    // Track only after the entire replacement set is ready to publish.
+
   }
 
+  if (_isStaleDoc(doc, publicationToken) || !isCurrent() || !pageWrapper.isConnected
+      || doc.scale !== expectedScale || getCanvasDPR() !== devicePixelRatio) return abort();
+  for (const tile of created) {
+    canvasContainer.appendChild(tile);
+    _trackMountedCanvas(doc, pageNum, tile, tile.dataset.renderSurface);
+  }
   for (const old of canvasContainer.querySelectorAll('.page-sharp-tile')) {
-    if (old.dataset.sharpRevision === String(revision)) continue;
+    if (retained.has(old) || created.includes(old)) continue;
     _forgetMountedCanvas(doc, pageNum, old, 'sharp-old');
     old.width = 0;
     old.height = 0;
     old.remove();
   }
-  return created.length === plans.length;
+  pageWrapper._sharpCoverage = {
+    identity, scale: expectedScale * devicePixelRatio,
+    left: Math.min(...plans.map((plan) => plan.cssLeft)),
+    top: Math.min(...plans.map((plan) => plan.cssTop)),
+    right: Math.max(...plans.map((plan) => plan.cssLeft + plan.cssWidth)),
+    bottom: Math.max(...plans.map((plan) => plan.cssTop + plan.cssHeight)),
+  };
+  return created.length + retained.size === plans.length;
 }
 
 async function _runContinuousSemanticLayers({
@@ -2551,6 +2639,9 @@ async function _runContinuousSemanticLayers({
     else delete pageWrapper.dataset.semanticLayoutKey;
   }
 
+  await ensureAnnotationsForPage(pageNum, doc);
+  if (signal?.aborted || !isCurrent() || _isStaleDoc(doc, publicationToken)
+      || !pageWrapper.isConnected) return { pageNum, superseded: true };
   const annotationContext = annotationCanvasEl.getContext('2d');
   renderAnnotationsForPage(annotationContext, pageNum, viewport.width, viewport.height);
   _trackMountedCanvas(doc, pageNum, annotationCanvasEl, 'annotation');
@@ -2668,7 +2759,10 @@ async function _renderContinuousPageNow(
   if (canvasContainer.querySelector('.page-preview-image, .page-preview-canvas')
       || pageWrapper.dataset.rasterQuality === RasterQuality.INTERACTIVE) {
     _continuousPageStatus(pageWrapper, 'preview');
-  } else if (reuseMountedRaster) {
+  } else if (reuseMountedRaster || _continuousMountedRasterCanReuse(doc, pageNum)
+      || (pageWrapper.dataset.rasterTiled === 'true'
+        && Number(pageWrapper.dataset.rasterSourceRevision) === (Number(doc.revisionState?.livePdfRevision) || 0)
+        && canvasContainer.querySelector('.pdf-page-raster')?.naturalWidth > 0)) {
     _continuousPageStatus(pageWrapper, 'ready');
   } else {
     _continuousPageStatus(pageWrapper, 'loading', { message: 'Rendering page…' });
@@ -2782,7 +2876,8 @@ async function _renderContinuousPageNow(
   const targetRasterScale = requestedRasterScale(doc.scale, devicePixelRatio);
   const pageMaxAxisPt = Math.max(viewport.width, viewport.height) / doc.scale;
   const maximumWholePageScale = CONTINUOUS_MAX_AXIS_PX / pageMaxAxisPt;
-  const renderScale = Math.min(targetRasterScale, maximumWholePageScale);
+  const renderScale = targetRasterScale <= maximumWholePageScale
+    ? targetRasterScale : Math.min(targetRasterScale, 1600 / pageMaxAxisPt);
   const baseQuality = renderScale + 0.01 >= targetRasterScale
     ? RasterQuality.FINAL
     : RasterQuality.PREVIEW;
@@ -2795,7 +2890,16 @@ async function _renderContinuousPageNow(
     renderScale,
   );
 
-  let rasterEntry = null;
+  const reuseTiledBase = pageWrapper.dataset.rasterTiled === 'true'
+    && Number(pageWrapper.dataset.rasterSourceRevision) === (Number(doc.revisionState?.livePdfRevision) || 0)
+    && Number(pageWrapper.dataset.rasterRotation) === (extraRotation || 0)
+    && Number(pageWrapper.dataset.rasterTargetScale) === targetRasterScale
+    && canvasContainer.querySelector('.pdf-page-raster')?.naturalWidth > 0;
+  let rasterEntry = reuseTiledBase ? {
+    image: canvasContainer.querySelector('.pdf-page-raster'),
+    w: canvasContainer.querySelector('.pdf-page-raster').naturalWidth,
+    h: canvasContainer.querySelector('.pdf-page-raster').naturalHeight,
+  } : null;
   let directImageLease = null;
   let directRasterImage = null;
   const cancelBackend = (reason = 'render-cancelled') => {
@@ -2808,7 +2912,7 @@ async function _renderContinuousPageNow(
   // fetch→Blob→ImageBitmap→canvas allocation chain. The shared bitmap
   // registry remains the complete fallback and continues to serve single-page
   // and viewport rendering.
-  if (doc.performanceProfile?.largeDocument && rasterContext.directStream === true) {
+  if (!reuseTiledBase && rasterContext.directStream === true) {
     try {
       const { beginPdfPageImageStream } = await import('./engine-router.js');
       const rasterKey = serializePageRasterKey(createPageRasterKey({
@@ -2895,7 +2999,9 @@ async function _renderContinuousPageNow(
     pdfCanvasEl = canvasContainer.querySelector('.pdf-canvas');
   }
 
-  if (directRasterImage) {
+  if (reuseTiledBase) {
+    directRasterImage = rasterEntry.image;
+  } else if (directRasterImage) {
     const geometryCanvas = _publishContinuousRasterImage(
       doc,
       pageNum,
@@ -2934,6 +3040,7 @@ async function _renderContinuousPageNow(
     state.renderEngine = rasterEntry.lastUsedAt ? 'Raster (PDFium · registry)' : 'Raster (PDFium)';
   }
 
+  pageWrapper.dataset.rasterTiled = String(baseQuality !== RasterQuality.FINAL);
   let visibleFinal = baseQuality === RasterQuality.FINAL;
   if (!visibleFinal) {
     visibleFinal = await _ensureContinuousSharpTiles({
@@ -2988,6 +3095,10 @@ async function _renderContinuousPageNow(
   markLayer('raster');
 
   const fullQualityPaintedAt = performance.now();
+  pageWrapper.dataset.sharpDecodedAt = String(fullQualityPaintedAt);
+  if (visibleFinal && pageWrapper.dataset.strictlyVisible === 'true') {
+    recordPerformanceSample('visibleToSharpMs', fullQualityPaintedAt - Number(pageWrapper.dataset.visibleAt || fullQualityPaintedAt));
+  }
   _recordContinuousPreviewAvailable(doc, pageNum, pageWrapper, {
     publishedAt: fullQualityPaintedAt,
     source: 'full-raster',
@@ -3027,6 +3138,16 @@ async function _renderContinuousPageNow(
     rasterCompletedAt - startedAt,
   );
   recordPerformanceSample('pageInteractiveReadyMs', rasterCompletedAt - startedAt);
+  if (kind === 'directional' && pageWrapper.dataset.strictlyVisible !== 'true' && !options.awaitSemantic) {
+    await ensureAnnotationsForPage(pageNum, doc);
+    if (signal?.aborted || !isCurrent() || _isStaleDoc(doc, publicationToken)
+        || !pageWrapper.isConnected) return { pageNum, superseded: true };
+    renderAnnotationsForPage(annotationCanvasEl.getContext('2d'), pageNum, viewport.width, viewport.height);
+    _trackMountedCanvas(doc, pageNum, annotationCanvasEl, 'annotation');
+    markLayer('annotations');
+    if (isNewPage) setupContinuousPageEvents(annotationCanvasEl, pageNum);
+    return { pageNum, rasterReady: true, semanticPending: true };
+  }
   const semanticTask = _scheduleContinuousSemanticLayers({
     doc,
     pageNum,
@@ -3164,6 +3285,10 @@ function _createContinuousWrapper(doc, pageNum, rect) {
     preview.className = 'page-preview-image';
     preview.alt = '';
     preview.draggable = false;
+    preview.onload = async () => {
+      try { await preview.decode?.(); } catch { return; }
+      if (preview.isConnected) _recordContinuousPreviewAvailable(doc, pageNum, pageWrapper, { source: 'thumbnail' });
+    };
     preview.src = cachedPreview.src;
     preview.style.position = 'absolute';
     preview.style.inset = '0';
@@ -3414,7 +3539,7 @@ function _updateContinuousVirtualWindow({
     layout,
     contentWidth: baseContentWidth,
   });
-  const overscan = planContinuousRenderOverscan({
+  const legacyOverscan = planContinuousRenderOverscan({
     direction,
     scrollVelocityPxPerMs: stateForWindow.scrollVelocityPxPerMs || 0,
     recentPreviewLatencyMs: stateForWindow.recentPreviewLatencyMs || 150,
@@ -3423,13 +3548,21 @@ function _updateContinuousVirtualWindow({
     budgetAllowsOverscan: backgroundRenderAdmissionAllowed(),
   });
   const velocity = Math.abs(Number(stateForWindow.scrollVelocityPxPerMs) || 0);
+  const lead = sharpLeadDistance({ viewportHeight: scrollContainer.clientHeight,
+    velocity, latencyMs: stateForWindow.recentSharpLatencyMs || 150 });
+  stateForWindow.sharpLeadPx = lead;
+  const overscan = backgroundRenderAdmissionAllowed() ? {
+    lookAheadPx: lead,
+    overscanBeforePx: direction < 0 ? lead : scrollContainer.clientHeight,
+    overscanAfterPx: direction < 0 ? scrollContainer.clientHeight : lead,
+  } : legacyOverscan;
   recordPerformanceSample('scrollVelocityPxPerMs', velocity);
   recordPerformanceSample('observerLeadDistancePx', overscan.lookAheadPx);
   recordPerformanceSample(
     'lookAheadCoverageMs',
     velocity > 0 ? overscan.lookAheadPx / velocity : Math.max(150, stateForWindow.recentPreviewLatencyMs || 150),
   );
-  const wanted = index.visiblePages({
+  const candidatePages = index.visiblePages({
     scrollTop: scrollContainer.scrollTop,
     viewportHeight: scrollContainer.clientHeight,
     scale: doc.scale,
@@ -3441,6 +3574,19 @@ function _updateContinuousVirtualWindow({
     maxPages: Math.max(9, protectedPages.length),
     protectedPages,
   });
+  const strictlyVisible = new Set(index.visiblePages({
+    scrollTop: scrollContainer.scrollTop,
+    viewportHeight: scrollContainer.clientHeight,
+    scale: doc.scale,
+    layout,
+    overscanPx: 0,
+    maxPages: 9,
+    protectedPages: [],
+  }));
+  const wanted = planSharpWindow({ visiblePages: [...strictlyVisible], candidates: candidatePages,
+    protectedPages, pageCount: doc.pdfDoc.numPages, direction,
+    allowPrefetch: backgroundRenderAdmissionAllowed(), maxPages: 9 });
+  stateForWindow.sharpWanted = wanted;
   const retainedMountPages = planContinuousMountRetention({
     wantedPages: wanted,
     mountedPages: [...mounted.keys()],
@@ -3453,15 +3599,7 @@ function _updateContinuousVirtualWindow({
     retainMounted: !force && backgroundRenderAdmissionAllowed(),
   });
   const retainedMountSet = new Set(retainedMountPages);
-  const strictlyVisible = new Set(index.visiblePages({
-    scrollTop: scrollContainer.scrollTop,
-    viewportHeight: scrollContainer.clientHeight,
-    scale: doc.scale,
-    layout,
-    overscanPx: 0,
-    maxPages: 9,
-    protectedPages: [],
-  }));
+
 
   for (const [pageNum, wrapper] of mounted) {
     if (retainedMountSet.has(pageNum)) continue;
@@ -3494,8 +3632,15 @@ function _updateContinuousVirtualWindow({
     }
     const strictlyVisiblePage = strictlyVisible.has(pageNum);
     const isVisible = strictlyVisiblePage || stateForWindow.intersecting?.has(pageNum);
-    if (isVisible && (force || interactionSettled || wrapper.dataset.strictlyVisible !== 'true')) {
+    if (strictlyVisiblePage && wrapper.dataset.strictlyVisible !== 'true') {
       wrapper.dataset.visibleAt = String(performance.now());
+      const sharp = _continuousMountedRasterCanReuse(doc, pageNum);
+      incrementPerformanceCounter('sharpViewportEntries');
+      incrementPerformanceCounter(sharp ? 'sharpPreparedEntries' : 'sharpPreparationMisses');
+      wrapper.dataset.sharpAtEntry = String(sharp);
+      recordPerformanceEvent('continuous:sharp-entry', { pageNum, sharp,
+        visibleAt: Number(wrapper.dataset.visibleAt),
+        cold: wrapper.dataset.previewSourceAvailableAtMount !== 'true' });
     }
     // Observer intersections are scheduling hints and may lag behind a fast
     // scroll. Only geometric viewport membership may protect raster memory.
@@ -3510,40 +3655,44 @@ function _updateContinuousVirtualWindow({
 
   if (scheduleRenders) {
     const protectedSet = new Set(protectedPages);
+    const visiblePages = [...strictlyVisible].sort((a, b) => a - b);
+    _continuousRenderScheduler.reprioritize((entry) => entry.ownerKey === stateForWindow.ownerKey ? {
+      priority: sharpRenderPriority(entry.pageNum, visiblePages, direction),
+      kind: strictlyVisible.has(entry.pageNum) || protectedSet.has(entry.pageNum) ? 'foreground' : 'directional',
+    } : null);
     for (const pageNum of renderOrder) {
       const wrapper = mounted.get(pageNum);
       if (!wrapper?.isConnected) continue;
-      const strictlyVisiblePage = strictlyVisible.has(pageNum);
-      const visible = strictlyVisiblePage || stateForWindow.intersecting?.has(pageNum);
-      const editRequired = protectedSet.has(pageNum);
-      const priority = 1_000 - Math.abs(pageNum - centerPage);
-      if (strictlyVisiblePage || editRequired) {
-        // Pixels needed during motion use a CSS-resolution raster first. The
-        // expensive DPR raster is admitted only after scroll settlement (or
-        // immediately for an editor/readiness lease).
-        void scheduleContinuousPreview(doc, pageNum, 2_000 + priority, 'foreground');
-        void renderContinuousInteractivePage(pageNum, 3_000 + priority, 'foreground');
-        if (interactionSettled || editRequired) {
-          if (wrapper.dataset.rasterQuality !== RasterQuality.FINAL
-              && !Number.isFinite(Number(wrapper.dataset.finalRequestedAt))) {
-            wrapper.dataset.finalRequestedAt = String(performance.now());
-          }
-          void renderContinuousPage(
-            pageNum,
-            2_000 + priority,
-            'foreground',
-            editRequired && !visible
-              ? CONTINUOUS_RENDER_LANES.SEMANTIC
-              : CONTINUOUS_RENDER_LANES.VISIBLE_FULL,
-            { awaitSemantic: editRequired },
-          );
+      const foreground = strictlyVisible.has(pageNum) || protectedSet.has(pageNum);
+      if (!foreground && !_continuousMountedRasterCanReuse(doc, pageNum, true)) {
+        const resources = renderResourceBudgetSnapshot();
+        const rect = index.pageRect(pageNum, { scale: doc.scale, layout, contentWidth: baseContentWidth });
+        const dpr = getCanvasDPR();
+        let estimate = Math.ceil(rect.width * dpr) * Math.ceil(rect.height * dpr) * 4;
+        if (Math.max(rect.width, rect.height) * dpr > CONTINUOUS_MAX_AXIS_PX) {
+          const region = _sharpRegion(doc, wrapper, true);
+          if (!region) continue;
+          const baseBytes = 1600 * 1600 * 4;
+          const tilePlans = planVisiblePageTiles({
+            pageRect: { left: 0, top: 0, right: rect.width, bottom: rect.height },
+            viewportRect: region, cssScale: doc.scale, devicePixelRatio: dpr,
+            pageWidthPt: rect.width / doc.scale, pageHeightPt: rect.height / doc.scale,
+            maxBitmapAxisPx: 1024,
+          });
+          estimate = baseBytes + tilePlans.reduce((sum, tile) => sum
+            + tile.expectedPixelWidth * tile.expectedPixelHeight * 4, 0);
         }
-        continue;
+        if (!backgroundRenderAdmissionAllowed() || resources.usage.active.javascript + estimate
+            > resources.budget.javascriptBytes * resources.budget.activeDocumentShare) continue;
       }
-      if (!backgroundRenderAdmissionAllowed()
-          || (!interactionSettled && !isPdfForegroundIdle())) continue;
-      void scheduleContinuousPreview(doc, pageNum, priority, 'background');
-      if (visible) void renderContinuousInteractivePage(pageNum, priority, 'background');
+      if (foreground && wrapper.dataset.rasterQuality !== RasterQuality.FINAL
+          && !Number.isFinite(Number(wrapper.dataset.finalRequestedAt))) {
+        wrapper.dataset.finalRequestedAt = String(performance.now());
+      }
+      void renderContinuousPage(pageNum, sharpRenderPriority(pageNum, visiblePages, direction),
+        foreground ? 'foreground' : 'directional',
+        foreground ? CONTINUOUS_RENDER_LANES.VISIBLE_FULL : CONTINUOUS_RENDER_LANES.DIRECTIONAL_FULL,
+        { awaitSemantic: protectedSet.has(pageNum) });
     }
   }
   if (typeof window !== 'undefined') {
@@ -3586,6 +3735,16 @@ export function getContinuousRenderResourceStats() {
     + (Number(semanticSchedule.statistics?.maxRunning) || 0);
   return Object.freeze({
     mountedPageSurfaces,
+    sharpWindow: [...(_continuousWindow?.mounted || [])].map(([pageNum, wrapper]) => ({
+      pageNum, visible: wrapper.dataset.strictlyVisible === 'true',
+      sharp: _continuousMountedRasterCanReuse(getActiveDocument(), pageNum),
+      prepared: _continuousMountedRasterCanReuse(getActiveDocument(), pageNum, true),
+      visibleAt: Number(wrapper.dataset.visibleAt) || null,
+      decodedAt: Number(wrapper.dataset.sharpDecodedAt) || null,
+      quality: wrapper.dataset.rasterQuality || null,
+      status: wrapper.querySelector('.page-render-status')?.textContent || null,
+      tileCoverage: wrapper._sharpCoverage || null,
+    })),
     renderedPages: _renderedPages.size,
     scheduled: Object.freeze({
       queued: Object.freeze([...previewSchedule.queued, ...fullSchedule.queued, ...semanticSchedule.queued]),
@@ -3601,10 +3760,8 @@ export function getContinuousRenderResourceStats() {
 }
 
 /**
- * Contract the settled continuous working set to pages that are actually on
- * screen (plus an offscreen active-editor page). Directional readiness is
- * still provided by the thumbnail/preview cache, so the next page appears
- * immediately without retaining several full-DPR canvases while idle.
+ * Keep the prepared sharp window across pauses. Under memory pressure only
+ * visible and editor-owned pages are protected; speculative pixels are evictable.
  */
 export function trimIdleContinuousPageSurfaces() {
   const doc = getActiveDocument();
@@ -3623,7 +3780,8 @@ export function trimIdleContinuousPageSurfaces() {
     maxPages: 9,
     protectedPages,
   });
-  const keep = new Set(visible);
+  const keep = new Set(backgroundRenderAdmissionAllowed()
+    ? [...visible, ...(stateForWindow.sharpWanted || [])] : visible);
   if (!keep.size && Number.isInteger(Number(doc.currentPage))) keep.add(Number(doc.currentPage));
   for (const pageNum of protectedPages) keep.add(pageNum);
 
@@ -4151,6 +4309,25 @@ function _bindContinuousScrollSync() {
   let pendingFrame = 0;
   let lastScrollTop = container.scrollTop;
   let lastScrollFrameAt = 0;
+  let motionFrame = 0;
+  let lastMotionFrameAt = 0;
+  let lastMotionInputAt = 0;
+  const sampleMotion = (timestamp) => {
+    motionFrame = 0;
+    const owner = getActiveDocument();
+    if (!_continuousWindowMatches(owner) || timestamp - lastMotionInputAt > 100) {
+      lastMotionFrameAt = 0;
+      return;
+    }
+    if (lastMotionFrameAt) recordPerformanceSample('motionFrameIntervalMs', timestamp - lastMotionFrameAt);
+    lastMotionFrameAt = timestamp;
+    const visible = [..._strictlyVisibleContinuousPageSet(owner)];
+    const sharp = visible.length > 0 && visible.every((page) => _continuousMountedRasterCanReuse(owner, page));
+    incrementPerformanceCounter('sharpMotionFrames');
+    if (!sharp) incrementPerformanceCounter('sharpMotionMissFrames');
+    recordPerformanceEvent('continuous:motion-frame', { timestamp, visible, sharp });
+    motionFrame = requestAnimationFrame(sampleMotion);
+  };
   let lastVelocitySampleAt = performance.now();
   container.addEventListener('wheel', () => {
     const owner = getActiveDocument();
@@ -4164,6 +4341,8 @@ function _bindContinuousScrollSync() {
     // vorige/volgende. Daarom hier overslaan.
     if (!doc || doc.viewMode !== 'continuous' || doc.facingSpread) return;
     const now = performance.now();
+    lastMotionInputAt = now;
+    if (!motionFrame) motionFrame = requestAnimationFrame(sampleMotion);
     const deltaPx = container.scrollTop - lastScrollTop;
     const direction = deltaPx >= 0 ? 1 : -1;
     const elapsedMs = Math.max(1, now - lastVelocitySampleAt);
@@ -4212,7 +4391,7 @@ function _bindContinuousScrollSync() {
       _syncCurrentPageFromScroll(container);
       const owner = getActiveDocument();
       if (owner?.viewMode === 'continuous') {
-        scheduleNearbyLowResPreviews(owner.pdfDoc, owner.currentPage, direction);
+        // The sharp window owns continuous prefetch admission, including during motion.
       }
       recordPerformanceSample('scrollFrameWorkMs', performance.now() - frameStartedAt);
     });
@@ -4437,9 +4616,7 @@ export async function renderContinuous(forceRebuild = false, {
           if (!pageNum) continue;
           if (entry.isIntersecting) {
             current.intersecting.add(pageNum);
-            if (entry.target.dataset.strictlyVisible !== 'true') {
-              entry.target.dataset.visibleAt = String(performance.now());
-            }
+
             if (entry.target.querySelector('.page-preview-image, .page-preview-canvas')) {
               _recordContinuousPreviewAvailable(doc, pageNum, entry.target, {
                 source: entry.target.querySelector('.page-preview-image')
@@ -4447,8 +4624,7 @@ export async function renderContinuous(forceRebuild = false, {
               });
             }
             if (!current.synchronizing) {
-              void scheduleContinuousPreview(doc, pageNum, 3_000, 'foreground');
-              void renderContinuousInteractivePage(pageNum, 3_000, 'foreground');
+              void renderContinuousPage(pageNum, 4_000, 'foreground');
             }
           } else {
             current.intersecting.delete(pageNum);
@@ -4743,7 +4919,7 @@ async function _prefetchOnePage(doc, pageNum, centerPage) {
 }
 
 // Go to specific page
-export async function goToPage(pageNum, { origin = 'user' } = {}) {
+export async function goToPage(pageNum, { origin = 'user', absolute = false, behavior = 'smooth' } = {}) {
   const doc = getActiveDocument();
   if (!doc?.pdfDoc) return;
   notePerformanceInteraction('page-jump');
@@ -4764,7 +4940,7 @@ export async function goToPage(pageNum, { origin = 'user' } = {}) {
     // Een vorige/volgende-knop levert currentPage ± 1: dat landt op de zíjpagina
     // van de huidige spread (zelfde anker). Dat interpreteren we als "spring een
     // hele spread in die richting".
-    if (targetAnchor === curAnchor && pageNum !== curAnchor) {
+    if (!absolute && targetAnchor === curAnchor && pageNum !== curAnchor) {
       targetAnchor = pageNum > curAnchor
         ? _nextSpreadAnchor(curAnchor, numPages)
         : _prevSpreadAnchor(curAnchor);
@@ -4774,7 +4950,7 @@ export async function goToPage(pageNum, { origin = 'user' } = {}) {
     bumpDocumentViewportRevision(doc, 'page');
     hideProperties();
     await renderContinuous();
-    updateActiveThumbnail();
+    updateActiveThumbnail(false, absolute ? pageNum : targetAnchor);
     updateAllStatus();
     return;
   }
@@ -4807,10 +4983,10 @@ export async function goToPage(pageNum, { origin = 'user' } = {}) {
     // sequential nav is a cache hit (skips the cold Rust extract).
     schedulePrefetch(pageNum);
   } else {
-    _scrollContinuousPageIntoView(pageNum, 'smooth');
+    _scrollContinuousPageIntoView(pageNum, window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : behavior);
   }
   scheduleBackgroundMetadata(pageNum, direction);
-  if (doc.viewMode === 'continuous') scheduleNearbyLowResPreviews(doc.pdfDoc, pageNum, direction);
+
 
   // Update active thumbnail in left panel
   updateActiveThumbnail();

@@ -1,3 +1,6 @@
+import { createOutputJob } from './output-job.js';
+import { tempDir, join } from '@tauri-apps/api/path';
+import { writeBinaryFile } from '../core/platform.js';
 // Background print job: render the selected pages to a temp PDF and spool it
 // to the printer, reporting progress through printProgressStore so the print
 // dialog can close immediately and the user keeps working.
@@ -17,9 +20,10 @@ import {
  * @param {{ pages:number[], copies:number, printer:string }} opts
  */
 export async function runPrintJob({ pages, copies, printer }) {
-  startPrintProgress(i18next.t('dialogs:print.progress.preparing'));
+  let job, tempPath = null;
   try {
-    const doc = getActiveDocument();
+    job = await createOutputJob(i18next.t('dialogs:print.progress.preparing'));
+    const doc = job.snapshot;
     if (!doc?.pdfDoc) throw new Error(i18next.t('dialogs:print.progress.errNoDocument'));
     const exportScale = 300 / 72;
     const newPdf = await PDFDocument.create();
@@ -29,12 +33,16 @@ export async function runPrintJob({ pages, copies, printer }) {
     for (let i = 0; i < pages.length; i++) {
       const pageNum = pages[i];
       updatePrintProgress(i18next.t('dialogs:print.progress.renderingPage', { page: pageNum, current: i + 1, total: pages.length }), i / total);
-      const canvas = await renderPageOffscreen(pageNum, exportScale);
-      const jpegBytes = await canvasToBytes(canvas, 'jpeg', 0.92);
+      job.check();
+      const canvas = await renderPageOffscreen(pageNum, exportScale, doc, job.signal);
+      let jpegBytes;
+      try { jpegBytes = await canvasToBytes(canvas, 'jpeg', 0.92); } finally { canvas.width = canvas.height = 0; }
+      job.check();
+      job.retainEncodedPage(jpegBytes.byteLength);
       const jpegImage = await newPdf.embedJpg(jpegBytes);
 
       const origPage = await doc.pdfDoc.getPage(pageNum);
-      const extraRotation = getPageRotation(pageNum);
+      const extraRotation = doc.pageRotations?.[pageNum] || 0;
       const origViewportOpts = { scale: 1 };
       if (extraRotation) origViewportOpts.rotation = (origPage.rotate + extraRotation) % 360;
       const origViewport = origPage.getViewport(origViewportOpts);
@@ -45,10 +53,13 @@ export async function runPrintJob({ pages, copies, printer }) {
 
     updatePrintProgress(i18next.t('dialogs:print.progress.saving'), pages.length / total);
     const pdfBytes = await newPdf.save();
-    const tempPath = await invoke('write_temp_pdf', { data: Array.from(pdfBytes) });
+    job.check();
+    tempPath = await join(await tempDir(), `opds-print-${crypto.randomUUID()}.pdf`);
+    await writeBinaryFile(tempPath, pdfBytes);
     if (!tempPath) throw new Error(i18next.t('dialogs:print.progress.errTempFile'));
 
-    const numCopies = Math.max(1, copies);
+    job.submitted();
+    const numCopies = Math.max(1, Number(copies) || 1);
     for (let c = 0; c < numCopies; c++) {
       updatePrintProgress(
         numCopies > 1
@@ -59,11 +70,14 @@ export async function runPrintJob({ pages, copies, printer }) {
       await invoke('print_pdf', { path: tempPath, printer });
     }
 
-    finishPrintProgress(i18next.t('dialogs:print.progress.sent'));
-    // delete_file (not delete_temp_file — that command does not exist).
-    setTimeout(async () => { try { await invoke('delete_file', { path: tempPath }); } catch (_) {} }, 30000);
-  } catch (e) {
-    console.error('Print job failed:', e);
-    failPrintProgress(i18next.t('dialogs:print.progress.failed', { error: e?.message ?? e }));
+    await job.finish('completed', i18next.t('dialogs:print.progress.sent'));
+  } catch (error) {
+    if (job) await job.finish(job.signal.aborted ? 'cancelled' : 'failed', job.signal.aborted ? 'Cancelled' : error.message);
+    else failPrintProgress(error.message);
+  } finally {
+    if (tempPath) {
+      // Native print has consumed the file before resolving (including failures).
+      try { await invoke('delete_file', { path: tempPath }); } catch (error) { console.warn('Print temporary cleanup failed', error); }
+    }
   }
 }

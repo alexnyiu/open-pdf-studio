@@ -1,3 +1,4 @@
+import { estimateRetainedBytes } from './core/retained-value-size.js';
 /**
  * MCP <-> WebView bridge.
  *
@@ -1097,6 +1098,10 @@ async function handleGetViewportState() {
   let renderResources = null;
   let renderedSurfaceStates = [];
   let performanceMetrics = null;
+  const [loader, compareRender, compareText, searchCache] = await Promise.all([
+    import('/js/pdf/loader.js'), import('/js/compare/compare-viewport.js'),
+    import('/js/compare/text-compare.js'), import('/js/search/text-cache.js'),
+  ]);
   let nativeRenderResources = null;
   let documentSaveState = null;
   let safeSaveProvider = null;
@@ -1169,6 +1174,7 @@ async function handleGetViewportState() {
         pageNumbers: Array.isArray(command.pageNumbers) ? [...command.pageNumbers] : null,
       } : null;
       documentHistory = {
+        estimatedRetainedBytes: estimateRetainedBytes([doc.undoStack, doc.redoStack]),
         undoDepth: Array.isArray(doc.undoStack) ? doc.undoStack.length : 0,
         redoDepth: Array.isArray(doc.redoStack) ? doc.redoStack.length : 0,
         savedUndoStackLength: Number.isSafeInteger(doc.savedUndoStackLength)
@@ -1349,6 +1355,9 @@ async function handleGetViewportState() {
     renderResources,
     renderedSurfaceStates,
     nativeRenderResources,
+    sourceBytes: loader.sourceByteCacheSnapshot(),
+    comparisonResources: { ...compareRender.comparisonRenderResourceSnapshot(), ...compareText.comparisonTextResourceSnapshot() },
+    searchCache: searchCache.textCacheSnapshot(),
     mountedThumbnails: Number(window.__mountedThumbnailCount) || 0,
     // Engine + timing — what the user sees in the status-bar chip.
     engine: renderEngine,
@@ -1432,6 +1441,10 @@ async function handleGetPerformanceMetrics(params) {
     import('/js/core/state.ts'),
   ]);
   const activeDocument = stateModule.state?.documents?.[stateModule.state.activeDocumentIndex] || null;
+  const [loader, compareRender, compareText, searchCache] = await Promise.all([
+    import('/js/pdf/loader.js'), import('/js/compare/compare-viewport.js'),
+    import('/js/compare/text-compare.js'), import('/js/search/text-cache.js'),
+  ]);
   let nativeRenderResources = null;
   try { nativeRenderResources = await tauriInvoke()?.('get_render_resource_stats') ?? null; } catch {}
   return {
@@ -1442,6 +1455,9 @@ async function handleGetPerformanceMetrics(params) {
     resources: rendererModule.getContinuousRenderResourceStats(),
     renderedSurfaceStates: rendererModule.getRenderedSurfaceStates(),
     nativeRenderResources,
+    sourceBytes: loader.sourceByteCacheSnapshot(),
+    comparisonResources: { ...compareRender.comparisonRenderResourceSnapshot(), ...compareText.comparisonTextResourceSnapshot() },
+    searchCache: searchCache.textCacheSnapshot(),
     mountedThumbnails: Number(window.__mountedThumbnailCount) || 0,
     performanceProfile: activeDocument?.performanceProfile || null,
   };
@@ -2461,6 +2477,9 @@ async function handleListTabs() {
     activeIndex: stateMod.state.activeDocumentIndex,
     tabs: docs.map((d, i) => ({
       index: i,
+      documentId: d.id,
+      lifecycleGeneration: Number(d.lifecycleGeneration) || 0,
+      loading: !!d._isLoading,
       fileName: d.fileName ?? null,
       filePath: d.filePath ?? null,
       modified: !!d.modified,

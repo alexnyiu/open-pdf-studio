@@ -32,7 +32,9 @@ export function loadContinuousRasterImage(lease, {
       finish(reject, new DOMException('Raster stream lease is no longer current', 'AbortError'));
       return;
     }
-    image.onload = () => {
+    image.onload = async () => {
+      try { await image.decode?.(); } catch (error) { finish(reject, error); return; }
+      if (settled || signal?.aborted) return;
       if (image.naturalWidth !== lease.width || image.naturalHeight !== lease.height) {
         try { image.removeAttribute('src'); } catch {}
         finish(reject, new Error('direct raster image dimensions do not match its stream descriptor'));

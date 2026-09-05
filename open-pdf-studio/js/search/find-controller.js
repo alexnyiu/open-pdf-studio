@@ -62,12 +62,13 @@ async function coherentSearchOwner(documentState = getActiveDocument()) {
   return current;
 }
 
-async function extractAllText(pdfDoc, doc, revision) {
+async function extractAllText(pdfDoc, doc, revision, isCurrent = () => true) {
 
   const pagesText = [];
   for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+    if (!isCurrent()) return null;
     const pageText = await extractPageText(pdfDoc, pageNum, doc);
-    if (!pageText || !searchRevisionIsCurrent(revision, doc)) return null;
+    if (!pageText || !isCurrent() || !searchRevisionIsCurrent(revision, doc)) return null;
     pagesText.push(pageText);
   }
 
@@ -156,18 +157,20 @@ function buildPattern(query, matchCase, wholeWord) {
  * Perform a full (non-progressive) search. Used as fallback.
  */
 export async function performSearch(query, options = {}) {
+  const generation = ++_searchGeneration;
   const initialOwner = getActiveDocument();
-  if (!query || !initialOwner?.pdfDoc) return [];
+  if (!query || !initialOwner?.pdfDoc) { state.search.isSearching = false; return []; }
 
   const { matchCase = false, wholeWord = false } = options;
   state.search.isSearching = true;
 
   try {
     const doc = await coherentSearchOwner(initialOwner);
-    if (!doc) return [];
+    const isCurrent = () => generation === _searchGeneration && getActiveDocument() === initialOwner;
+    if (!doc || !isCurrent()) return [];
     const revision = captureSearchRevision(doc);
-    const pagesText = await extractAllText(doc.pdfDoc, doc, revision);
-    if (!pagesText || !searchRevisionIsCurrent(revision, doc)) return [];
+    const pagesText = await extractAllText(doc.pdfDoc, doc, revision, isCurrent);
+    if (!pagesText || !isCurrent() || !searchRevisionIsCurrent(revision, doc)) return [];
     const pattern = buildPattern(query, matchCase, wholeWord);
     const results = [];
 
@@ -180,7 +183,7 @@ export async function performSearch(query, options = {}) {
 
     return results;
   } finally {
-    state.search.isSearching = false;
+    if (generation === _searchGeneration) state.search.isSearching = false;
   }
 }
 
@@ -191,67 +194,70 @@ export async function performSearch(query, options = {}) {
 export function executeProgressiveSearch(onProgress) {
   const { query, matchCase, wholeWord } = state.search;
   const doc = getActiveDocument();
+  const generation = ++_searchGeneration;
 
   if (!query || !doc?.pdfDoc) {
-    onProgress([], 0, 0, true);
+    state.search.isSearching = false;
+    onProgress([], 0, 0, true, { status: query ? 'failed' : 'completed', requestId: generation });
     return () => {};
   }
 
-  const generation = ++_searchGeneration;
+  state.search.isSearching = true;
   const pattern = buildPattern(query, matchCase, wholeWord);
 
   const allResults = [];
   let searchedCount = 0;
 
   let cancelled = false;
-
+  let finished = false;
+  let revision = null;
+  let totalPages = doc.pdfDoc.numPages;
+  const stale = () => generation !== _searchGeneration || getActiveDocument() !== doc
+    || (revision && !searchRevisionIsCurrent(revision, doc));
+  const finish = (status, error) => {
+    if (finished) return;
+    finished = true;
+    if (generation === _searchGeneration) state.search.isSearching = false;
+    onProgress(allResults, searchedCount, totalPages, true, { status, requestId: generation, error: error?.message });
+  };
   (async () => {
-    const coherentOwner = await coherentSearchOwner(doc);
-    if (cancelled || generation !== _searchGeneration) return;
-    if (!coherentOwner) {
-      onProgress([], 0, 0, true);
-      return;
-    }
-    const revision = captureSearchRevision(coherentOwner);
-    const totalPages = coherentOwner.pdfDoc.numPages;
-    const currentPage = Math.min(totalPages, Math.max(1, coherentOwner.currentPage || 1));
-    const pageOrder = [currentPage];
-    for (let page = 1; page <= totalPages; page += 1) {
-      if (page !== currentPage) pageOrder.push(page);
-    }
-    for (const pageNum of pageOrder) {
-      if (cancelled || generation !== _searchGeneration
-          || !searchRevisionIsCurrent(revision, coherentOwner)) return;
-
-      const pageData = await extractPageText(coherentOwner.pdfDoc, pageNum, coherentOwner);
-
-      if (!pageData || cancelled || generation !== _searchGeneration
-          || !searchRevisionIsCurrent(revision, coherentOwner)) return;
-
-      const pageResults = searchPage(pageData, pattern, query);
-      for (const r of pageResults) {
-        r.index = allResults.length;
-        allResults.push(r);
+    try {
+      const coherentOwner = await coherentSearchOwner(doc);
+      if (cancelled) return finish('cancelled');
+      if (stale()) return finish('superseded');
+      if (!coherentOwner) return finish('failed', new Error('Document text is not ready. Try again.'));
+      revision = captureSearchRevision(coherentOwner);
+      totalPages = coherentOwner.pdfDoc.numPages;
+      const currentPage = Math.min(totalPages, Math.max(1, coherentOwner.currentPage || 1));
+      const pageOrder = [currentPage];
+      for (let page = 1; page <= totalPages; page++) if (page !== currentPage) pageOrder.push(page);
+      let lastUpdate = 0;
+      for (const pageNum of pageOrder) {
+        if (cancelled) return finish('cancelled');
+        if (stale()) return finish('superseded');
+        const pageData = await extractPageText(coherentOwner.pdfDoc, pageNum, coherentOwner);
+        if (cancelled) return finish('cancelled');
+        if (stale()) return finish('superseded');
+        if (!pageData) return finish('failed', new Error('A page could not be searched. Try again.'));
+        for (const result of searchPage(pageData, pattern, query)) {
+          result.index = allResults.length; allResults.push(result);
+        }
+        searchedCount++;
+        const now = performance.now();
+        if (searchedCount === 1 || now - lastUpdate >= 100) {
+          onProgress([...allResults], searchedCount, totalPages, false, { status: 'running', requestId: generation });
+          lastUpdate = now;
+        }
+        if (searchedCount % 5 === 0) await new Promise(resolve => setTimeout(resolve, 0));
       }
-
-      searchedCount++;
-      onProgress(allResults, searchedCount, totalPages, false);
-
-      if (searchedCount % 5 === 0) {
-        await new Promise(r => setTimeout(r, 0));
-      }
-    }
-
-    if (cancelled || generation !== _searchGeneration
-        || !searchRevisionIsCurrent(revision, coherentOwner)) return;
-
-    allResults.sort(compareResultsVisually);
-    allResults.forEach((r, i) => r.index = i);
-
-    onProgress(allResults, totalPages, totalPages, true);
+      if (stale()) return finish('superseded');
+      allResults.sort(compareResultsVisually);
+      allResults.forEach((result, index) => { result.index = index; });
+      finish('completed');
+    } catch (error) { finish(cancelled ? 'cancelled' : stale() ? 'superseded' : 'failed', error); }
   })();
+  return () => { cancelled = true; finish('cancelled'); };
 
-  return () => { cancelled = true; };
 }
 
 /**
@@ -261,13 +267,19 @@ export async function executeSearch() {
   const { query, matchCase, wholeWord } = state.search;
 
   if (!query) {
+    ++_searchGeneration;
+    state.search.isSearching = false;
     state.search.results = [];
     state.search.totalMatches = 0;
     state.search.currentIndex = -1;
     return;
   }
 
-  const results = await performSearch(query, { matchCase, wholeWord });
+  const owner = getActiveDocument();
+  const pending = performSearch(query, { matchCase, wholeWord });
+  const generation = _searchGeneration;
+  const results = await pending;
+  if (generation !== _searchGeneration || getActiveDocument() !== owner || state.search.query !== query) return;
 
   state.search.results = results;
   state.search.totalMatches = results.length;
@@ -314,6 +326,8 @@ export function getResultsForPage(pageNum) {
 }
 
 export function clearSearch() {
+  _searchGeneration++;
+  state.search.isSearching = false;
   state.search.query = '';
   state.search.results = [];
   state.search.totalMatches = 0;

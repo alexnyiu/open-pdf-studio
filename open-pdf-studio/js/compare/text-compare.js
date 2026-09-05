@@ -1,3 +1,7 @@
+import i18next from '../i18n/config.js';
+const tr = (key, values) => i18next.t(`common:repair.${key}`, values);
+import { comparisonGeneration, onComparisonDispose } from './comparison-session.js';
+import { getCachedPdfBytes } from '../pdf/loader.js';
 // Tekstvergelijking voor de vergelijkweergave.
 //
 // Extraheert de tekst van BEIDE documenten per pagina via pdf.js
@@ -10,15 +14,16 @@
 // een document verandert niet binnen een vergelijk-sessie.
 
 import { getCompareDoc } from './compare-viewport.js';
-import { groupItemsIntoLineObjs, diffPageTexts, normalizeLine } from './text-diff.js';
+import { groupItemsIntoLineObjs, normalizeLine } from './text-diff.js';
 
 const _resultCache = new Map();
 const _CACHE_MAX = 4;
 
-async function _extractDocLines(filePath) {
+async function _extractDocLines(filePath, generation, progress) {
   const doc = await getCompareDoc(filePath);
   const pages = [];
   for (let p = 1; p <= doc.numPages; p++) {
+    if (generation !== comparisonGeneration()) throw new DOMException('Comparison cancelled', 'AbortError');
     const page = await doc.getPage(p);
     const tc = await page.getTextContent();
     // Viewport op schaal 1: de item-rects komen dan in dezelfde
@@ -52,6 +57,8 @@ async function _extractDocLines(filePath) {
     // betekenis.
     const lines = groupItemsIntoLineObjs(items).filter((l) => normalizeLine(l.text) !== String(p));
     pages.push({ page: p, lines });
+    progress?.(p, doc.numPages);
+    if (p % 5 === 0) await new Promise(resolve => setTimeout(resolve, 0));
   }
   return pages;
 }
@@ -60,23 +67,44 @@ async function _extractDocLines(filePath) {
  * Draai de tekstvergelijking tussen twee (in compare geopende) documenten.
  * @returns {Promise<Array>} diff-records (zie diffPageTexts).
  */
-export async function runTextCompare(oldPath, newPath) {
+const workers = new Map();
+let nextRequest = 0;
+export async function runTextCompare(oldPath, newPath, onProgress) {
   if (!oldPath || !newPath) return [];
+  const generation = comparisonGeneration();
+  const oldBytes = getCachedPdfBytes(oldPath), newBytes = getCachedPdfBytes(newPath);
   const key = `${oldPath}|${newPath}`;
-  if (_resultCache.has(key)) return _resultCache.get(key);
+  const cached = _resultCache.get(key);
+  if (cached?.oldBytes === oldBytes && cached?.newBytes === newBytes) return cached.changes;
   const [oldPages, newPages] = await Promise.all([
-    _extractDocLines(oldPath),
-    _extractDocLines(newPath),
+    _extractDocLines(oldPath, generation, (page, total) => onProgress?.(tr('readingOriginal', { page, total }))),
+    _extractDocLines(newPath, generation, (page, total) => onProgress?.(tr('readingRevised', { page, total }))),
   ]);
-  // Tag met source zodat de view weet dat ratio/klikgedrag de tekst-variant is.
-  const changes = diffPageTexts(oldPages, newPages).map((c) => ({ ...c, source: 'text' }));
-  _resultCache.set(key, changes);
-  while (_resultCache.size > _CACHE_MAX) {
-    _resultCache.delete(_resultCache.keys().next().value);
+  if (generation !== comparisonGeneration()) throw new DOMException('Comparison cancelled', 'AbortError');
+  onProgress?.(tr('comparingText'));
+  const changes = await new Promise((resolve, reject) => {
+    const id = ++nextRequest;
+    const worker = new Worker(new URL('./text-compare-worker.js', import.meta.url), { type: 'module' });
+    const finish = (error, value) => { workers.delete(id); worker.terminate(); error ? reject(error) : resolve(value); };
+    workers.set(id, () => finish(new DOMException('Comparison cancelled', 'AbortError')));
+    worker.onerror = event => finish(new Error(event.message || 'Comparison worker failed'));
+    worker.onmessage = ({ data }) => { if (data.id === id) finish(data.error ? new Error(data.error) : null, data.changes); };
+    worker.postMessage({ id, oldPages, newPages });
+  });
+  if (generation !== comparisonGeneration() || getCachedPdfBytes(oldPath) !== oldBytes || getCachedPdfBytes(newPath) !== newBytes) {
+    throw new DOMException('Comparison source changed. Retry.', 'AbortError');
   }
-  return changes;
+  const result = changes.map(change => ({ ...change, source: 'text' }));
+  _resultCache.set(key, { oldBytes, newBytes, changes: result });
+  while (_resultCache.size > _CACHE_MAX) _resultCache.delete(_resultCache.keys().next().value);
+  return result;
 }
-
 export function clearTextCompareCache() {
+  for (const cancel of [...workers.values()]) cancel();
   _resultCache.clear();
+}
+onComparisonDispose(clearTextCompareCache);
+
+export function comparisonTextResourceSnapshot() {
+  return { results: _resultCache.size, workers: workers.size };
 }

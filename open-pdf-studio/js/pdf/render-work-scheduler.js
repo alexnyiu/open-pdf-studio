@@ -9,6 +9,8 @@ export function createRenderWorkScheduler({
   concurrency = 1,
   idleDelayMs = 250,
   maxRetiredPerOwner = Number.POSITIVE_INFINITY,
+  maxActualRunning = Number.POSITIVE_INFINITY,
+  maxDirectionalRunning = Number.POSITIVE_INFINITY,
 } = {}) {
   const queued = new Map();
   const running = new Map();
@@ -60,6 +62,8 @@ export function createRenderWorkScheduler({
 
   const nextEntry = () => [...queued.values()]
     .filter((entry) => entry.kind !== 'background' || !isBackgroundPaused())
+    .filter((entry) => entry.kind !== 'directional'
+      || [...running.values(), ...retired.values()].filter((work) => work.kind === 'directional').length < maxDirectionalRunning)
     .filter((entry) => !Number.isFinite(maxRetiredPerOwner)
       || retiredForOwner(entry.ownerKey) < maxRetiredPerOwner)
     .sort((left, right) => right.priority - left.priority || left.sequence - right.sequence)[0] || null;
@@ -69,7 +73,7 @@ export function createRenderWorkScheduler({
       || renderPublicationTokenIsCurrent(entry.publicationToken, entry.publicationDocument));
 
   const pump = () => {
-    while (running.size < concurrency) {
+    while (running.size < concurrency && running.size + retired.size < maxActualRunning) {
       const entry = nextEntry();
       if (!entry) {
         if (queued.size && isBackgroundPaused()) wake();
@@ -176,6 +180,13 @@ export function createRenderWorkScheduler({
         retireRunning(key, entry, 'foreground-resumed');
       }
       wake();
+    },
+    reprioritize(update) {
+      for (const entry of [...queued.values(), ...running.values()]) {
+        const next = update(entry);
+        if (next) Object.assign(entry, next);
+      }
+      pump();
     },
     cancelOwner(ownerKey, reason = 'owner-cancelled') {
       for (const [key, entry] of queued) {

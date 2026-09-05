@@ -1,3 +1,4 @@
+import { createDocumentOpenQueue } from './pdf/document-open-queue.js';
 /**
  * PDF Annotator - Main Entry Point
  *
@@ -89,7 +90,25 @@ import { isTauri, isMobile, isDevMode, getOpenedFiles, loadSession, saveSession,
 
 // Global promise queue — serializes all file loads across multiple openFiles() calls
 // (Windows single-instance plugin sends separate open-files events per file)
-let fileOpenQueue = Promise.resolve();
+const fileOpenQueue = createDocumentOpenQueue({
+  resolve: id => state.documents.find(doc => doc.id === id),
+  active: () => state.documents[state.activeDocumentIndex],
+  load: async (filePath, owner) => {
+    if (owner.pdfDoc || owner._isLoading) return;
+    await loadPDF(filePath, state.documents.findIndex(doc => doc.id === owner.id), null, {
+      expectedDocumentId: owner.id, expectedGeneration: Number(owner.lifecycleGeneration) || 0,
+    });
+    if (state.documents.some(doc => doc.id === owner.id) && owner.pdfDoc && !owner._loadRejected) {
+      addRecentFile(filePath, extractFileName(filePath));
+    }
+  },
+  onError: (error, path) => console.warn('Failed to open file:', path, error),
+});
+// Release queued owner references immediately when their lifecycle changes;
+// the load already running retains its own publication checks.
+window.addEventListener('opds:document-lifecycle-changed', event => {
+  fileOpenQueue.remove(event.detail?.documentId);
+});
 
 // Register open-files listener immediately (before init) so events from the
 // single-instance plugin are never lost. Queue files until the app is ready.
@@ -109,26 +128,15 @@ if (window.__TAURI__?.event) {
 
 // Open PDF files: tabs created instantly, loads serialized through global queue
 function openFiles(filePaths) {
-  // 1. Create all tabs instantly (synchronous) so the tab bar updates right away
   const pending = [];
   for (const filePath of filePaths) {
     if (filePath && filePath.toLowerCase().endsWith('.pdf')) {
-      const { index } = createTab(filePath, false); // don't auto-switch
-      pending.push({ filePath, index });
+      const { doc } = createTab(filePath, false);
+      pending.push({ path: filePath, document: doc });
     }
   }
-  // 2. Switch to the last new tab immediately (shows placeholder until load completes)
-  if (pending.length > 0) {
-    switchToTab(pending[pending.length - 1].index);
-  }
-  // 3. Chain loads onto the global queue (serialized even across multiple callers)
-  for (const { filePath, index } of pending) {
-    fileOpenQueue = fileOpenQueue.then(async () => {
-      await loadPDF(filePath, index);
-      addRecentFile(filePath, extractFileName(filePath));
-    }).catch(e => console.warn('Failed to open file:', filePath, e));
-  }
-  return fileOpenQueue;
+  if (pending.length) switchToTab(state.documents.findIndex(doc => doc.id === pending.at(-1).document.id));
+  return fileOpenQueue.enqueue(pending);
 }
 
 // Disable default browser context menu

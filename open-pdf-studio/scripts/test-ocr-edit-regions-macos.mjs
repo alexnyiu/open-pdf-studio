@@ -39,7 +39,8 @@ const sourceFixturePath = path.join(
   projectDir, 'tests', 'fixtures', 'ocr', 'editing-foundation-v1',
   'flat-scanned-region-source.pdf',
 );
-const evidenceDir = path.join(projectDir, 'output', reflowMode ? 'ocr-reflow' : 'ocr-edit-regions');
+const evidenceDir = path.resolve(process.env.OPEN_PDF_STUDIO_OCR_EDIT_EVIDENCE_DIR
+  || path.join(projectDir, 'output', reflowMode ? 'ocr-reflow' : 'ocr-edit-regions'));
 const runDir = await mkdtemp(path.join(tmpdir(), reflowMode ? 'opds-ocr-reflow-' : 'opds-ocr-edit-regions-'));
 const workingPdf = path.join(runDir, reflowMode ? 'reflow-working.pdf' : 'fixed-region-working.pdf');
 const firstSavedPdf = path.join(runDir, reflowMode ? 'reflow-first-save.pdf' : 'fixed-region-first-save.pdf');

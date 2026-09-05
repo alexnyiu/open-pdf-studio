@@ -15,6 +15,9 @@ pub mod ocr_cache;
 pub mod ocr_controller;
 pub mod pdfium_renderer;
 mod render_png_stream;
+mod native_memory;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod cups_print;
 pub mod render_to_png;
 pub mod startup_diagnostics;
 pub mod window_mgmt;
@@ -195,8 +198,12 @@ fn configure_render_resource_budget(
 
 #[tauri::command]
 fn get_render_resource_stats(
+    bytes_cache: tauri::State<PdfBytesCache>,
+    handle_cache: tauri::State<DocHandleCache>,
+    pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
+    scene_cache: tauri::State<TileSceneCache>,
     pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
-) -> Result<RenderResourceStats, String> {
+) -> Result<serde_json::Value, String> {
     pixmap_cache.ensure();
     let guard = pixmap_cache.0.lock().map_err(|error| error.to_string())?;
     let cache = guard
@@ -209,13 +216,29 @@ fn get_render_resource_stats(
         native_pixmap_peak_bytes,
         native_pixmap_budget_bytes,
     ) = cache.detailed_stats();
-    Ok(RenderResourceStats {
+    let stats = RenderResourceStats {
         native_pixmap_entries,
         native_pixmap_bytes,
         native_pixmap_peak_entries,
         native_pixmap_peak_bytes,
         native_pixmap_budget_bytes,
-    })
+    };
+    drop(guard);
+    let (source_entries, source_bytes) = {
+        let bytes = bytes_cache.0.lock().map_err(|error| error.to_string())?;
+        (bytes.len(), bytes.values().map(|value| value.len()).sum::<usize>())
+    };
+    let documents = serde_json::json!({
+        "sourceEntries": source_entries,
+        "sourceBytes": source_bytes,
+        "parsedDocuments": handle_cache.0.lock().map_err(|error| error.to_string())?.len(),
+        "pdfiumDocuments": pdfium_cache.0.lock().map_err(|error| error.to_string())?.len(),
+        "tileScenes": scene_cache.0.lock().map_err(|error| error.to_string())?.len(),
+    });
+    let mut result = serde_json::to_value(stats).map_err(|error| error.to_string())?;
+    result["documents"] = documents;
+    result["allocator"] = native_memory::allocator_snapshot();
+    Ok(result)
 }
 
 #[tauri::command]
@@ -799,9 +822,15 @@ async fn print_pdf(path: String, printer: String) -> Result<bool, String> {
         Ok(true)
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        Err("Printing is only supported on Windows".to_string())
+        tauri::async_runtime::spawn_blocking(move || cups_print::submit_pdf(path, printer))
+            .await
+            .map_err(|error| format!("The print submission task failed: {error}"))?
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        Err("PDF printing is not available on this platform".to_string())
     }
 }
 
@@ -2938,17 +2967,23 @@ fn extract_draw_commands_batch(
 /// Invalidate the PDF bytes cache AND the parsed handle cache for a specific
 /// file (call after save/modify so the next render sees the new content).
 #[tauri::command]
-fn invalidate_pdf_cache(
+async fn invalidate_pdf_cache(
     path: String,
-    bytes_cache: tauri::State<PdfBytesCache>,
-    handle_cache: tauri::State<DocHandleCache>,
-    thumb_cache: tauri::State<ThumbnailCache>,
-    page_type_cache: tauri::State<PageTypeCache>,
-    page_content_size_cache: tauri::State<PageContentSizeCache>,
-    pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
-    pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
-    transfers: tauri::State<RenderPngTransfers>,
+    pool: tauri::State<'_, std::sync::Arc<tokio::sync::OnceCell<worker_pool::WorkerPool>>>,
+    bytes_cache: tauri::State<'_, PdfBytesCache>,
+    handle_cache: tauri::State<'_, DocHandleCache>,
+    thumb_cache: tauri::State<'_, ThumbnailCache>,
+    page_type_cache: tauri::State<'_, PageTypeCache>,
+    page_content_size_cache: tauri::State<'_, PageContentSizeCache>,
+    pdfium_cache: tauri::State<'_, pdfium_renderer::PdfiumDocCache>,
+    pixmap_cache: tauri::State<'_, pdfium_renderer::PixmapCacheState>,
+    scene_cache: tauri::State<'_, TileSceneCache>,
+    transfers: tauri::State<'_, RenderPngTransfers>,
 ) -> Result<bool, String> {
+    if let Ok(mut scenes) = scene_cache.0.lock() {
+        let prefix = format!("{}|", path);
+        scenes.retain(|(key, _)| !key.starts_with(&prefix));
+    }
     transfers.cancel_for_source(&path);
     bytes_cache
         .0
@@ -2979,6 +3014,9 @@ fn invalidate_pdf_cache(
             cache.clear();
         }
     }
+    if let Some(pool) = pool.get() {
+        pool.release_document(&path).await.map_err(|error| format!("Worker document release: {error}"))?;
+    }
     Ok(true)
 }
 
@@ -2986,21 +3024,27 @@ fn invalidate_pdf_cache(
 /// for the pages changed by a nonstructural save. Parsed byte/document handles
 /// are path-scoped and must be reopened; warm page-keyed neighbours survive.
 #[tauri::command]
-fn invalidate_pdf_pages(
+async fn invalidate_pdf_pages(
     path: String,
+    pool: tauri::State<'_, std::sync::Arc<tokio::sync::OnceCell<worker_pool::WorkerPool>>>,
     page_indices: Vec<u32>,
-    bytes_cache: tauri::State<PdfBytesCache>,
-    handle_cache: tauri::State<DocHandleCache>,
-    thumb_cache: tauri::State<ThumbnailCache>,
-    page_type_cache: tauri::State<PageTypeCache>,
-    page_content_size_cache: tauri::State<PageContentSizeCache>,
-    pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
-    pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
-    transfers: tauri::State<RenderPngTransfers>,
+    bytes_cache: tauri::State<'_, PdfBytesCache>,
+    handle_cache: tauri::State<'_, DocHandleCache>,
+    thumb_cache: tauri::State<'_, ThumbnailCache>,
+    page_type_cache: tauri::State<'_, PageTypeCache>,
+    page_content_size_cache: tauri::State<'_, PageContentSizeCache>,
+    pdfium_cache: tauri::State<'_, pdfium_renderer::PdfiumDocCache>,
+    pixmap_cache: tauri::State<'_, pdfium_renderer::PixmapCacheState>,
+    scene_cache: tauri::State<'_, TileSceneCache>,
+    transfers: tauri::State<'_, RenderPngTransfers>,
 ) -> Result<bool, String> {
     let pages: HashSet<u32> = page_indices.into_iter().collect();
     // The streaming endpoint currently cancels by source path. This prevents
     // stale publication while retaining every completed unrelated cache entry.
+    if let Ok(mut scenes) = scene_cache.0.lock() {
+        let prefix = format!("{}|", path);
+        scenes.retain(|(key, _)| !key.starts_with(&prefix));
+    }
     transfers.cancel_for_source(&path);
     bytes_cache
         .0
@@ -3034,6 +3078,9 @@ fn invalidate_pdf_pages(
             cache.remove_pages(&path, &pages);
         }
     }
+    if let Some(pool) = pool.get() {
+        pool.release_document(&path).await.map_err(|error| format!("Worker document release: {error}"))?;
+    }
     Ok(true)
 }
 
@@ -3048,8 +3095,12 @@ fn clear_pdf_cache(
     page_content_size_cache: tauri::State<PageContentSizeCache>,
     pdfium_cache: tauri::State<pdfium_renderer::PdfiumDocCache>,
     pixmap_cache: tauri::State<pdfium_renderer::PixmapCacheState>,
+    scene_cache: tauri::State<'_, TileSceneCache>,
     transfers: tauri::State<RenderPngTransfers>,
 ) -> Result<bool, String> {
+    if let Ok(mut scenes) = scene_cache.0.lock() {
+        scenes.clear();
+    }
     transfers.cancel_all();
     bytes_cache
         .0

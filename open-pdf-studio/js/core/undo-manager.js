@@ -8,7 +8,7 @@ import {
   noteDocumentMutation,
 } from './document-revision-state.runtime.js';
 import { resolvePageSurface } from '../pdf/page-surface-registry.js';
-const MAX_UNDO_STACK = 100;
+import { trimDocumentHistory } from './undo-history-budget.js';
 const DOCUMENT_STATE_COMMAND_TYPES = new Set([
   'ocrApplyCompound', 'ocrCorrectPage', 'ocrRemoveOwned', 'scannedTextEdit',
 ]);
@@ -52,12 +52,12 @@ function getRedoStack() {
 function pushUndoForDocument(doc, cmd) {
   if (!doc.undoStack) doc.undoStack = [];
   doc.undoStack.push(cmd);
-  if (doc.undoStack.length > MAX_UNDO_STACK) {
-    doc.undoStack.shift();
-    if (doc.savedUndoStackLength >= 0) {
-      doc.savedUndoStackLength--;
-      if (doc.savedUndoStackLength < 0) doc.savedUndoStackLength = -1;
-    }
+  doc.redoStack = [];
+  const budget = trimDocumentHistory(doc);
+  if (budget.latestChangeNotUndoable) {
+    void import('../solid/stores/dialogStore.js').then(({ showMessage }) => {
+      import('../i18n/config.js').then(({ default: i18next }) => showMessage(i18next.t('common:repair.undoTooLarge')));
+    });
   }
 }
 
@@ -327,6 +327,7 @@ export function executeForDocument(doc, cmd, { noteRevision = true } = {}) {
 // Undo
 export async function undo() {
   flushPropertyChange();
+  const commandDocument = getActiveDocument();
   const undoStack = getUndoStack();
   if (undoStack.length === 0) return;
 
@@ -336,13 +337,30 @@ export async function undo() {
   scheduleThumbnailRefresh(cmd);
 
   if (cmd.type === 'pageStructure') {
-    const { clearEditableMetadataPreload } = await import('../pdf/editable-metadata-preload.js');
-    clearEditableMetadataPreload(getActiveDocument());
-    const { restorePageState } = await import('../pdf/page-manager.js');
-    await restorePageState(cmd.oldBytes, cmd.oldAnnotations, cmd.oldRotations, cmd.oldPage);
-    void import('../pdf/whole-pdf-preload.js').then((module) => module.restartWholePdfPreload(getActiveDocument()));
-    noteUndoCommandMutation(getActiveDocument(), cmd, 'undo');
-    syncModifiedState();
+    const originalIndex = undoStack.length;
+    let published = false;
+    const onPublished = () => {
+      published = true;
+      noteUndoCommandMutation(commandDocument, cmd, 'undo');
+      syncModifiedState(commandDocument);
+    };
+    try {
+      const { clearEditableMetadataPreload } = await import('../pdf/editable-metadata-preload.js');
+      clearEditableMetadataPreload(commandDocument);
+      const { restorePageState } = await import('../pdf/page-manager.js');
+      await restorePageState(cmd.oldBytes, cmd.oldAnnotations, cmd.oldRotations, cmd.oldPage, commandDocument, onPublished);
+    } catch (error) {
+      if (!published) {
+        const movedIndex = redoStack.indexOf(cmd);
+        if (movedIndex >= 0) redoStack.splice(movedIndex, 1);
+        if (commandDocument?.undoStack === undoStack) undoStack.splice(Math.min(originalIndex, undoStack.length), 0, cmd);
+      }
+      syncModifiedState(commandDocument);
+      updateButtons();
+      throw error;
+    }
+    void import('../pdf/whole-pdf-preload.js').then((module) => module.restartWholePdfPreload(commandDocument));
+    syncModifiedState(commandDocument);
     updateButtons();
     return;
   }
@@ -387,6 +405,7 @@ export async function undo() {
 // Redo
 export async function redo() {
   flushPropertyChange();
+  const commandDocument = getActiveDocument();
   const redoStack = getRedoStack();
   if (redoStack.length === 0) return;
 
@@ -396,13 +415,30 @@ export async function redo() {
   scheduleThumbnailRefresh(cmd);
 
   if (cmd.type === 'pageStructure') {
-    const { clearEditableMetadataPreload } = await import('../pdf/editable-metadata-preload.js');
-    clearEditableMetadataPreload(getActiveDocument());
-    const { restorePageState } = await import('../pdf/page-manager.js');
-    await restorePageState(cmd.newBytes, cmd.newAnnotations, cmd.newRotations, cmd.newPage);
-    void import('../pdf/whole-pdf-preload.js').then((module) => module.restartWholePdfPreload(getActiveDocument()));
-    noteUndoCommandMutation(getActiveDocument(), cmd, 'redo');
-    syncModifiedState();
+    const originalIndex = redoStack.length;
+    let published = false;
+    const onPublished = () => {
+      published = true;
+      noteUndoCommandMutation(commandDocument, cmd, 'redo');
+      syncModifiedState(commandDocument);
+    };
+    try {
+      const { clearEditableMetadataPreload } = await import('../pdf/editable-metadata-preload.js');
+      clearEditableMetadataPreload(commandDocument);
+      const { restorePageState } = await import('../pdf/page-manager.js');
+      await restorePageState(cmd.newBytes, cmd.newAnnotations, cmd.newRotations, cmd.newPage, commandDocument, onPublished);
+    } catch (error) {
+      if (!published) {
+        const movedIndex = undoStack.indexOf(cmd);
+        if (movedIndex >= 0) undoStack.splice(movedIndex, 1);
+        if (commandDocument?.redoStack === redoStack) redoStack.splice(Math.min(originalIndex, redoStack.length), 0, cmd);
+      }
+      syncModifiedState(commandDocument);
+      updateButtons();
+      throw error;
+    }
+    void import('../pdf/whole-pdf-preload.js').then((module) => module.restartWholePdfPreload(commandDocument));
+    syncModifiedState(commandDocument);
     updateButtons();
     return;
   }
@@ -1068,14 +1104,7 @@ export function flushPropertyChange() {
     if (targetDoc.savedUndoStackLength > targetDoc.undoStack.length) {
       targetDoc.savedUndoStackLength = -1;
     }
-    targetDoc.undoStack.push(cmd);
-    if (targetDoc.undoStack.length > MAX_UNDO_STACK) {
-      targetDoc.undoStack.shift();
-      if (targetDoc.savedUndoStackLength >= 0) {
-        targetDoc.savedUndoStackLength--;
-        if (targetDoc.savedUndoStackLength < 0) targetDoc.savedUndoStackLength = -1;
-      }
-    }
+    pushUndoForDocument(targetDoc, cmd);
     targetDoc.redoStack = [];
     noteUndoCommandMutation(targetDoc, cmd);
     syncModifiedState(targetDoc);
@@ -1113,11 +1142,11 @@ export function recordModifyBookmark(id, oldState, newState) {
 }
 
 // Record a page structure change (insert, delete, reorder) for undo/redo
-export function recordPageStructure(oldBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, newPage) {
+export function recordPageStructure(oldBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, newPage, doc = getActiveDocument()) {
   void import('../pdf/editable-metadata-preload.js').then(({ clearEditableMetadataPreload }) => (
-    clearEditableMetadataPreload(getActiveDocument())
+    clearEditableMetadataPreload(doc)
   ));
-  execute({
+  executeForDocument(doc, {
     type: 'pageStructure',
     oldBytes: oldBytes,
     oldAnnotations: oldAnnotations.map(a => ({ ...a })),

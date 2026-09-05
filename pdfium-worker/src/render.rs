@@ -400,6 +400,10 @@ impl Renderer {
     /// bytes blijven. De volgende render op die pagina betaalt eenmalig de
     /// her-parse. Aangeroepen bij pool-inactiviteit om het werkgeheugen van
     /// zware CAD-pagina's (ruim 1 GB per open handle) terug te geven.
+    pub fn release_document(&mut self, path: &str) {
+        self.cache.retain(|entry| entry.path != path);
+    }
+
     pub fn trim(&mut self) {
         for e in self.cache.iter_mut() {
             e.page = None;

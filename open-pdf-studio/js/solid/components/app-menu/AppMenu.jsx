@@ -1,3 +1,4 @@
+import { shortcutLabel, usesMacShortcuts } from '../../../core/shortcut-label.js';
 import { Show, Switch, Match, onMount, onCleanup } from 'solid-js';
 import { isAppMenuOpen, closeAppMenu, getActivePanel, setActivePanel } from '../../stores/appMenuStore.js';
 import { openDialog } from '../../stores/dialogStore.js';
@@ -101,11 +102,11 @@ export default function AppMenu() {
             <span>{t('file')}</span>
           </button>
           <div class="app-menu-items">
-            <MenuItem icon={ICONS.new} label={t('new')} shortcut="Ctrl+N" onClick={() => actionAndClose(showNewDocDialog)} />
-            <MenuItem icon={ICONS.open} label={t('open')} shortcut="Ctrl+O" active={getActivePanel() === 'open'} onClick={() => setActivePanel('open')} />
-            <MenuItem icon={ICONS.save} label={t('save')} shortcut="Ctrl+S" commitAction onClick={() => actionAndClose(savePDF)} />
-            <MenuItem icon={ICONS.saveAs} label={t('saveAs')} shortcut="Ctrl+Shift+S" commitAction onClick={() => actionAndClose(savePDFAs)} />
-            <MenuItem icon={ICONS.print} label={t('print')} shortcut="Ctrl+P" onClick={() => actionAndClose(showPrintDialog)} />
+            <MenuItem icon={ICONS.new} label={t('new')} shortcut={shortcutLabel('N')} onClick={() => actionAndClose(showNewDocDialog)} />
+            <MenuItem icon={ICONS.open} label={t('open')} shortcut={shortcutLabel('O')} active={getActivePanel() === 'open'} onClick={() => setActivePanel('open')} />
+            <MenuItem icon={ICONS.save} label={t('save')} shortcut={shortcutLabel('S')} commitAction onClick={() => actionAndClose(savePDF)} />
+            <MenuItem icon={ICONS.saveAs} label={t('saveAs')} shortcut={shortcutLabel('S', { shift: true })} commitAction onClick={() => actionAndClose(savePDFAs)} />
+            <MenuItem icon={ICONS.print} label={t('print')} shortcut={shortcutLabel('P')} onClick={() => actionAndClose(showPrintDialog)} />
             <Divider />
             <MenuItem icon={ICONS.annotateScreenshot} label={t('annotateScreenshot')} onClick={() => actionAndClose(() => import('../../../tools/screenshot-annotate.js').then((m) => m.annotateClipboardScreenshot()))} />
             <Divider />
@@ -114,14 +115,14 @@ export default function AppMenu() {
             <Divider />
             <MenuItem icon={ICONS.extensions} label={t('extensions')} onClick={() => { closeAppMenu(); openDialog('extensions'); }} />
             <Divider />
-            <MenuItem icon={ICONS.docProperties} label={t('docProperties')} shortcut="Ctrl+D" onClick={() => actionAndClose(showDocPropertiesDialog)} />
+            <MenuItem icon={ICONS.docProperties} label={t('docProperties')} shortcut={shortcutLabel('D')} onClick={() => actionAndClose(showDocPropertiesDialog)} />
             <Divider />
-            <MenuItem icon={ICONS.preferences} label={t('preferences')} shortcut="Ctrl+," onClick={() => actionAndClose(showPreferencesDialog)} />
+            <MenuItem icon={ICONS.preferences} label={t('preferences')} shortcut={shortcutLabel(',')} onClick={() => actionAndClose(showPreferencesDialog)} />
             <Divider />
             <MenuItem icon={ICONS.about} label={t('about')} onClick={() => actionAndClose(() => openDialog('about'))} />
             <MenuItem icon={ICONS.about} label={t('whatsNew.title')} onClick={() => actionAndClose(() => import('../../../help/whats-new-trigger.js').then(m => m.openWhatsNewManual()))} />
             <Divider />
-            <MenuItem icon={ICONS.exit} label={t('exit')} shortcut="Alt+F4" onClick={handleExit} />
+            <MenuItem icon={ICONS.exit} label={t('exit')} shortcut={usesMacShortcuts() ? '⌘Q' : 'Alt+F4'} onClick={handleExit} />
           </div>
         </div>
         <div class="app-menu-content" onClick={handleContentClick}>

@@ -4,22 +4,15 @@ import test from 'node:test';
 
 const source = await readFile(new URL('./renderer.js', import.meta.url), 'utf8');
 
-test('strictly visible pages bypass the foreground-idle admission gate', () => {
+test('continuous motion schedules final rasters without waiting for idle or settlement', () => {
   const start = source.indexOf('function _updateContinuousVirtualWindow');
-  const end = source.indexOf('\nexport function getContinuousRenderResourceStats', start);
-  const virtualWindow = source.slice(start, end);
-  const visibleBranch = virtualWindow.slice(
-    virtualWindow.indexOf('if (strictlyVisiblePage || editRequired)'),
-    virtualWindow.indexOf('if (!backgroundRenderAdmissionAllowed()', virtualWindow.indexOf('if (strictlyVisiblePage || editRequired)')),
-  );
-  assert.match(visibleBranch, /scheduleContinuousPreview/u);
-  assert.match(visibleBranch, /renderContinuousInteractivePage/u);
-  assert.match(visibleBranch, /renderContinuousPage/u);
-  assert.match(visibleBranch, /if \(interactionSettled \|\| editRequired\)/u);
-  assert.doesNotMatch(visibleBranch, /isPdfForegroundIdle/u);
-  assert.match(virtualWindow, /planContinuousRenderOverscan/u);
-  assert.match(virtualWindow, /overscanBeforePx/u);
-  assert.match(virtualWindow, /overscanAfterPx/u);
+  const end = source.indexOf('export function getContinuousRenderResourceStats', start);
+  const window = source.slice(start, end);
+  assert.match(window, /planSharpWindow/u);
+  assert.match(window, /renderContinuousPage/u);
+  assert.match(window, /DIRECTIONAL_FULL/u);
+  assert.doesNotMatch(window, /renderContinuousInteractivePage|scheduleContinuousPreview/u);
+  assert.doesNotMatch(window, /interactionSettled \|\| editRequired|!isPdfForegroundIdle/u);
 });
 
 test('visible previews and full renders use explicit bounded lanes', () => {

@@ -40,6 +40,10 @@ export default function TextFormatSection() {
   return (
     <Show when={sectionVis.textFormat}>
       <CollapsibleSection title={t('textFormat.title')} name="textFormat" id="prop-text-format-section">
+        <Show when={panelMode() === 'textEdit'}>
+          <p class="text-edit-guidance" role="note">{tCommon('repair.editCompletion')}</p>
+          <Show when={richActive()}><p class="text-edit-guidance" role="note">{tCommon('repair.editFontPolicy')}</p></Show>
+        </Show>
         <Show when={annotProps.scannedTextEstimate === true}>
           <p class="scanned-text-estimate-note" role="note">
             Font class, size, weight, italic state, color, and alignment are estimates. The source font is not recovered exactly.

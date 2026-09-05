@@ -175,8 +175,8 @@ export async function readOwnedTextEditManifest(pdfDocument) {
   return payload;
 }
 
-export async function hydrateOwnedTextEditManifest(documentState, pdfBytes) {
-  const pdfDocument = await PDFDocument.load(pdfBytes, { ignoreEncryption: false });
+export async function hydrateOwnedTextEditManifest(documentState, pdfBytes, parsedDocument = null) {
+  const pdfDocument = parsedDocument || await PDFDocument.load(pdfBytes, { ignoreEncryption: false });
   const manifest = await readOwnedTextEditManifest(pdfDocument);
   if (!manifest) {
     documentState.textEditManifest = null;

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
 import { evaluateLargePdfPerformanceReport } from './verify-large-pdf-performance-report.mjs';
+import { runSharpnessScenarios } from './lib/continuous-sharpness-scenarios.mjs';
 import { startPackagedApp } from './lib/macos-packaged-app.mjs';
 
 assert.equal(process.platform, 'darwin', 'large-PDF packaged performance acceptance is macOS-only');
@@ -141,6 +142,7 @@ async function bundleIdentity(appBundle) {
     shortVersion: await plistValue('CFBundleShortVersionString'),
     bundleVersion: await plistValue('CFBundleVersion'),
     executableBytes: executable.size,
+    executableSha256: await sha256(executablePath),
     signingScope: 'packaged usability evidence; not Developer ID or notarization evidence',
   };
 }
@@ -341,6 +343,7 @@ async function runOnce(options) {
       startupTimeoutMs: 90_000,
     });
     applicationPid = application.processId;
+    reportBase.packagedApp.processId = applicationPid;
     await callTool('app_set_window_size', { width: 1440, height: 960, keepVisible: true });
     await callTool('app_clear_caches');
     const processStartRssBytes = await sampleRss('process-start');
@@ -352,7 +355,7 @@ async function runOnce(options) {
       const viewport = await callTool('app_get_viewport_state');
       return viewport.doc?.filePath === options.pdfPath
         && viewport.pageCount === lastPage
-        && viewport.performanceProfile?.largeDocument === true
+        && (fixture.diagnostic || viewport.performanceProfile?.largeDocument === true)
         && viewport.pageGeometry?.pages === lastPage
         ? viewport : null;
     }, 90_000);
@@ -378,7 +381,7 @@ async function runOnce(options) {
     // Facing mode retains at most one two-page spread.
     const facingSet = await callTool('app_set_view_mode', { mode: 'facing' });
     assert.equal(facingSet.ok, true, facingSet.error);
-    await callTool('app_go_to_page', { page: 55 });
+    await callTool('app_go_to_page', { page: Math.min(55, lastPage) });
     const facing = await waitForRenderIdle('facing spread render');
     await sampleRss('facing-settled');
 
@@ -433,6 +436,7 @@ async function runOnce(options) {
       Buffer.from(sharpnessCapture.png_base64, 'base64'),
       directCrop,
     );
+    const sharpScenarios = await runSharpnessScenarios({ callTool, outputDir, pageCount: lastPage, applicationPid });
     const preScrollCapture = await callTool('app_get_performance_metrics');
     await callTool('app_go_to_page', { page: 1 });
     await waitForRenderIdle('return to page 1 before traversal');
@@ -475,6 +479,13 @@ async function runOnce(options) {
     const scrollCapture = await waitForRenderIdle('settled top-page render');
     await delay(5_000);
     const firstTraversalSettledRssBytes = await sampleRss('first-traversal-settled-five-seconds');
+    const firstTraversalCapture = await callTool('app_get_performance_metrics');
+    if (process.env.OPEN_PDF_STUDIO_MEMORY_DIAGNOSTICS === '1') {
+      try {
+        const { stdout } = await execFileAsync('/usr/bin/vmmap', ['-summary', String(applicationPid)], { maxBuffer: 8 * 1024 * 1024 });
+        await writeFile(path.join(outputDir, 'first-traversal-vmmap.txt'), stdout);
+      } catch { /* Optional attribution does not change the RSS gate. */ }
+    }
 
     // Repeat the complete traversal in the same process. The second pass is
     // the leak/regrowth gate; it may retain at most 32 MiB after settling.
@@ -502,6 +513,12 @@ async function runOnce(options) {
     await delay(5_000);
     const secondTraversalSettledRssBytes = await sampleRss('second-traversal-settled-five-seconds');
     const secondTraversalCapture = await callTool('app_get_performance_metrics');
+    if (process.env.OPEN_PDF_STUDIO_MEMORY_DIAGNOSTICS === '1') {
+      try {
+        const { stdout } = await execFileAsync('/usr/bin/vmmap', ['-summary', String(applicationPid)], { maxBuffer: 8 * 1024 * 1024 });
+        await writeFile(path.join(outputDir, 'second-traversal-vmmap.txt'), stdout);
+      } catch { /* Optional attribution does not change the RSS gate. */ }
+    }
     const secondTraversalGrowthBytes = Number.isFinite(firstTraversalSettledRssBytes)
       && Number.isFinite(secondTraversalSettledRssBytes)
       ? Math.max(0, secondTraversalSettledRssBytes - firstTraversalSettledRssBytes)
@@ -659,7 +676,10 @@ async function runOnce(options) {
         continuous: {
           scrollEvents,
           smallScrollChecks,
+          sharpScenarios,
           scroll: scrollCapture,
+          firstTraversal: firstTraversalCapture,
+          secondTraversal: secondTraversalCapture,
           zoom: finalCapture,
           settled: settledCapture,
           scaleBefore: beforeZoom.doc.scale,
@@ -681,6 +701,15 @@ async function runOnce(options) {
       metrics: {
         largeDocument: finalCapture.performanceProfile?.largeDocument === true,
         coldOpenMs,
+        sharpScenarios: sharpScenarios.map(({ label, zoom, speed, frames, missedFrames, entries,
+          missedEntries, frameIntervals, warmupComplete, captures, video, tileShadowFree }) => ({
+          label, zoom, speed, frames, missedFrames, entries, missedEntries, warmupComplete, tileShadowFree,
+          framesBelow20MsPercent: frameIntervals?.below20MsPercent ?? null,
+          captureCount: captures.length, video,
+        })),
+        fullQualityPublishes: scrollMetric?.counters?.fullQualityPublishes || 0,
+        sharpPreparedEntries: scrollMetric?.counters?.sharpPreparedEntries || 0,
+        sharpPreparationMisses: scrollMetric?.counters?.sharpPreparationMisses || 0,
         scrollHandlerP95Ms: sample(scrollCapture, 'scrollHandlerMs'),
         ordinaryMainThreadTaskMaxMs: longTaskMax || measuredWorkMax,
         longTaskInstrumentationAvailable: scrollMetric?.longTaskSupported === true
@@ -692,11 +721,9 @@ async function runOnce(options) {
         interactiveRasterPublishes: scrollMetric?.counters?.interactiveRasterPublishes || 0,
         interactiveRasterP95Ms: sample(scrollCapture, 'visiblePageInteractiveRasterLatencyMs'),
         rasterTransferP95Ms: sample(scrollCapture, 'rasterTransferMs'),
-        scrollFramesBelow20MsPercent: sample(
-          scrollCapture,
-          'scrollFrameWorkMs',
-          'below20MsPercent',
-        ),
+        scrollFramesBelow20MsPercent: Math.min(...sharpScenarios.map((scenario) =>
+          scenario.frameIntervals?.below20MsPercent ?? 0)),
+        stressFramesBelow20MsPercent: sample(scrollCapture, 'motionFrameIntervalMs', 'below20MsPercent'),
         visibleBlankWithSourceSamples:
           scrollMetric?.measurements?.visibleBlankWithSourceDurationMs?.count || 0,
         visibleBlankWithSourceMaxMs:
@@ -812,6 +839,10 @@ function aggregateMetrics(reports) {
   return {
     largeDocument: values.every((metrics) => metrics.largeDocument === true),
     coldOpenMs: maxField('coldOpenMs'),
+    sharpScenarios: values.flatMap((metrics) => metrics.sharpScenarios || []),
+    fullQualityPublishes: values.reduce((sum, metrics) => sum + (metrics.fullQualityPublishes || 0), 0),
+    sharpPreparedEntries: values.reduce((sum, metrics) => sum + (metrics.sharpPreparedEntries || 0), 0),
+    sharpPreparationMisses: values.reduce((sum, metrics) => sum + (metrics.sharpPreparationMisses || 0), 0),
     scrollHandlerP95Ms: maxField('scrollHandlerP95Ms'),
     ordinaryMainThreadTaskMaxMs: maxField('ordinaryMainThreadTaskMaxMs'),
     longTaskInstrumentationAvailable: values.every((metrics) =>
@@ -872,7 +903,8 @@ function aggregateMetrics(reports) {
     settledRssBytes: worstRss.settledRssBytes ?? null,
     rssCeilingBytes: worstRss.rssCeilingBytes ?? null,
     secondTraversalGrowthBytes: maxField('secondTraversalGrowthBytes'),
-    freshPackagedProcessRuns: reports.length,
+    freshPackagedProcessRuns: new Set(reports.map((report) => report.packagedApp?.processId).filter(Boolean)).size,
+    matchingPackagedBuilds: new Set(reports.map((report) => report.packagedApp?.executableSha256)).size === 1,
   };
 }
 
@@ -908,6 +940,7 @@ async function run(options) {
       })),
       processRuns: reports.map((report, index) => ({
         run: index + 1,
+        packagedApp: report.packagedApp,
         statusIgnoringFreshProcessCount: report.failures?.every?.((failure) =>
           failure === 'freshPackagedProcessRuns') === true ? 'PASS' : report.status,
         output: path.relative(path.dirname(options.outputPath), runOutputPath(options.outputPath, index + 1)),

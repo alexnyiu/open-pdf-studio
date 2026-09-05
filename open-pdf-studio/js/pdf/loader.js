@@ -10,6 +10,7 @@ import { setViewMode, fitPage } from './renderer.js';
 import { generateThumbnails, refreshActiveTab } from '../ui/panels/left-panel.js';
 import { createTab, updateWindowTitle } from '../ui/chrome/tabs.js';
 import * as pdfjsLib from 'pdfjs-dist';
+import { batch } from 'solid-js';
 import { isTauri, readBinaryFile, openFileDialog, lockFile, unlockFile, invoke } from '../core/platform.js';
 import { PDFDocument } from 'pdf-lib';
 import { resetAnnotationStorage } from './form-layer.js';
@@ -57,11 +58,23 @@ function documentLifecycleIsOpen(owner) {
 // herkend: die worden NIET als losse sticky note gepusht maar als status
 // op de doel-annotatie gezet.
 async function _convertAndPushAnnotations(annots, pageNum, viewport, stampImageMap, annotColorMap, doc) {
+  const owner = captureDocumentLifecycleOwner(doc);
+  const source = doc.pdfDoc;
+  const loadId = doc._annotationLoadId;
+  const isCurrent = () => documentLifecycleIsOpen(owner)
+    && doc.pdfDoc === source && doc._annotationLoadId === loadId;
+  const convertedAnnotations = [];
+  let sliceStarted = performance.now();
   const textboxByRect = new Map();
   const byPdfId = new Map();
   const pendingLeaders = [];
   const pendingStatuses = [];
   for (const annot of annots) {
+    if (performance.now() - sliceStarted >= 8) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (!isCurrent()) return;
+      sliceStarted = performance.now();
+    }
     const statusReply = statusReplyFromPdfAnnotation(annot);
     if (statusReply) {
       pendingStatuses.push(statusReply);
@@ -77,12 +90,12 @@ async function _convertAndPushAnnotations(annots, pageNum, viewport, stampImageM
       textboxByRect.set(converted._pdfRectKey, converted);
     }
     if (annot.id) byPdfId.set(annot.id, converted);
-    doc.annotations.push(converted);
+    convertedAnnotations.push(converted);
     // Sommige converters leveren EXTRA annotaties naast de hoofdannotatie
     // (bv. een legacy meerpunts-betonbalk die in losse tweepunts-balken
     // gesplitst wordt). Die worden hier mee-gepusht.
     if (Array.isArray(converted.__extraAnnotations)) {
-      for (const extra of converted.__extraAnnotations) doc.annotations.push(extra);
+      for (const extra of converted.__extraAnnotations) convertedAnnotations.push(extra);
       delete converted.__extraAnnotations;
     }
   }
@@ -95,10 +108,21 @@ async function _convertAndPushAnnotations(annots, pageNum, viewport, stampImageM
   }
   for (const tb of textboxByRect.values()) delete tb._pdfRectKey;
   applyStatusReplies(pendingStatuses, byPdfId);
+  if (!isCurrent()) return;
+  // Publish the complete page once. Per-annotation mutable-store pushes used
+  // to rerun document-wide reactive consumers for every imported annotation.
+  batch(() => {
+    for (const annotation of convertedAnnotations) doc.annotations.push(annotation);
+  });
 }
 
 // Cache for original PDF bytes (used by saver to avoid re-reading)
 const originalBytesCache = new Map(); // filePath -> Uint8Array
+
+export function sourceByteCacheSnapshot() {
+  return { entries: originalBytesCache.size,
+    retainedBytes: [...originalBytesCache.values()].reduce((sum, bytes) => sum + bytes.byteLength, 0) };
+}
 
 export function getCachedPdfBytes(filePath) {
   return originalBytesCache.get(filePath);
@@ -324,9 +348,12 @@ export function isPdfAReadOnly() {
 // Optional preloadedData (Uint8Array) bypasses FS plugin read.
 export async function loadPDF(filePath, docIndex, preloadedData = null, {
   recoveryRevision = null,
+  expectedDocumentId = null,
+  expectedGeneration = null,
 } = {}) {
   const doc = state.documents[docIndex];
-  if (!doc) return;
+  if (!doc || (expectedDocumentId != null && doc.id !== expectedDocumentId)
+      || (expectedGeneration != null && (Number(doc.lifecycleGeneration) || 0) !== expectedGeneration)) return;
   let loadOwner = captureDocumentLifecycleOwner(doc);
 
   // Guard against loading into a document that's already loading
@@ -345,7 +372,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
   try {
     const _t0 = performance.now();
     console.log('[PERF] ===== loadPDF START =====', filePath);
-    if (isActive()) showLoading('Loading PDF...');
+    if (isActive()) showLoading(i18next.t('common:repair.loadingPdf'), { documentId: doc.id });
 
     // Ensure Tauri FS scope access for this file path (needed for Rust backend)
     if (filePath && window.__TAURI__) {
@@ -458,11 +485,17 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
     const sourceByteLength = typedArray.byteLength;
     console.log(`[PERF] File read done: ${(performance.now() - _t0).toFixed(0)}ms, size: ${sourceByteLength} bytes`);
 
+    // One read-only parse feeds both independent fail-closed ownership validators.
+    let ownershipDocument = null;
+    try { ownershipDocument = await PDFDocument.load(typedArray, { ignoreEncryption: false, updateMetadata: false }); }
+    catch (error) { console.warn('[ownership] Shared parse unavailable:', error.message); }
+    if (isClosed()) return;
+
     // Restore only validated Open PDF Studio-owned scanned-text edit state.
     // Foreign or malformed PieceInfo never becomes editable application state.
     try {
       const { hydrateOwnedScannedTextEditState } = await import('../ocr/editing/pdf-persistence.js');
-      await hydrateOwnedScannedTextEditState(doc, typedArray);
+      await hydrateOwnedScannedTextEditState(doc, typedArray, ownershipDocument);
     } catch (error) {
       doc.scannedTextEdits = null;
       doc.scannedTextEditPersistedRevision = 0;
@@ -474,13 +507,16 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
     // fail-closed and never become editable state.
     try {
       const { hydrateOwnedTextEditManifest } = await import('../text/owned-edit-manifest.js');
-      await hydrateOwnedTextEditManifest(doc, typedArray);
+      await hydrateOwnedTextEditManifest(doc, typedArray, ownershipDocument);
     } catch (error) {
       doc.textEdits = [];
       doc.textEditManifest = null;
       doc.textEditReadOnlyReason = `Open PDF Studio text-edit ownership could not be validated: ${error?.message || error}`;
       console.warn('[rich-text-edit] Owned manifest was not hydrated:', error?.message || error);
     }
+
+    ownershipDocument = null;
+    if (isClosed()) return;
 
     // Load PDF using pdf.js (this transfers the buffer to a worker)
     const openedPdfDocument = await pdfjsLib.getDocument({
@@ -491,6 +527,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
       isEvalSupported: false,
       verbosity: 0,
     }).promise;
+    if (isClosed()) { await openedPdfDocument.destroy(); return; }
     const previousPdfDocument = replaceDocumentPdfProxy(
       doc,
       openedPdfDocument,
@@ -604,7 +641,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
       // the previous document's zoomed scroll offset.
       restoreDocumentScrollPosition(pdfContainer, doc);
       console.log(`[PERF] setViewMode DONE: ${(performance.now() - _t0).toFixed(0)}ms`);
-      hideLoading();
+      hideLoading(doc.id);
 
       // Check for PDF/A compliance and show info bar if applicable
       checkPdfACompliance(doc);
@@ -763,7 +800,7 @@ export async function loadPDF(filePath, docIndex, preloadedData = null, {
     }
   } finally {
     doc._isLoading = false;
-    if (isActive()) hideLoading();
+    if (isActive()) hideLoading(doc.id);
   }
 }
 

@@ -131,6 +131,7 @@ export async function startPackagedApp({
   appBundle: requestedAppBundle,
   cwd,
   env = {},
+  initialFiles = [],
   startupTimeoutMs = 90_000,
   artifactDir = null,
   launchLabel = 'packaged-app',
@@ -168,6 +169,8 @@ export async function startPackagedApp({
     openArguments.push('--env', `${name}=${value}`);
   }
   openArguments.push(appBundle, '--args', '--mcp-server', '--mcp-port', String(port));
+  // Exercise the production command-line open-files queue with real fixtures.
+  for (const file of initialFiles) openArguments.push(path.resolve(file));
   const child = spawn('/usr/bin/open', openArguments, {
     cwd,
     env: process.env,

@@ -3,8 +3,15 @@
 // (pdf/print-job.js) and drives the floating progress bar through these
 // signals, so the user keeps working meanwhile.
 
+import i18next from '../../i18n/config.js';
 import { createSignal } from 'solid-js';
 
+export const [printOutputPaths, setPrintOutputPaths] = createSignal([]);
+export function dismissPrintProgress() { clearTimeout(dismissTimer); setActive(false); setPrintOutputPaths([]); }
+
+export const [printCancellation, setCancellation] = createSignal(null);
+export function setPrintCancellation(callback) { setCancellation(() => callback); }
+let dismissTimer = null;
 const [active, setActive] = createSignal(false);
 const [label, setLabel] = createSignal('');
 const [value, setValue] = createSignal(0);     // 0..1
@@ -18,6 +25,8 @@ export {
 };
 
 export function startPrintProgress(l) {
+  clearTimeout(dismissTimer);
+  setPrintOutputPaths([]);
   setIsError(false);
   setLabel(l || '');
   setValue(0);
@@ -32,12 +41,12 @@ export function updatePrintProgress(l, v) {
 export function finishPrintProgress(l) {
   setLabel(l || '');
   setValue(1);
-  setTimeout(() => setActive(false), 1800);
+  if (!printOutputPaths().length) dismissTimer = setTimeout(() => setActive(false), 1800);
 }
 
 export function failPrintProgress(msg) {
   setIsError(true);
-  setLabel(msg || 'Afdrukken mislukt');
+  setLabel(msg || i18next.t('common:repair.outputFailed'));
   setValue(1);
-  setTimeout(() => { setActive(false); setIsError(false); }, 6000);
+  if (!printOutputPaths().length) dismissTimer = setTimeout(() => { setActive(false); setIsError(false); }, 6000);
 }

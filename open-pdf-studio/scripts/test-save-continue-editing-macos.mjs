@@ -332,6 +332,18 @@ export async function runSaveContinueEditing(options) {
       assert.equal(result.clicked, true, `${selector} was not clicked`);
       return result;
     };
+    const clickAway = async (selector) => {
+      const target = await waitUi(selector, (value) => value.found && value.visible && !value.disabled);
+      // Exercise the production pointer-down boundary. HTMLElement.click()
+      // only transfers programmatic focus, which intentionally does not apply
+      // an edit when macOS keyboard focus belongs to another application.
+      const result = await call('app_mouse_click', {
+        x: target.rect.x + target.rect.width / 2,
+        y: target.rect.y + target.rect.height / 2,
+      });
+      assert.equal(result.ok, true, result.error);
+      return result;
+    };
     const openPdf = async (pdfPath) => {
       const opened = await call('app_open_pdf', { path: pdfPath });
       assert.equal(opened.ok, true, JSON.stringify(opened));
@@ -405,7 +417,7 @@ export async function runSaveContinueEditing(options) {
       assert.equal(closed.ok, true, closed.error);
     };
 
-    await call('app_set_window_size', { width: 1320, height: 900 });
+    await call('app_set_window_size', { width: 1320, height: 900, keepVisible: true });
     await waitUi('#placeholder', (value) => (
       value.found && value.rect?.width > 100 && value.rect?.height > 100
     ));
@@ -443,7 +455,7 @@ export async function runSaveContinueEditing(options) {
       resizeHandleEventCount: resizeHandleAutomationEvents.length,
     };
     let globalLoadingObserved = false;
-    await click('.status-page-input');
+    await clickAway('.status-page-input');
     await waitUi('.pdf-text-editor', (value) => !value.found);
     const afterA = await waitUntil('Edit A click-away automatic save', async () => {
       const [viewport, loading] = await Promise.all([
@@ -571,7 +583,7 @@ export async function runSaveContinueEditing(options) {
     const blockedDraft = `A23 ${'W'.repeat(240)}`;
     await openEditor(ownedSelector, EDIT_A);
     await replaceEditorText(blockedDraft);
-    await click('.status-page-input');
+    await clickAway('.status-page-input');
     const blockedLayout = await waitUntil('A23 typed layout rejection retains editor', async () => {
       const [editor, viewport] = await Promise.all([
         ui('.pdf-text-editor'),

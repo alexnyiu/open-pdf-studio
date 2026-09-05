@@ -26,7 +26,7 @@ async function renderPageSnapshot(doc, pageNum) {
     const base = page.getViewport({ scale: 1 });
     const longest = Math.max(base.width, base.height);
     const scale = longest > SNAPSHOT_MAX_PX ? SNAPSHOT_MAX_PX / longest : 1;
-    const canvas = await renderPageOffscreen(pageNum, scale);
+    const canvas = await renderPageOffscreen(pageNum, scale, doc);
     return await canvasToBytes(canvas, 'png');
   } catch (e) {
     console.warn('[bcf] snapshot render failed for page', pageNum, e);

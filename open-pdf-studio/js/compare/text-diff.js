@@ -1,3 +1,4 @@
+import { boundedDiff } from './bounded-diff.js';
 // Pure tekst-diff-kern voor de vergelijkweergave.
 //
 // Geen DOM- of pdf.js-afhankelijkheden: dit bestand is ook direct vanuit Node
@@ -101,59 +102,7 @@ function lineKey(s) {
 
 // ── Myers O(ND) regel-diff ────────────────────────────────────────────────
 // Retourneert een lijst ops: {op:'eq'|'del'|'ins', oldIdx?, newIdx?}
-function myersDiff(a, b) {
-  const N = a.length;
-  const M = b.length;
-  const MAX = N + M;
-  if (MAX === 0) return [];
-  const offset = MAX;
-  let v = new Int32Array(2 * MAX + 1);
-  const trace = [];
-  let found = false;
-  for (let d = 0; d <= MAX && !found; d++) {
-    trace.push(v.slice());
-    const nv = v.slice();
-    for (let k = -d; k <= d; k += 2) {
-      let x;
-      if (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) {
-        x = v[offset + k + 1];
-      } else {
-        x = v[offset + k - 1] + 1;
-      }
-      let y = x - k;
-      while (x < N && y < M && a[x] === b[y]) { x++; y++; }
-      nv[offset + k] = x;
-      if (x >= N && y >= M) { found = true; }
-    }
-    v = nv;
-  }
-  // Backtrack
-  const ops = [];
-  let x = N;
-  let y = M;
-  for (let d = trace.length - 1; d > 0; d--) {
-    const vPrev = trace[d];
-    const k = x - y;
-    let prevK;
-    if (k === -d || (k !== d && vPrev[offset + k - 1] < vPrev[offset + k + 1])) {
-      prevK = k + 1;
-    } else {
-      prevK = k - 1;
-    }
-    const prevX = vPrev[offset + prevK];
-    const prevY = prevX - prevK;
-    while (x > prevX && y > prevY) { x--; y--; ops.push({ op: 'eq', oldIdx: x, newIdx: y }); }
-    if (d > 0) {
-      if (x === prevX) { y--; ops.push({ op: 'ins', newIdx: y }); }
-      else { x--; ops.push({ op: 'del', oldIdx: x }); }
-    }
-  }
-  while (x > 0 && y > 0) { x--; y--; ops.push({ op: 'eq', oldIdx: x, newIdx: y }); }
-  while (x > 0) { x--; ops.push({ op: 'del', oldIdx: x }); }
-  while (y > 0) { y--; ops.push({ op: 'ins', newIdx: y }); }
-  ops.reverse();
-  return ops;
-}
+const myersDiff = boundedDiff;
 
 /**
  * Vergelijk twee documenten op regelniveau, over paginagrenzen heen.
@@ -228,6 +177,7 @@ export function diffPageTexts(oldPages, newPages) {
     else inss.push(op.newIdx);
   }
   flush();
+  if (ops.partial) for (const change of changes) change.partial = true;
   return changes;
 }
 
@@ -258,5 +208,19 @@ export function diffWords(oldText, newText) {
       push(newParts, bw[op.newIdx], true);
     }
   }
-  return { oldParts, newParts };
+  return { oldParts, newParts, partial: !!ops.partial };
+}
+
+/** Complete presentation data in the worker; rendering must not rerun diff work. */
+export function diffPageTextsForPresentation(oldPages, newPages) {
+  return diffPageTexts(oldPages, newPages).map(change => {
+    if (change.type !== 'modified') return change;
+    // A coarse region has no proven word alignment. Keep it visibly coarse.
+    const words = change.partial ? {
+      oldParts: [{ text: change.oldText, changed: true }],
+      newParts: [{ text: change.newText, changed: true }],
+      partial: true,
+    } : diffWords(change.oldText, change.newText);
+    return { ...change, words, partial: !!change.partial || words.partial };
+  });
 }

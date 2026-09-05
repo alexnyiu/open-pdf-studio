@@ -22,6 +22,10 @@ struct Cli {
     /// Internal production one-job process boundary. Never shown as end-user UI.
     #[arg(long, hide = true)]
     ocr_child_job: Option<String>,
+
+    /// PDF files to open. The application routes these through its normal file-open queue.
+    #[arg(value_name = "PDF")]
+    files: Vec<std::path::PathBuf>,
 }
 
 fn main() {
@@ -34,6 +38,7 @@ fn main() {
         mcp_server: false,
         mcp_port: 9223,
         ocr_child_job: None,
+        files: Vec::new(),
     });
 
     app_lib::run(app_lib::StartupOpts {
@@ -41,4 +46,31 @@ fn main() {
         mcp_port: cli.mcp_port,
         ocr_child_job: cli.ocr_child_job,
     });
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn multiple_files_preserve_explicit_launch_options() {
+        let cli = Cli::try_parse_from([
+            "open-pdf-studio", "--mcp-server", "--mcp-port", "19321",
+            "/tmp/first file.pdf", "/tmp/第二.pdf",
+        ]).unwrap();
+        assert!(cli.mcp_server);
+        assert_eq!(cli.mcp_port, 19321);
+        assert_eq!(cli.files, vec![
+            std::path::PathBuf::from("/tmp/first file.pdf"),
+            std::path::PathBuf::from("/tmp/第二.pdf"),
+        ]);
+    }
+
+    #[test]
+    fn ordinary_file_launch_keeps_diagnostics_disabled() {
+        let cli = Cli::try_parse_from(["open-pdf-studio", "/tmp/document.pdf"]).unwrap();
+        assert!(!cli.mcp_server);
+        assert_eq!(cli.files.len(), 1);
+        assert!(Cli::try_parse_from(["open-pdf-studio"]).unwrap().files.is_empty());
+    }
 }

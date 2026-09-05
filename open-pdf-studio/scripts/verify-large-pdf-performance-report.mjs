@@ -16,6 +16,10 @@ const finite = (value) => Number.isFinite(Number(value));
 
 export function evaluateLargePdfPerformanceReport(report) {
   const metrics = report?.metrics || {};
+  const scrollCounters = report?.measurements?.continuous?.scroll?.metrics?.counters || {};
+  const preparedEntries = metrics.sharpPreparedEntries ?? scrollCounters.sharpPreparedEntries ?? 0;
+  const preparationMisses = metrics.sharpPreparationMisses ?? scrollCounters.sharpPreparationMisses ?? 0;
+  const preparedReuse = preparedEntries > 0 && preparationMisses === 0;
   const threshold = (name, passes, measured, requirement) => ({
     name,
     status: passes ? 'PASS' : 'FAIL',
@@ -38,18 +42,29 @@ export function evaluateLargePdfPerformanceReport(report) {
       || (finite(metrics.cachedPreviewP95Ms) && metrics.cachedPreviewP95Ms <= 100),
     metrics.cachedPreviewPaints === 0 ? 'not applicable; no cached preview encountered' : metrics.cachedPreviewP95Ms,
     '<= 100 ms when a cached preview exists'),
-    threshold('strictlyVisibleFirstPreview', metrics.visiblePagePreviewPublishes > 0
-      && finite(metrics.visiblePagePreviewP95Ms) && metrics.visiblePagePreviewP95Ms <= 150,
+    threshold('strictlyVisibleFirstPreview', metrics.visiblePagePreviewPublishes === 0 && preparedReuse
+      || metrics.visiblePagePreviewPublishes > 0
+        && finite(metrics.visiblePagePreviewP95Ms) && metrics.visiblePagePreviewP95Ms <= 150,
     {
       publishes: metrics.visiblePagePreviewPublishes,
+      preparedEntries, preparationMisses,
       p95Ms: metrics.visiblePagePreviewP95Ms,
-    }, 'at least one visible preview and p95 <= 150 ms'),
-    threshold('interactiveRasterLatency', metrics.interactiveRasterPublishes > 0
-      && finite(metrics.interactiveRasterP95Ms) && metrics.interactiveRasterP95Ms <= 150,
+    }, 'reused prepared sharp pages without misses, or visible preview p95 <= 150 ms'),
+    threshold('interactiveRasterLatency', metrics.interactiveRasterPublishes === 0
+      ? metrics.fullQualityPublishes > 0 || preparedReuse
+      : metrics.interactiveRasterPublishes > 0 && finite(metrics.interactiveRasterP95Ms) && metrics.interactiveRasterP95Ms <= 150,
     {
       publishes: metrics.interactiveRasterPublishes,
       p95Ms: metrics.interactiveRasterP95Ms,
-    }, 'at least one readable CSS-resolution raster and p95 <= 150 ms'),
+    }, 'direct full-quality publication, or readable CSS-resolution raster p95 <= 150 ms'),
+    threshold('sharpDuringMotion', Array.isArray(metrics.sharpScenarios)
+      && metrics.sharpScenarios.length >= 4
+      && [1, 3].every((zoom) => [1, 3].every((speed) => metrics.sharpScenarios.some((s) => s.zoom === zoom && s.speed === speed)))
+      && metrics.sharpScenarios.every((s) => s.warmupComplete && s.frames > 0
+        && s.missedFrames === 0 && s.missedEntries === 0
+        && (s.zoom !== 3 || s.tileShadowFree === true)
+        && s.captureCount > 0 && s.video && s.framesBelow20MsPercent >= 95),
+    metrics.sharpScenarios, 'normal and tiled zoom at 1 and 3 viewports/second: no unsharp frames or entries, >=95% frames below 20 ms, captured video and pixels'),
     threshold('rasterTransferP95Ms', finite(metrics.rasterTransferP95Ms)
       && metrics.rasterTransferP95Ms <= 150,
     metrics.rasterTransferP95Ms, '<= 150 ms end-to-end raster transport and decode'),
@@ -140,6 +155,7 @@ export function evaluateLargePdfPerformanceReport(report) {
       || report?.provenance?.stateSeeding !== false) {
     evidenceIssues.push('performance evidence was not captured through the packaged production UI');
   }
+  if (metrics.matchingPackagedBuilds === false) evidenceIssues.push('process runs used different packaged binaries');
   if (!report?.packagedApp?.executablePath || !report?.head) evidenceIssues.push('packaged app or HEAD identity is missing');
   const failures = criteria.filter((criterion) => criterion.status !== 'PASS').map(({ name }) => name);
   return {

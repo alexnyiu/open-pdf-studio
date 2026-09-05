@@ -18,7 +18,8 @@ const MM_TO_POINTS = 72 / 25.4;
  */
 async function detectContentBounds(pageNum, threshold) {
   // Determine render scale — reduce for very large pages
-  const page = await getActiveDocument().pdfDoc.getPage(pageNum);
+  const doc = getActiveDocument();
+  const page = await doc.pdfDoc.getPage(pageNum);
   const vp = page.getViewport({ scale: 1 });
   const basePixels = vp.width * vp.height;
   let scale = 1;
@@ -29,7 +30,7 @@ async function detectContentBounds(pageNum, threshold) {
     scale = 2;
   }
 
-  const canvas = await renderPageOffscreen(pageNum, scale);
+  const canvas = await renderPageOffscreen(pageNum, scale, doc);
   const ctx = canvas.getContext("2d");
   const { width, height } = canvas;
   const imageData = ctx.getImageData(0, 0, width, height);

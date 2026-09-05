@@ -13,53 +13,51 @@ const categoryLimit = (category) => {
   return budget.javascriptBytes;
 };
 
-function totals() {
-  const result = {
-    javascript: 0,
-    native: 0,
-    metadata: 0,
-    total: 0,
-    active: { javascript: 0, native: 0, metadata: 0, total: 0 },
-    inactive: { javascript: 0, native: 0, metadata: 0, total: 0 },
-  };
-  for (const resource of resources.values()) {
-    result[resource.category] = (result[resource.category] || 0) + resource.bytes;
-    result.total += resource.bytes;
-    const group = resource.documentId === activeDocumentId ? result.active : result.inactive;
-    group[resource.category] = (group[resource.category] || 0) + resource.bytes;
-    group.total += resource.bytes;
-  }
-  return result;
+const emptyUsage = () => ({ javascript: 0, native: 0, metadata: 0, total: 0 });
+let aggregate = emptyUsage();
+const documentUsage = new Map();
+function account(resource, direction) {
+  let usage = documentUsage.get(resource.documentId);
+  if (!usage) { usage = emptyUsage(); documentUsage.set(resource.documentId, usage); }
+  const delta = resource.bytes * direction;
+  usage[resource.category] += delta; usage.total += delta;
+  aggregate[resource.category] += delta; aggregate.total += delta;
+  if (usage.total === 0) documentUsage.delete(resource.documentId);
 }
-
+function removeResource(key) {
+  const resource = resources.get(key);
+  if (!resource) return false;
+  resources.delete(key); account(resource, -1); return true;
+}
+function totals() {
+  const active = { ...(documentUsage.get(activeDocumentId) || emptyUsage()) };
+  const inactive = emptyUsage();
+  for (const category of Object.keys(inactive)) inactive[category] = aggregate[category] - active[category];
+  return { ...aggregate, active, inactive };
+}
 function evictCategory(category) {
   const limit = categoryLimit(category);
   const activeLimit = limit * (Number(budget.activeDocumentShare) || 0.8);
-  const inactiveLimit = limit - activeLimit;
   const evictGroup = (isActive, groupLimit) => {
-    let used = [...resources.values()].reduce((sum, resource) => sum
-      + (resource.category === category && (resource.documentId === activeDocumentId) === isActive
-        ? resource.bytes : 0), 0);
-    const candidates = [...resources.values()]
-      .filter((resource) => resource.category === category
-        && (resource.documentId === activeDocumentId) === isActive
-        && !resource.protected?.())
-      .sort((left, right) => left.touched - right.touched);
-    for (const resource of candidates) {
-      if (used <= groupLimit) break;
-      resources.delete(resource.key);
-      used -= resource.bytes;
+    const used = () => {
+      const activeBytes = documentUsage.get(activeDocumentId)?.[category] || 0;
+      return isActive ? activeBytes : aggregate[category] - activeBytes;
+    };
+    if (used() <= groupLimit) return;
+    // Map order is the LRU order; no full-registry copy or sort per registration.
+    for (const [key, resource] of resources) {
+      if (used() <= groupLimit) break;
+      if (resource.category !== category || (resource.documentId === activeDocumentId) !== isActive
+          || resource.protected?.()) continue;
+      removeResource(key);
       try { resource.release?.(); } catch {}
     }
   };
-  evictGroup(false, inactiveLimit);
+  evictGroup(false, limit - activeLimit);
   evictGroup(true, activeLimit);
 }
 
-function enforce() {
-  evictCategory('javascript');
-  evictCategory('native');
-  evictCategory('metadata');
+function refreshPressure() {
   const current = totals();
   const activeShare = Number(budget.activeDocumentShare) || 0.8;
   overBudget = current.javascript > budget.javascriptBytes
@@ -77,6 +75,13 @@ function enforce() {
   recordPerformancePeak('trackedResourceBytes', current.total);
   recordPerformancePeak('trackedResourceCount', resources.size);
   return !overBudget;
+}
+
+function enforce() {
+  evictCategory('javascript');
+  evictCategory('native');
+  evictCategory('metadata');
+  return refreshPressure();
 }
 
 export function configureRenderResourceBudget(nextBudget, documentId = activeDocumentId) {
@@ -104,8 +109,8 @@ export function registerRenderResource({
   release = null,
 } = {}) {
   if (!key) throw new TypeError('Render resource requires a stable key');
-  resources.delete(key);
-  resources.set(key, {
+  removeResource(key);
+  const resource = {
     key,
     category: category === 'metadata' || category === 'native' ? category : 'javascript',
     documentId,
@@ -113,29 +118,34 @@ export function registerRenderResource({
     protected: typeof isProtected === 'function' ? isProtected : null,
     release: typeof release === 'function' ? release : null,
     touched: ++sequence,
-  });
+  };
+  resources.set(key, resource);
+  account(resource, 1);
   enforce();
   return resources.has(key);
 }
 
 export function touchRenderResource(key) {
   const resource = resources.get(key);
-  if (resource) resource.touched = ++sequence;
+  if (resource) { resource.touched = ++sequence; resources.delete(key); resources.set(key, resource); }
   return Boolean(resource);
 }
 
 export function unregisterRenderResource(key) {
-  return resources.delete(key);
+  const removed = removeResource(key);
+  refreshPressure();
+  return removed;
 }
 
 export function clearRenderResourcesForDocument(documentId, { release = false } = {}) {
   for (const [key, resource] of resources) {
     if (resource.documentId !== documentId) continue;
-    resources.delete(key);
+    removeResource(key);
     if (release) {
       try { resource.release?.(); } catch {}
     }
   }
+  refreshPressure();
 }
 
 export function backgroundRenderAdmissionAllowed() {
@@ -155,6 +165,7 @@ export function renderResourceBudgetSnapshot() {
 
 export function resetRenderResourceBudgetForTests() {
   resources.clear();
+  documentUsage.clear(); aggregate = emptyUsage();
   budget = calculateRenderResourceBudget(null);
   activeDocumentId = null;
   sequence = 0;

@@ -132,7 +132,7 @@ export default function PrintDialog(props) {
       ctx.clearRect(0, 0, canvasRef.width, canvasRef.height);
 
       if (printContent() === 'doc-and-markups') {
-        const rendered = await renderPageOffscreen(pageNum, previewScale);
+        const rendered = await renderPageOffscreen(pageNum, previewScale, doc);
         ctx.drawImage(rendered, 0, 0, canvasRef.width, canvasRef.height);
       } else {
         const renderTask = page.render({

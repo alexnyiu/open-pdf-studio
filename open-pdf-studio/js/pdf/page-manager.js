@@ -1,10 +1,10 @@
 import { state, getActiveDocument } from '../core/state.js';
-import { getCachedPdfBytes, setCachedPdfBytes, cancelAnnotationLoading, markAllAnnotationPagesLoaded } from './loader.js';
-import { setViewMode } from './renderer.js';
+import { getCachedPdfBytes, setCachedPdfBytes, clearCachedPdfBytes, cancelAnnotationLoading, markAllAnnotationPagesLoaded } from './loader.js';
+import { setViewMode, clearBitmapJSCacheForFile } from './renderer.js';
 import { generateThumbnails, clearThumbnailCache } from '../ui/panels/left-panel.js';
 import { updateAllStatus } from '../ui/chrome/status-bar.js';
 import { hideProperties } from '../ui/panels/properties-panel.js';
-import { saveFileDialog, writeBinaryFile, readBinaryFile, isTauri } from '../core/platform.js';
+import { saveFileDialog, writeBinaryFile, readBinaryFile, isTauri, invoke } from '../core/platform.js';
 import { showLoading, hideLoading } from '../ui/chrome/dialogs.js';
 import { recordPageStructure } from '../core/undo-manager.js';
 import { PDFDocument } from 'pdf-lib';
@@ -112,6 +112,7 @@ export async function pastePage(afterPageNum) {
   if (!currentBytes) return;
 
   const doc = getActiveDocument();
+  const owner = capturePageStructureOwner(doc);
   const oldAnnotations = doc.annotations.map(a => ({ ...a }));
   const oldRotations = { ...doc.pageRotations };
   const oldPage = doc.currentPage;
@@ -147,8 +148,9 @@ export async function pastePage(afterPageNum) {
     const newBytes = new Uint8Array(await destDoc.save());
     const targetPage = insertIdx + 1;
 
-    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage);
-    recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage);
+    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage, { ...owner,
+      onPublished: () => recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage, doc)
+    });
   } finally {
     hideLoading();
   }
@@ -162,85 +164,78 @@ export function getCacheKey() {
   return `__memory__${doc.id}`;
 }
 
+function capturePageStructureOwner(doc) {
+  return { document: doc, lifecycleGeneration: Number(doc?.lifecycleGeneration) || 0,
+    contentRevision: Number(doc?.revisionState?.contentRevision) || 0, pdfDocument: doc?.pdfDoc };
+}
+
 // Reload PDF.js from new bytes, preserving annotations and rotations
-export async function reloadFromBytes(newBytes, annotations, rotations, targetPage) {
-  const doc = getActiveDocument();
+export async function reloadFromBytes(newBytes, annotations, rotations, targetPage, owner = capturePageStructureOwner(getActiveDocument())) {
+  const doc = owner.document;
   if (!doc) return;
 
   const oldPath = doc.filePath || getCacheKey();
   if (!oldPath) return;
 
-  // Cancel any in-progress annotation loading
-  cancelAnnotationLoading();
-
-  // Destroy old pdf.js document to free memory
-  if (doc.pdfDoc) {
-    doc.pdfDoc.destroy();
-  }
-
-  // ── Issue #247 fix ──────────────────────────────────────────────────────
-  // The PDFium main-view renderer reads each page bitmap from the file on
-  // DISK, keyed by path (the Rust DocHandle / PdfBytes / PdfiumDoc / pixmap
-  // caches are all path-keyed). After a structural edit (merge / insert /
-  // delete) only the in-memory bytes change — the on-disk file does not — so
-  // the main view kept rendering the pre-edit document while the thumbnails
-  // (drawn from pdf.js) updated. Fix: persist the edited bytes to a FRESH temp
-  // working file and point the document at it. A brand-new path has no cache
-  // entries anywhere, so the main view rebuilds from the edited content, and
-  // the user's original file is never touched (saved docs route Save → Save-As).
+  const { lifecycleGeneration, contentRevision, pdfDocument: oldPdfDocument } = owner;
+  const ownerIsCurrent = () => getActiveDocument() === doc
+    && (Number(doc.lifecycleGeneration) || 0) === lifecycleGeneration
+    && (Number(doc.revisionState?.contentRevision) || 0) === contentRevision
+    && doc.pdfDoc === oldPdfDocument;
+  const assertOwner = () => {
+    if (!ownerIsCurrent()) throw new DOMException(i18next.t('common:repair.pageChangeCancelled'), 'AbortError');
+  };
+  assertOwner();
+  const previousWasTemporary = !!doc._renderTemp || !!doc.isUntitled;
+  const saveTarget = doc.saveTargetPath || (doc.isUntitled ? null : oldPath);
   let renderPath = oldPath;
-  if (isTauri() && window.__TAURI__?.path && window.__TAURI__?.fs) {
-    const invoke = window.__TAURI__?.core?.invoke;
-    try {
-      const tempDir = await window.__TAURI__.path.tempDir();
-      const sep = (tempDir.endsWith('/') || tempDir.endsWith('\\')) ? '' : '/';
-      renderPath = `${tempDir}${sep}opds-edit-${Date.now()}.pdf`;
-      try { await invoke?.('allow_fs_scope', { path: renderPath }); } catch {}
+  let loadingTask;
+  let replacementPdfDocument;
+  try {
+    // Stage both representations before publishing either. A failed write or
+    // parse must leave the existing path, proxy, bytes and form state usable.
+    if (isTauri()) {
+      const platform = window.__TAURI__;
+      if (!platform?.path || !platform?.fs) throw new Error(i18next.t('common:repair.pageChangeStorageUnavailable'));
+      renderPath = await platform.path.join(await platform.path.tempDir(), `opds-edit-${crypto.randomUUID()}.pdf`);
+      await invoke('allow_fs_scope', { path: renderPath });
       await writeBinaryFile(renderPath, newBytes.slice());
-
-      const prevPath = oldPath;
-      const wasUntitled = !!doc.isUntitled;
-      const prevWasOurTemp = !!doc._renderTemp; // a temp working copy WE created earlier
-      // Remember the real file Ctrl+S must write to: the original opened path.
-      // An untitled doc has none → it stays untitled (Ctrl+S → Save-As).
-      const saveTarget = doc.saveTargetPath || (wasUntitled ? null : oldPath);
-      doc.filePath = renderPath;
-      doc._renderTemp = true;
-      doc.saveTargetPath = saveTarget;
-      doc.isUntitled = !saveTarget; // saved docs keep Ctrl+S → original; untitled → Save-As
-
-      // Delete the previous working/temp file (never a real saved original).
-      if ((prevWasOurTemp || wasUntitled) && prevPath && prevPath !== renderPath) {
-        try { await window.__TAURI__.fs.remove(prevPath); } catch {}
-      }
-    } catch (e) {
-      console.warn('[reloadFromBytes] temp working-file write failed; main view may stay stale', e);
-      renderPath = oldPath;
     }
+    assertOwner();
+    loadingTask = pdfjsLib.getDocument({
+      data: newBytes.slice(),
+      cMapUrl: '/pdfjs/web/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: '/pdfjs/web/standard_fonts/',
+      isEvalSupported: false,
+      verbosity: 0,
+    });
+    replacementPdfDocument = await loadingTask.promise;
+    assertOwner();
+  } catch (error) {
+    try { await loadingTask?.destroy(); } catch {}
+    if (renderPath !== oldPath) {
+      try { await window.__TAURI__?.fs?.remove(renderPath); } catch {}
+    }
+    showMessage(i18next.t('common:repair.pageChangeFailed', { error: error?.message || String(error) }));
+    throw error;
   }
 
-  // Update cache with new bytes (keyed by the path we now render from)
-  setCachedPdfBytes(renderPath, newBytes.slice());
-
-  // Reset form field annotation storage
+  cancelAnnotationLoading();
   resetAnnotationStorage();
-
-  // Load new bytes into pdf.js (slice to prevent buffer detachment of the original)
-  const replacementPdfDocument = await pdfjsLib.getDocument({
-    data: newBytes.slice(),
-    cMapUrl: '/pdfjs/web/cmaps/',
-    cMapPacked: true,
-    standardFontDataUrl: '/pdfjs/web/standard_fonts/',
-    isEvalSupported: false,
-    verbosity: 0,
-  }).promise;
+  if (renderPath !== oldPath) {
+    doc.filePath = renderPath;
+    doc._renderTemp = true;
+    doc.saveTargetPath = saveTarget;
+    doc.isUntitled = !saveTarget;
+  }
+  setCachedPdfBytes(renderPath, newBytes.slice());
   const previousPdfDocument = replaceDocumentPdfProxy(
     doc,
     replacementPdfDocument,
     LIFECYCLE_TRANSITION_POLICIES.CONTENT_REPLACEMENT,
   );
-  try { await previousPdfDocument?.destroy?.(); } catch (_) {}
-
+  const publishedGeneration = doc.lifecycleGeneration;
   // Page identities and geometry changed. Invalidate pending OCR atomically so
   // a late child result from the previous document generation cannot publish.
   resetDocumentOcrGeneration(doc);
@@ -261,17 +256,48 @@ export async function reloadFromBytes(newBytes, annotations, rotations, targetPa
     doc.selectedAnnotation = null;
     doc.selectedAnnotations = [];
   }
+  // Record persistence debt and history before yielding to tab closure or edits.
+  owner.onPublished?.();
+  try { await previousPdfDocument?.destroy?.(); } catch (_) {}
+
+  // A new path must retire every derivative of the superseded source, not
+  // merely unlink its temporary file. History owns independent byte snapshots.
+  if (oldPath !== renderPath) {
+    clearCachedPdfBytes(oldPath);
+    clearBitmapJSCacheForFile(oldPath);
+    try {
+      const { clearVectorCacheForFile } = await import('./vector-renderer.js');
+      clearVectorCacheForFile(oldPath);
+    } catch (error) { console.warn('[reloadFromBytes] Retired vector cleanup failed:', error); }
+    if (isTauri()) {
+      try {
+        await invoke('invalidate_pdf_cache', { path: oldPath });
+        if (previousWasTemporary) await window.__TAURI__?.fs?.remove(oldPath);
+      } catch (error) {
+        console.warn('[reloadFromBytes] Retired-source cleanup failed:', error);
+      }
+    }
+  }
+
+
+  if (getActiveDocument() !== doc || doc.lifecycleGeneration !== publishedGeneration) return;
   hideProperties();
 
   // Re-render (preserve the book-spread / facing layout variants of continuous)
-  await setViewMode(
-    doc?.facingSpread && doc?.viewMode === 'continuous' ? 'facing'
-    : doc?.bookSpread && doc?.viewMode === 'continuous' ? 'book'
-    : (doc?.viewMode || 'single')
-  );
-  clearThumbnailCache(doc.id);
-  generateThumbnails();
-  updateAllStatus();
+  try {
+    await setViewMode(
+      doc?.facingSpread && doc?.viewMode === 'continuous' ? 'facing'
+      : doc?.bookSpread && doc?.viewMode === 'continuous' ? 'book'
+      : (doc?.viewMode || 'single')
+    );
+    if (getActiveDocument() !== doc || doc.lifecycleGeneration !== publishedGeneration) return;
+    clearThumbnailCache(doc.id);
+    generateThumbnails();
+    updateAllStatus();
+  } catch (error) {
+    console.error('[reloadFromBytes] Replacement published but view refresh failed:', error);
+    showMessage(i18next.t('common:repair.pageChangeRefreshFailed'));
+  }
 }
 
 // Build remapped annotations array based on page mapping
@@ -315,6 +341,7 @@ export async function insertBlankPages(position, refPage, count, widthPt, height
   if (!currentBytes) return;
 
   const doc = getActiveDocument();
+  const owner = capturePageStructureOwner(doc);
   const oldAnnotations = doc.annotations.map(a => ({ ...a }));
   const oldRotations = { ...doc.pageRotations };
   const oldPage = doc.currentPage;
@@ -357,10 +384,10 @@ export async function insertBlankPages(position, refPage, count, widthPt, height
     // Determine which page to navigate to
     let targetPage = insertIdx + 1; // First inserted page
 
-    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage);
+    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage, { ...owner,
+      onPublished: () => recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage, doc)
+    });
 
-    // Record undo
-    recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage);
   } finally {
     hideLoading();
   }
@@ -400,6 +427,7 @@ export async function insertPagesFromFile(refPage, position) {
   if (!currentBytes) return;
 
   const doc = getActiveDocument();
+  const owner = capturePageStructureOwner(doc);
   const oldAnnotations = doc.annotations.map(a => ({ ...a }));
   const oldRotations = { ...doc.pageRotations };
   const oldPage = doc.currentPage;
@@ -447,10 +475,10 @@ export async function insertPagesFromFile(refPage, position) {
     const newBytes = new Uint8Array(await destDoc.save());
     const targetPage = insertIdx + 1; // Navigate to first inserted page
 
-    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage);
+    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage, { ...owner,
+      onPublished: () => recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage, doc)
+    });
 
-    // Record undo
-    recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage);
   } catch (err) {
     console.error('Failed to insert pages from file:', err);
     showMessage(i18next.t('failedToInsertPagesFromFile', { error: err.message }));
@@ -480,6 +508,7 @@ export async function deletePages(pageNumbers) {
   if (!currentBytes) return;
 
   const doc = getActiveDocument();
+  const owner = capturePageStructureOwner(doc);
   const oldAnnotations = doc.annotations.map(a => ({ ...a }));
   const oldRotations = { ...doc.pageRotations };
   const oldPage = doc.currentPage;
@@ -516,10 +545,10 @@ export async function deletePages(pageNumbers) {
     // Clamp current page
     let targetPage = Math.min(doc.currentPage, newNumPages);
 
-    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage);
+    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage, { ...owner,
+      onPublished: () => recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage, doc)
+    });
 
-    // Record undo
-    recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage);
   } finally {
     hideLoading();
   }
@@ -601,6 +630,7 @@ export async function reorderPages(newPageOrder) {
   if (!currentBytes) return;
 
   const doc = getActiveDocument();
+  const owner = capturePageStructureOwner(doc);
   const oldAnnotations = doc.annotations.map(a => ({ ...a }));
   const oldRotations = { ...doc.pageRotations };
   const oldPage = doc.currentPage;
@@ -632,10 +662,10 @@ export async function reorderPages(newPageOrder) {
     // Navigate to the page that the current page moved to
     const targetPage = pageMapping[doc.currentPage] || 1;
 
-    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage);
+    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage, { ...owner,
+      onPublished: () => recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage, doc)
+    });
 
-    // Record undo
-    recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage);
   } finally {
     hideLoading();
   }
@@ -648,10 +678,10 @@ export async function reorderPages(newPageOrder) {
  * @param {Object} rotations - Page rotations to restore
  * @param {number} currentPage - Page to navigate to
  */
-export async function restorePageState(bytes, annotations, rotations, currentPage) {
+export async function restorePageState(bytes, annotations, rotations, currentPage, doc = getActiveDocument(), onPublished = null) {
   showLoading('Restoring...');
   try {
-    await reloadFromBytes(bytes, annotations, rotations, currentPage);
+    await reloadFromBytes(bytes, annotations, rotations, currentPage, { ...capturePageStructureOwner(doc), onPublished });
   } finally {
     hideLoading();
   }
@@ -686,6 +716,7 @@ export async function replacePages(pageNumber) {
   if (!currentBytes) return;
 
   const doc = getActiveDocument();
+  const owner = capturePageStructureOwner(doc);
   const oldAnnotations = doc.annotations.map(a => ({ ...a }));
   const oldRotations = { ...doc.pageRotations };
   const oldPage = doc.currentPage;
@@ -740,10 +771,10 @@ export async function replacePages(pageNumber) {
     const newBytes = new Uint8Array(await destDoc.save());
     const targetPage = pageNumber; // Navigate to where replacement starts
 
-    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage);
+    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage, { ...owner,
+      onPublished: () => recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage, doc)
+    });
 
-    // Record undo
-    recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage);
   } catch (err) {
     console.error('Failed to replace page:', err);
     showMessage(i18next.t('failedToReplacePage', { error: err.message }));
@@ -773,6 +804,7 @@ export async function mergeFiles(filePaths, position) {
     try { currentBytes = new Uint8Array(await readBinaryFile(doc.filePath)); } catch {}
   }
   if (!currentBytes) return;
+  const owner = capturePageStructureOwner(doc);
   const oldAnnotations = doc.annotations.map(a => ({ ...a }));
   const oldRotations = { ...doc.pageRotations };
   const oldPage = doc.currentPage;
@@ -843,10 +875,10 @@ export async function mergeFiles(filePaths, position) {
     // Navigate to first merged page
     const targetPage = insertIdx + 1;
 
-    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage);
+    await reloadFromBytes(newBytes, newAnnotations, newRotations, targetPage, { ...owner,
+      onPublished: () => recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage, doc)
+    });
 
-    // Record undo
-    recordPageStructure(currentBytes, oldAnnotations, oldRotations, oldPage, newBytes, newAnnotations, newRotations, targetPage);
   } finally {
     hideLoading();
   }

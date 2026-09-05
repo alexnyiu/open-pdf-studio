@@ -1,10 +1,14 @@
+import { preferredScrollBehavior } from '../core/motion.js';
+import i18next from '../i18n/config.js';
+const tr = (key, values) => i18next.t(`common:repair.${key}`, values);
+import { waitForPageTextSurface } from '../pdf/page-surface-ready.js';
 /**
  * Find Bar - UI component for PDF text search
  */
 
 import { state, getActiveDocument } from '../core/state.js';
 import { executeSearch, executeProgressiveSearch, findNext, findPrevious, getCurrentResult, clearSearch, getResultsForPage } from './find-controller.js';
-import { renderPage, renderContinuous } from '../pdf/renderer.js';
+import { goToPage, renderPage, renderContinuous } from '../pdf/renderer.js';
 import { projectOcrItemToTextLayer } from '../text/text-layer.js';
 import {
   setFindBarVisible as setVisible, setFindBarResultsText as setResultsText,
@@ -24,13 +28,27 @@ let searchDebounceTimer = null;
 
 // Cancel function for the current progressive search
 let cancelProgressiveSearch = null;
+let searchRequest = 0;
+let navigationController = null;
 
 /**
  * Initialize the find bar (no-op, retained for backward compatibility).
  * Event binding is now handled by the Solid.js FindBar component.
  */
+let searchListenersInstalled = false;
 export function initFindBar() {
-  // No-op: DOM caching and event binding moved to FindBar.jsx
+  if (searchListenersInstalled) return;
+  searchListenersInstalled = true;
+  const refresh = event => {
+    if (event.detail?.documentId && event.detail.documentId !== String(getActiveDocument()?.id)) return;
+    if (!state.search.isOpen || !state.search.query) return;
+    searchRequest++; navigationController?.abort(); cancelProgressiveSearch?.();
+    clearHighlights(); clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => { if (state.search.isOpen) executeSearchAndUpdate(); }, 100);
+  };
+  window.addEventListener('opds:page-edit-readiness-cleared', refresh);
+  window.addEventListener('opds:document-lifecycle-changed', refresh);
+  window.addEventListener('opds:active-document-changed', refresh);
 }
 
 /**
@@ -51,6 +69,9 @@ export function openFindBar() {
  * Close the find bar
  */
 export function closeFindBar() {
+  searchRequest++;
+  navigationController?.abort();
+  clearTimeout(searchDebounceTimer);
   if (state.search.isOpen) noteSearchMutation();
   setVisible(false);
   state.search.isOpen = false;
@@ -82,6 +103,8 @@ export function toggleFindBar() {
  * @param {string} value - The current input value
  */
 export function handleSearchInput(value) {
+  searchRequest++;
+  navigationController?.abort();
   const query = value;
   if (state.search.query !== query) noteSearchMutation();
   state.search.query = query;
@@ -104,6 +127,18 @@ export function handleSearchInput(value) {
     clearHighlights();
     return;
   }
+
+  // The previous query is already superseded, including during debounce.
+  // Do not leave its matches available to navigation or assistive technology.
+  state.search.results = [];
+  state.search.totalMatches = 0;
+  state.search.currentIndex = -1;
+  clearHighlights();
+  setSearching(true);
+  setResultsText(tr('searching'));
+  setMessageText('');
+  setNotFound(false);
+  setNavDisabled(true);
 
   searchDebounceTimer = setTimeout(() => {
     executeSearchAndUpdate();
@@ -209,6 +244,8 @@ export function onHighlightChange(highlightAll) {
  * Execute search and update UI progressively
  */
 async function executeSearchAndUpdate() {
+  const request = ++searchRequest;
+  navigationController?.abort();
   // Cancel any in-progress search
   if (cancelProgressiveSearch) {
     cancelProgressiveSearch();
@@ -224,7 +261,7 @@ async function executeSearchAndUpdate() {
   state.search.currentIndex = -1;
 
   setSearching(true);
-  setResultsText('Searching...');
+  setResultsText(tr('searching'));
   setMessageText('');
   setNotFound(false);
   setNavDisabled(true);
@@ -234,7 +271,19 @@ async function executeSearchAndUpdate() {
   let navigatedMatchPage = -1;
   let navigatedMatchPos = -1;
 
-  cancelProgressiveSearch = executeProgressiveSearch((results, searchedPages, totalPages, done) => {
+  cancelProgressiveSearch = executeProgressiveSearch((results, searchedPages, totalPages, done, outcome = {}) => {
+    if (request !== searchRequest || !state.search.isOpen) return;
+    if (done && outcome.status && outcome.status !== 'completed') {
+      setSearching(false);
+      cancelProgressiveSearch = null;
+      if (outcome.status === 'superseded' && state.search.query) {
+        queueMicrotask(() => { if (request === searchRequest && state.search.isOpen) executeSearchAndUpdate(); });
+      } else if (outcome.status === 'failed') {
+        setResultsText(tr('searchFailed')); setMessageText(outcome.error || tr('searchRetry'));
+        setNavDisabled(true);
+      }
+      return;
+    }
     // Update state
     state.search.results = results;
     state.search.totalMatches = results.length;
@@ -252,18 +301,18 @@ async function executeSearchAndUpdate() {
     if (results.length > 0) {
       const idx = state.search.currentIndex;
       if (done) {
-        setResultsText(`${idx + 1} of ${results.length}`);
+        setResultsText(tr('matchCount', { current: idx + 1, total: results.length }));
       } else {
-        setResultsText(`${results.length}+ (${searchedPages}/${totalPages})`);
+        setResultsText(tr('partialMatchCount', { count: results.length, current: searchedPages, total: totalPages }));
       }
       setNavDisabled(false);
       setNotFound(false);
     } else if (done) {
-      setResultsText('No results');
+      setResultsText(tr('noResults'));
       setNotFound(true);
-      setMessageText('Phrase not found');
+      setMessageText(tr('phraseNotFound'));
     } else {
-      setResultsText(`${searchedPages}/${totalPages} pages...`);
+      setResultsText(tr('pageProgress', { current: searchedPages, total: totalPages }));
     }
 
     // Navigate to first result as soon as we have one
@@ -294,9 +343,9 @@ async function executeSearchAndUpdate() {
           if (newIdx === -1) newIdx = 0;
         }
         state.search.currentIndex = newIdx;
-        setResultsText(`${newIdx + 1} of ${results.length}`);
+        setResultsText(tr('matchCount', { current: newIdx + 1, total: results.length }));
       }
-      setMessageText(results.length === 0 && query ? 'Phrase not found' : '');
+      setMessageText(results.length === 0 && query ? tr('phraseNotFound') : '');
       highlightResults();
     }
   });
@@ -307,32 +356,22 @@ async function executeSearchAndUpdate() {
  */
 async function navigateToResult(result) {
   if (!result) return;
-
-  // Switch to the page if needed
+  navigationController?.abort();
+  const controller = new AbortController();
+  navigationController = controller;
   const doc = getActiveDocument();
-  const docPage = doc ? doc.currentPage : 1;
-  if (result.pageNum !== docPage) {
-    if (doc) {
-      noteDocumentViewMutation(doc, ['page', ...(doc.viewMode === 'continuous' ? ['scroll'] : [])]);
-      doc.currentPage = result.pageNum;
-    }
-
-    if (getActiveDocument()?.viewMode === 'continuous') {
-      // Scroll to page in continuous mode
-      const pageWrapper = document.querySelector(`.page-wrapper[data-page="${result.pageNum}"]`);
-      if (pageWrapper) {
-        pageWrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    } else {
-      // Render the page in single page mode
-      await renderPage(result.pageNum);
-    }
+  if (!doc?.pdfDoc) return;
+  try {
+    await goToPage(result.pageNum, { absolute: true, behavior: 'auto' });
+    const surface = await waitForPageTextSurface(doc, result.pageNum, { signal: controller.signal });
+    if (controller.signal.aborted || getActiveDocument() !== doc || !state.search.isOpen) return;
+    highlightResults();
+    surface.textLayer.querySelector('.search-highlight.current')?.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+    const { populateDocInfo } = await import('../solid/stores/propertiesStore.js');
+    if (!controller.signal.aborted && getActiveDocument() === doc) await populateDocInfo();
+  } catch (error) {
+    if (error.name !== 'AbortError') setMessageText(error.message);
   }
-
-  // Scroll to the match after a short delay to ensure rendering is complete
-  setTimeout(() => {
-    scrollToMatch(result);
-  }, 100);
 }
 
 /**
@@ -344,7 +383,7 @@ function scrollToMatch(result) {
   // Find the highlight element for the current match
   const highlights = document.querySelectorAll('.search-highlight.current');
   if (highlights.length > 0) {
-    highlights[0].scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    highlights[0].scrollIntoView({ behavior: preferredScrollBehavior(), block: 'center', inline: 'center' });
   }
 }
 
@@ -356,16 +395,16 @@ function updateUI() {
 
   // Update results count
   if (totalMatches > 0) {
-    setResultsText(`${currentIndex + 1} of ${totalMatches}`);
+    setResultsText(tr('matchCount', { current: currentIndex + 1, total: totalMatches }));
   } else if (query) {
-    setResultsText('No results');
+    setResultsText(tr('noResults'));
   } else {
     setResultsText('');
   }
 
   // Update message
   if (query && totalMatches === 0) {
-    setMessageText('Phrase not found');
+    setMessageText(tr('phraseNotFound'));
   } else {
     setMessageText('');
   }

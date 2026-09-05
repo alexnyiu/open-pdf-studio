@@ -112,6 +112,7 @@ export function switchToTab(index) {
 
   // Switch active document
   state.activeDocumentIndex = index;
+  window.dispatchEvent(new CustomEvent('opds:active-document-changed', { detail: { documentId: String(getActiveDocument()?.id || '') } }));
   import('../../pdf/render-resource-budget.js').then((module) => {
     module.setActiveRenderDocument(getActiveDocument()?.id || null);
   });
@@ -196,8 +197,8 @@ export function switchToTab(index) {
       }, 50);
     }
 
-    // Regenerate thumbnails for the new document
-    generateThumbnails();
+    // Restore this tab's panel scroll only while no newer page navigation occurs.
+    generateThumbnails({ restoreScroll: true });
 
     // Refresh active left panel tab content
     refreshActiveTab();
@@ -326,7 +327,7 @@ async function closeDocumentTab(doc, force) {
   }
 
   // Delete the temp backing file of an untitled (never-saved) blank doc.
-  if (doc.isUntitled && doc.filePath) {
+  if ((doc.isUntitled || doc._renderTemp) && doc.filePath) {
     try {
       if (window.__TAURI__?.fs?.remove) await window.__TAURI__.fs.remove(doc.filePath);
     } catch (e) { console.warn('[blank-pdf] temp cleanup on close failed:', e); }
@@ -353,6 +354,8 @@ async function closeDocumentTab(doc, force) {
     state.activeDocumentIndex = -1;
     clearPdfView();
     clearThumbnails();
+    const { populateDocInfo } = await import('../../solid/stores/propertiesStore.js');
+    await populateDocInfo();
     refreshAllTabs();
     updateWindowTitle();
     import('../../search/find-bar.js').then(m => m.closeFindBar());

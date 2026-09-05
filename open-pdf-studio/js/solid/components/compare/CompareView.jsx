@@ -1,4 +1,8 @@
+import i18next from '../../../i18n/config.js';
+const repairText = key => i18next.t(`common:repair.${key}`);
+import { disposeComparisonSession, comparisonGeneration } from '../../../compare/comparison-session.js';
 import { createEffect, createMemo, createSignal, onCleanup, onMount, For, Show } from 'solid-js';
+import VirtualList from '../common/VirtualList.jsx';
 import {
   compareActive,
   compareOldPath,
@@ -19,7 +23,8 @@ import {
   compareShowContour,
   compareFocused,
   compareFitRequest,
-  compareDetecting,
+  compareDetecting, setCompareDetecting,
+  compareVisualError, setCompareVisualError, retryVisualComparison,
   setCompareShowAdded,
   setCompareShowRemoved,
   setCompareShowModified,
@@ -37,6 +42,7 @@ import {
   requestCompareReset,
   comparePanelTab,
   setComparePanelTab,
+  compareTextError, setCompareTextError, compareTextProgress, setCompareTextProgress,
   compareTextChanges,
   compareTextComparing,
   setCompareTextChanges,
@@ -50,7 +56,6 @@ import {
   clearCompareDocCache,
 } from '../../../compare/compare-viewport.js';
 import { runTextCompare, clearTextCompareCache } from '../../../compare/text-compare.js';
-import { diffWords } from '../../../compare/text-diff.js';
 import { useTranslation } from '../../../i18n/useTranslation.js';
 import { state } from '../../../core/state.js';
 import { diffAnnotationsForPair } from '../../../compare/compare-annotations.js';
@@ -382,6 +387,7 @@ export default function CompareView() {
     const skipDetection = !!opts2.skipDetection || pendingSkipDetection;
     pendingSkipDetection = false;
     const zoomAtRender = compareZoom();
+    const sessionAtRender = comparisonGeneration();
     try {
       const opts = {
         oldPath: compareOldPath(),
@@ -412,6 +418,9 @@ export default function CompareView() {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[compare] render failed', err);
+      if (compareActive() && sessionAtRender === comparisonGeneration() && err.name !== 'AbortError') {
+        setCompareVisualError(err.message || repairText('comparisonFailed'));
+      }
     } finally {
       busy = false;
       // The freshly painted bitmap matches zoomAtRender. Reset CSS preview
@@ -568,21 +577,24 @@ export default function CompareView() {
   // Tekst-tab opent (lazy — extractie van alle pagina's is niet gratis).
   let _textRunSeq = 0;
   createEffect(() => {
-    if (comparePanelTab() !== 'text' || !compareActive()) return;
+    if (!compareActive()) { _textRunSeq++; return; }
+    if (comparePanelTab() !== 'text' || compareTextError()) return;
     if (compareTextChanges() !== null || compareTextComparing()) return;
     const oldP = compareOldPath();
     const newP = compareNewPath();
     if (!oldP || !newP) return;
     const seq = ++_textRunSeq;
+    const generation = comparisonGeneration();
+    const isCurrent = () => seq === _textRunSeq && generation === comparisonGeneration() && compareActive();
     setCompareTextComparing(true);
-    runTextCompare(oldP, newP)
-      .then((list) => { if (seq === _textRunSeq) setCompareTextChanges(list); })
+    runTextCompare(oldP, newP, message => { if (isCurrent()) setCompareTextProgress(message); })
+      .then((list) => { if (isCurrent()) setCompareTextChanges(list); })
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.warn('[compare] text compare failed', err);
-        if (seq === _textRunSeq) setCompareTextChanges([]);
+        if (isCurrent()) setCompareTextError(err.message || 'Comparison failed');
       })
-      .finally(() => { if (seq === _textRunSeq) setCompareTextComparing(false); });
+      .finally(() => { if (isCurrent()) setCompareTextComparing(false); });
   });
 
   // Klik op een tekstverschil → spring naar de betreffende pagina('s), licht
@@ -1026,6 +1038,27 @@ function ChangeListPanel(props) {
         <TextDiffList t={props.t} onFocus={props.onTextFocus} focused={props.focused} />
       </Show>
       <Show when={comparePanelTab() === 'changes'}>
+      <Show when={compareVisualError()}>
+        <div role="alert" style="padding:12px;">
+          {compareVisualError()}
+          <button type="button" onClick={retryVisualComparison}>{repairText('retry')}</button>
+        </div>
+      </Show>
+      <Show when={compareDetecting()}>
+        <div role="status" aria-busy="true" style="padding:8px;">
+          {repairText('comparingVisual')}
+          <button type="button" onClick={() => {
+            disposeComparisonSession(); setCompareDetecting(false);
+            setCompareTextComparing(false);
+            setCompareVisualError(repairText('comparisonCancelled'));
+            setCompareTextError(repairText('comparisonCancelled'));
+          }}>{repairText('cancel')}</button>
+        </div>
+      </Show>
+      <Show when={!compareVisualError()}>
+      <Show when={(props.changes() || []).some(change => change.partial)}>
+        <p role="status" style="padding:8px;">{repairText('comparisonCoarse')}</p>
+      </Show>
       <div style="display:flex; gap:4px; padding:6px 8px; border-bottom:1px solid #d4d4d4; background:#fafafa;">
         <TypeToggle type="added" count={groupedByType().added.length} />
         <TypeToggle type="removed" count={groupedByType().removed.length} />
@@ -1095,6 +1128,7 @@ function ChangeListPanel(props) {
         </Show>
       </div>
       </Show>
+      </Show>
     </div>
   );
 }
@@ -1103,6 +1137,13 @@ function ChangeListPanel(props) {
 // soort en de tekst oud → nieuw; klik springt naar het betreffende
 // pagina-paar. Bij 'modified' worden de gewijzigde woorden geaccentueerd.
 function TextDiffList(props) {
+  let scrollContainer;
+  const changeKeys = new WeakMap();
+  let nextChangeKey = 0;
+  const keyFor = change => {
+    if (!changeKeys.has(change)) changeKeys.set(change, `text-change:${++nextChangeKey}`);
+    return changeKeys.get(change);
+  };
   const typeColor = (type) => type === 'added' ? '#16a34a' : type === 'removed' ? '#dc2626' : '#ca8a04';
   const typeIcon = (type) => type === 'added' ? '+' : type === 'removed' ? '−' : 'Δ';
   const typeLabel = (type) => props.t(
@@ -1129,52 +1170,67 @@ function TextDiffList(props) {
   );
   const textStyle = 'font-size:11px; white-space:pre-wrap; word-break:break-word; max-height:88px; overflow:hidden;';
   return (
-    <div style="flex:1; overflow:auto;">
+    <div ref={scrollContainer} class="compare-text-list" style="flex:1; overflow:auto; position:relative; overflow-anchor:none;">
+      <Show when={compareTextError()}>
+        <div role="alert" style="padding:14px;">
+          {compareTextError()}
+          <button type="button" onClick={() => { clearTextCompareCache(); setCompareTextChanges(null); setCompareTextError(null); }}>{repairText('retry')}</button>
+        </div>
+      </Show>
+      <Show when={(compareTextChanges() || []).some(change => change.partial)}>
+        <p role="status">{repairText('comparisonCoarse')}</p>
+      </Show>
       <Show
         when={!compareTextComparing()}
-        fallback={<div style="padding:14px; color:#666; font-style:italic;">…</div>}
+        fallback={<div role="status" style="padding:14px; color:#666;">
+          {compareTextProgress()}
+          <button type="button" onClick={() => { disposeComparisonSession(); setCompareTextError(repairText('comparisonCancelled')); setCompareTextComparing(false); }}>{repairText('cancel')}</button>
+        </div>}
       >
         <Show
           when={(compareTextChanges() || []).length > 0}
           fallback={
             <div style="padding:14px; color:#666; font-style:italic;">
-              {props.t('compare.noTextChanges') || 'Geen tekstverschillen'}
+              {!compareTextError() && (props.t('compare.noTextChanges') || 'No text differences')}
             </div>
           }
         >
-          <For each={compareTextChanges()}>
+          <VirtualList items={compareTextChanges() || []} scrollElement={() => scrollContainer}
+            keyFor={keyFor} estimateHeight={() => 100}
+            labelFor={change => `${typeLabel(change.type)}. ${pageLabel(change)}`}
+            selected={change => props.focused?.() === change}
+            onActivate={change => props.onFocus?.(change)}>
             {(c, i) => {
-              const words = () => c.type === 'modified' ? diffWords(c.oldText, c.newText) : null;
-              const isFocused = () => props.focused?.() === c;
+              const words = () => c().words || null;
+              const isFocused = () => props.focused?.() === c();
               return (
                 <div
-                  onClick={(e) => { e.stopPropagation(); props.onFocus?.(c); }}
                   style={`padding:6px 10px; border-bottom:1px solid #e0e0e0; cursor:pointer; background:${isFocused() ? '#dbeafe' : '#ffffff'};`}
                   onMouseEnter={(e) => { if (!isFocused()) e.currentTarget.style.background = '#eaf3ff'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = isFocused() ? '#dbeafe' : '#ffffff'; }}
                 >
                   <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
                     <span
-                      style={`width:16px; height:16px; flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; background:${typeColor(c.type)}; color:#fff; font-weight:bold; font-size:11px;`}
+                      style={`width:16px; height:16px; flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; background:${typeColor(c().type)}; color:#fff; font-weight:bold; font-size:11px;`}
                     >
-                      {typeIcon(c.type)}
+                      {typeIcon(c().type)}
                     </span>
-                    <span style="font-weight:bold;">{i() + 1}. {typeLabel(c.type)}</span>
-                    <span style="margin-left:auto; color:#666; font-size:11px;">{pageLabel(c)}</span>
+                    <span style="font-weight:bold;">{i() + 1}. {typeLabel(c().type)}</span>
+                    <span style="margin-left:auto; color:#666; font-size:11px;">{pageLabel(c())}</span>
                   </div>
-                  <Show when={c.oldText}>
+                  <Show when={c().oldText}>
                     <div style={`${textStyle} color:#991b1b;`}>
-                      <Show when={words()} fallback={c.oldText}>
+                      <Show when={words()} fallback={c().oldText}>
                         {renderParts(words().oldParts, '#dc2626')}
                       </Show>
                     </div>
                   </Show>
-                  <Show when={c.oldText && c.newText}>
+                  <Show when={c().oldText && c().newText}>
                     <div style="color:#888; font-size:10px; line-height:1; padding:1px 0;">↓</div>
                   </Show>
-                  <Show when={c.newText}>
+                  <Show when={c().newText}>
                     <div style={`${textStyle} color:#14532d;`}>
-                      <Show when={words()} fallback={c.newText}>
+                      <Show when={words()} fallback={c().newText}>
                         {renderParts(words().newParts, '#16a34a')}
                       </Show>
                     </div>
@@ -1182,7 +1238,7 @@ function TextDiffList(props) {
                 </div>
               );
             }}
-          </For>
+          </VirtualList>
         </Show>
       </Show>
     </div>

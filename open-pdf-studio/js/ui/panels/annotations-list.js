@@ -1,3 +1,4 @@
+import { preferredScrollBehavior } from '../../core/motion.js';
 import { state, getActiveDocument, isSelected, getAnnotationBounds, addToSelection, removeFromSelection } from '../../core/state.js';
 import { getTypeDisplayName, formatDate } from '../../utils/helpers.js';
 import { showProperties, showMultiSelectionProperties } from './properties-panel.js';
@@ -331,11 +332,11 @@ function scrollToAnnotation(annotation) {
     const canvasOffset = canvasContainer.offsetTop;
     const scrollX = centerX - pdfContainer.clientWidth / 2;
     const scrollY = wrapperOffset + canvasOffset + centerY - pdfContainer.clientHeight / 2;
-    pdfContainer.scrollTo({ left: Math.max(0, scrollX), top: Math.max(0, scrollY), behavior: 'smooth' });
+    pdfContainer.scrollTo({ left: Math.max(0, scrollX), top: Math.max(0, scrollY), behavior: preferredScrollBehavior() });
   } else {
     const scrollX = centerX - pdfContainer.clientWidth / 2;
     const scrollY = centerY - pdfContainer.clientHeight / 2;
-    pdfContainer.scrollTo({ left: Math.max(0, scrollX), top: Math.max(0, scrollY), behavior: 'smooth' });
+    pdfContainer.scrollTo({ left: Math.max(0, scrollX), top: Math.max(0, scrollY), behavior: preferredScrollBehavior() });
   }
 }
 

@@ -106,6 +106,8 @@ export {
   setVisible as setLoadingVisible,
   message as loadingMessage,
   setMessage as setLoadingMessage,
+  documentId as loadingDocumentId,
+  setDocumentId as setLoadingDocumentId,
 } from './solid/stores/loadingStore.js';
 
 // ============= APP MENU =============

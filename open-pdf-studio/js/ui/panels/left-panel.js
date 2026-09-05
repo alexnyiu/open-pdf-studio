@@ -1,3 +1,4 @@
+import { preferredScrollBehavior } from '../../core/motion.js';
 import {
   state,
   getActiveDocument,
@@ -321,7 +322,7 @@ export function toggleLeftPanel() {
 let processorRunning = false;
 
 // Generate thumbnails for all pages (sets store signals and starts generation)
-export async function generateThumbnails() {
+export async function generateThumbnails({ restoreScroll = false } = {}) {
   const activeDoc = getActiveDocument();
   if (!activeDoc || !activeDoc.pdfDoc) {
     return;
@@ -330,6 +331,17 @@ export async function generateThumbnails() {
   const pdfDoc = activeDoc.pdfDoc;
   const docId = activeDoc.id;
   const numPages = pdfDoc.numPages;
+  const lifecycleGeneration = Number(activeDoc.lifecycleGeneration) || 0;
+  const pageViewRevision = Number(activeDoc.viewMutationState?.fields?.page) || 0;
+  const ownerIsCurrent = () => getActiveDocument() === activeDoc
+    && activeDoc.pdfDoc === pdfDoc
+    && (Number(activeDoc.lifecycleGeneration) || 0) === lifecycleGeneration;
+
+  // Switch the panel owner synchronously. The first-page geometry request
+  // must not leave the previous tab's images or page count interactive.
+  clearAllThumbnails();
+  setPageCount(numPages);
+  setActivePage(activeDoc.currentPage || 1);
 
   // Get first page dimensions for placeholder sizing
   let placeholderWidth = 150;
@@ -345,6 +357,8 @@ export async function generateThumbnails() {
   } catch (err) {
     console.warn('[Thumbnails] Could not get first page dimensions:', err);
   }
+
+  if (!ownerIsCurrent()) return;
 
   // Initialize or update document state
   const priorDocumentState = documentState.get(docId);
@@ -362,12 +376,6 @@ export async function generateThumbnails() {
 
   // Update Solid store signals - this triggers reactive rendering of ThumbnailItem components
   setPlaceholderSize({ width: placeholderWidth, height: placeholderHeight });
-  setPageCount(numPages);
-
-  // Clear old thumbnail data before populating from the new document's cache
-  // (prevents stale images from the previous document showing through)
-  clearAllThumbnails();
-  setPageCount(numPages);
 
   // Populate store with any already-cached thumbnail data
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
@@ -377,7 +385,8 @@ export async function generateThumbnails() {
   }
 
   // Mark current page as active and restore scroll position
-  updateActiveThumbnail(true);
+  updateActiveThumbnail(restoreScroll
+    && (Number(activeDoc.viewMutationState?.fields?.page) || 0) === pageViewRevision);
 
   // Ensure scroll listener is attached (Solid may have re-rendered the container)
   scrollListenerAttached = false;
@@ -1217,7 +1226,7 @@ export function saveThumbnailScrollPosition() {
 }
 
 // Update which thumbnail is marked as active
-export function updateActiveThumbnail(restoreScroll = false) {
+export function updateActiveThumbnail(restoreScroll = false, selectionPage = null) {
   const doc = getActiveDocument();
   const newPage = doc ? doc.currentPage : 1;
   setActivePage(newPage);
@@ -1228,10 +1237,13 @@ export function updateActiveThumbnail(restoreScroll = false) {
   // they don't lose their selection while navigating with the wheel/keyboard.
   const sel = thumbnailSelectedPages();
   if (sel.size <= 1) {
-    selectThumbnailPage(newPage);
+    selectThumbnailPage(selectionPage ?? newPage);
   }
 
+  const pageViewRevision = Number(doc?.viewMutationState?.fields?.page) || 0;
   setTimeout(() => {
+    if (getActiveDocument() !== doc || doc?.currentPage !== newPage
+        || (Number(doc?.viewMutationState?.fields?.page) || 0) !== pageViewRevision) return;
     const container = getContainerRef();
     if (!container) return;
 
@@ -1242,7 +1254,7 @@ export function updateActiveThumbnail(restoreScroll = false) {
       // Scroll active thumbnail into view (page navigation)
       const activeThumbnail = container.querySelector('.thumbnail-item.active');
       if (activeThumbnail) {
-        activeThumbnail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        activeThumbnail.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'nearest' });
       }
     }
   }, 0);

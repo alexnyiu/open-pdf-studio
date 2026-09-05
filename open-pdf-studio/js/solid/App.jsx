@@ -65,6 +65,13 @@ function OrderedDockedPalettes(props) {
   );
 }
 
+function RecoverablePanel(props) {
+  const { t } = useTranslation('common');
+  return <ErrorBoundary fallback={(error, reset) => <div role="alert" class="panel-recovery">
+    <p>{t('repair.panelFailed', { name: props.name })}</p><button type="button" onClick={reset}>{t('repair.retry')}</button>
+  </div>}>{props.children}</ErrorBoundary>;
+}
+
 function DesktopApp() {
   const { t } = useTranslation('common');
   const extPalettes = () => getRegisteredPalettes();
@@ -83,7 +90,7 @@ function DesktopApp() {
 
       <div class="content">
         <LeftPanel />
-        <ElementVisibilityPanel />
+        <RecoverablePanel name="ElementVisibility"><ElementVisibilityPanel /></RecoverablePanel>
         <OrderedDockedPalettes side="left" />
 
         <div class="main-view">
@@ -99,6 +106,7 @@ function DesktopApp() {
             </svg>
             <h2>{t('noDocuments')}</h2>
             <p>{t('noDocumentsHint')}</p>
+            <button type="button" class="empty-open-pdf" onClick={() => import('../pdf/loader.js').then(module => module.openPDFFile())}>{t('repair.openPdf')}</button>
           </div>
 
           <FormFieldsBar />
@@ -135,8 +143,8 @@ function DesktopApp() {
       <PaletteContextMenu />
       <SymbolSettingsDialog />
       <SymbolTypeEditor />
-      <SchedulePanel />
-      <AssistantPanel />
+      <RecoverablePanel name="Schedule"><SchedulePanel /></RecoverablePanel>
+      <RecoverablePanel name="Assistant"><AssistantPanel /></RecoverablePanel>
       {/* MiniLog floating engine-log overlay removed per user request. */}
       <LoadingOverlay />
       <TypeLengthHUD />

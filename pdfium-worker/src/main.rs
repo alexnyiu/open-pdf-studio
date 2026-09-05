@@ -308,6 +308,7 @@ fn main() -> Result<()> {
                 writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
                 stdout.flush()?;
             }
+            Request::ReleaseDocument { path } => { renderer.release_document(&path); }
             Request::Trim => {
                 renderer.trim();
             }

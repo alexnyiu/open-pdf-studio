@@ -815,6 +815,11 @@ body.pdf-cursor-override #canvas-container * {
   user-select: none;
 }
 
+/* Tiles are pieces of one page; shadows belong to the page container. */
+.continuous-container .page-sharp-tile {
+  box-shadow: none;
+}
+
 /* Large continuous documents let the one-use PNG stream own the visible
    pixels directly. This canvas remains as a context-free geometry surface so
    existing page-coordinate, text-edit, and pointer code keeps one canonical
@@ -1127,4 +1132,32 @@ body.pdf-cursor-override #canvas-container * {
   background: #e81123;
   border-color: #e81123;
   color: #ffffff;
+}
+
+/* Repair controls without changing the saved dock/panel layout. */
+.document-tab-close, .document-tabs-add { font: inherit; color: inherit; border: 0; background: transparent; }
+.document-tab-close, .document-tabs-add, .find-btn, .find-toggle-btn { min-width: 24px; min-height: 24px; }
+.document-tab:focus-visible, .thumbnail-item:focus-visible, button:focus-visible, select:focus-visible { outline: 2px solid var(--accent-color, #2563eb); outline-offset: -2px; }
+.pref-native-select { min-height: 28px; max-width: 100%; font: inherit; color: inherit; background: var(--bg-primary, #fff); border: 1px solid var(--border-color, #999); border-radius: 3px; padding: 3px 6px; }
+.empty-open-pdf { padding: 9px 22px; font: inherit; cursor: pointer; }
+.panel-recovery { padding: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+.text-edit-guidance { font-size: 12px; line-height: 1.4; margin: 6px 0 10px; }
+.text-edit-delete-btn { width: auto; min-height: 26px; padding: 4px 10px; }
+
+.document-tab-menu-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  font: inherit;
+}
+.document-tab-menu-item:focus-visible {
+  outline: 2px solid #2463a6;
+  outline-offset: -2px;
 }

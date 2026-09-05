@@ -8,6 +8,7 @@ import {
 } from './render-resource-budget.js';
 import {
   registerTileCacheOwner,
+  releaseTileAfterCanvasCopy,
   tileCacheClearAll,
   tileCacheClearPages,
   tileCacheGet,
@@ -136,4 +137,16 @@ test('page-scoped tile clear retains neighboring pages', async () => {
   assert.ok(tileCacheGet('/scoped-tiles.pdf', 249, 2, 0, '0,0'));
   assert.equal(tileCacheGet('/scoped-tiles.pdf', 250, 2, 0, '0,0'), null);
   assert.ok(tileCacheGet('/scoped-tiles.pdf', 251, 2, 0, '0,0'));
+});
+
+test('a published canvas releases only its duplicate bitmap, exactly once', async () => {
+  let closed = 0;
+  globalThis.createImageBitmap = async () => ({ width: 10, height: 10, close: () => { closed += 1; } });
+  const copied = await tileCacheSet('/copy.pdf', 1, 2, 0, '0', { width: 10, height: 10 }, { renderScale: 2 });
+  const other = await tileCacheSet('/copy.pdf', 2, 2, 0, '0', { width: 10, height: 10 }, { renderScale: 2 });
+  assert.equal(releaseTileAfterCanvasCopy(copied), true);
+  assert.equal(releaseTileAfterCanvasCopy(copied), false);
+  assert.equal(closed, 1);
+  assert.equal(tileCacheSnapshotForTests().bytes, 400);
+  assert.equal(tileCacheGet('/copy.pdf', 2, 2, 0, '0'), other);
 });

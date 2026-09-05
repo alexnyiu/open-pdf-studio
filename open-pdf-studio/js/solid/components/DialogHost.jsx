@@ -1,5 +1,7 @@
-import { For } from 'solid-js';
-import { getDialogs } from '../stores/dialogStore.js';
+import Dialog from './Dialog.jsx';
+import { useTranslation } from '../../i18n/useTranslation.js';
+import { For, ErrorBoundary } from 'solid-js';
+import { getDialogs, closeDialog } from '../stores/dialogStore.js';
 import DocPropertiesDialog from './DocPropertiesDialog.jsx';
 import PreferencesDialog from './preferences/PreferencesDialog.jsx';
 import NewDocDialog from './dialogs/NewDocDialog.jsx';
@@ -102,6 +104,21 @@ const DIALOG_MAP = {
   'style-preset-manage': StylePresetManageDialog,
 };
 
+const RECOVERABLE_DIALOGS = new Set([
+  'doc-properties', 'preferences', 'about', 'whats-new', 'shortcuts', 'extensions', 'feedback', 'compare',
+]);
+
+function RecoverableDialog(props) {
+  const { t } = useTranslation('common');
+  return <ErrorBoundary fallback={(error, reset) => (
+    <Dialog title={t('repair.dialogFailed')} onClose={() => closeDialog(props.dialog.id)}
+      footer={<button type="button" class="pref-btn" onClick={reset}>{t('repair.retry')}</button>}>
+      <p role="alert">{t('repair.dialogRecovery')}</p>
+      <pre style="white-space:pre-wrap;">{error?.message || String(error)}</pre>
+    </Dialog>
+  )}>{props.children}</ErrorBoundary>;
+}
+
 export default function DialogHost() {
   return (
     <>
@@ -115,7 +132,10 @@ export default function DialogHost() {
               dialog,
               isTop: () => getDialogs().at(-1)?.id === dialog.id,
             }}>
-              <Component data={dialog.data} />
+              {RECOVERABLE_DIALOGS.has(dialog.name)
+                ? <RecoverableDialog dialog={dialog}><Component data={dialog.data} /></RecoverableDialog>
+                : <Component data={dialog.data} />}
+
             </ModalStackProvider>
           );
         }}

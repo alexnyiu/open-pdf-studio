@@ -194,8 +194,8 @@ export async function buildAndValidateScannedTextEditPdfCandidate({
 }
 
 /** Hydrate only fully validated application-owned state from reopened bytes. */
-export async function hydrateOwnedScannedTextEditState(document, pdfBytes) {
-  const inspection = await inspectOwnedScannedTextRepairLayer(pdfBytes);
+export async function hydrateOwnedScannedTextEditState(document, pdfBytes, parsedDocument = null) {
+  const inspection = await inspectOwnedScannedTextRepairLayer(pdfBytes, parsedDocument);
   const owned = inspection.filter((entry) => entry.owned);
   if (owned.length === 0) {
     document.scannedTextEdits = null;

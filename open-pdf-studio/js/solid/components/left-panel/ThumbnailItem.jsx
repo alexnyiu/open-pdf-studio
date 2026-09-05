@@ -1,3 +1,4 @@
+import { useTranslation } from '../../../i18n/useTranslation.js';
 import { Show } from 'solid-js';
 import {
   activePage, thumbnailData, draggedPage, setDraggedPage, dropTarget, setDropTarget, placeholderSize, pagePlaceholderSizes,
@@ -6,6 +7,7 @@ import {
 import { showThumbnailMenu } from '../../stores/contextMenuStore.js';
 
 export default function ThumbnailItem(props) {
+  const { t } = useTranslation('common');
   const isActive = () => activePage() === props.pageNum;
   const imageData = () => thumbnailData[String(props.pageNum)];
   const isDragging = () => draggedPage() === props.pageNum;
@@ -17,11 +19,11 @@ export default function ThumbnailItem(props) {
   const size = () => pagePlaceholderSizes[String(props.pageNum)] || placeholderSize();
 
   const handleClick = (e) => {
-    if (e.ctrlKey && e.shiftKey) {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
       selectPageRange(props.pageNum, true);
     } else if (e.shiftKey) {
       selectPageRange(props.pageNum, false);
-    } else if (e.ctrlKey) {
+    } else if ((e.ctrlKey || e.metaKey)) {
       togglePageSelection(props.pageNum);
     } else {
       selectPage(props.pageNum);
@@ -48,6 +50,19 @@ export default function ThumbnailItem(props) {
         dragging: isDragging(),
         'drop-before': isDropBefore(),
         'drop-after': isDropAfter()
+      }}
+      role="button"
+      tabIndex={(selectedPages().size === 1 ? isSelected() : isActive()) ? 0 : -1}
+      aria-label={t('repair.page', { page: props.pageNum })}
+      aria-pressed={isSelected()}
+      onKeyDown={async e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(e); return; }
+        const direction = ['ArrowDown', 'ArrowRight'].includes(e.key) ? 1 : ['ArrowUp', 'ArrowLeft'].includes(e.key) ? -1 : 0;
+        if (!direction && !['Home', 'End'].includes(e.key)) return;
+        e.preventDefault();
+        const target = e.key === 'Home' ? 1 : e.key === 'End' ? props.totalPages : Math.min(props.totalPages || Infinity, Math.max(1, props.pageNum + direction));
+        if (e.shiftKey) selectPageRange(target, e.ctrlKey || e.metaKey); else selectPage(target);
+        await props.onNavigate(target, { focus: true });
       }}
       data-page={props.pageNum}
       draggable={true}
@@ -89,7 +104,7 @@ export default function ThumbnailItem(props) {
           <div class="thumbnail-spinner" />
         </div>
       }>
-        <img class="thumbnail-canvas" src={imageData().src || imageData().dataURL} style={{ width: imageData().width + 'px', height: imageData().height + 'px' }} />
+        <img alt="" class="thumbnail-canvas" src={imageData().src || imageData().dataURL} style={{ width: imageData().width + 'px', height: imageData().height + 'px' }} />
       </Show>
       <div class="thumbnail-label">{props.pageNum}</div>
     </div>

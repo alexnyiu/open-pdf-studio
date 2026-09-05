@@ -89,13 +89,13 @@ export default function FindBar() {
           <div class="find-input-wrapper" classList={{ 'not-found': notFound() }}>
             <input
               class="find-input"
-              placeholder={t('findPlaceholder')}
+              aria-label={t('findPlaceholder')} aria-busy={searching()} placeholder={t('findPlaceholder')}
               autocomplete="off"
               ref={inputRef}
               onInput={handleInput}
               onKeyDown={handleKeyDown}
             />
-            <span class="find-count-inline" classList={{ 'is-searching': searching() }}>
+            <span role="status" aria-live="polite" aria-atomic="true" class="find-count-inline" classList={{ 'is-searching': searching() }}>
               {resultsText()}
             </span>
           </div>
@@ -117,14 +117,14 @@ export default function FindBar() {
           {/* Toggle buttons (icon-only) */}
           <button
             class="find-toggle-btn"
-            classList={{ active: matchCase() }}
+            aria-pressed={matchCase()} classList={{ active: matchCase() }}
             title={t('matchCase')}
             onClick={toggleMatchCase}
           >Aa</button>
 
           <button
             class="find-toggle-btn"
-            classList={{ active: wholeWord() }}
+            aria-pressed={wholeWord()} classList={{ active: wholeWord() }}
             title={t('wholeWords')}
             onClick={toggleWholeWord}
           >
@@ -135,7 +135,7 @@ export default function FindBar() {
 
           <button
             class="find-toggle-btn"
-            classList={{ active: highlightAll() }}
+            aria-pressed={highlightAll()} classList={{ active: highlightAll() }}
             title={t('highlightAll')}
             onClick={toggleHighlightAll}
           >

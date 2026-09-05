@@ -1,4 +1,10 @@
-import { state, getActiveDocument, getPageRotation, imageCache } from '../core/state.js';
+import { annotationsForPage, invalidateAnnotationPageIndex } from './page-index.js';
+import { state, getActiveDocument as activeDocument, getPageRotation as activePageRotation, imageCache } from '../core/state.js';
+// Output drawing is synchronous and owns a detached snapshot. Never switch the viewer.
+let outputRenderDocument = null;
+const getActiveDocument = () => outputRenderDocument || activeDocument();
+const getPageRotation = page => outputRenderDocument
+  ? (outputRenderDocument.pageRotations?.[page] || 0) : activePageRotation(page);
 import { annotationCanvas, annotationCtx, textHighlightCanvas, textHighlightCtx } from '../ui/dom-elements.js';
 import { updateStatusAnnotations } from '../ui/chrome/status-bar.js';
 import { updateAnnotationsList } from '../ui/panels/annotations-list.js';
@@ -182,7 +188,7 @@ const DRAG_LOD_MAX_SCREEN_PX = 6;
 // annotatie de ENIGE selectie is (zie annotations/editable-numbers.js) —
 // precies dan opent een klik op zo'n getal de inline invoer.
 function inlineNumberHighlight(annotation) {
-  const doc = state.documents[state.activeDocumentIndex];
+  const doc = getActiveDocument();
   return shouldHighlightNumbers(annotation, doc ? doc.selectedAnnotations : null);
 }
 
@@ -191,14 +197,14 @@ function thinLw(width) {
   if (state.preferences?.thinLines) {
     // Lineweight display OFF ('TL'): EVERYTHING renders as a true hairline —
     // exactly 1 screen pixel at any zoom (CAD LWDISPLAY off).
-    const vp0 = window.__pdfViewport;
-    const _d0 = state.documents[state.activeDocumentIndex];
+    const vp0 = outputRenderDocument ? null : window.__pdfViewport;
+    const _d0 = getActiveDocument();
     const s0 = (vp0 && vp0.active && _d0?.filePath) ? vp0.zoom : (_d0?.scale || 1);
     return s0 > 0 ? 1 / s0 : 1;
   }
   let lw = Math.max(width, 0.25);
-  const vp = window.__pdfViewport;
-  const _doc = state.documents[state.activeDocumentIndex];
+  const vp = outputRenderDocument ? null : window.__pdfViewport;
+  const _doc = getActiveDocument();
   // Blank docs (no filePath) bypass the viewport singleton and use doc.scale.
   const scale = (vp && vp.active && _doc?.filePath)
     ? vp.zoom
@@ -496,7 +502,7 @@ export function drawAnnotation(ctx, annotation) {
       const offH = maxAY - minAY;
 
       // Create offscreen canvas at scaled resolution to avoid pixelation when zoomed
-      const arrowDoc = state.documents[state.activeDocumentIndex];
+      const arrowDoc = getActiveDocument();
       const arrowScale = (arrowDoc ? arrowDoc.scale : 1) || 1;
       const offCanvas = document.createElement('canvas');
       offCanvas.width = offW * arrowScale;
@@ -858,7 +864,7 @@ export function drawAnnotation(ctx, annotation) {
         const popX = annotation.popupX !== undefined ? annotation.popupX : annotation.x + 30;
         const popY = annotation.popupY !== undefined ? annotation.popupY : annotation.y;
 
-        const doc = state.documents[state.activeDocumentIndex];
+        const doc = getActiveDocument();
         const scl = (doc ? doc.scale : 1) || 1;
         const popW = 230 / scl;
         const popH = 150 / scl;
@@ -1173,7 +1179,7 @@ export function drawAnnotation(ctx, annotation) {
 
     case 'image':
       // Draw image with rotation and flip
-      const img = imageCache.get(annotation.imageId);
+      const img = (outputRenderDocument?.outputImages || imageCache).get(annotation.imageId);
       if (img && img.complete) {
         ctx.save();
 
@@ -1316,7 +1322,7 @@ export function drawAnnotation(ctx, annotation) {
       // Render stamp - image or text-based
       // Always prefer global imageCache (plain Map, no Proxy) for reliable .complete checks.
       // SolidJS createMutable can wrap _cachedImg in a Proxy, breaking HTMLImageElement checks.
-      let stampImg = annotation.imageId ? imageCache.get(annotation.imageId) : null;
+      let stampImg = annotation.imageId ? (outputRenderDocument?.outputImages || imageCache).get(annotation.imageId) : null;
       if (!stampImg && annotation._cachedImg) {
         // Unwrap potential SolidJS proxy by reading src and re-fetching from cache
         const raw = annotation._cachedImg;
@@ -1399,7 +1405,7 @@ export function drawAnnotation(ctx, annotation) {
 
     case 'signature': {
       // Render signature image
-      const sigImg = annotation.imageId ? imageCache.get(annotation.imageId) : null;
+      const sigImg = annotation.imageId ? (outputRenderDocument?.outputImages || imageCache).get(annotation.imageId) : null;
       if (sigImg && sigImg.complete) {
         ctx.save();
         const cx = annotation.x + annotation.width / 2;
@@ -1428,7 +1434,7 @@ export function drawAnnotation(ctx, annotation) {
     case 'wall': {
       // Plan-view wall segment with material hatch + mitred corner joins
       // (see rendering/walls.js). Needs sibling walls for the joins.
-      const _wallDoc = state.documents[state.activeDocumentIndex];
+      const _wallDoc = getActiveDocument();
       ctx.lineWidth = thinLw(annotation.lineWidth ?? 0.7);
       drawWall(ctx, annotation, _wallDoc ? _wallDoc.annotations : []);
       break;
@@ -1732,13 +1738,13 @@ export function drawAnnotation(ctx, annotation) {
       // PDF-appearance. Aansluitingen op ANDERE balken (hoek-verstek / T)
       // worden per render opnieuw berekend uit de sibling-annotaties; de
       // doelbalk zelf wordt nooit gemuteerd.
-      const _bbDoc = state.documents[state.activeDocumentIndex];
+      const _bbDoc = getActiveDocument();
       // Tijdens het tekenen doet het voorbeeld-lijnstuk (shape-preview) mee
       // als sibling, zodat een BESTAANDE balk zijn verstek/open-T al toont
       // vóór de tweede klik — anders ziet de gebruiker een rauwe overlap met
       // eindkap op het aansluitpunt die na het vastleggen ineens verspringt.
       const _bbAnns = _bbDoc ? (_bbDoc.annotations || []) : [];
-      const _bbSibs = (state._previewJoinAnn && state._previewJoinAnn !== annotation)
+      const _bbSibs = (!outputRenderDocument && state._previewJoinAnn && state._previewJoinAnn !== annotation)
         ? [..._bbAnns, state._previewJoinAnn]
         : _bbAnns;
       const bbGeom = buildBetonbalk(annotation, {
@@ -2440,7 +2446,7 @@ function drawRichTextEdit(ctx, edit, pageHeight) {
 // exact operator neutralization is available.
 // ctx is already scaled by state.scale, so coordinates are in unscaled page space
 function drawTextEdits(ctx, pageNum) {
-  const doc = state.documents[state.activeDocumentIndex];
+  const doc = getActiveDocument();
   if (!doc || !doc.textEdits || doc.textEdits.length === 0) return;
 
   const pageEdits = doc.textEdits.filter(e => e.page === pageNum).map(projectTextEditRecord);
@@ -2456,10 +2462,12 @@ function drawTextEdits(ctx, pageNum) {
   const totalRotation = (Number(dims?.rotation) || 0) + getPageRotation(pageNum);
   const pageRevision = Number(doc.revisionState?.pageContentRevisions?.[pageNum]
     ?? doc.revisionState?.contentRevision) || 0;
-  const viewportPreview = window.__pdfViewport?.authoritativeTextPreview;
+  const viewportPreview = outputRenderDocument ? null : window.__pdfViewport?.authoritativeTextPreview;
   const continuousPreview = canvasEl.parentElement
     ?.querySelector?.('.text-edit-authoritative-preview');
-  const authoritativeRevision = viewportPreview
+  const authoritativeRevision = outputRenderDocument
+    ? Number(outputRenderDocument.outputPersistedRevision) || 0
+    : viewportPreview
     && viewportPreview.documentId === String(doc.id)
     && viewportPreview.lifecycleGeneration === (Number(doc.lifecycleGeneration) || 0)
     && viewportPreview.pageNum === Number(pageNum)
@@ -2548,14 +2556,12 @@ function drawTextEdits(ctx, pageNum) {
 
 // Redraw all annotations (single page mode)
 // Pass lightweight=true during drag/resize to skip expensive DOM updates
-// Track annotation count to know when spatial index needs rebuild
-let _lastIndexedCount = -1;
 
 export function rebuildSpatialIndex() {
-  const doc = state.documents[state.activeDocumentIndex];
+  const doc = getActiveDocument();
   const annotations = doc ? doc.annotations : [];
   spatialIndex.rebuild(annotations);
-  _lastIndexedCount = annotations.length;
+  invalidateAnnotationPageIndex(doc);
 }
 
 export function redrawAnnotations(lightweight = false) {
@@ -2563,15 +2569,9 @@ export function redrawAnnotations(lightweight = false) {
 
   // Read scale and annotations from the active document directly
   // (bypass createMutable proxy getter caching)
-  const doc = state.documents[state.activeDocumentIndex];
+  const doc = getActiveDocument();
   const scale = doc ? doc.scale : 1;
-  const annotations = doc ? doc.annotations : [];
-
-  // Rebuild spatial index when annotation count changes (add/delete)
-  if (annotations.length !== _lastIndexedCount) {
-    spatialIndex.rebuild(annotations);
-    _lastIndexedCount = annotations.length;
-  }
+  const annotations = annotationsForPage(doc, doc?.currentPage);
 
   // Scale-region lookup cache: invalidate per redraw so moves/resizes
   // are reflected lazily on next draw. O(1) cost.
@@ -2599,8 +2599,8 @@ export function redrawAnnotations(lightweight = false) {
   // must match doc.scale, NOT the viewport zoom that belongs to a previously-
   // open real PDF.
   const dpr = window.devicePixelRatio || 1;
-  const vp = window.__pdfViewport;
-  const _activeDoc = state.documents[state.activeDocumentIndex];
+  const vp = outputRenderDocument ? null : window.__pdfViewport;
+  const _activeDoc = getActiveDocument();
   const useViewport = vp && vp.active && _activeDoc?.filePath;
   const overlayTransform = overlayCanvasTransform({
     viewportActive: useViewport,
@@ -2836,9 +2836,9 @@ function drawRubberBand(ctx, effectiveScale) {
 
 export function renderAnnotationsForPage(ctx, pageNum, width, height, overrideDpr) {
   // Read scale and annotations from the active document directly
-  const doc = state.documents[state.activeDocumentIndex];
+  const doc = getActiveDocument();
   const scale = doc ? doc.scale : 1;
-  const annotations = doc ? doc.annotations : [];
+  const annotations = annotationsForPage(doc, pageNum);
 
   // Apply scale transformation for zooming (includes hi-DPI factor)
   const dpr = overrideDpr !== undefined ? overrideDpr : (window.devicePixelRatio || 1);
@@ -2953,4 +2953,21 @@ export function redrawContinuous() {
 
   // Show/hide contextual ribbon tabs based on selection
   updateContextualTabs();
+}
+
+/** Paint only document content, with no editor selection, cursor, or viewer mutation. */
+export function renderOutputAnnotations(ctx, pageNum, snapshot, scale) {
+  const previous = outputRenderDocument;
+  outputRenderDocument = { ...snapshot, scale };
+  ctx.save();
+  try {
+    ctx.scale(scale, scale);
+    const width = ctx.canvas.width / scale, height = ctx.canvas.height / scale;
+    renderWatermarksBehind(ctx, pageNum, width, height, outputRenderDocument);
+    drawTextEdits(ctx, pageNum);
+    for (const annotation of annotationsForPage(snapshot, pageNum)) {
+      if (annotation.page === pageNum) drawAnnotation(ctx, annotation);
+    }
+    renderWatermarksInFront(ctx, pageNum, width, height, outputRenderDocument);
+  } finally { ctx.restore(); outputRenderDocument = previous; }
 }

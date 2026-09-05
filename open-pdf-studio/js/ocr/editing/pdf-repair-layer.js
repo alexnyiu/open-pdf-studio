@@ -529,9 +529,9 @@ function failPdfLoad(error) {
   fail('MALFORMED_PDF', `PDF could not be loaded: ${message}`);
 }
 
-async function loadPdfWithPages(sourceBytes) {
+async function loadPdfWithPages(sourceBytes, parsedDocument = null) {
   try {
-    const pdfDoc = await PDFDocument.load(sourceBytes, { updateMetadata: false });
+    const pdfDoc = parsedDocument || await PDFDocument.load(sourceBytes, { updateMetadata: false });
     return { pdfDoc, pages: pdfDoc.getPages() };
   } catch (error) {
     failPdfLoad(error);
@@ -743,9 +743,9 @@ export async function writeOwnedScannedTextRepairLayer({
     : sourceBytes.slice();
 }
 
-export async function inspectOwnedScannedTextRepairLayer(pdfBytes) {
+export async function inspectOwnedScannedTextRepairLayer(pdfBytes, parsedDocument = null) {
   const sourceBytes = asBytes(pdfBytes);
-  const { pdfDoc, pages } = await loadPdfWithPages(sourceBytes);
+  const { pdfDoc, pages } = await loadPdfWithPages(sourceBytes, parsedDocument);
   const inspections = [];
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
     const page = pages[pageIndex];

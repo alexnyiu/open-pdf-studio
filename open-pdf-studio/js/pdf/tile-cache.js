@@ -96,10 +96,10 @@ function registerEntry(key, entry, filePath, pageNum) {
     protected: () => {
       if (typeof window === 'undefined') return false;
       const viewport = window.__pdfViewport;
-      if (viewport?.filePath === filePath && viewport?.pageNum === pageNum) return true;
+      if (viewport?.active && viewport?.filePath === filePath && viewport?.pageNum === pageNum) return true;
       return isActiveRenderDocument(documentId)
         && Boolean(document.querySelector?.(
-          `#continuous-container .page-wrapper[data-page="${pageNum}"] .page-sharp-tile`,
+          `#continuous-container .page-wrapper[data-page="${pageNum}"][data-strictly-visible="true"] .page-sharp-tile`,
         ));
     },
     release: () => {
@@ -226,4 +226,14 @@ export function tileCacheSnapshotForTests() {
     entries: CACHE.size,
     bytes: [...CACHE.values()].reduce((sum, entry) => sum + entry.w * entry.h * 4, 0),
   });
+}
+
+/** The continuous canvas owns its copied pixels; release the duplicate decoded bitmap. */
+export function releaseTileAfterCanvasCopy(entry) {
+  for (const [key, candidate] of CACHE) {
+    if (candidate !== entry) continue;
+    releaseEntry(key, candidate);
+    return true;
+  }
+  return false;
 }

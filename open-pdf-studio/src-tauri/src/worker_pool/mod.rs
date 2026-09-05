@@ -399,6 +399,24 @@ impl WorkerPool {
     /// vanzelf af (~1 GB parse-state per stuk terug), terwijl de worker die de
     /// interactieve tegels bedient heet blijft. Onder de per-worker
     /// request_lock zodat het nooit door een lopende exchange vlecht.
+    /// Serialize release after any in-flight exchange so a closed owner's
+    /// parsed document does not remain resident in a rendering sidecar.
+    pub async fn release_document(&self, path: &str) -> Result<()> {
+        let mut message = serde_json::to_vec(&json!({ "op": "release_document", "path": path }))?;
+        message.push(b'\n');
+        for worker in &self.workers {
+            if worker.status() != Status::Ready { continue; }
+            let request_lock = worker.request_lock.clone();
+            let _exchange = request_lock.lock().await;
+            let mut stdin_guard = worker.stdin.lock().await;
+            if let Some(stdin) = stdin_guard.as_mut() {
+                stdin.write_all(&message).await?;
+                stdin.flush().await?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn trim_if_idle(&self, idle_ms: u64) {
         let now = now_ms();
         for worker in &self.workers {

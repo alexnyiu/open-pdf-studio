@@ -19,6 +19,40 @@ function pendingImage() {
   };
 }
 
+test('a loaded image is not publishable until decoding completes', async () => {
+  const image = pendingImage();
+  image.naturalWidth = 100;
+  image.naturalHeight = 50;
+  let decoded;
+  image.decode = () => new Promise((resolve) => { decoded = resolve; });
+  let published = false;
+  const loaded = loadContinuousRasterImage({ url: 'local-raster', width: 100, height: 50, attach: () => true }, {
+    createImage: () => image,
+  }).then((value) => { published = true; return value; });
+  const loading = image.onload();
+  await Promise.resolve();
+  assert.equal(published, false);
+  decoded();
+  await loading;
+  assert.equal(await loaded, image);
+});
+
+test('owner cancellation during decode cannot publish a late sharp image', async () => {
+  const controller = new AbortController();
+  const image = pendingImage();
+  let decoded;
+  image.decode = () => new Promise((resolve) => { decoded = resolve; });
+  const loaded = loadContinuousRasterImage({ url: 'local-raster', width: 100, height: 50, attach: () => true }, {
+    createImage: () => image, signal: controller.signal,
+  });
+  const rejected = assert.rejects(loaded, { name: 'AbortError' });
+  const loading = image.onload();
+  controller.abort();
+  decoded();
+  await Promise.all([loading, rejected]);
+  assert.equal(image.removedSource, true);
+});
+
 test('aborting a pending direct raster image settles its load promise', async () => {
   const controller = new AbortController();
   const image = pendingImage();

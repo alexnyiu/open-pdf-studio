@@ -4,18 +4,22 @@ import {
   openDialog, closeDialog, showMessage,
   openAppMenu, setAppMenuPanel as setActivePanel,
   setLoadingVisible as setVisible, setLoadingMessage as setMessage,
+  loadingDocumentId, setLoadingDocumentId,
 } from '../../bridge.js';
 import i18next from '../../i18n/config.js';
 
 // Show loading overlay
-export function showLoading(message = 'Loading...') {
+export function showLoading(message = 'Loading...', { documentId = null } = {}) {
+  setLoadingDocumentId(documentId);
   setMessage(message);
   setVisible(true);
 }
 
 // Hide loading overlay
-export function hideLoading() {
+export function hideLoading(documentId = null) {
+  if (documentId !== null && loadingDocumentId() !== documentId) return;
   setVisible(false);
+  setLoadingDocumentId(null);
 }
 
 // ============================================

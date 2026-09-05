@@ -206,11 +206,12 @@ export async function retryPendingMacosSafeSaveCleanup(recoveryPath) {
 }
 
 /** @param {string|null|undefined} token */
-export async function abortMacosSafePdfSave(token) {
+export async function abortMacosSafePdfSave(token, { throwOnError = false } = {}) {
   if (!token) return;
   try {
     await invoke('abort_macos_safe_pdf_save', { token });
-  } catch (_) {
+  } catch (error) {
+    if (throwOnError) throw nativeError(error, 'SAFE_SAVE_ABORT_FAILED');
   } finally {
     stagedProviderByToken.delete(token);
   }

@@ -1,7 +1,12 @@
+import i18next from '../i18n/config.js';
+const tr = (key, values) => i18next.t(`common:repair.${key}`, values);
+import { join, dirname, normalize } from '@tauri-apps/api/path';
+import { createOutputJob, captureOutputSource } from './output-job.js';
+import { assertOutputRasterSize } from './output-snapshot.js';
 import { state, getActiveDocument, getAnnotationBounds } from '../core/state.js';
 import { showLoading, hideLoading } from '../ui/chrome/dialogs.js';
 import { isTauri, writeBinaryFile, saveFileDialog, openFolderDialog } from '../core/platform.js';
-import { renderAnnotationsForPage, drawAnnotation } from '../annotations/rendering.js';
+import { renderAnnotationsForPage, renderOutputAnnotations, drawAnnotation } from '../annotations/rendering.js';
 import { getPageRotation } from '../core/state.js';
 import { PDFDocument } from 'pdf-lib';
 
@@ -46,50 +51,25 @@ export function parsePageRange(rangeStr, totalPages) {
  * @param {number} exportScale - Scale factor (e.g. 300/72 for 300 DPI)
  * @returns {Promise<HTMLCanvasElement>} The rendered canvas
  */
-export async function renderPageOffscreen(pageNum, exportScale) {
-  const page = await getActiveDocument().pdfDoc.getPage(pageNum);
-  const extraRotation = getPageRotation(pageNum);
-  const viewportOpts = { scale: exportScale };
-  if (extraRotation) {
-    viewportOpts.rotation = (page.rotate + extraRotation) % 360;
-  }
-  const viewport = page.getViewport(viewportOpts);
-
-  // Create off-screen canvas for PDF content
+export async function renderPageOffscreen(pageNum, exportScale, owner, signal) {
+  if (!owner?.pdfDoc) throw new TypeError('An explicit output document owner is required');
+  signal?.throwIfAborted();
+  const page = await owner.pdfDoc.getPage(pageNum);
+  signal?.throwIfAborted();
+  const viewport = page.getViewport({ scale: exportScale, rotation: (page.rotate + (owner.pageRotations?.[pageNum] || 0)) % 360 });
+  assertOutputRasterSize(viewport.width, viewport.height);
   const pdfCanvas = document.createElement('canvas');
-  pdfCanvas.width = viewport.width;
-  pdfCanvas.height = viewport.height;
-  const pdfCtx = pdfCanvas.getContext('2d');
-
-  // Render PDF page
-  const renderContext = {
-    canvasContext: pdfCtx,
-    viewport: viewport,
-    annotationMode: 0
-  };
-
-  const renderTask = page.render(renderContext);
-  await renderTask.promise;
-
-  // Create annotation canvas and render annotations
-  const annCanvas = document.createElement('canvas');
-  annCanvas.width = viewport.width;
-  annCanvas.height = viewport.height;
-  const annCtx = annCanvas.getContext('2d');
-
-  // Temporarily override state.scale so renderAnnotationsForPage uses export scale
-  const savedScale = state.documents[state.activeDocumentIndex].scale;
-  state.documents[state.activeDocumentIndex].scale = exportScale;
-
-  renderAnnotationsForPage(annCtx, pageNum, annCanvas.width, annCanvas.height, 1);
-
-  // Restore original scale
-  state.documents[state.activeDocumentIndex].scale = savedScale;
-
-  // Composite: draw annotations on top of PDF
-  pdfCtx.drawImage(annCanvas, 0, 0);
-
-  return pdfCanvas;
+  pdfCanvas.width = Math.ceil(viewport.width); pdfCanvas.height = Math.ceil(viewport.height);
+  const ctx = pdfCanvas.getContext('2d');
+  const task = page.render({ canvasContext: ctx, viewport, annotationMode: 0 });
+  const cancel = () => task.cancel();
+  signal?.addEventListener('abort', cancel, { once: true });
+  try {
+    await task.promise; signal?.throwIfAborted();
+    renderOutputAnnotations(ctx, pageNum, owner, exportScale);
+    return pdfCanvas;
+  } catch (error) { pdfCanvas.width = pdfCanvas.height = 0; throw error; }
+  finally { signal?.removeEventListener('abort', cancel); }
 }
 
 /**
@@ -139,6 +119,8 @@ function getPdfBaseName() {
  */
 export async function exportAsImages({ format = 'png', quality = 0.92, dpi = 150, pages }) {
   if (!getActiveDocument()?.pdfDoc || !isTauri()) return;
+  const outputSource = captureOutputSource();
+  pages = [...pages];
 
   const ext = format === 'jpeg' ? 'jpg' : 'png';
   const exportScale = dpi / 72;
@@ -157,32 +139,41 @@ export async function exportAsImages({ format = 'png', quality = 0.92, dpi = 150
     if (!outputPath) return;
   } else {
     // Multiple pages: folder dialog
-    folderPath = await openFolderDialog('Select output folder for exported images');
+    folderPath = await openFolderDialog(tr('chooseImageFolder'));
     if (!folderPath) return;
   }
 
-  showLoading('Exporting images...');
+  const job = await createOutputJob(tr('exportImages'), outputSource);
 
   try {
     for (let i = 0; i < pages.length; i++) {
       const pageNum = pages[i];
-      showLoading(`Exporting page ${pageNum} of ${pages[pages.length - 1]}...`);
+      job.progress(tr('exportPage', { page: pageNum, current: i + 1, total: pages.length }), i / pages.length);
 
-      const canvas = await renderPageOffscreen(pageNum, exportScale);
-      const bytes = await canvasToBytes(canvas, format, quality);
+      const canvas = await renderPageOffscreen(pageNum, exportScale, job.snapshot, job.signal);
+      let bytes;
+      try { bytes = await canvasToBytes(canvas, format, quality); } finally { canvas.width = canvas.height = 0; }
+      job.check();
 
       let filePath;
       if (pages.length === 1) {
         filePath = outputPath;
       } else {
         const fileName = `${baseName}_page${String(pageNum).padStart(4, '0')}.${ext}`;
-        filePath = `${folderPath}\\${fileName}`;
+        filePath = await join(folderPath, fileName);
+        if (await normalize(await dirname(filePath)) !== await normalize(folderPath)) throw new Error('Invalid export destination');
       }
 
+      job.check();
       await writeBinaryFile(filePath, bytes);
+      job.writtenPaths.push(filePath);
     }
-  } finally {
-    hideLoading();
+    return await job.finish('completed', tr('exportedImages', { count: job.writtenPaths.length }));
+  } catch (error) {
+    const cancelled = job.signal.aborted;
+    await job.finish(cancelled ? 'cancelled' : 'failed', `${cancelled ? tr('cancelled') : error.message}. ${tr('partialImages', { count: job.writtenPaths.length })}`);
+    if (!cancelled) throw error;
+    return { status: 'cancelled', writtenPaths: [...job.writtenPaths] };
   }
 }
 
@@ -194,6 +185,8 @@ export async function exportAsImages({ format = 'png', quality = 0.92, dpi = 150
  */
 export async function exportAsRasterPdf({ dpi = 300, pages }) {
   if (!getActiveDocument()?.pdfDoc || !isTauri()) return;
+  const outputSource = captureOutputSource();
+  pages = [...pages];
 
   const baseName = getPdfBaseName();
   const defaultName = `${baseName}_raster.pdf`;
@@ -203,7 +196,7 @@ export async function exportAsRasterPdf({ dpi = 300, pages }) {
   ]);
   if (!outputPath) return;
 
-  showLoading('Exporting raster PDF...');
+  const job = await createOutputJob(tr('exportRaster'), outputSource);
 
   try {
     const exportScale = dpi / 72;
@@ -211,16 +204,19 @@ export async function exportAsRasterPdf({ dpi = 300, pages }) {
 
     for (let i = 0; i < pages.length; i++) {
       const pageNum = pages[i];
-      showLoading(`Rasterizing page ${pageNum} of ${pages[pages.length - 1]}...`);
+      job.progress(tr('rasterPage', { page: pageNum, current: i + 1, total: pages.length }), i / pages.length);
 
-      const canvas = await renderPageOffscreen(pageNum, exportScale);
-      const jpegBytes = await canvasToBytes(canvas, 'jpeg', 0.92);
+      const canvas = await renderPageOffscreen(pageNum, exportScale, job.snapshot, job.signal);
+      let jpegBytes;
+      try { jpegBytes = await canvasToBytes(canvas, 'jpeg', 0.92); } finally { canvas.width = canvas.height = 0; }
+      job.check();
 
+      job.retainEncodedPage(jpegBytes.byteLength);
       const jpegImage = await newPdf.embedJpg(jpegBytes);
 
       // Get original page dimensions (in PDF points)
-      const origPage = await getActiveDocument().pdfDoc.getPage(pageNum);
-      const extraRotation = getPageRotation(pageNum);
+      const origPage = await job.snapshot.pdfDoc.getPage(pageNum);
+      const extraRotation = job.snapshot.pageRotations?.[pageNum] || 0;
       const origViewportOpts = { scale: 1 };
       if (extraRotation) {
         origViewportOpts.rotation = (origPage.rotate + extraRotation) % 360;
@@ -237,7 +233,9 @@ export async function exportAsRasterPdf({ dpi = 300, pages }) {
     }
 
     const pdfBytes = await newPdf.save();
+    job.check();
     await writeBinaryFile(outputPath, pdfBytes);
+    job.writtenPaths.push(outputPath);
 
     // Open the rasterised result in a new tab. Each page is now a flat image,
     // so it renders identically in every viewer/printer — the reliable way to
@@ -245,13 +243,16 @@ export async function exportAsRasterPdf({ dpi = 300, pages }) {
     try {
       const { createTab } = await import('../ui/chrome/tabs.js');
       const { loadPDF } = await import('./loader.js');
-      const { index } = createTab(outputPath);
-      await loadPDF(outputPath, index);
+      const { index, doc } = createTab(outputPath);
+      await loadPDF(outputPath, index, null, { expectedDocumentId: doc.id, expectedGeneration: Number(doc.lifecycleGeneration) || 0 });
     } catch (e) {
       console.error('Could not open raster PDF in a new tab:', e);
     }
-  } finally {
-    hideLoading();
+    await job.finish('completed', tr('rasterExported'));
+  } catch (error) {
+    await job.finish(job.signal.aborted ? 'cancelled' : 'failed', job.signal.aborted ? tr('cancelled') : error.message);
+    if (!job.signal.aborted) throw error;
+    return null;
   }
   return outputPath;
 }

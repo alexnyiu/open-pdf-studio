@@ -1,3 +1,4 @@
+import { preferredScrollBehavior } from '../../core/motion.js';
 // Assistant — floating chat panel (bottom-right) + launcher button. Two ways to
 // answer, tried in order:
 //   1. Claude (Anthropic) -> direct API with a locally stored API key
@@ -55,7 +56,7 @@ export default function AssistantPanel() {
 
   createEffect(() => {
     messages();
-    queueMicrotask(() => messagesEnd?.scrollIntoView({ behavior: 'smooth' }));
+    queueMicrotask(() => messagesEnd?.scrollIntoView({ behavior: preferredScrollBehavior() }));
   });
 
   function systemPrompt() {

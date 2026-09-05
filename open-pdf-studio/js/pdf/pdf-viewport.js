@@ -1,3 +1,4 @@
+import { createDemandFrameLoop } from './demand-frame-loop.js';
 // pdf-viewport.js — Unified viewport: fixed canvas, transform zoom/pan, RAF loop.
 // Modeled after Open2D Studio's CADRenderer pattern.
 // The ONLY render path for PDF pages. No fallback, no CSS-scale, no debounce.
@@ -64,7 +65,18 @@ viewport.authoritativeTextPreview ??= null;
 
 let _canvas = null;
 let _ctx = null;
-let _rafId = 0;
+let _frameLoop = null;
+let _dirtyFlag = Boolean(viewport.dirty);
+let _activeFlag = Boolean(viewport.active);
+Object.defineProperties(viewport, {
+  dirty: { configurable: true, enumerable: true, get: () => _dirtyFlag,
+    set(value) { _dirtyFlag = Boolean(value); if (_dirtyFlag) _startLoop(); } },
+  active: { configurable: true, enumerable: true, get: () => _activeFlag,
+    set(value) { _activeFlag = Boolean(value); if (_activeFlag) { _dirtyFlag = true; _startLoop(); } else _frameLoop?.stop(); } },
+});
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => {
+  if (document.hidden) _frameLoop?.stop(); else if (viewport.active) viewport.dirty = true;
+});
 let _annotationRedraw = null; // callback for annotation overlay
 let _resizeObserver = null;
 const _viewportCanvasResourceKeys = new Set();
@@ -257,7 +269,7 @@ export function bumpViewportRevision(reason = 'geometry') {
 
 export function initViewport(canvas, annotationRedrawFn) {
   // Stop previous loop if re-initializing
-  if (_rafId) cancelAnimationFrame(_rafId);
+  _frameLoop?.stop();
   _canvas = canvas;
   _ctx = canvas.getContext('2d');
   _annotationRedraw = annotationRedrawFn || null;
@@ -335,7 +347,7 @@ export function suspendViewportBackingStores(reason = 'inactive-view') {
 export function destroyViewport() {
   suspendViewportBackingStores('teardown');
   _dispatchViewportEvent('opds:viewport-teardown', 'teardown');
-  cancelAnimationFrame(_rafId);
+  _frameLoop?.stop();
   window.removeEventListener('resize', _resizeCanvas);
   if (_resizeObserver) {
     _resizeObserver.disconnect();
@@ -694,6 +706,7 @@ export function kickRedactAnts() {
 }
 
 function _startLoop() {
+  if (!_canvas || !viewport.active) return;
   function tick() {
     if (viewport.active) {
       // Apply pan momentum before the dirty check so a velocity > 0 keeps
@@ -738,9 +751,14 @@ function _startLoop() {
         _render();
       }
     }
-    _rafId = requestAnimationFrame(tick);
   }
-  _rafId = requestAnimationFrame(tick);
+  if (!_frameLoop) _frameLoop = createDemandFrameLoop({
+    requestFrame: callback => requestAnimationFrame(callback), cancelFrame: id => cancelAnimationFrame(id),
+    active: () => viewport.active && !!_canvas && !document.hidden,
+    dirty: () => viewport.dirty || _vx !== 0 || _vy !== 0,
+    render: tick,
+  });
+  _frameLoop.wake();
 }
 
 // DISABLED (2026-05-15, free pan/zoom UX request).

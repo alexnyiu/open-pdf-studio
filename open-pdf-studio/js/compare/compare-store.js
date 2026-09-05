@@ -1,3 +1,4 @@
+import { disposeComparisonSession } from './comparison-session.js';
 // Compare/Overlay session store.
 // Tracks which two PDFs are being compared, the mode, current page-pair and offset.
 // Reactive via solid-js signals so UI re-renders when fields change.
@@ -48,6 +49,9 @@ const [panelTab, setPanelTabSignal] = createSignal('changes');
 // Tekstvergelijkings-resultaat: null = nog niet uitgevoerd voor dit paar.
 const [textChanges, setTextChangesSignal] = createSignal(null);
 const [textComparing, setTextComparingSignal] = createSignal(false);
+export const [compareVisualError, setCompareVisualError] = createSignal(null);
+export const [compareTextError, setCompareTextError] = createSignal(null);
+export const [compareTextProgress, setCompareTextProgress] = createSignal('');
 
 export {
   active as compareActive,
@@ -148,11 +152,16 @@ function _applyPairIndex() {
 // Vlak/Contour-markering niet van het vorige paar op de nieuwe pagina blijven
 // staan totdat de nieuwe detectie klaar is.
 function _resetPairDiff() {
+  setCompareVisualError(null);
   setChangesSignal([]);
   setFocusedChangeSignal(null);
 }
 
 export function startCompare({ oldFilePath, newFilePath, mode: m, oldPage: op = 1, newPage: np = 1 }) {
+  disposeComparisonSession();
+  setCompareTextError(null);
+  setCompareVisualError(null);
+  setDetectingSignal(false);
   const activeDocument = getActiveDocument();
   if (activeDocument) cancelTextEditingForDocument(activeDocument.id, 'compare-entry');
   cancelPendingZoom();
@@ -178,6 +187,10 @@ export function startCompare({ oldFilePath, newFilePath, mode: m, oldPage: op = 
 }
 
 export function exitCompare() {
+  disposeComparisonSession();
+  setCompareTextError(null);
+  setCompareVisualError(null);
+  setDetectingSignal(false);
   setActive(false);
   setFocused(false);
   setOldPath(null);
@@ -236,4 +249,25 @@ export function setCompareZoom(z) {
 
 export function setCompareOffset(o) {
   setOffset({ ...offset(), ...o });
+}
+
+// A saved/replaced compared source invalidates both pixels and text results.
+if (typeof window !== 'undefined') window.addEventListener('opds:document-lifecycle-changed', event => {
+  if (!active()) return;
+  const changed = state.documents.find(doc => String(doc.id) === event.detail?.documentId);
+  if (!changed || ![oldPath(), newPath()].includes(changed.filePath)) return;
+  disposeComparisonSession();
+  setTextChangesSignal(null); setTextComparingSignal(false); setCompareTextError(null);
+  setOffset({ ...offset() });
+});
+
+export function retryVisualComparison() {
+  disposeComparisonSession();
+  setCompareVisualError(null);
+  setDetectingSignal(false);
+  setTextChangesSignal(null);
+  setTextComparingSignal(false);
+  setCompareTextError(null);
+  _resetPairDiff();
+  setOffset({ ...offset() });
 }

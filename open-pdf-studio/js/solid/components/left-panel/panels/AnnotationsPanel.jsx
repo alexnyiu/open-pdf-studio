@@ -1,4 +1,6 @@
-import { For, Show, createSignal, onCleanup } from 'solid-js';
+import { shortcutLabel } from '../../../../core/shortcut-label.js';
+import { For, Show, createMemo, createSignal, onCleanup } from 'solid-js';
+import VirtualList from '../../common/VirtualList.jsx';
 import { activeTab } from '../../../stores/leftPanelStore.js';
 import { items, countText, emptyMessage, sortMode, setSortMode, filterMode, setFilterMode, hiddenStatuses, toggleHiddenStatus, collapsedGroups, toggleGroup, expandAllGroups, collapseAllGroups } from '../../../stores/panels/annotationsStore.js';
 import { useTranslation } from '../../../../i18n/useTranslation.js';
@@ -50,6 +52,12 @@ export default function AnnotationsPanel() {
   const [menuPos, setMenuPos] = createSignal({ top: 0, left: 0 });
   let menuRef;
   let menuBtnRef;
+  let listContainer;
+  const visibleItems = createMemo(() => items().filter(item => item.isHeader || !collapsedGroups().has(item.groupKey)));
+  const activateItem = (item, event) => {
+    if (item.isHeader) { toggleGroup(item.groupKey); return; }
+    import('../../../../ui/panels/annotations-list.js').then(module => module.selectAnnotationItem(item.id, item.page, event.ctrlKey || event.metaKey));
+  };
 
   const closeMenu = (e) => {
     if (menuRef && !menuRef.contains(e.target) && menuBtnRef && !menuBtnRef.contains(e.target)) {
@@ -210,7 +218,7 @@ export default function AnnotationsPanel() {
               >
                 <span class="annotations-menu-icon" innerHTML={cutIcon}></span>
                 <span class="annotations-menu-label">{tCommon('cut')}</span>
-                <span class="annotations-menu-shortcut">Ctrl+X</span>
+                <span class="annotations-menu-shortcut">{shortcutLabel('X')}</span>
               </div>
               <div
                 class={`annotations-menu-item${!hasSelection() ? ' disabled' : ''}`}
@@ -218,7 +226,7 @@ export default function AnnotationsPanel() {
               >
                 <span class="annotations-menu-icon" innerHTML={copyIcon}></span>
                 <span class="annotations-menu-label">{tCommon('copy')}</span>
-                <span class="annotations-menu-shortcut">Ctrl+C</span>
+                <span class="annotations-menu-shortcut">{shortcutLabel('C')}</span>
               </div>
               <div
                 class={`annotations-menu-item${!hasSelection() ? ' disabled' : ''}`}
@@ -375,71 +383,71 @@ export default function AnnotationsPanel() {
           </svg>
         </button>
       </div>
-      <div class="annotations-list-content">
+      <div ref={listContainer} class="annotations-list-content" style={{ position: 'relative', 'overflow-anchor': 'none' }}>
         <Show when={emptyMessage()}>
           <div class="annotations-list-empty">{emptyMessage()}</div>
         </Show>
         <Show when={!emptyMessage()}>
-          <For each={items()}>
+          <VirtualList items={visibleItems()} scrollElement={() => listContainer}
+            keyFor={item => item.isHeader ? `group:${item.groupKey}` : `annotation:${item.id}`}
+            estimateHeight={item => item.isHeader ? 34 : item.text ? 64 : 50}
+            labelFor={item => item.isHeader ? headerText(item) : `${item.typeLabel}. ${tCommon('repair.page', { page: item.page })}. ${item.text || ''}. ${item.meta}`}
+            selected={item => item.isHeader ? undefined : item.selected}
+            expanded={item => item.isHeader ? !collapsedGroups().has(item.groupKey) : undefined}
+            onActivate={activateItem}>
             {(item) => (
-              <Show when={item.isHeader} fallback={
-                <Show when={!collapsedGroups().has(item.groupKey)}>
+              <Show when={item().isHeader} fallback={
+                <Show when={!collapsedGroups().has(item().groupKey)}>
                   <div
-                    class={`annotation-list-item${item.selected ? ' selected' : ''}`}
-                    on:click={(e) => {
-                      const ctrlKey = e.ctrlKey || e.metaKey;
-                      import('../../../../ui/panels/annotations-list.js').then(m => m.selectAnnotationItem(item.id, item.page, ctrlKey));
-                    }}
+                    class={`annotation-list-item${item().selected ? ' selected' : ''}`}
                   >
-                    <div class="annotation-list-color" style={{ 'background-color': item.color }}></div>
+                    <div class="annotation-list-color" style={{ 'background-color': item().color }}></div>
                     <div class="annotation-list-info">
                       <div class="annotation-list-type">
-                        {item.typeLabel}
-                        <Show when={item.statusColor}>
-                          <span style={{ color: item.statusColor, 'margin-left': '6px', 'font-size': '10px' }} title={item.statusTitle}>
+                        {item().typeLabel}
+                        <Show when={item().statusColor}>
+                          <span style={{ color: item().statusColor, 'margin-left': '6px', 'font-size': '10px' }} title={item().statusTitle}>
                             {'\u25CF'}
                           </span>
                         </Show>
-                        <Show when={item.replyCount > 0}>
+                        <Show when={item().replyCount > 0}>
                           <span style={{ 'margin-left': '6px', 'font-size': '10px', color: 'var(--theme-panel-tab-text)' }}>
-                            ({item.replyCount})
+                            ({item().replyCount})
                           </span>
                         </Show>
                       </div>
-                      <Show when={item.text}>
-                        <div class="annotation-list-preview">{item.text}</div>
+                      <Show when={item().text}>
+                        <div class="annotation-list-preview">{item().text}</div>
                       </Show>
-                      <div class="annotation-list-meta">{item.meta}</div>
+                      <div class="annotation-list-meta">{item().meta}</div>
                     </div>
                   </div>
                 </Show>
               }>
-                <Show when={item.sortMode === 'color'}>
+                <Show when={item().sortMode === 'color'}>
                   <div
-                    class={`annotations-list-page-header annotations-list-color-header${collapsedGroups().has(item.groupKey) ? ' collapsed' : ''}`}
-                    onClick={() => toggleGroup(item.groupKey)}
+                    class={`annotations-list-page-header annotations-list-color-header${collapsedGroups().has(item().groupKey) ? ' collapsed' : ''}`}
                   >
                     <svg class="annotations-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points={collapsedGroups().has(item.groupKey) ? "9 6 15 12 9 18" : "6 9 12 15 18 9"}/>
+                      <polyline points={collapsedGroups().has(item().groupKey) ? "9 6 15 12 9 18" : "6 9 12 15 18 9"}/>
                     </svg>
-                    <span class="annotations-list-color-swatch" style={{ 'background-color': item.headerColor }}></span>
-                    <span>{item.headerColor}</span>
+                    <span class="annotations-list-color-swatch" style={{ 'background-color': item().headerColor }}></span>
+                    <span>{item().headerColor}</span>
                   </div>
                 </Show>
-                <Show when={item.sortMode !== 'color'}>
+                <Show when={item().sortMode !== 'color'}>
                   <div
-                    class={`annotations-list-page-header${collapsedGroups().has(item.groupKey) ? ' collapsed' : ''}`}
-                    onClick={() => toggleGroup(item.groupKey)}
+                    class={`annotations-list-page-header${collapsedGroups().has(item().groupKey) ? ' collapsed' : ''}`}
                   >
                     <svg class="annotations-group-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points={collapsedGroups().has(item.groupKey) ? "9 6 15 12 9 18" : "6 9 12 15 18 9"}/>
+                      <polyline points={collapsedGroups().has(item().groupKey) ? "9 6 15 12 9 18" : "6 9 12 15 18 9"}/>
                     </svg>
-                    {headerText(item)}
+                    {headerText(item())}
                   </div>
                 </Show>
               </Show>
             )}
-          </For>
+          </VirtualList>
         </Show>
       </div>
       <div class="annotations-list-count">{countText()}</div>

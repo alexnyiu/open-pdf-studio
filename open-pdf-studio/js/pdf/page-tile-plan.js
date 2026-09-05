@@ -8,6 +8,7 @@ const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, v
 export function planVisiblePageTiles({
   pageRect,
   viewportRect,
+  predictedRect = null,
   cssScale,
   devicePixelRatio,
   pageWidthPt,
@@ -22,6 +23,7 @@ export function planVisiblePageTiles({
   if (![scale, dpr, widthPt, heightPt].every((value) => Number.isFinite(value) && value > 0)) return [];
   if (!pageRect || !viewportRect) return [];
 
+  viewportRect = predictedRect || viewportRect;
   const left = Math.max(pageRect.left, viewportRect.left);
   const top = Math.max(pageRect.top, viewportRect.top);
   const right = Math.min(pageRect.right, viewportRect.right);
@@ -42,10 +44,10 @@ export function planVisiblePageTiles({
   const coreMaxPt = Math.max(1 / targetScale,
     (Math.max(1, Number(maxBitmapAxisPx) || 4096) - seamOverscanPx * 2 - 1) / targetScale);
   const tiles = [];
-  for (let coreY = visibleY; coreY < visibleBottom - 1e-7; coreY += coreMaxPt) {
-    const coreBottom = Math.min(visibleBottom, coreY + coreMaxPt);
-    for (let coreX = visibleX; coreX < visibleRight - 1e-7; coreX += coreMaxPt) {
-      const coreRight = Math.min(visibleRight, coreX + coreMaxPt);
+  for (let coreY = Math.floor(visibleY / coreMaxPt) * coreMaxPt; coreY < visibleBottom - 1e-7; coreY += coreMaxPt) {
+    const coreBottom = Math.min(heightPt, coreY + coreMaxPt);
+    for (let coreX = Math.floor(visibleX / coreMaxPt) * coreMaxPt; coreX < visibleRight - 1e-7; coreX += coreMaxPt) {
+      const coreRight = Math.min(widthPt, coreX + coreMaxPt);
       const regionXpt = clamp(coreX - seamPt, 0, widthPt);
       const regionYpt = clamp(coreY - seamPt, 0, heightPt);
       const regionRight = clamp(coreRight + seamPt, 0, widthPt);

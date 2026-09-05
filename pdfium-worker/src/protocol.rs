@@ -122,6 +122,8 @@ pub enum Request {
     /// CAD-pagina's); documenten blijven gecachet. Fire-and-forget: geen
     /// response. Gestuurd door de pool bij inactiviteit.
     Trim,
+    /// Release all retained state for one closed or invalidated document.
+    ReleaseDocument { path: String },
     Shutdown,
 }
 

@@ -4,6 +4,7 @@ import { activeTab } from '../../../stores/leftPanelStore.js';
 import ThumbnailItem from '../ThumbnailItem.jsx';
 import { useTranslation } from '../../../../i18n/useTranslation.js';
 import { createThumbnailGeometry } from '../../../../ui/panels/thumbnail-virtualization.js';
+import { getActiveDocument } from '../../../../core/state.js';
 import { recordPerformancePeak } from '../../../../pdf/performance-metrics.js';
 
 export default function ThumbnailsPanel() {
@@ -11,6 +12,7 @@ export default function ThumbnailsPanel() {
 
   let container;
   let frame = 0;
+  const [pendingFocus, setPendingFocus] = createSignal(null);
   const [viewport, setViewport] = createSignal({ scrollTop: 0, height: 600 });
   const geometry = createMemo(() => createThumbnailGeometry(pageCount(), {
     heightForPage: (pageNum) => (pagePlaceholderSizes[String(pageNum)] || placeholderSize()).height,
@@ -61,8 +63,36 @@ export default function ThumbnailsPanel() {
     });
   });
 
-  const handleNavigate = (pageNum) => {
-    import('../../../../pdf/renderer.js').then(m => m.goToPage(pageNum));
+  // The target may not exist until the virtual window follows activePage.
+  // Keep keyboard focus owned by this navigation until the row is mounted.
+  createEffect(() => {
+    const request = pendingFocus();
+    const pages = mounted().pages;
+    const page = activePage();
+    if (!request?.ready || page !== request.publishedPage || !pages.includes(request.page)) return;
+    queueMicrotask(() => {
+      if (pendingFocus() !== request) return;
+      if (getActiveDocument()?.id !== request.documentId) { setPendingFocus(null); return; }
+      const target = container?.querySelector(`.thumbnail-item[data-page="${request.page}"]`);
+      if (target) { target.focus({ preventScroll: true }); setPendingFocus(null); }
+    });
+  });
+
+  const handleNavigate = async (pageNum, options = {}) => {
+    const request = options.focus ? { page: pageNum, documentId: getActiveDocument()?.id, ready: false } : null;
+    setPendingFocus(request);
+    try {
+      const renderer = await import('../../../../pdf/renderer.js');
+      await renderer.goToPage(pageNum, { absolute: true, ...(options.focus ? { behavior: 'auto' } : {}) });
+      if (request && pendingFocus() === request) {
+        // Facing navigation publishes the spread anchor; keyboard focus still
+        // belongs to the requested thumbnail on either side of that spread.
+        setPendingFocus({ ...request, publishedPage: getActiveDocument()?.currentPage, ready: true });
+      }
+    } catch (error) {
+      if (pendingFocus() === request) setPendingFocus(null);
+      throw error;
+    }
   };
 
   const handleReorder = async (fromPage, toPage, dropBefore) => {
@@ -78,7 +108,7 @@ export default function ThumbnailsPanel() {
   };
 
   const handleKeyDown = async (e) => {
-    if (e.ctrlKey && e.key === 'a') {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       e.preventDefault();
       selectAllPages();
     } else if (e.key === 'Escape') {
@@ -102,11 +132,17 @@ export default function ThumbnailsPanel() {
       <div class="left-panel-header">
         <span>{t('leftPanel.thumbnails')}</span>
       </div>
-      <div class="thumbnails-container" id="thumbnails-container" ref={(element) => { container = element; setContainerRef(element); }} tabIndex={0} onKeyDown={handleKeyDown} onScroll={scheduleViewportUpdate}>
+      <div class="thumbnails-container" id="thumbnails-container" ref={(element) => { container = element; setContainerRef(element); }} tabIndex={0} onFocusOut={event => {
+        // WebKit moves focus to the body when virtualization removes the old row.
+        // Only an explicit move to another control cancels keyboard handoff.
+        if (event.relatedTarget && event.relatedTarget !== document.body
+            && event.relatedTarget !== document.documentElement
+            && !container.contains(event.relatedTarget)) setPendingFocus(null);
+      }} onKeyDown={handleKeyDown} onScroll={scheduleViewportUpdate}>
         <div class="thumbnail-virtual-spacer" style={{ height: `${mounted().topSpacer}px` }} />
         <For each={mounted().pages}>
           {(pageNum) => (
-            <ThumbnailItem
+            <ThumbnailItem totalPages={pageCount()}
               pageNum={pageNum}
               onNavigate={handleNavigate}
               onReorder={handleReorder}

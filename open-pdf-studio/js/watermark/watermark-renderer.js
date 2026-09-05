@@ -33,9 +33,8 @@ function getPosition(position, customX, customY, pageWidth, pageHeight, objWidth
   }
 }
 
-function substituteVariables(text, pageNum, totalPages) {
+function substituteVariables(text, pageNum, totalPages, doc) {
   if (!text) return '';
-  const doc = getActiveDocument();
   const filename = doc ? doc.fileName : '';
   const now = new Date();
   const dateStr = now.toLocaleDateString();
@@ -87,7 +86,7 @@ function renderImageWatermark(ctx, wm, pageWidth, pageHeight) {
   ctx.restore();
 }
 
-function renderHeaderFooter(ctx, wm, pageNum, totalPages, pageWidth, pageHeight) {
+function renderHeaderFooter(ctx, wm, pageNum, totalPages, pageWidth, pageHeight, doc) {
   ctx.save();
   ctx.globalAlpha = 1;
   const fontSize = wm.fontSize || 10;
@@ -113,7 +112,7 @@ function renderHeaderFooter(ctx, wm, pageNum, totalPages, pageWidth, pageHeight)
 
   for (const slot of slots) {
     if (!slot.text) continue;
-    const resolved = substituteVariables(slot.text, pageNum, totalPages);
+    const resolved = substituteVariables(slot.text, pageNum, totalPages, doc);
     ctx.textAlign = slot.align;
     ctx.textBaseline = 'top';
     ctx.fillText(resolved, slot.x, slot.y);
@@ -122,8 +121,7 @@ function renderHeaderFooter(ctx, wm, pageNum, totalPages, pageWidth, pageHeight)
   ctx.restore();
 }
 
-function renderWatermarksForLayer(ctx, layer, pageNum, pageWidth, pageHeight) {
-  const doc = getActiveDocument();
+function renderWatermarksForLayer(ctx, layer, pageNum, pageWidth, pageHeight, doc = getActiveDocument()) {
   const watermarks = doc?.watermarks;
   if (!watermarks || watermarks.length === 0) return;
 
@@ -143,16 +141,16 @@ function renderWatermarksForLayer(ctx, layer, pageNum, pageWidth, pageHeight) {
         renderImageWatermark(ctx, wm, pageWidth, pageHeight);
         break;
       case 'headerFooter':
-        renderHeaderFooter(ctx, wm, pageNum, totalPages, pageWidth, pageHeight);
+        renderHeaderFooter(ctx, wm, pageNum, totalPages, pageWidth, pageHeight, doc);
         break;
     }
   }
 }
 
-export function renderWatermarksBehind(ctx, pageNum, pageWidth, pageHeight) {
-  renderWatermarksForLayer(ctx, 'behind', pageNum, pageWidth, pageHeight);
+export function renderWatermarksBehind(ctx, pageNum, pageWidth, pageHeight, doc = getActiveDocument()) {
+  renderWatermarksForLayer(ctx, 'behind', pageNum, pageWidth, pageHeight, doc);
 }
 
-export function renderWatermarksInFront(ctx, pageNum, pageWidth, pageHeight) {
-  renderWatermarksForLayer(ctx, 'infront', pageNum, pageWidth, pageHeight);
+export function renderWatermarksInFront(ctx, pageNum, pageWidth, pageHeight, doc = getActiveDocument()) {
+  renderWatermarksForLayer(ctx, 'infront', pageNum, pageWidth, pageHeight, doc);
 }

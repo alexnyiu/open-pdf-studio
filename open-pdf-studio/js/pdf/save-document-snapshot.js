@@ -5,7 +5,7 @@ import {
 } from '../ocr/pdf-persistence.js';
 import { cloneOwnedTextEditPersistenceState } from '../text/rich-text.js';
 
-function clonePersistenceValue(value, seen = new WeakMap()) {
+export function clonePersistenceValue(value, seen = new WeakMap()) {
   if (value == null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
   if (typeof value === 'bigint') return value.toString();
   if (typeof value === 'function' || typeof value === 'symbol') return undefined;
